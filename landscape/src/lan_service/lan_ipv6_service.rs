@@ -13,7 +13,7 @@ use landscape_common::service::controller::{ConfigStoreController, ConfigStoreSe
 use landscape_common::service::manager::ServiceManager;
 use landscape_common::service::manager::ServiceStarterTrait;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_database::enrolled_device::repository::EnrolledDeviceRepository;
 use landscape_database::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 use landscape_database::provider::LandscapeDBServiceProvider;

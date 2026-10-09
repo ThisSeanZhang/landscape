@@ -31,10 +31,11 @@ use landscape_common::wan_link::{
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
-use landscape_common::wan_service::ipv6_pd::{IAPrefixMap, IPV6PDPrefixStatus, LDIAPrefix};
+use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, LDIAPrefix};
 use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_common::wan_service::pppoe::PppoeDataplane;
+use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::wan_link::repository::WanLinkRepository;
 

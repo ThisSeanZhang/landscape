@@ -13,8 +13,8 @@ use landscape_common::{
     net_proto::icmpv6::messages::Icmpv6Message,
     service::{ServiceHandle, ServiceStatus},
     sys_service::route_service::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode},
-    wan_service::ipv6_pd::IAPrefixMap,
 };
+use landscape_core::pd_prefix::IAPrefixMap;
 use tokio::sync::{mpsc, watch};
 use tokio::{net::UdpSocket, sync::Mutex};
 

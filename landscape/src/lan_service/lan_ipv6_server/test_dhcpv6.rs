@@ -9,7 +9,7 @@ use landscape_common::net_proto::udp::dhcp::v6::{
     self, Authentication, DhcpOption, DhcpOptions, IANA, MessageType, OptionCode,
 };
 use landscape_common::net_proto::udp::dhcp::{Decodable, Decoder, Encodable, Encoder};
-use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_core::pd_prefix::IAPrefixMap;
 
 use super::dhcpv6::{Dhcpv6Result, process_dhcpv6_msg};
 use super::{Ipv6LanReplyParams, Ipv6ServerStatus, compute_subnets, mpsc};

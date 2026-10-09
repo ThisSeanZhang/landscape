@@ -10,8 +10,8 @@ use landscape_common::{
 };
 use landscape_common::{
     event::hub::IAPrefixEventSender, sys_service::route_service::RouteTargetInfo,
-    wan_service::ipv6_pd::IAPrefixMap,
 };
+use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_ebpf::runtime::EbpfRuntime;
 use tokio::sync::mpsc;
 

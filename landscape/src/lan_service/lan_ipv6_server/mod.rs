@@ -12,8 +12,9 @@ use landscape_common::{
         PrefixParentSource, checked_allocate_subnet,
     },
     net::MacAddr,
-    wan_service::ipv6_pd::{IAPrefixMap, pd_expectation_fits_snapshot},
+    wan_service::ipv6_pd::pd_expectation_fits_snapshot,
 };
+use landscape_core::pd_prefix::IAPrefixMap;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 

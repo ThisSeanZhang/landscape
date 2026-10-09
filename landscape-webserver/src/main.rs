@@ -56,10 +56,10 @@ use landscape_common::{
     database::error::DbError,
     database::store::ConfigStore,
     event::hub::EventHub,
-    wan_service::ipv6_pd::IAPrefixMap,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
 use landscape_core::cert::build_tls_server_config_with_shared_resolver;
+use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_core::{lan_device::LanDeviceDirectory, time::SyncTimeService};
 use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::runtime::Builder as RuntimeBuilder;

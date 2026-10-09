@@ -9,7 +9,7 @@ use landscape_common::service::ServiceHandle;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_link::{RuntimeWanLinkPdConfig, SessionIface};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
-use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
+use landscape_core::pd_prefix::IAPrefixMap;
 
 use crate::sys_service::route::IpRouteService;
 

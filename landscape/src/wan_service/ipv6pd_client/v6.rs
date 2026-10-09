@@ -26,7 +26,7 @@ use landscape_common::{
     service::{ServiceHandle, ServiceStatus},
     utils::time::get_f64_timestamp,
     wan_service::addr_binding::WanAddrBinding,
-    wan_service::ipv6_pd::{IAPrefixMap, LDIAPrefix},
+    wan_service::ipv6_pd::LDIAPrefix,
 };
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -34,6 +34,7 @@ use landscape_common::{
     net::MacAddr,
     sys_service::route_service::RouteTargetInfo,
 };
+use landscape_core::pd_prefix::IAPrefixMap;
 
 pub const IPV6_TIMEOUT_DEFAULT_DURACTION: u64 = 10;
 pub const IPV6_TIMEOUT_RENEW_DURACTION: u64 = 10;

@@ -17,11 +17,11 @@ use landscape_common::event::hub::{
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::memtrack::{TaggedFuture, subsystem_from_task_label};
-use landscape_common::wan_service::ipv6_pd::IAPrefixMap;
 use landscape_common::{
     database::error::DbError, database::store::Change, service::controller::ConfigStoreController,
 };
 use landscape_core::lan_device::LanDeviceDirectory;
+use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_database::{
     ddns::repository::DdnsJobRepository,
     dns_provider_profile::repository::DnsProviderProfileRepository,

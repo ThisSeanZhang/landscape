@@ -6,8 +6,8 @@ use landscape_common::{
         LanPrefixGroupConfig, NaPrefixConfig, PrefixParentSource, RaPrefixConfig,
     },
     net::MacAddr,
-    wan_service::ipv6_pd::IAPrefixMap,
 };
+use landscape_core::pd_prefix::IAPrefixMap;
 
 use super::*;
 
