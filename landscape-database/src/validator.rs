@@ -135,6 +135,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: String::new(),
             attach_iface_name: attach.to_string(),
+            link_chain_id: 0,
             kind: WanLinkKind::Pppd {
                 ppp_iface_name: ppp.to_string(),
                 peer_id: "peer".to_string(),

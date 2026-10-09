@@ -14,6 +14,16 @@ use crate::service::manager::ServiceKeyProvider;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::{PPPDConfig, PPPoEPlugin};
 
+/// Valid chain slots are `1..=LINK_CHAIN_ID_MAX` (`0` means "unassigned").
+pub const LINK_CHAIN_ID_MIN: u16 = 1;
+pub const LINK_CHAIN_ID_MAX: u16 = 1023;
+
+/// Smallest free chain slot, skipping `used`.
+pub fn allocate_link_chain_id(used: impl IntoIterator<Item = u16>) -> Option<u16> {
+    let used: std::collections::HashSet<u16> = used.into_iter().collect();
+    (LINK_CHAIN_ID_MIN..=LINK_CHAIN_ID_MAX).find(|id| !used.contains(id))
+}
+
 /// One WAN uplink: a link owns its addressing model and the per-link
 /// service sections that used to be separate per-iface config rows
 /// (see migration `m20261008_095616_wan_links`).
@@ -29,6 +39,10 @@ pub struct WanLinkConfig {
     /// the `Pppd` variant's `ppp_iface_name` (see
     /// `RuntimeWanLinkConfig::section_iface_name`).
     pub attach_iface_name: String,
+    /// eBPF WAN chain slot, immutable once assigned; `0` means "unassigned".
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub link_chain_id: u16,
     #[serde(default)]
     pub kind: WanLinkKind,
     #[serde(default)]
@@ -270,6 +284,15 @@ impl ValidatableConfig for WanLinkConfig {
             });
         }
 
+        if self.link_chain_id > LINK_CHAIN_ID_MAX {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "link_chain_id ({}) must be 0 (unassigned) or between {LINK_CHAIN_ID_MIN} and {LINK_CHAIN_ID_MAX}",
+                    self.link_chain_id
+                ),
+            });
+        }
+
         match &self.kind {
             WanLinkKind::Ethernet => {}
             WanLinkKind::Pppd { ppp_iface_name, peer_id, password, ac, plugin } => {
@@ -314,5 +337,47 @@ impl ValidatableConfig for WanLinkConfig {
         validate_nat_range("icmp_in_range", &self.nat.icmp_in_range)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::validator::ValidatableConfig;
+
+    fn minimal() -> WanLinkConfig {
+        serde_json::from_value(serde_json::json!({
+            "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+            "attach_iface_name": "eth0"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn allocate_link_chain_id_picks_smallest_free_slot() {
+        assert_eq!(allocate_link_chain_id([]), Some(LINK_CHAIN_ID_MIN));
+        assert_eq!(allocate_link_chain_id([1, 2]), Some(3));
+        assert_eq!(allocate_link_chain_id([1, 3]), Some(2));
+        // 0 is a "needs allocation" signal, never a usable slot.
+        assert_eq!(allocate_link_chain_id([0, 1]), Some(2));
+        assert_eq!(allocate_link_chain_id([LINK_CHAIN_ID_MAX]), Some(1));
+    }
+
+    #[test]
+    fn allocate_link_chain_id_returns_none_when_exhausted() {
+        assert_eq!(allocate_link_chain_id(LINK_CHAIN_ID_MIN..=LINK_CHAIN_ID_MAX), None);
+    }
+
+    #[test]
+    fn validates_link_chain_id_range() {
+        let mut config = minimal();
+        config.link_chain_id = 0;
+        assert!(config.validate().is_ok(), "0 (unassigned) is allowed");
+        config.link_chain_id = LINK_CHAIN_ID_MIN;
+        assert!(config.validate().is_ok());
+        config.link_chain_id = LINK_CHAIN_ID_MAX;
+        assert!(config.validate().is_ok());
+        config.link_chain_id = LINK_CHAIN_ID_MAX + 1;
+        assert!(config.validate().is_err());
     }
 }

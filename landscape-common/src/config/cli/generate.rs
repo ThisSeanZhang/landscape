@@ -223,6 +223,7 @@ impl ConfigCliArgs {
             id: gen_database_uuid(),
             name: wan_iface.to_string(),
             attach_iface_name: wan_iface.to_string(),
+            link_chain_id: 0,
             kind: WanLinkKind::Ethernet,
             v4: WanLinkV4Config::default(),
             pd: Default::default(),

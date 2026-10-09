@@ -480,6 +480,7 @@ mod wan_link_ref_tests {
             id,
             name: String::new(),
             attach_iface_name: attach.to_string(),
+            link_chain_id: 0,
             kind,
             v4: Default::default(),
             pd: Default::default(),

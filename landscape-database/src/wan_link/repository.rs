@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use landscape_common::database::error::DbError;
-use landscape_common::database::store::ConfigStore;
+use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::database::validator::StoreValidator;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::wan_link::{RuntimeWanLinkConfig, WanLinkConfig, WanLinkKind};
@@ -9,6 +10,9 @@ use sea_orm::DatabaseConnection;
 
 use super::entity::{WanLinkConfigActiveModel, WanLinkConfigEntity, WanLinkConfigModel};
 use crate::DBId;
+
+/// Retries for a concurrent first-insert losing the `link_chain_id` race.
+const CHAIN_ID_ALLOC_RETRIES: u32 = 8;
 
 #[derive(Clone)]
 pub struct WanLinkRepository {
@@ -31,6 +35,54 @@ impl WanLinkRepository {
             .map(|link| (link.id, link.section_iface_name().to_string()))
             .collect())
     }
+
+    /// Keeps `link_chain_id` stable across updates and allocates a free slot
+    /// on insert, retrying on a concurrent-allocation unique-index clash.
+    pub async fn upsert_preserving_chain_id(
+        &self,
+        mut config: WanLinkConfig,
+    ) -> Result<Change<WanLinkConfig>, DbError> {
+        match self.find_by_id(config.id).await? {
+            Some(existing) => {
+                config.link_chain_id = existing.link_chain_id;
+                self.checked_upsert(config).await
+            }
+            None => {
+                config.link_chain_id = 0;
+                retry_on_chain_id_conflict(|| self.checked_upsert(config.clone())).await
+            }
+        }
+    }
+}
+
+async fn retry_on_chain_id_conflict<T, F, Fut>(mut attempt: F) -> Result<T, DbError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, DbError>>,
+{
+    let mut retries = 0;
+    loop {
+        match attempt().await {
+            Ok(value) => return Ok(value),
+            Err(err) if retries < CHAIN_ID_ALLOC_RETRIES && is_link_chain_id_conflict(&err) => {
+                retries += 1;
+                tokio::time::sleep(Duration::from_millis(5 * u64::from(retries))).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// True only for the `wan_links.link_chain_id` unique-index violation.
+fn is_link_chain_id_conflict(err: &DbError) -> bool {
+    let DbError::Database(db_err) = err else {
+        return false;
+    };
+    let message = match db_err {
+        sea_orm::DbErr::Exec(error) | sea_orm::DbErr::Query(error) => error.to_string(),
+        _ => return false,
+    };
+    message.contains("wan_links.link_chain_id") || message.contains("idx_wan_links_link_chain_id")
 }
 
 /// Strict wan-link reference resolution: the link must exist, otherwise
@@ -238,7 +290,9 @@ mod tests {
     use landscape_common::service::ServiceConfigError;
     use landscape_common::wan_link::{WanLinkConfig, WanLinkKind, WanLinkNatConfig};
     use sea_orm::prelude::Uuid;
+    use sea_orm::{ConnectionTrait, Database, DbErr};
 
+    use super::is_link_chain_id_conflict;
     use crate::provider::LandscapeDBServiceProvider;
 
     fn iface(name: &str, zone: IfaceZoneType) -> NetworkIfaceConfig {
@@ -269,6 +323,7 @@ mod tests {
             id,
             name: String::new(),
             attach_iface_name: attach.to_string(),
+            link_chain_id: 0,
             kind,
             v4: Default::default(),
             pd: Default::default(),
@@ -501,5 +556,136 @@ mod tests {
             .checked_upsert(nat_link(Uuid::new_v4(), true, None, Some((10000, 20000))))
             .await;
         assert!(result.is_err(), "UDP mapping port must not fall in the link's udp range");
+    }
+
+    #[tokio::test]
+    async fn inserts_allocate_distinct_chain_ids() {
+        let provider = setup().await;
+        let repo = provider.wan_link_store();
+
+        let a = repo
+            .upsert_preserving_chain_id(link(Uuid::new_v4(), "eth0", WanLinkKind::Ethernet))
+            .await
+            .unwrap()
+            .new;
+        let b = repo
+            .upsert_preserving_chain_id(link(Uuid::new_v4(), "eth1", WanLinkKind::Ethernet))
+            .await
+            .unwrap()
+            .new;
+
+        assert_ne!(a.link_chain_id, 0);
+        assert_ne!(b.link_chain_id, 0);
+        assert_ne!(a.link_chain_id, b.link_chain_id);
+    }
+
+    #[tokio::test]
+    async fn update_preserves_chain_id() {
+        let provider = setup().await;
+        let repo = provider.wan_link_store();
+
+        let saved = repo
+            .upsert_preserving_chain_id(link(Uuid::new_v4(), "eth0", WanLinkKind::Ethernet))
+            .await
+            .unwrap()
+            .new;
+        let original = saved.link_chain_id;
+        assert_ne!(original, 0);
+
+        let mut update = saved;
+        update.link_chain_id = 0;
+        let updated = repo.upsert_preserving_chain_id(update).await.unwrap().new;
+        assert_eq!(updated.link_chain_id, original, "chain id is immutable after creation");
+    }
+
+    #[tokio::test]
+    async fn concurrent_chain_id_allocation_converges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chain_alloc.db");
+
+        let provider_a = LandscapeDBServiceProvider::file_test_db(&path).await;
+        provider_a.iface_store().upsert(iface("eth0", IfaceZoneType::Wan)).await.unwrap();
+        provider_a.iface_store().upsert(iface("eth1", IfaceZoneType::Wan)).await.unwrap();
+        let provider_b = LandscapeDBServiceProvider::file_test_db(&path).await;
+
+        let repo_a = provider_a.wan_link_store();
+        let repo_b = provider_b.wan_link_store();
+        let (a, b) = tokio::join!(
+            repo_a.upsert_preserving_chain_id(link(Uuid::new_v4(), "eth0", WanLinkKind::Ethernet)),
+            repo_b.upsert_preserving_chain_id(link(Uuid::new_v4(), "eth1", WanLinkKind::Ethernet)),
+        );
+
+        let a = a.unwrap().new;
+        let b = b.unwrap().new;
+        assert_ne!(a.link_chain_id, 0);
+        assert_ne!(b.link_chain_id, 0);
+        assert_ne!(a.link_chain_id, b.link_chain_id, "concurrent allocation must not collide");
+    }
+
+    async fn conflict_db() -> sea_orm::DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db.execute_unprepared(
+            r#"
+            CREATE TABLE wan_links (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                attach_iface_name TEXT NOT NULL,
+                link_chain_id INTEGER NOT NULL DEFAULT 0,
+                kind TEXT NOT NULL,
+                v4 TEXT NOT NULL,
+                pd TEXT NOT NULL,
+                nat TEXT NOT NULL,
+                firewall TEXT NOT NULL,
+                mss TEXT NOT NULL,
+                update_at REAL NOT NULL DEFAULT 0
+            );
+            CREATE UNIQUE INDEX idx_wan_links_link_chain_id ON wan_links (link_chain_id);
+            "#,
+        )
+        .await
+        .unwrap();
+        db
+    }
+
+    async fn insert_raw_link(
+        db: &sea_orm::DatabaseConnection,
+        id: &str,
+        chain: i64,
+    ) -> Result<(), DbErr> {
+        db.execute_unprepared(&format!(
+            "INSERT INTO wan_links \
+             (id, attach_iface_name, link_chain_id, kind, v4, pd, nat, firewall, mss) \
+             VALUES ('{id}', 'wan0', {chain}, '{{}}', '{{}}', '{{}}', '{{}}', '{{}}', '{{}}')"
+        ))
+        .await
+        .map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn chain_id_unique_violation_is_recognized() {
+        let db = conflict_db().await;
+        insert_raw_link(&db, "00000000-0000-0000-0000-000000000001", 1).await.unwrap();
+        let err = insert_raw_link(&db, "00000000-0000-0000-0000-000000000002", 1)
+            .await
+            .expect_err("duplicate link_chain_id must violate the unique index");
+        assert!(is_link_chain_id_conflict(&DbError::from(err)));
+    }
+
+    #[tokio::test]
+    async fn primary_key_violation_is_not_a_chain_id_conflict() {
+        let db = conflict_db().await;
+        insert_raw_link(&db, "00000000-0000-0000-0000-000000000001", 1).await.unwrap();
+        let err = insert_raw_link(&db, "00000000-0000-0000-0000-000000000001", 2)
+            .await
+            .expect_err("duplicate primary key must fail");
+        assert!(!is_link_chain_id_conflict(&DbError::from(err)));
+    }
+
+    #[test]
+    fn non_unique_errors_are_not_chain_id_conflicts() {
+        assert!(!is_link_chain_id_conflict(&DbError::Conflict));
+        assert!(!is_link_chain_id_conflict(&DbError::Database(DbErr::Custom(
+            "some other failure".to_string()
+        ))));
     }
 }

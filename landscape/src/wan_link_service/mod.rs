@@ -812,7 +812,7 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
     /// A running link receives the new config over its per-link watch (partial
     /// reconfigure); a link that is not running is started via bounded delivery.
     async fn handle_service_config(&self, config: Self::Config) -> Result<Self::Config, DbError> {
-        let change = self.get_store().checked_upsert(config).await?;
+        let change = self.get_store().upsert_preserving_chain_id(config).await?;
         self.notify_changed(vec![change.clone()]).await;
         let saved = change.new;
 

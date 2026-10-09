@@ -27,6 +27,7 @@ export class WanLink {
   id: string;
   name: string;
   attach_iface_name: string;
+  link_chain_id: number;
   kind: WanLinkKind;
   v4: { enable: boolean; model: WanLinkV4Model };
   pd: { enable: boolean; mac: string; expected_pd_len: number };
@@ -44,6 +45,7 @@ export class WanLink {
     this.id = obj?.id ?? ZERO_UUID;
     this.name = obj?.name ?? "";
     this.attach_iface_name = obj?.attach_iface_name ?? "";
+    this.link_chain_id = obj?.link_chain_id ?? 0;
     this.kind = obj?.kind ?? { t: "ethernet" };
     this.v4 = obj?.v4 ?? { enable: false, model: { t: "nothing" } };
     this.pd = obj?.pd ?? {
@@ -133,6 +135,7 @@ export function wan_link_from_payload(payload: WanLinkConfig): WanLink {
     id: raw.id as string,
     name: (raw.name as string | undefined) ?? "",
     attach_iface_name: raw.attach_iface_name as string,
+    link_chain_id: (raw.link_chain_id as number | undefined) ?? 0,
     kind: raw.kind as WanLinkKind | undefined,
     v4: raw.v4 as WanLink["v4"] | undefined,
     pd: {

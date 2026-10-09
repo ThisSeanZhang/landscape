@@ -265,8 +265,19 @@ mod tests {
     use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
     use landscape_common::database::error::DbError;
     use landscape_common::database::store::ConfigStore;
+    use landscape_common::wan_link::WanLinkConfig;
 
     use crate::provider::LandscapeDBServiceProvider;
+
+    fn wan_link(id: &str, attach: &str, chain: u16) -> WanLinkConfig {
+        let mut link: WanLinkConfig = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "attach_iface_name": attach,
+        }))
+        .unwrap();
+        link.link_chain_id = chain;
+        link
+    }
 
     #[tokio::test]
     pub async fn test_run_database() {
@@ -324,6 +335,28 @@ mod tests {
         let imported = provider.iface_store().list().await.unwrap();
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].name, "br-test");
+    }
+
+    #[tokio::test]
+    pub async fn import_allocates_distinct_chain_ids_for_duplicate_values() {
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let init_config = InitConfig {
+            wan_links: vec![
+                wan_link("0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0001", "wan0", 5),
+                wan_link("0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0002", "wan1", 5),
+            ],
+            ..Default::default()
+        };
+
+        provider.truncate_and_fit_from(Some(init_config)).await.unwrap();
+
+        let links = provider.wan_link_store().list().await.unwrap();
+        assert_eq!(links.len(), 2);
+        assert!(links.iter().all(|link| link.link_chain_id != 0));
+        assert_ne!(
+            links[0].link_chain_id, links[1].link_chain_id,
+            "duplicate imported chain ids must be healed to distinct slots"
+        );
     }
 
     #[tokio::test]
