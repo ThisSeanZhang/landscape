@@ -57,6 +57,7 @@ mod m20260914_000000_add_names_to_config_resources;
 mod m20260927_000000_add_use_experimental_pool_to_dns_upstream;
 mod m20261008_095616_wan_links;
 mod m20261008_235359_wan_link_chain_id;
+mod m20261008_240001_wan_link_health_check;
 mod tables;
 
 pub struct Migrator;
@@ -120,6 +121,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260927_000000_add_use_experimental_pool_to_dns_upstream::Migration),
             Box::new(m20261008_095616_wan_links::Migration),
             Box::new(m20261008_235359_wan_link_chain_id::Migration),
+            Box::new(m20261008_240001_wan_link_health_check::Migration),
         ]
     }
 }

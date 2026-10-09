@@ -59,6 +59,8 @@ pub struct WanLinkConfig {
     pub firewall: WanLinkFirewallConfig,
     #[serde(default)]
     pub mss: WanLinkMssConfig,
+    #[serde(default)]
+    pub health_check: WanLinkHealthCheckConfig,
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
@@ -240,6 +242,12 @@ pub struct WanLinkMssConfig {
     pub clamp_size: Option<u16>,
 }
 
+/// Health check section of a link (schema placeholder; fields and runtime
+/// behavior land in a later release).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct WanLinkHealthCheckConfig {}
+
 impl ZoneAwareConfig for WanLinkConfig {
     fn iface_name(&self) -> &str {
         &self.attach_iface_name
@@ -383,5 +391,30 @@ mod tests {
         assert!(config.validate().is_ok());
         config.link_chain_id = LINK_CHAIN_ID_MAX + 1;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn health_check_placeholder_defaults_and_ignores_unknown_fields() {
+        // Missing section deserializes to the placeholder default.
+        let config = minimal();
+        assert_eq!(config.health_check, WanLinkHealthCheckConfig {});
+
+        // Rows written by builds that already carry the full section stay
+        // readable; unknown fields are ignored until the section lands.
+        let config: WanLinkConfig = serde_json::from_value(serde_json::json!({
+            "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+            "attach_iface_name": "eth0",
+            "health_check": {
+                "enable": true,
+                "probe_type": "icmp",
+                "target": "223.5.5.5",
+                "interval_secs": 30,
+                "timeout_ms": 3000,
+                "failure_threshold": 3
+            }
+        }))
+        .unwrap();
+        assert_eq!(config.health_check, WanLinkHealthCheckConfig {});
+        assert_eq!(serde_json::to_value(&config.health_check).unwrap(), serde_json::json!({}));
     }
 }

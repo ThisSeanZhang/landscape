@@ -14,5 +14,6 @@ pub enum WanLinks {
     Nat,
     Firewall,
     Mss,
+    HealthCheck,
     UpdateAt,
 }

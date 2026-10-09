@@ -487,6 +487,7 @@ mod wan_link_ref_tests {
             nat: Default::default(),
             firewall: Default::default(),
             mss: Default::default(),
+            health_check: Default::default(),
             update_at: 0.0,
         }
     }

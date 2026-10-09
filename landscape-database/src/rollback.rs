@@ -450,11 +450,11 @@ mod tests {
         let targets =
             build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
 
-        assert_eq!(targets.first().unwrap().version, "0.25.1");
-        assert_eq!(targets.first().unwrap().display_label, "previous release 0.25.1");
-        assert_eq!(targets.get(1).unwrap().display_label, "older release 0.24.3");
-        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.22.3");
-        assert_eq!(targets.first().unwrap().steps, 2);
+        assert_eq!(targets.first().unwrap().version, "0.25.3");
+        assert_eq!(targets.first().unwrap().display_label, "current release boundary 0.25.3");
+        assert_eq!(targets.get(1).unwrap().display_label, "previous release 0.25.1");
+        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.24.3");
+        assert_eq!(targets.first().unwrap().steps, 1);
     }
 
     #[test]
@@ -470,10 +470,11 @@ mod tests {
             .unwrap();
 
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 12);
+        assert_eq!(plan.steps, 13);
         assert_eq!(
             plan.rollback_migrations,
             vec![
+                "m20261008_240001_wan_link_health_check".to_string(),
                 "m20261008_235359_wan_link_chain_id".to_string(),
                 "m20261008_095616_wan_links".to_string(),
                 "m20260927_000000_add_use_experimental_pool_to_dns_upstream".to_string(),

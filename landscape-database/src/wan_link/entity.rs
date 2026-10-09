@@ -28,6 +28,7 @@ pub struct Model {
     pub nat: DBJson,
     pub firewall: DBJson,
     pub mss: DBJson,
+    pub health_check: DBJson,
     pub update_at: DBTimestamp,
 }
 
@@ -111,6 +112,7 @@ impl From<Model> for WanLinkConfig {
             nat: serde_json::from_value(entity.nat).unwrap(),
             firewall: serde_json::from_value(entity.firewall).unwrap(),
             mss: serde_json::from_value(entity.mss).unwrap(),
+            health_check: serde_json::from_value(entity.health_check).unwrap(),
             update_at: entity.update_at,
         }
     }
@@ -135,6 +137,7 @@ impl UpdateActiveModel<ActiveModel> for WanLinkConfig {
         active.nat = Set(serde_json::to_value(&self.nat).unwrap());
         active.firewall = Set(serde_json::to_value(&self.firewall).unwrap());
         active.mss = Set(serde_json::to_value(&self.mss).unwrap());
+        active.health_check = Set(serde_json::to_value(&self.health_check).unwrap());
         active.update_at = Set(self.update_at);
     }
 }
@@ -159,6 +162,7 @@ mod tests {
                 nat TEXT NOT NULL,
                 firewall TEXT NOT NULL,
                 mss TEXT NOT NULL,
+                health_check TEXT NOT NULL DEFAULT '{}',
                 update_at REAL NOT NULL DEFAULT 0
             );
             CREATE UNIQUE INDEX idx_wan_links_link_chain_id ON wan_links (link_chain_id);

@@ -17,8 +17,8 @@ use crate::{
     },
     utils::{id::gen_database_uuid, time::get_f64_timestamp},
     wan_link::{
-        WanLinkConfig, WanLinkFirewallConfig, WanLinkKind, WanLinkMssConfig, WanLinkNatConfig,
-        WanLinkV4Config, WanLinkV4Model,
+        WanLinkConfig, WanLinkFirewallConfig, WanLinkHealthCheckConfig, WanLinkKind,
+        WanLinkMssConfig, WanLinkNatConfig, WanLinkV4Config, WanLinkV4Model,
     },
     wan_service::{nat::config::NatConfig, wan_route::RouteWanServiceConfig},
 };
@@ -230,6 +230,7 @@ impl ConfigCliArgs {
             nat: WanLinkNatConfig::default(),
             firewall: WanLinkFirewallConfig::default(),
             mss: WanLinkMssConfig::default(),
+            health_check: WanLinkHealthCheckConfig::default(),
             update_at: now,
         };
 
