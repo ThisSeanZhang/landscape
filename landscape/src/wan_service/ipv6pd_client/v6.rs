@@ -64,6 +64,7 @@ pub enum IpV6PdState {
         service_id: Vec<u8>,
         iapd: v6::IAPD,
         service_sock: SocketAddr,
+        server_unicast: Option<Ipv6Addr>,
         send_times: u8,
     },
 
@@ -72,6 +73,7 @@ pub enum IpV6PdState {
         xid: u32,
         service_id: Vec<u8>,
         iapd: v6::IAPD,
+        server_unicast: Option<Ipv6Addr>,
         bound_time: Instant,
     },
     /// 确认当前地址状态
@@ -81,6 +83,7 @@ pub enum IpV6PdState {
         xid: u32,
         service_id: Vec<u8>,
         iapd: v6::IAPD,
+        server_unicast: Option<Ipv6Addr>,
         renew_time: Instant,
         bound_time: Instant,
     },
@@ -89,6 +92,7 @@ pub enum IpV6PdState {
         xid: u32,
         service_id: Vec<u8>,
         iapd: v6::IAPD,
+        server_unicast: Option<Ipv6Addr>,
         bound_time: Instant,
     },
     /// 续订超时
@@ -96,6 +100,7 @@ pub enum IpV6PdState {
         xid: u32,
         service_id: Vec<u8>,
         iapd: v6::IAPD,
+        server_unicast: Option<Ipv6Addr>,
         rebind_time: Instant,
         bound_time: Instant,
     },
@@ -134,16 +139,18 @@ impl IpV6PdState {
         }
     }
 
-    pub fn into_release(self) -> Option<Vec<u8>> {
+    pub fn into_release(self) -> Option<(Vec<u8>, v6::IAPD, Option<Ipv6Addr>)> {
         match self {
             IpV6PdState::Solicit { .. } => None,
-            IpV6PdState::Request { service_id, .. }
-            | IpV6PdState::Bound { service_id, .. }
-            | IpV6PdState::Renew { service_id, .. }
-            | IpV6PdState::WaitToRebind { service_id, .. }
+            IpV6PdState::Request { service_id, iapd, server_unicast, .. }
+            | IpV6PdState::Bound { service_id, iapd, server_unicast, .. }
+            | IpV6PdState::Renew { service_id, iapd, server_unicast, .. }
+            | IpV6PdState::WaitToRebind { service_id, iapd, server_unicast, .. }
             // TODO: simple exit
-            | IpV6PdState::Rebind { service_id, .. } => Some(service_id),
-            IpV6PdState::Confirm => todo!(),
+            | IpV6PdState::Rebind { service_id, iapd, server_unicast, .. } => {
+                Some((service_id, iapd, server_unicast))
+            }
+            IpV6PdState::Confirm => None,
             IpV6PdState::Release { .. } => None,
             IpV6PdState::Decline => None,
             IpV6PdState::Stop => None,
@@ -209,6 +216,48 @@ fn create_pd_socket(socket_addr: &SocketAddr, iface_name: &[u8]) -> std::io::Res
     socket.bind_device(Some(iface_name))?;
     UdpSocket::from_std(socket.into())
 }
+
+/// 从 Advertise/Reply 中解析 Server Unicast option(RFC 8415 §21.12)。
+/// 仅当服务器通过该 option 显式授权时,客户端才可以单播 Release 等消息。
+fn extract_server_unicast(msg: &v6::Message) -> Option<Ipv6Addr> {
+    match msg.opts().get(OptionCode::ServerUnicast) {
+        Some(DhcpOption::ServerUnicast(addr)) => Some(*addr),
+        _ => None,
+    }
+}
+
+/// Release 的发送目标(RFC 8415 §18.2/§21.12):
+/// 服务器授权了 Server Unicast option 时单播到该地址,否则返回 None(组播)。
+fn release_target(server_unicast: Option<Ipv6Addr>) -> Option<SocketAddr> {
+    server_unicast
+        .map(|addr| SocketAddr::new(IpAddr::V6(addr), LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT))
+}
+
+/// 构造 Release 消息:回显 ServerId/ClientId,并携带被释放的 IA_PD
+/// (RFC 8415 §18.2.7;IA_PD 的 t1/t2 与前缀生命周期清零为惯例做法,
+/// RFC 8415 未明文规定;§16.1 Release 属于新事务,使用新的随机 xid)。
+/// 若 IA_PD 不含任何 IA_Prefix,则没有可释放的前缀绑定,返回 None。
+fn gen_release(client_id: &[u8], service_id: Vec<u8>, iapd: v6::IAPD) -> Option<v6::Message> {
+    let mut release_opts = DhcpOptions::new();
+    let prefixes = iapd.opts.get_all(OptionCode::IAPrefix)?;
+    for prefix in prefixes {
+        if let DhcpOption::IAPrefix(mut prefix) = prefix.clone() {
+            prefix.preferred_lifetime = 0;
+            prefix.valid_lifetime = 0;
+            release_opts.insert(DhcpOption::IAPrefix(prefix));
+        }
+    }
+    let release_iapd = v6::IAPD { id: iapd.id, t1: 0, t2: 0, opts: release_opts };
+
+    let mut send_msg = v6::Message::new(V6MessageType::Release);
+    send_msg.set_xid_num(get_new_ipv6_xid());
+    send_msg.opts_mut().insert(DhcpOption::ServerId(service_id));
+    send_msg.opts_mut().insert(DhcpOption::ClientId(client_id.to_vec()));
+    send_msg.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
+    send_msg.opts_mut().insert(DhcpOption::IAPD(release_iapd));
+    Some(send_msg)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
     link_id: Uuid,
@@ -306,6 +355,7 @@ pub async fn dhcp_v6_pd_client(
     let mut current_wan_addr: Option<Ipv6Addr> = None;
 
     let stop_token = service_status.stop_token();
+    let mut cleaned_up = false;
     loop {
         tokio::select! {
             // 超时激发重发
@@ -394,14 +444,26 @@ pub async fn dhcp_v6_pd_client(
                     None => break
                 }
             },
-            // 停止信号(进入退出态即触发):发送 Release 后收尾
+            // 停止信号(进入退出态即触发):先停用租约再发送 Release 后收尾
             () = stop_token.cancelled() => {
-                if let Some(service_id) = status.into_release() {
-                    let mut send_msg = v6::Message::new(V6MessageType::Release);
-                    send_msg.opts_mut().insert(DhcpOption::ServerId(service_id));
-                    send_msg.opts_mut().insert(DhcpOption::ClientId(client_id));
-                    send_msg.opts_mut().insert(v6::DhcpOption::ElapsedTime(0));
-                    send_data(&send_msg, &send_socket, None).await;
+                // RFC 8415 §18.2.7: 客户端 MUST 在发起 Release 交换前停止使用所有被释放的租约
+                clear_active_pd_prefix(
+                    link_id,
+                    &iface_name,
+                    ifindex,
+                    &route_service,
+                    addr_binding.as_ref(),
+                    &prefix_map,
+                    &prefix_sender,
+                    &mut current_wan_addr,
+                )
+                .await;
+                cleaned_up = true;
+                if let Some((service_id, iapd, server_unicast)) = status.into_release()
+                    && let Some(send_msg) = gen_release(&client_id, service_id, iapd)
+                {
+                    // RFC 8415 §18.2/§21.12: 仅当服务器授权 Server Unicast option 时单播,否则组播
+                    send_data(&send_msg, &send_socket, release_target(server_unicast)).await;
                 }
                 service_status.just_change_status(ServiceStatus::Stop);
                 tracing::info!("release send and stop");
@@ -410,17 +472,19 @@ pub async fn dhcp_v6_pd_client(
         }
     }
 
-    clear_active_pd_prefix(
-        link_id,
-        &iface_name,
-        ifindex,
-        &route_service,
-        addr_binding.as_ref(),
-        &prefix_map,
-        &prefix_sender,
-        &mut current_wan_addr,
-    )
-    .await;
+    if !cleaned_up {
+        clear_active_pd_prefix(
+            link_id,
+            &iface_name,
+            ifindex,
+            &route_service,
+            addr_binding.as_ref(),
+            &prefix_map,
+            &prefix_sender,
+            &mut current_wan_addr,
+        )
+        .await;
+    }
     tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
 
     if !service_status.is_stop() {
@@ -512,7 +576,14 @@ async fn send_current_status_packet(
             send_data(&msg, send_socket, None).await;
         }
         // IpV6PdState::Advertise { xid } => todo!(),
-        IpV6PdState::Request { xid, service_id, iapd, service_sock: _, send_times } => {
+        IpV6PdState::Request {
+            xid,
+            service_id,
+            iapd,
+            service_sock: _,
+            server_unicast: _,
+            send_times,
+        } => {
             let mut send_msg = v6::Message::new(V6MessageType::Request);
             send_msg.set_xid_num(*xid);
             let mut options = DhcpOptions::new();
@@ -540,7 +611,13 @@ async fn send_current_status_packet(
             }
             *send_times += 1;
         }
-        IpV6PdState::Bound { xid: _, service_id, iapd, bound_time } => {
+        IpV6PdState::Bound {
+            xid: _,
+            service_id,
+            iapd,
+            server_unicast,
+            bound_time,
+        } => {
             // t1 时间到 转换状态为 Renew
             *current_status = IpV6PdState::Renew {
                 xid: get_new_ipv6_xid(),
@@ -548,11 +625,19 @@ async fn send_current_status_packet(
                 renew_time: Instant::now(),
                 bound_time: *bound_time,
                 iapd: iapd.clone(),
+                server_unicast: *server_unicast,
             };
             return SendStatusOutcome::RESET_TIMEOUT;
         }
         IpV6PdState::Confirm => todo!(),
-        IpV6PdState::Renew { xid, service_id, iapd, renew_time, bound_time } => {
+        IpV6PdState::Renew {
+            xid,
+            service_id,
+            iapd,
+            server_unicast,
+            renew_time,
+            bound_time,
+        } => {
             //
             let mut send_msg = v6::Message::new(V6MessageType::Renew);
             send_msg.set_xid_num(*xid);
@@ -586,11 +671,18 @@ async fn send_current_status_packet(
                     service_id: service_id.clone(),
                     bound_time: *bound_time,
                     iapd: iapd.clone(),
+                    server_unicast: *server_unicast,
                 };
                 return SendStatusOutcome::RESET_TIMEOUT;
             }
         }
-        IpV6PdState::WaitToRebind { xid: _, service_id, iapd, bound_time } => {
+        IpV6PdState::WaitToRebind {
+            xid: _,
+            service_id,
+            iapd,
+            server_unicast,
+            bound_time,
+        } => {
             tracing::warn!("WaitToRebind turn to Rebind");
             // 切换状态为 Rebind
             *current_status = IpV6PdState::Rebind {
@@ -599,6 +691,7 @@ async fn send_current_status_packet(
                 rebind_time: Instant::now(),
                 bound_time: *bound_time,
                 iapd: iapd.clone(),
+                server_unicast: *server_unicast,
             };
             return SendStatusOutcome::RESET_TIMEOUT;
         }
@@ -762,6 +855,7 @@ async fn handle_packet(
                         service_id: my_service_id,
                         iapd,
                         service_sock: msg_addr,
+                        server_unicast: extract_server_unicast(&new_v6_msg),
                         send_times: 0,
                     };
 
@@ -819,6 +913,7 @@ async fn handle_packet(
                                 xid: get_new_ipv6_xid(),
                                 service_id,
                                 iapd: iapd.clone(),
+                                server_unicast: extract_server_unicast(&new_v6_msg),
                                 bound_time: Instant::now(),
                             };
 
@@ -976,6 +1071,7 @@ mod tests {
             xid: get_new_ipv6_xid(),
             service_id: Vec::new(),
             iapd: iapd(4, 8, 10),
+            server_unicast: None,
             rebind_time: Instant::now(),
             bound_time: Instant::now() - Duration::from_secs(11),
         };
@@ -993,6 +1089,7 @@ mod tests {
             xid: get_new_ipv6_xid(),
             service_id: Vec::new(),
             iapd: iapd(4, 8, 30),
+            server_unicast: None,
             rebind_time: Instant::now(),
             bound_time: Instant::now() - Duration::from_secs(11),
         };
@@ -1009,6 +1106,7 @@ mod tests {
             xid: get_new_ipv6_xid(),
             service_id: Vec::new(),
             iapd: iapd(120, 180, 20),
+            server_unicast: None,
             bound_time: Instant::now() - Duration::from_secs(5),
         };
 
@@ -1025,6 +1123,7 @@ mod tests {
             xid: get_new_ipv6_xid(),
             service_id: Vec::new(),
             iapd: v6::IAPD { id: 1, t1: 4, t2: 8, opts: DhcpOptions::new() },
+            server_unicast: None,
             bound_time: Instant::now(),
         };
 
@@ -1041,6 +1140,7 @@ mod tests {
             xid: get_new_ipv6_xid(),
             service_id: Vec::new(),
             iapd: iapd(4, 8, 0),
+            server_unicast: None,
             bound_time: Instant::now(),
         };
 
@@ -1059,5 +1159,180 @@ mod tests {
         assert_ne!(&first.octets()[..8], &second.octets()[..8]);
         assert_eq!(&first.octets()[8..], &iid.to_be_bytes());
         assert_eq!(&second.octets()[8..], &iid.to_be_bytes());
+    }
+
+    #[test]
+    fn release_echoes_server_and_client_id_and_zeroes_iapd() {
+        let server_unicast_addr: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: vec![0x00, 0x01],
+            iapd: iapd(120, 180, 7200),
+            server_unicast: Some(server_unicast_addr),
+            bound_time: Instant::now(),
+        };
+        let client_id = [0x00, 0x03, 0x00, 0x01, 0xaa];
+
+        let (service_id, iapd, server_unicast) =
+            status.into_release().expect("bound state holds a lease");
+        assert_eq!(
+            release_target(server_unicast),
+            Some(SocketAddr::new(
+                IpAddr::V6(server_unicast_addr),
+                LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT
+            )),
+            "Release must unicast to the authorized Server Unicast address"
+        );
+        let msg = gen_release(&client_id, service_id, iapd).expect("lease holds a prefix");
+
+        assert_eq!(msg.msg_type(), V6MessageType::Release);
+        let Some(DhcpOption::ServerId(id)) = msg.opts().get(OptionCode::ServerId) else {
+            panic!("Release must echo the server id");
+        };
+        assert_eq!(id, &[0x00, 0x01]);
+        let Some(DhcpOption::ClientId(id)) = msg.opts().get(OptionCode::ClientId) else {
+            panic!("Release must carry the client id");
+        };
+        assert_eq!(id, &client_id);
+
+        let Some(DhcpOption::IAPD(release_iapd)) = msg.opts().get(OptionCode::IAPD) else {
+            panic!("Release must carry the IA_PD being released (RFC 8415 §18.2.7)");
+        };
+        assert_eq!(release_iapd.id, 1);
+        assert_eq!(release_iapd.t1, 0);
+        assert_eq!(release_iapd.t2, 0);
+        let Some(DhcpOption::IAPrefix(prefix)) = release_iapd.opts.get(OptionCode::IAPrefix) else {
+            panic!("Release IA_PD must carry the released IAPrefix");
+        };
+        assert_eq!(prefix.preferred_lifetime, 0);
+        assert_eq!(prefix.valid_lifetime, 0);
+    }
+
+    #[test]
+    fn states_without_a_lease_have_no_release_target() {
+        assert!(IpV6PdState::init_status().into_release().is_none());
+        assert!(IpV6PdState::Confirm.into_release().is_none());
+        assert!(IpV6PdState::Stop.into_release().is_none());
+    }
+
+    #[test]
+    fn request_state_into_release_returns_lease() {
+        let status = IpV6PdState::Request {
+            xid: get_new_ipv6_xid(),
+            service_id: vec![0x00, 0x01],
+            iapd: iapd(120, 180, 7200),
+            service_sock: "[::1]:547".parse().unwrap(),
+            server_unicast: None,
+            send_times: 1,
+        };
+
+        let (service_id, iapd, server_unicast) =
+            status.into_release().expect("request state holds a pending lease");
+
+        assert_eq!(service_id, vec![0x00, 0x01]);
+        assert_eq!(iapd.id, 1);
+        assert_eq!(server_unicast, None);
+    }
+
+    #[test]
+    fn release_zeroes_all_iaprefixes() {
+        let mut opts = DhcpOptions::new();
+        for i in 0u32..2 {
+            opts.insert(DhcpOption::IAPrefix(v6::IAPrefix {
+                preferred_lifetime: 3600 + i,
+                valid_lifetime: 7200 + i,
+                prefix_len: 56,
+                prefix_ip: format!("2001:db8:{}00::", i + 1).parse().unwrap(),
+                opts: DhcpOptions::new(),
+            }));
+        }
+        let status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: vec![0x00, 0x02],
+            iapd: v6::IAPD { id: 7, t1: 120, t2: 180, opts },
+            server_unicast: None,
+            bound_time: Instant::now(),
+        };
+
+        let (service_id, iapd, _) = status.into_release().expect("bound state holds a lease");
+        let msg = gen_release(&[0x00, 0x03, 0x00, 0x01, 0xbb], service_id, iapd)
+            .expect("lease holds prefixes");
+
+        let Some(DhcpOption::IAPD(release_iapd)) = msg.opts().get(OptionCode::IAPD) else {
+            panic!("Release must carry the IA_PD being released (RFC 8415 §18.2.7)");
+        };
+        assert_eq!(release_iapd.id, 7);
+        let prefixes = release_iapd
+            .opts
+            .get_all(OptionCode::IAPrefix)
+            .expect("release IA_PD must carry every released prefix");
+        assert_eq!(prefixes.len(), 2);
+        for prefix in prefixes {
+            let DhcpOption::IAPrefix(prefix) = prefix else {
+                panic!("expected IAPrefix options");
+            };
+            assert_eq!(prefix.preferred_lifetime, 0);
+            assert_eq!(prefix.valid_lifetime, 0);
+        }
+    }
+
+    #[test]
+    fn gen_release_skips_when_iapd_has_no_prefix() {
+        let status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: vec![0x00, 0x01],
+            iapd: v6::IAPD { id: 1, t1: 4, t2: 8, opts: DhcpOptions::new() },
+            server_unicast: None,
+            bound_time: Instant::now(),
+        };
+
+        let (service_id, iapd, _) = status.into_release().expect("bound state holds a lease");
+        assert!(
+            gen_release(&[0x00, 0x03, 0x00, 0x01, 0xcc], service_id, iapd).is_none(),
+            "a prefix-less IA_PD has no binding to release"
+        );
+    }
+
+    #[tokio::test]
+    async fn bound_forwards_server_unicast_to_renew() {
+        let socket = UdpSocket::bind("[::1]:0").await.unwrap();
+        let server_unicast_addr: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let mut status = IpV6PdState::Bound {
+            xid: get_new_ipv6_xid(),
+            service_id: vec![0x00, 0x01],
+            iapd: iapd(120, 180, 7200),
+            server_unicast: Some(server_unicast_addr),
+            bound_time: Instant::now(),
+        };
+
+        let outcome = send_current_status_packet(&[], &socket, &mut status).await;
+
+        assert_eq!(outcome, SendStatusOutcome::RESET_TIMEOUT);
+        let IpV6PdState::Renew { server_unicast, .. } = status else {
+            panic!("bound state should transition to renew");
+        };
+        assert_eq!(server_unicast, Some(server_unicast_addr));
+    }
+
+    #[test]
+    fn release_target_follows_server_unicast_option() {
+        // RFC 8415 §18.2/§21.12: 未授权 Server Unicast option 时,Release 走组播默认路径
+        assert_eq!(release_target(None), None);
+        // 授权后单播到 option 中的服务器地址
+        let addr: Ipv6Addr = "2001:db8::1".parse().unwrap();
+        assert_eq!(
+            release_target(Some(addr)),
+            Some(SocketAddr::new(IpAddr::V6(addr), LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT))
+        );
+    }
+
+    #[test]
+    fn extract_server_unicast_reads_option_from_message() {
+        let mut msg = v6::Message::new(V6MessageType::Reply);
+        assert_eq!(extract_server_unicast(&msg), None);
+
+        let addr: Ipv6Addr = "2001:db8::2".parse().unwrap();
+        msg.opts_mut().insert(DhcpOption::ServerUnicast(addr));
+        assert_eq!(extract_server_unicast(&msg), Some(addr));
     }
 }
