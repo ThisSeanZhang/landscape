@@ -41,51 +41,18 @@ struct CurrentSchemaState {
     pending_since_release: Vec<String>,
 }
 
-// Keep only the latest product release for each schema boundary.
+// Rollback only guarantees the previous release: keep exactly the two newest
+// boundaries here (current release + previous release). At each release,
+// append the new boundary and drop the oldest. Older schema states are
+// reached via the manual step-based rollback path.
 pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
-    ReleaseBoundary {
-        version: "0.16.3",
-        terminal_migration: "m20260302_060012_cert_management",
-    },
-    ReleaseBoundary {
-        version: "0.17.6",
-        terminal_migration: "m20260314_120000_dns_redirect_answer_mode",
-    },
-    ReleaseBoundary {
-        version: "0.18.3",
-        terminal_migration: "m20260408_120000_lan_ipv6_v2",
-    },
-    ReleaseBoundary {
-        version: "0.19.0",
-        terminal_migration: "m20260502_080437_enrolled_device_dhcp_options",
-    },
-    ReleaseBoundary {
-        version: "0.20.1",
-        terminal_migration: "m20260504_000000_flow_device_match",
-    },
-    ReleaseBoundary {
-        version: "0.21.0",
-        terminal_migration: "m20260620_000000_split_static_nat_v4_v6",
-    },
-    ReleaseBoundary {
-        version: "0.21.5",
-        terminal_migration: "m20260625_000000_enrolled_device_hostname",
-    },
-    ReleaseBoundary {
-        version: "0.22.3",
-        terminal_migration: "m20260728_000000_add_name_in_flow",
-    },
-    ReleaseBoundary {
-        version: "0.24.3",
-        terminal_migration: "m20260815_000000_dns_upstream_bind",
-    },
     ReleaseBoundary {
         version: "0.25.1",
         terminal_migration: "m20260927_000000_add_use_experimental_pool_to_dns_upstream",
     },
     ReleaseBoundary {
-        version: "0.25.3",
-        terminal_migration: "m20261008_235359_wan_link_chain_id",
+        version: "0.26.0",
+        terminal_migration: "m20261008_240001_wan_link_health_check",
     },
 ];
 
@@ -177,18 +144,14 @@ fn build_rollback_targets(
     all_migrations: &[String],
     boundaries: &[ReleaseBoundary],
 ) -> Result<Vec<RollbackTarget>, DbError> {
-    let mut raw_targets = Vec::new();
+    let mut targets = Vec::new();
 
     for boundary in boundaries.iter().rev() {
         let target_index = migration_index(all_migrations, boundary.terminal_migration)?;
-        if target_index < current_state.head_index {
-            raw_targets.push((*boundary, (current_state.head_index - target_index) as u32));
+        if target_index >= current_state.head_index {
+            continue;
         }
-    }
 
-    let mut targets = Vec::with_capacity(raw_targets.len());
-    let mut previous_release_assigned = false;
-    for (boundary, steps) in raw_targets {
         let is_current_release_boundary = current_state
             .release_boundary
             .is_some_and(|release| release.version == boundary.version)
@@ -196,19 +159,22 @@ fn build_rollback_targets(
 
         let display_label = if is_current_release_boundary {
             format!("current release boundary {}", boundary.version)
-        } else if !previous_release_assigned {
-            previous_release_assigned = true;
-            format!("previous release {}", boundary.version)
         } else {
-            format!("older release {}", boundary.version)
+            format!("previous release {}", boundary.version)
         };
 
         targets.push(RollbackTarget {
             version: boundary.version,
             display_label,
             terminal_migration: boundary.terminal_migration,
-            steps,
+            steps: (current_state.head_index - target_index) as u32,
         });
+
+        // Only the current release boundary (undoing unreleased migrations)
+        // and the previous release are offered, even if more boundaries exist.
+        if !is_current_release_boundary {
+            break;
+        }
     }
 
     Ok(targets)
@@ -368,6 +334,9 @@ fn print_targets(current_state: &CurrentSchemaState, targets: &[RollbackTarget])
     println!(
         "Each target keeps the listed migration applied and rolls back newer migrations only."
     );
+    println!(
+        "Only the previous release is guaranteed; deeper rollbacks use the manual step-based path."
+    );
 
     for (index, target) in targets.iter().enumerate() {
         let step_label = if target.steps == 1 { "step" } else { "steps" };
@@ -439,92 +408,96 @@ mod tests {
     fn release_boundaries_match_current_migrations() {
         let all_migrations = migration_names();
         validate_release_boundaries(&all_migrations, RELEASE_BOUNDARIES).unwrap();
+
+        // Rollback window: exactly the current and the previous release.
+        assert_eq!(
+            RELEASE_BOUNDARIES.len(),
+            2,
+            "keep only the two newest boundaries; drop the oldest at each release"
+        );
+
+        // Release checklist: the newest migration must terminate a boundary,
+        // otherwise the release that ships it has no rollback target.
+        assert_eq!(
+            RELEASE_BOUNDARIES.last().unwrap().terminal_migration,
+            all_migrations.last().unwrap(),
+            "newest migration has no release boundary; register it before releasing"
+        );
+    }
+
+    fn synthetic_migrations() -> Vec<String> {
+        (1..=8).map(|i| format!("m{i:03}")).collect()
+    }
+
+    fn synthetic_boundaries() -> [ReleaseBoundary; 3] {
+        [
+            ReleaseBoundary { version: "1.0.0", terminal_migration: "m002" },
+            ReleaseBoundary { version: "1.1.0", terminal_migration: "m004" },
+            ReleaseBoundary { version: "1.2.0", terminal_migration: "m006" },
+        ]
     }
 
     #[test]
-    fn rollback_targets_are_computed_from_current_head() {
-        let all_migrations = migration_names();
-        let current_head = all_migrations.last().unwrap().clone();
-        let current_state =
-            resolve_current_state(&current_head, &all_migrations, RELEASE_BOUNDARIES).unwrap();
-        let targets =
-            build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
+    fn rollback_targets_stop_at_previous_release() {
+        let all_migrations = synthetic_migrations();
+        let boundaries = &synthetic_boundaries();
 
-        assert_eq!(targets.first().unwrap().version, "0.25.3");
-        assert_eq!(targets.first().unwrap().display_label, "current release boundary 0.25.3");
-        assert_eq!(targets.get(1).unwrap().display_label, "previous release 0.25.1");
-        assert_eq!(targets.get(2).unwrap().display_label, "older release 0.24.3");
-        assert_eq!(targets.first().unwrap().steps, 1);
+        // Head beyond the newest boundary: it is offered to undo unreleased
+        // migrations, followed by the previous release — nothing deeper even
+        // though a third boundary exists.
+        let state = resolve_current_state("m008", &all_migrations, boundaries).unwrap();
+        assert_eq!(state.release_label, "1.2.0 (+2 unreleased migrations)");
+        let targets = build_rollback_targets(&state, &all_migrations, boundaries).unwrap();
+        let labels: Vec<_> = targets.iter().map(|target| target.display_label.as_str()).collect();
+        assert_eq!(labels, vec!["current release boundary 1.2.0", "previous release 1.1.0"]);
+        let steps: Vec<_> = targets.iter().map(|target| target.steps).collect();
+        assert_eq!(steps, vec![2, 4]);
+        assert!(targets.iter().all(|target| target.version != "1.0.0"));
+
+        // Head exactly on the newest boundary: only the previous release is
+        // offered, never the boundary the head sits on.
+        let state = resolve_current_state("m006", &all_migrations, boundaries).unwrap();
+        assert_eq!(state.release_label, "1.2.0");
+        let targets = build_rollback_targets(&state, &all_migrations, boundaries).unwrap();
+        let labels: Vec<_> = targets.iter().map(|target| target.display_label.as_str()).collect();
+        assert_eq!(labels, vec!["previous release 1.1.0"]);
+        assert!(targets.iter().all(|target| target.version != "1.2.0"));
     }
 
     #[test]
-    fn rollback_plan_lists_migrations_in_reverse_order() {
-        let all_migrations = migration_names();
-        let current_head = all_migrations.last().unwrap().clone();
-        let current_state =
-            resolve_current_state(&current_head, &all_migrations, RELEASE_BOUNDARIES).unwrap();
-        let target = build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
+    fn rollback_plan_rolls_back_newer_migrations_in_reverse_order() {
+        let all_migrations = synthetic_migrations();
+        let boundaries = &synthetic_boundaries();
+        let state = resolve_current_state("m008", &all_migrations, boundaries).unwrap();
+        let target = build_rollback_targets(&state, &all_migrations, boundaries)
             .unwrap()
             .into_iter()
-            .find(|target| target.version == "0.19.0")
+            .find(|target| target.version == "1.1.0")
             .unwrap();
 
-        let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.steps, 13);
+        let plan = build_rollback_plan(&state, &target, &all_migrations).unwrap();
+        assert_eq!(plan.steps, 4);
+        assert_eq!(plan.target_head, "m004");
         assert_eq!(
             plan.rollback_migrations,
-            vec![
-                "m20261008_240001_wan_link_health_check".to_string(),
-                "m20261008_235359_wan_link_chain_id".to_string(),
-                "m20261008_095616_wan_links".to_string(),
-                "m20260927_000000_add_use_experimental_pool_to_dns_upstream".to_string(),
-                "m20260914_000000_add_names_to_config_resources".to_string(),
-                "m20260815_000000_dns_upstream_bind".to_string(),
-                "m20260813_000000_dns_redirect_block_metadata".to_string(),
-                "m20260728_000000_add_name_in_flow".to_string(),
-                "m20260721_000000_wan_pd_expected_len".to_string(),
-                "m20260625_000000_enrolled_device_hostname".to_string(),
-                "m20260620_000000_split_static_nat_v4_v6".to_string(),
-                "m20260504_000000_flow_device_match".to_string(),
-                "m20260503_213507_static_nat_lan_target".to_string(),
-            ]
+            vec!["m008".to_string(), "m007".to_string(), "m006".to_string(), "m005".to_string(),]
         );
         assert!(!plan.rollback_migrations.contains(&target.terminal_migration.to_string()));
     }
 
     #[test]
-    fn rollback_targets_exclude_current_boundary() {
-        let all_migrations = migration_names();
-        let current_head = "m20260408_120000_lan_ipv6_v2";
-        let current_state =
-            resolve_current_state(current_head, &all_migrations, RELEASE_BOUNDARIES).unwrap();
-        let targets =
-            build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES).unwrap();
+    fn rollback_plan_rejects_target_not_older_than_head() {
+        let all_migrations = synthetic_migrations();
+        let boundaries = &synthetic_boundaries();
+        let state = resolve_current_state("m006", &all_migrations, boundaries).unwrap();
 
-        assert_eq!(current_state.release_label, "0.18.3");
-        assert!(targets.iter().all(|target| target.version != "0.18.3"));
-        assert_eq!(targets.first().unwrap().version, "0.17.6");
-    }
-
-    #[test]
-    fn rollback_to_boundary_keeps_target_migration_applied() {
-        let all_migrations = migration_names();
-        let current_head = "m20260419_085215_flow_target_weights";
-        let current_state =
-            resolve_current_state(current_head, &all_migrations, RELEASE_BOUNDARIES).unwrap();
-        let target = build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
-            .unwrap()
-            .into_iter()
-            .find(|target| target.version == "0.18.3")
-            .unwrap();
-
-        let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
-        assert_eq!(plan.target_head, "m20260408_120000_lan_ipv6_v2");
-        assert_eq!(plan.steps, 1);
-        assert_eq!(
-            plan.rollback_migrations,
-            vec!["m20260419_085215_flow_target_weights".to_string()]
-        );
+        let at_head = RollbackTarget {
+            version: "1.2.0",
+            display_label: "current release boundary 1.2.0".to_string(),
+            terminal_migration: "m006",
+            steps: 0,
+        };
+        assert!(build_rollback_plan(&state, &at_head, &all_migrations).is_err());
     }
 
     #[tokio::test]
@@ -542,7 +515,7 @@ mod tests {
         let target = build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
             .unwrap()
             .into_iter()
-            .find(|target| target.version == "0.18.3")
+            .find(|target| target.version == "0.25.1")
             .unwrap();
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
 
