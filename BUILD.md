@@ -23,7 +23,7 @@ Install the system packages used by CI:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
+sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
 ```
 
 ## pnpm and Corepack
