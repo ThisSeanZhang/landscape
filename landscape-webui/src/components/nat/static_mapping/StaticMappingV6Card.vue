@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { delete_static_nat_mapping_v6 } from "@/api/static_nat_mapping";
-import type { ApiStaticNatMappingV6Config as StaticNatMappingV6Config } from "@landscape-router/types/api/schemas";
+import type { StaticNatMappingV6ConfigView as StaticNatMappingV6Config } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 
 import { useFrontEndStore } from "@/stores/front_end_config";

@@ -1,3 +1,24 @@
+mod ld_dto;
+
+/// Generate the create-request DTO for a config struct.
+/// See the `ld_dto` module docs for the attribute table.
+#[proc_macro_derive(LdCreate, attributes(ld, ldc))]
+pub fn derive_ld_create(input: TokenStream) -> TokenStream {
+    ld_dto::expand_create(parse_macro_input!(input as DeriveInput)).into()
+}
+
+/// Generate the update-request DTO: key/version stay but become required.
+#[proc_macro_derive(LdUpdate, attributes(ld, ldu))]
+pub fn derive_ld_update(input: TokenStream) -> TokenStream {
+    ld_dto::expand_update(parse_macro_input!(input as DeriveInput)).into()
+}
+
+/// Generate the response-view DTO: internal/hidden fields are removed.
+#[proc_macro_derive(LdView, attributes(ld, ldv))]
+pub fn derive_ld_view(input: TokenStream) -> TokenStream {
+    ld_dto::expand_view(parse_macro_input!(input as DeriveInput)).into()
+}
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{DeriveInput, Lit, parse_macro_input};

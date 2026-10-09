@@ -6,7 +6,9 @@ use landscape_common::config::ConfigId;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
-use landscape_common::wan_link::{WanLinkConfig, WanLinkKind, WanLinkStatus};
+use landscape_common::wan_link::{
+    CreateWanLinkConfig, UpdateWanLinkConfig, WanLinkConfig, WanLinkKind, WanLinkStatus,
+};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -75,15 +77,15 @@ async fn get_wan_link(
     path = "/wan-links",
     tag = "WAN Link",
     operation_id = "create_wan_link",
-    request_body = WanLinkConfig,
+    request_body = CreateWanLinkConfig,
     responses((status = 200, description = "Success", body = CommonApiResp<WanLinkConfig>))
 )]
 async fn create_wan_link(
     State(state): State<LandscapeApp>,
-    JsonBody(mut payload): JsonBody<WanLinkConfig>,
+    JsonBody(payload): JsonBody<CreateWanLinkConfig>,
 ) -> LandscapeApiResult<WanLinkConfig> {
-    // The id is always server-assigned; a client-supplied one is ignored.
-    payload.id = ConfigId::new_v4();
+    // id/update_at are server-assigned by the DTO conversion.
+    let payload: WanLinkConfig = payload.into();
     validate_wan_link(&payload, None).await?;
     LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)
 }
@@ -94,7 +96,7 @@ async fn create_wan_link(
     tag = "WAN Link",
     operation_id = "update_wan_link",
     params(("id" = Uuid, Path, description = "WAN link ID")),
-    request_body = WanLinkConfig,
+    request_body = UpdateWanLinkConfig,
     responses(
         (status = 200, description = "Success", body = CommonApiResp<WanLinkConfig>),
         (status = 404, description = "Not found")
@@ -103,12 +105,14 @@ async fn create_wan_link(
 async fn update_wan_link(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
-    JsonBody(mut payload): JsonBody<WanLinkConfig>,
+    JsonBody(body): JsonBody<UpdateWanLinkConfig>,
 ) -> LandscapeApiResult<WanLinkConfig> {
     let old = state.wan_link_service.find_by_id(id).await?;
     if old.is_none() {
         Err(ServiceConfigError::NotFound { service_name: "WAN Link" })?;
     }
+    // Path id wins; update_at must echo the client's last-seen version.
+    let mut payload: WanLinkConfig = body.into();
     payload.id = id;
     validate_wan_link(&payload, old.as_ref()).await?;
     LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)

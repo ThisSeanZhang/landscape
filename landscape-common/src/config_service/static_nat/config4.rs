@@ -1,3 +1,4 @@
+use landscape_macro::{LdCreate, LdUpdate, LdView};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use uuid::Uuid;
@@ -32,7 +33,7 @@ impl StaticNatV4Target {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, LdCreate, LdUpdate, LdView)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StaticNatMappingV4Config {
     #[serde(default = "gen_database_uuid")]
@@ -47,7 +48,7 @@ pub struct StaticNatMappingV4Config {
     pub wan_link_id: Option<Uuid>,
     /// Net-iface name mirror, re-derived from `wan_link_id` on every save.
     /// CLEAN when 1.0.0 (dropped with the legacy name-keyed format).
-    #[cfg_attr(feature = "openapi", schema(required = true, nullable = true))]
+    #[ld(internal)]
     pub wan_iface_name: Option<String>,
     pub mapping_pair_ports: Vec<StaticMapPair>,
     #[serde(default)]

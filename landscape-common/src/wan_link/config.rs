@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 
+use landscape_macro::{LdCreate, LdUpdate};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -11,6 +12,7 @@ use crate::net::MacAddr;
 use crate::net_proto::udp::dhcp::DhcpV4Options;
 use crate::service::ServiceConfigError;
 use crate::service::manager::ServiceKeyProvider;
+use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::{PPPDConfig, PPPoEPlugin};
 
@@ -27,9 +29,11 @@ pub fn allocate_link_chain_id(used: impl IntoIterator<Item = u16>) -> Option<u16
 /// One WAN uplink: a link owns its addressing model and the per-link
 /// service sections that used to be separate per-iface config rows
 /// (see migration `m20261008_095616_wan_links`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, LdCreate, LdUpdate)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkConfig {
+    #[serde(default = "gen_database_uuid")]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub id: Uuid,
     /// Pure remark; the reference key is the uuid.
     #[serde(default)]

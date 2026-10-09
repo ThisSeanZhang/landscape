@@ -2,19 +2,25 @@ import {
   getStaticNatMappingsV4,
   getStaticNatMappingV4,
   addStaticNatMappingV4,
+  updateStaticNatMappingV4,
   delStaticNatMappingV4,
   addManyStaticNatMappingsV4,
   checkStaticNatV4Conflict,
   getStaticNatMappingsV6,
   getStaticNatMappingV6,
   addStaticNatMappingV6,
+  updateStaticNatMappingV6,
   delStaticNatMappingV6,
   addManyStaticNatMappingsV6,
 } from "@landscape-router/types/api/static-nat-mappings/static-nat-mappings";
 import type {
-  ApiStaticNatMappingV4Config as StaticNatMappingV4Config,
-  ApiStaticNatMappingV6Config as StaticNatMappingV6Config,
+  CreateStaticNatMappingV4Config,
+  CreateStaticNatMappingV6Config,
   CheckStaticNatV4ConflictParams,
+  StaticNatMappingV4ConfigView as StaticNatMappingV4Config,
+  StaticNatMappingV6ConfigView as StaticNatMappingV6Config,
+  UpdateStaticNatMappingV4Config,
+  UpdateStaticNatMappingV6Config,
 } from "@landscape-router/types/api/schemas";
 import type { LandscapeApiRespPortConflictCheckResponseData } from "@landscape-router/types/api/schemas";
 
@@ -35,14 +41,21 @@ export async function get_static_nat_mapping_v4(
   return getStaticNatMappingV4(id);
 }
 
-export async function push_static_nat_mapping_v4(
-  rule: StaticNatMappingV4Config,
-): Promise<void> {
-  await addStaticNatMappingV4(rule);
+export async function create_static_nat_mapping_v4(
+  rule: CreateStaticNatMappingV4Config,
+): Promise<StaticNatMappingV4Config> {
+  return addStaticNatMappingV4(rule);
+}
+
+export async function update_static_nat_mapping_v4(
+  id: string,
+  rule: UpdateStaticNatMappingV4Config,
+): Promise<StaticNatMappingV4Config> {
+  return updateStaticNatMappingV4(id, rule);
 }
 
 export async function push_many_static_nat_mapping_v4(
-  rules: StaticNatMappingV4Config[],
+  rules: CreateStaticNatMappingV4Config[],
 ): Promise<void> {
   await addManyStaticNatMappingsV4(rules);
 }
@@ -76,14 +89,21 @@ export async function get_static_nat_mapping_v6(
   return getStaticNatMappingV6(id);
 }
 
-export async function push_static_nat_mapping_v6(
-  rule: StaticNatMappingV6Config,
-): Promise<void> {
-  await addStaticNatMappingV6(rule);
+export async function create_static_nat_mapping_v6(
+  rule: CreateStaticNatMappingV6Config,
+): Promise<StaticNatMappingV6Config> {
+  return addStaticNatMappingV6(rule);
+}
+
+export async function update_static_nat_mapping_v6(
+  id: string,
+  rule: UpdateStaticNatMappingV6Config,
+): Promise<StaticNatMappingV6Config> {
+  return updateStaticNatMappingV6(id, rule);
 }
 
 export async function push_many_static_nat_mapping_v6(
-  rules: StaticNatMappingV6Config[],
+  rules: CreateStaticNatMappingV6Config[],
 ): Promise<void> {
   await addManyStaticNatMappingsV6(rules);
 }

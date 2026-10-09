@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { get_static_nat_mappings_v4 } from "@/api/static_nat_mapping";
-import type { ApiStaticNatMappingV4Config as StaticNatMappingV4Config } from "@landscape-router/types/api/schemas";
+import type { StaticNatMappingV4ConfigView as StaticNatMappingV4Config } from "@landscape-router/types/api/schemas";
 import { ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 

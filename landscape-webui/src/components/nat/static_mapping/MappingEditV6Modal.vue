@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import type {
-  ApiStaticNatMappingV6Config as StaticNatMappingV6Config,
+  StaticNatMappingV6ConfigView,
   StaticNatV6Target,
 } from "@landscape-router/types/api/schemas";
 
@@ -9,7 +9,8 @@ import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import {
   get_static_nat_mapping_v6,
-  push_static_nat_mapping_v6,
+  create_static_nat_mapping_v6,
+  update_static_nat_mapping_v6,
 } from "@/api/static_nat_mapping";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useI18n } from "vue-i18n";
@@ -29,7 +30,7 @@ const show = defineModel<boolean>("show", { required: true });
 
 const origin_rule_json = ref<string>("");
 
-const rule = ref<StaticNatMappingV6Config>();
+const rule = ref<StaticNatMappingV6ConfigView>();
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
 type TargetMode = "address" | "local" | "device";
@@ -209,7 +210,21 @@ async function saveRule() {
 
       commit_spin.value = true;
       syncRuleTarget();
-      await push_static_nat_mapping_v6(rule.value);
+      const { id, update_at, ...create_body } = rule.value;
+      if (props.rule_id) {
+        // 编辑模式数据源是 GET(必含 id/update_at),收窄 optional
+        if (id === undefined || update_at === undefined) {
+          console.error("edit form loaded without id/update_at");
+          return;
+        }
+        await update_static_nat_mapping_v6(props.rule_id, {
+          ...create_body,
+          id,
+          update_at,
+        });
+      } else {
+        await create_static_nat_mapping_v6(create_body);
+      }
       show.value = false;
       emit("refresh");
     } catch (e) {

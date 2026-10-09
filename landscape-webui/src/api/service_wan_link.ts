@@ -30,17 +30,23 @@ export async function get_wan_link_status(): Promise<
 }
 
 export async function create_wan_link(link: WanLink): Promise<WanLink> {
-  const payload = (await createWanLink(
-    link as unknown as WanLinkConfig,
-  )) as WanLinkConfig;
+  // Strip the server-assigned id/update_at the local model carries by
+  // default; the create endpoint ignores them, but a clean body is explicit.
+  const { id: _id, update_at: _updateAt, ...body } = link;
+  const payload = (await createWanLink(body)) as WanLinkConfig;
   return wan_link_from_payload(payload);
 }
 
 export async function update_wan_link(link: WanLink): Promise<WanLink> {
-  const payload = (await updateWanLink(
-    link.id,
-    link as unknown as WanLinkConfig,
-  )) as WanLinkConfig;
+  const { id, update_at, ...body } = link;
+  if (update_at === undefined) {
+    throw new Error("update_wan_link: missing update_at (stale form state)");
+  }
+  const payload = (await updateWanLink(id, {
+    ...body,
+    id,
+    update_at,
+  })) as WanLinkConfig;
   return wan_link_from_payload(payload);
 }
 

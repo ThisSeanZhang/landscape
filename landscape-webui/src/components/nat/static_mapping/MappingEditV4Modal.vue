@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import type {
-  ApiStaticNatMappingV4Config as StaticNatMappingV4Config,
+  StaticNatMappingV4ConfigView,
   StaticNatV4Target,
 } from "@landscape-router/types/api/schemas";
 
@@ -10,7 +10,8 @@ import { useDebounceFn } from "@vueuse/core";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import {
   get_static_nat_mapping_v4,
-  push_static_nat_mapping_v4,
+  create_static_nat_mapping_v4,
+  update_static_nat_mapping_v4,
   check_static_nat_v4_conflict,
   type PortConflictCheckResponse,
 } from "@/api/static_nat_mapping";
@@ -33,7 +34,7 @@ const show = defineModel<boolean>("show", { required: true });
 
 const origin_rule_json = ref<string>("");
 
-const rule = ref<StaticNatMappingV4Config>();
+const rule = ref<StaticNatMappingV4ConfigView>();
 const portInputRefs = ref<any[]>([]);
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
@@ -254,7 +255,21 @@ async function saveRule() {
 
       commit_spin.value = true;
       syncRuleTarget();
-      await push_static_nat_mapping_v4(rule.value);
+      const { id, update_at, ...create_body } = rule.value;
+      if (props.rule_id) {
+        // 编辑模式数据源是 GET(必含 id/update_at),收窄 optional
+        if (id === undefined || update_at === undefined) {
+          console.error("edit form loaded without id/update_at");
+          return;
+        }
+        await update_static_nat_mapping_v4(props.rule_id, {
+          ...create_body,
+          id,
+          update_at,
+        });
+      } else {
+        await create_static_nat_mapping_v4(create_body);
+      }
       show.value = false;
       emit("refresh");
     } catch (e) {

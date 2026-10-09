@@ -6,13 +6,19 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[lints]
-workspace = true
+# Generated DTOs emit `#[cfg_attr(feature = "openapi", ...)]` for the
+# consumer crate; allow that value in test crates using the macros.
+[lints.clippy]
+dbg_macro = "deny"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("openapi"))'] }
 
 [lib]
 proc-macro = true
 
 [dependencies]
+proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
 
