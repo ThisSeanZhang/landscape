@@ -147,6 +147,11 @@ impl IpRouteService {
         let removed = self.ipv4_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
         self.apply_removed_ipv4_wan_route(removed).await;
+        // A link without its v4 WAN route has nothing to probe; its health
+        // verdict is stale.
+        if let RouteOwner::Link(link_id) = owner {
+            self.clear_link_health(*link_id).await;
+        }
         if had_removed {
             self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Removed);
         }

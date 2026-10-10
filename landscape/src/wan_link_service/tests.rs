@@ -307,3 +307,80 @@ async fn dead_section_run_is_retried_after_backoff() {
         .expect("supervisor did not stop")
         .unwrap();
 }
+
+#[tokio::test]
+async fn health_check_runner_judges_and_cleans_up() {
+    use std::net::Ipv4Addr;
+    use std::sync::atomic::AtomicBool;
+
+    use landscape_common::wan_link::{
+        RuntimeWanHealthProbe, RuntimeWanLinkHealthCheckConfig, WanLinkHealthState,
+    };
+    use landscape_core::route::IpRouteService;
+
+    use super::health_check;
+    use super::probe::{FakeProbe, WanHealthProbe};
+
+    async fn wait_health(route_service: &IpRouteService, link_id: Uuid, want: WanLinkHealthState) {
+        for _ in 0..900 {
+            if route_service.get_link_health(link_id).await.is_some_and(|info| info.state == want) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("health state did not reach {want:?} in time");
+    }
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+    let mut events = route_service.subscribe_health_events();
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    let up = Arc::new(AtomicBool::new(false));
+    let up_for_probe = up.clone();
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(move |_target| {
+        up_for_probe.load(Ordering::SeqCst).then(|| Duration::from_millis(5))
+    }));
+
+    let config = RuntimeWanLinkHealthCheckConfig {
+        enable: true,
+        probe: RuntimeWanHealthProbe::Icmp {
+            targets: vec![Ipv4Addr::new(1, 1, 1, 1)],
+            probe_gateway: false,
+        },
+        interval_secs: 1,
+        timeout_ms: 100,
+        failure_threshold: 1,
+        recovery_threshold: 1,
+        reliability: 1,
+    };
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        SessionIface::new(1, "eth0", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+    ));
+
+    // Round 0 is warmup-tolerated, round 1 fails with threshold 1.
+    wait_health(&route_service, link_id, WanLinkHealthState::Unhealthy).await;
+    assert!(events.try_recv().is_ok(), "Unknown -> Unhealthy flip broadcast");
+
+    up.store(true, Ordering::SeqCst);
+    wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not stop")
+        .unwrap();
+    assert!(route_service.get_link_health(link_id).await.is_none(), "exit clears the entry");
+    assert_eq!(link_status.current(), ServiceStatus::Stop);
+}

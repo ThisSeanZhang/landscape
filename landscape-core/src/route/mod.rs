@@ -13,10 +13,12 @@
 //! - [`flow_target`]: flow-config → WAN target slot join
 
 mod flow_target;
+mod health;
 mod lan;
 mod local_addr;
 mod wan;
 
+pub use health::{LinkHealths, WanLinkHealthEvent};
 pub use local_addr::LocalAddrView;
 pub use wan::{WanRouteEvent, WanRouteEventKind};
 
@@ -45,6 +47,8 @@ pub struct IpRouteService {
     pub(crate) ipv4_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     pub(crate) ipv6_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     pub(crate) wan_route_events: broadcast::Sender<WanRouteEvent>,
+    pub(crate) link_healths: ShareRwLock<health::LinkHealths>,
+    pub(crate) health_events: broadcast::Sender<health::WanLinkHealthEvent>,
 
     pub(crate) ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,
     pub(crate) ipv6_lan_ifaces: ShareRwLock<Ipv6LanRoutesByKey>,
@@ -65,6 +69,8 @@ impl IpRouteService {
             ipv4_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             wan_route_events: broadcast::channel(64).0,
+            link_healths: Arc::new(RwLock::new(HashMap::new())),
+            health_events: broadcast::channel(64).0,
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             reachable_local_ipv4_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),

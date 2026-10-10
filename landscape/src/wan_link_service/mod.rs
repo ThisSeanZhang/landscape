@@ -1,7 +1,9 @@
 mod firewall;
+mod health_check;
 mod mss;
 mod nat;
 mod pd;
+pub mod probe;
 mod v4;
 
 use std::collections::HashMap;
@@ -26,7 +28,8 @@ use landscape_common::service::{
 };
 use landscape_common::wan_link::{
     LinkState, LinkStateHandle, RuntimeWanLinkConfig, SectionKind, SessionIface, SessionPhase,
-    SessionState, WanLinkConfig, WanLinkStatus, WanLinkStatusHandle, WanLinkStatusStore,
+    SessionState, WanHealthProbeConfig, WanLinkConfig, WanLinkStatus, WanLinkStatusHandle,
+    WanLinkStatusStore,
 };
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
@@ -42,6 +45,8 @@ use landscape_database::wan_link::repository::WanLinkRepository;
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 
+use self::probe::WanHealthProbe;
+
 /// Backoff before re-spawning a run that ended on its own.
 const DEFAULT_RESTART_BACKOFF: Duration = Duration::from_secs(5);
 /// Cadence at which a running section samples its status into the display board.
@@ -56,6 +61,7 @@ enum SectionTag {
     Mss,
     Firewall,
     Pd,
+    HealthCheck,
 }
 
 enum Step {
@@ -80,6 +86,7 @@ pub struct WanLinkService {
     nat_dataplane: Arc<dyn NatDataplane>,
     mss_dataplane: Arc<dyn MssClampDataplane>,
     firewall_dataplane: Arc<dyn FirewallDataplane>,
+    health_probe: Arc<dyn WanHealthProbe>,
     prefix_map: IAPrefixMap,
     prefix_sender: IAPrefixEventSender,
     shared_wan_iid: Arc<u64>,
@@ -97,6 +104,7 @@ impl WanLinkService {
         nat_dataplane: Arc<dyn NatDataplane>,
         mss_dataplane: Arc<dyn MssClampDataplane>,
         firewall_dataplane: Arc<dyn FirewallDataplane>,
+        health_probe: Arc<dyn WanHealthProbe>,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
         shared_wan_iid: Arc<u64>,
@@ -111,6 +119,7 @@ impl WanLinkService {
             nat_dataplane,
             mss_dataplane,
             firewall_dataplane,
+            health_probe,
             prefix_map,
             prefix_sender,
             shared_wan_iid,
@@ -157,6 +166,7 @@ impl ServiceStarterTrait for WanLinkService {
         board.set_section(SectionKind::Nat, ServiceStatus::Stop).await;
         board.set_section(SectionKind::Firewall, ServiceStatus::Stop).await;
         board.set_section(SectionKind::Mss, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::HealthCheck, ServiceStatus::Stop).await;
 
         {
             let status = link_status.clone();
@@ -345,10 +355,51 @@ impl ServiceStarterTrait for WanLinkService {
             },
         );
 
+        self.spawn_section(
+            &link_status,
+            &board,
+            state_rx.clone(),
+            cfg_rx.clone(),
+            reconfig_tx.subscribe(),
+            SectionTag::HealthCheck,
+            SectionKind::HealthCheck,
+            task_label::task::WAN_LINK_HEALTH_CHECK,
+            health_check_enabled,
+            |state| state.has_v4_lease(),
+            {
+                let probe = self.health_probe.clone();
+                let route_service = self.route_service.clone();
+                let link_state = link_state.clone();
+                Arc::new(move |iface, cfg, status| {
+                    let probe = probe.clone();
+                    let route_service = route_service.clone();
+                    let link_state = link_state.clone();
+                    Box::pin(async move {
+                        health_check::run(
+                            cfg.id,
+                            iface,
+                            link_state,
+                            RuntimeWanLinkConfig::from_config(&cfg).health_check,
+                            status,
+                            probe,
+                            route_service,
+                        )
+                        .await;
+                    })
+                })
+            },
+        );
+
         link_status.just_change_status(ServiceStatus::Running);
 
         link_status
     }
+}
+
+/// Health check needs something to probe: explicit targets or the gateway.
+fn health_check_enabled(cfg: &WanLinkConfig) -> bool {
+    let WanHealthProbeConfig::Icmp { targets, probe_gateway } = &cfg.health_check.probe;
+    cfg.health_check.enable && (!targets.is_empty() || *probe_gateway)
 }
 
 impl WanLinkService {
@@ -490,6 +541,9 @@ fn config_change_tags(applied: &WanLinkConfig, new: &WanLinkConfig) -> Vec<Secti
     }
     if new_rt.pd != old_rt.pd {
         tags.push(SectionTag::Pd);
+    }
+    if new_rt.health_check != old_rt.health_check {
+        tags.push(SectionTag::HealthCheck);
     }
 
     tags
@@ -854,6 +908,7 @@ impl WanLinkServiceManagerService {
         nat_dataplane: Arc<dyn NatDataplane>,
         mss_dataplane: Arc<dyn MssClampDataplane>,
         firewall_dataplane: Arc<dyn FirewallDataplane>,
+        health_probe: Arc<dyn WanHealthProbe>,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
         shared_wan_iid: Arc<u64>,
@@ -872,6 +927,7 @@ impl WanLinkServiceManagerService {
             nat_dataplane,
             mss_dataplane,
             firewall_dataplane,
+            health_probe,
             prefix_map.clone(),
             prefix_sender,
             shared_wan_iid,
