@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 
 use landscape_macro::{LdCreate, LdUpdate};
@@ -15,6 +15,8 @@ use crate::service::manager::ServiceKeyProvider;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 use crate::wan_service::pppd::{PPPDConfig, PPPoEPlugin};
+
+use super::runtime::{DEFAULT_HEALTH_INTERVAL_SECS, DEFAULT_HEALTH_TIMEOUT_MS};
 
 /// Valid chain slots are `1..=LINK_CHAIN_ID_MAX` (`0` means "unassigned").
 pub const LINK_CHAIN_ID_MIN: u16 = 1;
@@ -242,11 +244,61 @@ pub struct WanLinkMssConfig {
     pub clamp_size: Option<u16>,
 }
 
-/// Health check section of a link (schema placeholder; fields and runtime
-/// behavior land in a later release).
+/// Health check section of a link: probes the link's connectivity through
+/// its own iface/source and reports a debounced verdict to the route
+/// service. Disabled by default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct WanLinkHealthCheckConfig {}
+pub struct WanLinkHealthCheckConfig {
+    #[serde(default)]
+    pub enable: bool,
+    /// Probe method with its targets.
+    #[serde(default)]
+    pub probe: WanHealthProbeConfig,
+    /// Seconds between probe rounds; `None` = 10.
+    #[serde(default)]
+    pub interval_secs: Option<u16>,
+    /// Per-probe timeout in milliseconds; `None` = 1000.
+    #[serde(default)]
+    pub timeout_ms: Option<u16>,
+    /// Consecutive failed rounds before flipping to `Unhealthy`;
+    /// `None` = 3.
+    #[serde(default)]
+    pub failure_threshold: Option<u8>,
+    /// Consecutive successful rounds required to recover from
+    /// `Unhealthy`; `None` = 3.
+    #[serde(default)]
+    pub recovery_threshold: Option<u8>,
+    /// Probe targets that must answer for a round to succeed; `None` = 1.
+    #[serde(default)]
+    pub reliability: Option<u8>,
+}
+
+/// Probe method of a health check; each variant owns its target
+/// representation. v1 implements ICMP only; further methods land as new
+/// (purely additive) variants.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum WanHealthProbeConfig {
+    /// ICMP echo bound to the section iface and source address.
+    Icmp {
+        /// Probe targets; v1 accepts IPv4 only. Empty means only the
+        /// gateway (if `probe_gateway`) is probed.
+        #[serde(default)]
+        #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
+        targets: Vec<IpAddr>,
+        /// Additionally probe the session's default gateway.
+        #[serde(default)]
+        probe_gateway: bool,
+    },
+}
+
+impl Default for WanHealthProbeConfig {
+    fn default() -> Self {
+        Self::Icmp { targets: Vec::new(), probe_gateway: false }
+    }
+}
 
 impl ZoneAwareConfig for WanLinkConfig {
     fn iface_name(&self) -> &str {
@@ -348,6 +400,80 @@ impl ValidatableConfig for WanLinkConfig {
         validate_nat_range("udp_range", &self.nat.udp_range)?;
         validate_nat_range("icmp_in_range", &self.nat.icmp_in_range)?;
 
+        let health = &self.health_check;
+        let WanHealthProbeConfig::Icmp { targets, probe_gateway } = &health.probe;
+        if targets.iter().any(|target| !target.is_ipv4()) {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "health_check icmp targets must be IPv4 addresses".to_string(),
+            });
+        }
+        if health.enable && targets.is_empty() && !*probe_gateway {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "health_check enabled but nothing to probe: set targets or probe_gateway"
+                    .to_string(),
+            });
+        }
+        if let Some(reliability) = health.reliability {
+            if !(1..=100).contains(&reliability) {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "health_check reliability ({reliability}) must be between 1 and 100"
+                    ),
+                });
+            }
+            let target_count = targets.len() + usize::from(*probe_gateway);
+            if target_count > 0 && reliability as usize > target_count {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "health_check reliability ({reliability}) must not exceed the target count ({target_count})"
+                    ),
+                });
+            }
+        }
+        if let Some(interval_secs) = health.interval_secs
+            && interval_secs == 0
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: "health_check interval_secs must not be 0".to_string(),
+            });
+        }
+        if let Some(timeout_ms) = health.timeout_ms
+            && !(1..=10000).contains(&timeout_ms)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "health_check timeout_ms ({timeout_ms}) must be between 1 and 10000"
+                ),
+            });
+        }
+        if let Some(threshold) = health.failure_threshold
+            && !(1..=100).contains(&threshold)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "health_check failure_threshold ({threshold}) must be between 1 and 100"
+                ),
+            });
+        }
+        if let Some(threshold) = health.recovery_threshold
+            && !(1..=100).contains(&threshold)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "health_check recovery_threshold ({threshold}) must be between 1 and 100"
+                ),
+            });
+        }
+        let interval_secs = health.interval_secs.unwrap_or(DEFAULT_HEALTH_INTERVAL_SECS);
+        let timeout_ms = health.timeout_ms.unwrap_or(DEFAULT_HEALTH_TIMEOUT_MS);
+        if u32::from(timeout_ms) >= u32::from(interval_secs) * 1000 {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "health_check timeout_ms ({timeout_ms}) must be smaller than interval_secs ({interval_secs}) in milliseconds"
+                ),
+            });
+        }
+
         Ok(())
     }
 }
@@ -394,27 +520,71 @@ mod tests {
     }
 
     #[test]
-    fn health_check_placeholder_defaults_and_ignores_unknown_fields() {
-        // Missing section deserializes to the placeholder default.
-        let config = minimal();
-        assert_eq!(config.health_check, WanLinkHealthCheckConfig {});
+    fn health_check_validation_rejects_bad_sections() {
+        let mut config = minimal();
+        config.health_check.enable = true;
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: vec![
+                IpAddr::V4(Ipv4Addr::new(223, 5, 5, 5)),
+                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            ],
+            probe_gateway: true,
+        };
+        config.health_check.reliability = Some(2);
+        config.health_check.interval_secs = Some(30);
+        config.health_check.timeout_ms = Some(800);
+        config.health_check.failure_threshold = Some(5);
+        config.health_check.recovery_threshold = Some(2);
+        assert!(config.validate().is_ok(), "a fully populated section is valid");
 
-        // Rows written by builds that already carry the full section stay
-        // readable; unknown fields are ignored until the section lands.
-        let config: WanLinkConfig = serde_json::from_value(serde_json::json!({
-            "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
-            "attach_iface_name": "eth0",
-            "health_check": {
-                "enable": true,
-                "probe_type": "icmp",
-                "target": "223.5.5.5",
-                "interval_secs": 30,
-                "timeout_ms": 3000,
-                "failure_threshold": 3
-            }
-        }))
-        .unwrap();
-        assert_eq!(config.health_check, WanLinkHealthCheckConfig {});
-        assert_eq!(serde_json::to_value(&config.health_check).unwrap(), serde_json::json!({}));
+        let mut config = minimal();
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: vec![IpAddr::V6(Ipv6Addr::LOCALHOST)],
+            probe_gateway: false,
+        };
+        assert!(config.validate().is_err(), "v6 targets are rejected in v1");
+
+        let mut config = minimal();
+        config.health_check.enable = true;
+        assert!(config.validate().is_err(), "enabled without targets or probe_gateway is rejected");
+
+        config.health_check.probe =
+            WanHealthProbeConfig::Icmp { targets: vec![], probe_gateway: true };
+        assert!(config.validate().is_ok(), "gateway-only probing is valid");
+        config.health_check.reliability = Some(2);
+        assert!(config.validate().is_err(), "gateway-only probing allows at most reliability 1");
+
+        let mut config = minimal();
+        config.health_check.reliability = Some(0);
+        assert!(config.validate().is_err(), "reliability 0 is rejected");
+
+        let mut config = minimal();
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],
+            probe_gateway: false,
+        };
+        config.health_check.reliability = Some(2);
+        assert!(config.validate().is_err(), "reliability above explicit targets is rejected");
+
+        let mut config = minimal();
+        config.health_check.interval_secs = Some(0);
+        assert!(config.validate().is_err(), "interval 0 is rejected");
+
+        let mut config = minimal();
+        config.health_check.timeout_ms = Some(15000);
+        assert!(config.validate().is_err(), "timeout beyond 10s is rejected");
+
+        let mut config = minimal();
+        config.health_check.interval_secs = Some(2);
+        config.health_check.timeout_ms = Some(2000);
+        assert!(config.validate().is_err(), "timeout >= interval is rejected");
+
+        let mut config = minimal();
+        config.health_check.failure_threshold = Some(0);
+        assert!(config.validate().is_err(), "failure_threshold 0 is rejected");
+
+        let mut config = minimal();
+        config.health_check.recovery_threshold = Some(0);
+        assert!(config.validate().is_err(), "recovery_threshold 0 is rejected");
     }
 }

@@ -1,3 +1,4 @@
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 
 use uuid::Uuid;
@@ -6,7 +7,9 @@ use crate::net::MacAddr;
 use crate::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
 use crate::wan_service::pppd::PPPoEPlugin;
 
-use super::{WanLinkConfig, WanLinkKind, WanLinkV4Model};
+use super::{
+    WanHealthProbeConfig, WanLinkConfig, WanLinkHealthCheckConfig, WanLinkKind, WanLinkV4Model,
+};
 
 /// Default MRU requested from the AC when the stored kind config carries 0.
 pub const DEFAULT_REQUESTED_MRU: u16 = 1492;
@@ -15,6 +18,16 @@ pub const DEFAULT_CLAMP_SIZE: u16 = 1492;
 /// Default port range for every NAT protocol, matching `NatConfig::default`.
 pub const DEFAULT_NAT_PORT_RANGE_START: u16 = 32768;
 pub const DEFAULT_NAT_PORT_RANGE_END: u16 = 65535;
+/// Default health-check cadence, in seconds between probe rounds.
+pub const DEFAULT_HEALTH_INTERVAL_SECS: u16 = 10;
+/// Default per-probe timeout, in milliseconds.
+pub const DEFAULT_HEALTH_TIMEOUT_MS: u16 = 1000;
+/// Default consecutive failed rounds before flipping to `Unhealthy`.
+pub const DEFAULT_HEALTH_FAILURE_THRESHOLD: u32 = 3;
+/// Default consecutive successful rounds required to recover.
+pub const DEFAULT_HEALTH_RECOVERY_THRESHOLD: u32 = 3;
+/// Default number of targets that must answer per round.
+pub const DEFAULT_HEALTH_RELIABILITY: u32 = 1;
 
 fn default_nat_port_range() -> Range<u16> {
     DEFAULT_NAT_PORT_RANGE_START..DEFAULT_NAT_PORT_RANGE_END
@@ -35,6 +48,7 @@ pub struct RuntimeWanLinkConfig {
     pub nat: RuntimeWanLinkNatConfig,
     pub firewall: RuntimeWanLinkFirewallConfig,
     pub mss: RuntimeWanLinkMssConfig,
+    pub health_check: RuntimeWanLinkHealthCheckConfig,
 }
 
 impl RuntimeWanLinkConfig {
@@ -100,6 +114,7 @@ impl RuntimeWanLinkConfig {
                 enable: config.mss.enable,
                 clamp_size: config.mss.clamp_size.unwrap_or(DEFAULT_CLAMP_SIZE),
             },
+            health_check: RuntimeWanLinkHealthCheckConfig::from_config(&config.health_check),
         }
     }
 
@@ -170,14 +185,73 @@ pub struct RuntimeWanLinkMssConfig {
     pub clamp_size: u16,
 }
 
+/// Health-check section with defaults filled in and the probe enum
+/// resolved (IPv6 filtered out).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeWanLinkHealthCheckConfig {
+    pub enable: bool,
+    pub probe: RuntimeWanHealthProbe,
+    pub interval_secs: u16,
+    pub timeout_ms: u16,
+    pub failure_threshold: u32,
+    pub recovery_threshold: u32,
+    pub reliability: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeWanHealthProbe {
+    /// ICMP echo with resolved IPv4 targets.
+    Icmp {
+        /// Configured IPv4 targets; empty when only the gateway is probed.
+        targets: Vec<Ipv4Addr>,
+        probe_gateway: bool,
+    },
+}
+
+impl RuntimeWanLinkHealthCheckConfig {
+    fn from_config(config: &WanLinkHealthCheckConfig) -> Self {
+        let probe = match &config.probe {
+            WanHealthProbeConfig::Icmp { targets, probe_gateway } => {
+                let targets: Vec<Ipv4Addr> = targets
+                    .iter()
+                    .filter_map(|target| match target {
+                        IpAddr::V4(v4) => Some(*v4),
+                        IpAddr::V6(_) => None,
+                    })
+                    .collect();
+                RuntimeWanHealthProbe::Icmp { targets, probe_gateway: *probe_gateway }
+            }
+        };
+        Self {
+            enable: config.enable,
+            probe,
+            interval_secs: config.interval_secs.unwrap_or(DEFAULT_HEALTH_INTERVAL_SECS),
+            timeout_ms: config.timeout_ms.unwrap_or(DEFAULT_HEALTH_TIMEOUT_MS),
+            failure_threshold: config
+                .failure_threshold
+                .map(u32::from)
+                .unwrap_or(DEFAULT_HEALTH_FAILURE_THRESHOLD),
+            recovery_threshold: config
+                .recovery_threshold
+                .map(u32::from)
+                .unwrap_or(DEFAULT_HEALTH_RECOVERY_THRESHOLD),
+            reliability: config.reliability.map(u32::from).unwrap_or(DEFAULT_HEALTH_RELIABILITY),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
     use serde_json::json;
 
     use super::{
         DEFAULT_CLAMP_SIZE, DEFAULT_EXPECTED_PD_LEN, DEFAULT_NAT_PORT_RANGE_END,
-        DEFAULT_NAT_PORT_RANGE_START, DEFAULT_REQUESTED_MRU, RuntimeWanLinkConfig,
+        DEFAULT_NAT_PORT_RANGE_START, DEFAULT_REQUESTED_MRU, RuntimeWanHealthProbe,
+        RuntimeWanLinkConfig,
     };
+    use crate::wan_link::WanHealthProbeConfig;
     use crate::wan_link::WanLinkConfig;
 
     fn minimal_config() -> WanLinkConfig {
@@ -201,6 +275,26 @@ mod tests {
         assert!(!runtime.nat.enable);
         assert!(!runtime.firewall.enable);
         assert!(!runtime.mss.enable);
+        assert!(!runtime.health_check.enable);
+    }
+
+    #[test]
+    fn from_config_filters_v6_health_targets() {
+        let mut config = minimal_config();
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), IpAddr::V6(Ipv6Addr::LOCALHOST)],
+            probe_gateway: true,
+        };
+
+        let health = RuntimeWanLinkConfig::from_config(&config).health_check;
+
+        assert_eq!(
+            health.probe,
+            RuntimeWanHealthProbe::Icmp {
+                targets: vec![Ipv4Addr::new(1, 1, 1, 1)],
+                probe_gateway: true
+            }
+        );
     }
 
     #[test]

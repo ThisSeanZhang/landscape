@@ -37,6 +37,9 @@ pub struct WanLinkStatus {
     pub nat: ServiceStatus,
     pub firewall: ServiceStatus,
     pub mss: ServiceStatus,
+    /// Lifecycle of the health-check section; not part of the `state`
+    /// aggregation.
+    pub health_check: ServiceStatus,
 }
 
 impl WanLinkStatus {
@@ -101,6 +104,7 @@ pub enum SectionKind {
     Nat,
     Firewall,
     Mss,
+    HealthCheck,
 }
 
 pub type WanLinkStatusStore = Arc<RwLock<HashMap<Uuid, WanLinkStatus>>>;
@@ -136,6 +140,7 @@ impl WanLinkStatusHandle {
             SectionKind::Nat => entry.nat = status,
             SectionKind::Firewall => entry.firewall = status,
             SectionKind::Mss => entry.mss = status,
+            SectionKind::HealthCheck => entry.health_check = status,
         })
         .await;
     }

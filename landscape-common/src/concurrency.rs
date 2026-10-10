@@ -184,6 +184,8 @@ pub mod task_label {
         pub const WAN_LINK_V4_SUPERVISOR: &str = "wan.link.v4.supervisor";
         /// WAN link dependent section supervisor (nat/mss/firewall/pd).
         pub const WAN_LINK_SECTION_SUPERVISOR: &str = "wan.link.section.supervisor";
+        /// WAN link health-check probe loop.
+        pub const WAN_LINK_HEALTH_CHECK: &str = "wan.link.health.check";
         /// LAN hostname registry listener for device/DHCP events.
         pub const DNS_HOSTNAME_OBSERVER: &str = "dns.hostname.observer";
         /// LAN device directory projection listener for device/DHCP/discovery events.
