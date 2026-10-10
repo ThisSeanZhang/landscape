@@ -30,7 +30,13 @@ use crate::{
     },
 };
 
-const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Outer envelope for one rule's upstream lookup. Must stay strictly above
+/// the native pool's worst-case internal budget (`attempts × query_timeout
+/// + connect_timeout` = 5s with the current defaults): with equal budgets
+/// the caller's timeout fires at the exact moment the pool's final attempt
+/// completes, discarding a valid answer. Pool defaults are covered by
+/// `pool_config::tests::default_budget_leaves_caller_margin`.
+pub(crate) const LOOKUP_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Outcome of a matched rule's upstream lookup; the caller (`stage_rule`) has
 /// already applied the cache write policy via `apply_outcome_to_cache`.
