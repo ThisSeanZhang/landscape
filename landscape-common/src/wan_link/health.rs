@@ -16,7 +16,8 @@ use crate::utils::time::get_f64_timestamp;
 
 /// Debounced liveness of a link as judged by its health-check section.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum WanLinkHealthState {
     /// No verdict yet: the section just (re)started or has no session.
     #[default]

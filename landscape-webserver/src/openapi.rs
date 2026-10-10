@@ -130,6 +130,7 @@ impl Modify for SecurityAddon {
         // Route status view
         landscape_common::sys_service::route_service::RouteStatusView,
         landscape_common::sys_service::route_service::WanRouteEntry,
+        landscape_common::wan_link::WanLinkHealthState,
         landscape_common::sys_service::route_service::Ipv4LanRouteEntry,
         landscape_common::sys_service::route_service::Ipv6LanRouteEntry,
         landscape_common::sys_service::route_service::RouteOwner,

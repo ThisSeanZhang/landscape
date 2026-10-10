@@ -34,7 +34,7 @@ pub struct DnsMetric {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum DnsSortKey {
     #[default]
     Time,

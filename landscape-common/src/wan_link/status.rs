@@ -13,7 +13,7 @@ use crate::service::ServiceStatus;
 /// Aggregate lifecycle of a WAN link, derived from its section statuses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum WanLinkState {
     /// Config exists but no acquisition intent.
     #[default]

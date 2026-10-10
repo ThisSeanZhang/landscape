@@ -297,7 +297,7 @@ pub struct GetConnectGlobalStatsParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ConnectSortKey {
     #[default]
     Time,
@@ -309,7 +309,7 @@ pub enum ConnectSortKey {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     Asc,
     #[default]

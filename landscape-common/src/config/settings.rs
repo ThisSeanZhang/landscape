@@ -51,7 +51,7 @@ pub struct LandscapeStoreConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum MetricMode {
     Off,
     Memory,

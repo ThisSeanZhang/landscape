@@ -18,7 +18,7 @@ pub use error::ServiceConfigError;
 #[derive(Serialize, Debug, PartialEq, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ServiceStatus {
     // 启动中
     Staring,

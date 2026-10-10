@@ -1,13 +1,17 @@
+use std::collections::HashMap;
+
 use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::flow::trace::{
     FlowMatchRequest, FlowMatchResult, FlowVerdictRequest, FlowVerdictResult,
 };
 use landscape_common::sys_service::route_service::{
-    Ipv4LanRouteEntry, Ipv6LanRouteEntry, RouteStatusView, WanRouteEntry,
+    Ipv4LanRouteEntry, Ipv6LanRouteEntry, RouteOwner, RouteStatusView, WanRouteEntry,
 };
+use landscape_common::wan_link::{WanLinkHealthInfo, WanLinkHealthState};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
+use uuid::Uuid;
 
 use crate::LandscapeApp;
 use crate::api::JsonBody;
@@ -19,6 +23,16 @@ pub fn get_route_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(trace_flow_match))
         .routes(routes!(trace_verdict))
         .routes(routes!(get_routing_status))
+}
+
+fn link_health(
+    healths: &HashMap<Uuid, WanLinkHealthInfo>,
+    owner: &RouteOwner,
+) -> Option<WanLinkHealthState> {
+    match owner {
+        RouteOwner::Link(link_id) => healths.get(link_id).map(|info| info.state),
+        RouteOwner::Netns(_) => None,
+    }
 }
 
 #[utoipa::path(
@@ -76,11 +90,22 @@ async fn get_routing_status(
     let ipv6_wan = state.route_service.get_all_ipv6_wan_routes().await;
     let ipv4_lan = state.route_service.get_all_ipv4_lan_routes().await;
     let ipv6_lan = state.route_service.get_all_ipv6_lan_routes().await;
+    let link_healths = state.route_service.get_link_healths().await;
 
-    let mut ipv4_wan: Vec<WanRouteEntry> =
-        ipv4_wan.into_iter().map(|(owner, info)| WanRouteEntry { owner, info }).collect();
-    let mut ipv6_wan: Vec<WanRouteEntry> =
-        ipv6_wan.into_iter().map(|(owner, info)| WanRouteEntry { owner, info }).collect();
+    let mut ipv4_wan: Vec<WanRouteEntry> = ipv4_wan
+        .into_iter()
+        .map(|(owner, info)| {
+            let health = link_health(&link_healths, &owner);
+            WanRouteEntry { owner, info, health }
+        })
+        .collect();
+    let mut ipv6_wan: Vec<WanRouteEntry> = ipv6_wan
+        .into_iter()
+        .map(|(owner, info)| {
+            let health = link_health(&link_healths, &owner);
+            WanRouteEntry { owner, info, health }
+        })
+        .collect();
     ipv4_wan.sort_by_key(|entry| entry.info.iface_name.clone());
     ipv6_wan.sort_by_key(|entry| entry.info.iface_name.clone());
 

@@ -142,6 +142,10 @@ pub struct LanIPv6RouteKey {
 pub struct WanRouteEntry {
     pub owner: RouteOwner,
     pub info: RouteTargetInfo,
+    /// Health-check verdict of the owning link; `None` for netns owners
+    /// or links without a running health check.
+    #[serde(default)]
+    pub health: Option<crate::wan_link::WanLinkHealthState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
