@@ -18,8 +18,8 @@ use landscape_common::dns::pool_config::UpstreamPoolConfig;
 use crate::exp_conn_pool::allowance::TimeAllowance;
 use crate::exp_conn_pool::connection::{EndpointKey, InflightGuard, PooledConnection};
 use crate::exp_conn_pool::transport::{
-    DialParams, Transport, UdpExchange, WireQuery, connect_quic, connect_tcp, connect_tls,
-    doq_client_config, dot_client_config,
+    DialParams, Transport, UdpExchange, WireQuery, connect_doh, connect_quic, connect_tcp,
+    connect_tls, doh_client_config, doq_client_config, dot_client_config,
 };
 
 const REAP_EVERY: u64 = 64;
@@ -31,6 +31,7 @@ pub(crate) struct StreamConnectionPool {
     dial: DialParams,
     tls: Arc<ClientConfig>,
     quic: ClientConfig,
+    https: Arc<ClientConfig>,
     configs: HashMap<EndpointKey, ConnectionConfig>,
     config: UpstreamPoolConfig,
     next_id: AtomicU64,
@@ -96,6 +97,7 @@ impl StreamConnectionPool {
             dial,
             tls: dot_client_config(cx.tls.clone()),
             quic: doq_client_config(cx.tls.clone()),
+            https: doh_client_config(cx.tls.clone()),
             configs,
             config,
             next_id: AtomicU64::new(0),
@@ -273,7 +275,22 @@ impl StreamConnectionPool {
                 .await
                 .map(Transport::Doq)
             }
-            // Exhaustiveness arm: `endpoint_configs` produces only Tcp, Udp, Tls and Quic.
+            Protocol::Https => {
+                let ProtocolConfig::Https { server_name, path } = &config.protocol else {
+                    return Err(NetError::from("HTTPS endpoint without a server name"));
+                };
+                connect_doh(
+                    endpoint.addr,
+                    server_name.to_string(),
+                    path.clone(),
+                    self.https.clone(),
+                    self.dial,
+                    allowance,
+                )
+                .await
+                .map(Transport::Doh)
+            }
+            // Exhaustiveness arm: h3 upstreams have no configuration surface today.
             _ => Err(NetError::from("protocol not supported by the pooled engine")),
         }
     }

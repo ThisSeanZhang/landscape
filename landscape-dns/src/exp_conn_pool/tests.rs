@@ -828,3 +828,119 @@ async fn quic_upstream_resolves_and_reuses_connection() {
     assert_eq!(quic_connections.load(Ordering::SeqCst), 1, "both lookups reuse one DoQ connection");
     assert_eq!(quic_queries.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn https_upstream_resolves_and_reuses_connection() {
+    let answers: Answers = HashMap::from([(
+        ("example.com.", RecordType::A),
+        vec![a_record("example.com.", Ipv4Addr::new(1, 2, 3, 4), 300)],
+    )]);
+
+    // Explicit crypto provider: nothing installs a process-level default
+    // and tests must not depend on crate features enabled elsewhere.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let certified = rcgen::generate_simple_self_signed(vec!["dns.example".to_string()]).unwrap();
+    let mut server_tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certified.cert.der().clone()],
+            rustls::pki_types::PrivateKeyDer::try_from(certified.signing_key.serialize_der())
+                .unwrap(),
+        )
+        .unwrap();
+    // HTTP/2 DoH is negotiated with the "h2" ALPN.
+    server_tls.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_tls));
+
+    let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = tcp_listener.local_addr().unwrap().port();
+    let https_connections = Arc::new(AtomicUsize::new(0));
+    let https_queries = Arc::new(AtomicUsize::new(0));
+    tokio::spawn({
+        let answers = answers.clone();
+        let https_connections = https_connections.clone();
+        let https_queries = https_queries.clone();
+        async move {
+            loop {
+                let Ok((stream, _)) = tcp_listener.accept().await else { break };
+                let Ok(tls) = acceptor.accept(stream).await else { continue };
+                let Ok(mut connection) =
+                    h2::server::Builder::new().handshake::<_, bytes::Bytes>(tls).await
+                else {
+                    continue;
+                };
+                https_connections.fetch_add(1, Ordering::SeqCst);
+                let answers = answers.clone();
+                let https_queries = https_queries.clone();
+                tokio::spawn(async move {
+                    while let Some(request) = futures_util::StreamExt::next(&mut connection).await {
+                        let Ok((request, mut responder)) = request else { break };
+                        let answers = answers.clone();
+                        let https_queries = https_queries.clone();
+                        tokio::spawn(async move {
+                            let (_parts, mut body) = request.into_parts();
+                            let mut msg_buf = Vec::new();
+                            while let Some(Ok(chunk)) =
+                                futures_util::StreamExt::next(&mut body).await
+                            {
+                                msg_buf.extend_from_slice(&chunk);
+                            }
+                            https_queries.fetch_add(1, Ordering::SeqCst);
+                            let response =
+                                respond(&msg_buf, &answers, ResponseCode::NoError, Truncation::Off);
+                            let http_response = http::Response::builder()
+                                .status(200)
+                                .header(http::header::CONTENT_TYPE, "application/dns-message")
+                                .header(http::header::CONTENT_LENGTH, response.len())
+                                .body(())
+                                .unwrap();
+                            let mut send = responder.send_response(http_response, false).unwrap();
+                            send.send_data(bytes::Bytes::from(response), true).unwrap();
+                        });
+                    }
+                });
+            }
+        }
+    });
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certified.cert.der().clone()).unwrap();
+    let client_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let resolver = PooledDnsResolver::with_config_and_tls(
+        1,
+        0,
+        &DnsUpstreamConfig {
+            mode: DnsUpstreamMode::Https {
+                domain: "dns.example".to_string(),
+                http_endpoint: None,
+            },
+            ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            port: Some(port),
+            use_experimental_pool: Some(true),
+            ..DnsUpstreamConfig::default()
+        },
+        fast_config(),
+        hickory_resolver::TlsConfig { config: client_config },
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let lookup = resolver.lookup("example.com.", RecordType::A).await.unwrap();
+        assert_eq!(lookup.answers().len(), 1);
+    }
+
+    // Both lookups ride one persistent HTTP/2 connection; each query takes
+    // its own POST exchange.
+    assert_eq!(
+        https_connections.load(Ordering::SeqCst),
+        1,
+        "both lookups reuse one DoH connection"
+    );
+    assert_eq!(https_queries.load(Ordering::SeqCst), 2);
+}

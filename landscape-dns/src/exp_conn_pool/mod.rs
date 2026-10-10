@@ -61,10 +61,18 @@ impl PooledDnsResolver {
                 conn.port = port.unwrap_or(853);
                 vec![conn]
             }
-            DnsUpstreamMode::Https { .. } => {
-                return Err(NetError::from(
-                    "HTTPS upstreams are not supported by the pooled engine",
-                ));
+            DnsUpstreamMode::Https { domain, http_endpoint } => {
+                let path: Arc<str> = http_endpoint
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.clone().into())
+                    .unwrap_or_else(|| Arc::from("/dns-query"));
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Https {
+                    server_name: domain.clone().into(),
+                    path,
+                });
+                conn.port = port.unwrap_or(443);
+                vec![conn]
             }
             DnsUpstreamMode::Quic { domain } => {
                 let mut conn = ConnectionConfig::new(ProtocolConfig::Quic {

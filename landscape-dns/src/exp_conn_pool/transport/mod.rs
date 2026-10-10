@@ -1,3 +1,4 @@
+pub(crate) mod https;
 pub(crate) mod quic;
 pub(crate) mod stream;
 pub(crate) mod tls;
@@ -12,11 +13,13 @@ use hickory_proto::op::{DnsResponse, Query};
 use hickory_resolver::net::NetError;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
+pub(crate) use crate::exp_conn_pool::transport::https::{connect_doh, doh_client_config};
 pub(crate) use crate::exp_conn_pool::transport::quic::{connect_quic, doq_client_config};
 pub(crate) use crate::exp_conn_pool::transport::stream::connect_tcp;
 pub(crate) use crate::exp_conn_pool::transport::tls::{connect_tls, dot_client_config};
 pub(crate) use crate::exp_conn_pool::transport::udp::UdpExchange;
 
+use crate::exp_conn_pool::transport::https::DohH2Connection;
 use crate::exp_conn_pool::transport::quic::DoqConnection;
 use crate::exp_conn_pool::transport::stream::StreamConnection;
 use crate::exp_conn_pool::transport::tls::TlsConnection;
@@ -42,6 +45,7 @@ pub(crate) enum Transport {
     Tls(TlsConnection),
     Udp(UdpExchange),
     Doq(DoqConnection),
+    Doh(DohH2Connection),
 }
 
 impl Transport {
@@ -51,6 +55,7 @@ impl Transport {
             Transport::Tls(conn) => conn.query(query).await,
             Transport::Udp(conn) => conn.query(query).await,
             Transport::Doq(conn) => conn.query(query).await,
+            Transport::Doh(conn) => conn.query(query).await,
         }
     }
 
@@ -60,6 +65,7 @@ impl Transport {
             Transport::Tls(conn) => conn.is_alive(),
             Transport::Udp(conn) => conn.is_alive(),
             Transport::Doq(conn) => conn.is_alive(),
+            Transport::Doh(conn) => conn.is_alive(),
         }
     }
 
@@ -69,6 +75,7 @@ impl Transport {
             Transport::Tls(conn) => conn.close(),
             Transport::Udp(conn) => conn.close(),
             Transport::Doq(conn) => conn.close(),
+            Transport::Doh(conn) => conn.close(),
         }
     }
 }
