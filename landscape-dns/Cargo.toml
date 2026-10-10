@@ -37,9 +37,6 @@ tokio = { workspace = true, features = ['fs', 'net'] }
 clap = { workspace = true }
 libc = { workspace = true }
 async-trait = { workspace = true }
-zerotrie = { workspace = true }
-ahash = { workspace = true }
-aho-corasick = { workspace = true }
 regex = { workspace = true }
 
 tracing = { workspace = true }
@@ -62,5 +59,3 @@ idna = { workspace = true }
 
 [dev-dependencies]
 homedir = { workspace = true }
-jemallocator = { workspace = true }
-jemalloc-ctl = { workspace = true }

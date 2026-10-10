@@ -82,10 +82,6 @@ pub enum GeoError {
     #[api_error(id = "geo_ip.invalid_lookup_address", status = 400)]
     IpInvalidLookupAddress(String),
 
-    #[error("failed to read geo site cache '{name}:{key}'")]
-    #[api_error(id = "geo_matcher.read_failed", status = 500)]
-    MatcherReadFailed { name: String, key: String },
-
     #[error(transparent)]
     #[api_error(transparent)]
     Internal(#[from] DbError),

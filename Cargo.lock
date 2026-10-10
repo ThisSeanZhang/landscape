@@ -2864,37 +2864,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "jemalloc-ctl"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cffc705424a344c054e135d12ee591402f4539245e8bbd64e6c9eaa9458b63c"
-dependencies = [
- "jemalloc-sys",
- "libc",
- "paste",
-]
-
-[[package]]
-name = "jemalloc-sys"
-version = "0.5.4+5.3.0-patched"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac6c1946e1cea1788cbfde01c993b52a10e2da07f4bac608228d1bed20bfebf2"
-dependencies = [
- "cc",
- "libc",
-]
-
-[[package]]
-name = "jemallocator"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0de374a9f8e63150e6f5e8a60cc14c668226d7a347d8aee1a45766e3c4dd3bc"
-dependencies = [
- "jemalloc-sys",
- "libc",
-]
-
-[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3107,6 +3076,8 @@ dependencies = [
 name = "landscape-core"
 version = "0.26.0"
 dependencies = [
+ "ahash 0.8.12",
+ "aho-corasick",
  "arc-swap",
  "async-trait",
  "dashmap 6.2.1",
@@ -3127,6 +3098,7 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-parser 0.18.1",
+ "zerotrie",
 ]
 
 [[package]]
@@ -3150,8 +3122,6 @@ dependencies = [
 name = "landscape-dns"
 version = "0.26.0"
 dependencies = [
- "ahash 0.8.12",
- "aho-corasick",
  "arc-swap",
  "async-trait",
  "base64 0.23.1",
@@ -3166,8 +3136,6 @@ dependencies = [
  "homedir",
  "http",
  "idna",
- "jemalloc-ctl",
- "jemallocator",
  "landscape-common",
  "landscape-core",
  "landscape-protobuf",
@@ -3187,7 +3155,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "zerotrie",
 ]
 
 [[package]]

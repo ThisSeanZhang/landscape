@@ -1,8 +1,8 @@
 use landscape_common::{
     concurrency::{spawn_task, task_label},
     config_service::geo::{
-        GeoDomainConfig, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
-        GeoSiteLookupResult, GeoSiteSource, RawDatState,
+        GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteFileConfig, GeoSiteLookupResult,
+        GeoSiteSource, RawDatState,
     },
     database::store::{Change, ConfigStore},
     dns::domain::{normalize_domain_name, normalize_domain_text},
@@ -25,7 +25,7 @@ use landscape_common::{
     event::dns::DnsEvent,
 };
 use landscape_core::geo_cache::{
-    CacheWriteOutcome, GeoCacheDatabase, SiteCacheRepository, SiteRuleRow,
+    CacheWriteOutcome, GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry, SiteRuleRow,
 };
 use landscape_database::{
     geo_site::repository::GeoSiteConfigRepository, provider::LandscapeDBServiceProvider,
@@ -102,6 +102,7 @@ struct GeoCacheApplyResult {
 pub struct GeoSiteService {
     store: GeoSiteConfigRepository,
     cache: SiteCacheRepository,
+    matcher_registry: Arc<SiteMatcherRegistry>,
     dns_events_tx: mpsc::Sender<DnsEvent>,
     raw_downloading: Arc<Mutex<HashSet<Uuid>>>,
 }
@@ -116,10 +117,15 @@ impl GeoSiteService {
         let cache = SiteCacheRepository::new(
             GeoCacheDatabase::open_site(&LAND_HOME_PATH).await.expect("open geo site cache db"),
         );
+        // compiled matchers live next to the data they are derived from; the
+        // registry shares the cache's pool and is refreshed below before any
+        // change event is announced
+        let matcher_registry = Arc::new(SiteMatcherRegistry::new(cache.clone()));
 
         let service = Self {
             store,
             cache,
+            matcher_registry,
             dns_events_tx,
             raw_downloading: Arc::new(Mutex::new(HashSet::new())),
         };
@@ -199,6 +205,9 @@ impl GeoSiteService {
         if changed_keys.is_empty() {
             return;
         }
+        // recompile the affected matchers first: the engine rebuilds
+        // triggered by the event below must observe fresh data
+        self.matcher_registry.refresh_matchers(&changed_keys).await;
         let _ = self
             .dns_events_tx
             .send(DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) })
@@ -531,21 +540,13 @@ impl GeoSiteService {
     }
 }
 
-#[async_trait::async_trait]
-impl GeoMatcherSource for GeoSiteService {
-    async fn load_geo_domains(
-        &self,
-        key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
-        self.cache
-            .load_entry(&key.name, &key.key)
-            .await
-            .map_err(GeoError::from)
-            .map(|config| config.map(|config| config.values))
-    }
-}
-
 impl GeoSiteService {
+    /// Shared owner of the compiled geo matchers; consumers (the DNS rule
+    /// builder) fetch ready `Arc<DomainMatcher>`s from it per rule.
+    pub fn matcher_registry(&self) -> Arc<SiteMatcherRegistry> {
+        self.matcher_registry.clone()
+    }
+
     pub async fn list_all_keys(&self) -> Vec<GeoFileCacheKey> {
         self.cache.list_keys().await.unwrap_or_default()
     }
@@ -768,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn sql_semantics_ground_truth() {
         // Golden semantics table shared with the DomainMatcher ground truth
-        // (landscape-dns/src/server/matcher.rs) — keep both copies in sync.
+        // (landscape-core/src/geo_cache/tests.rs) — keep both copies in sync.
         // Non-ASCII Domain rules never match on this side without an
         // explicit guard: queries arrive punycoded ASCII, so suffix
         // candidates can never equal non-ASCII rule text.

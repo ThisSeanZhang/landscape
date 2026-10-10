@@ -136,7 +136,7 @@ impl LandscapeDnsService {
 
         // dns_service.restart(53).await;
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;
-        let matcher_builder = MatcherBuilder::new(Arc::new(geo_site_service));
+        let matcher_builder = MatcherBuilder::new(geo_site_service.matcher_registry());
 
         let dns_service = Self {
             dns_service,
@@ -169,7 +169,6 @@ impl LandscapeDnsService {
                         dns_service_clone.dns_service.renew_runtime_config(true).await;
                     }
                     DnsEvent::GeoSitesChanged { changed_keys: None } => {
-                        dns_service_clone.matcher_builder.invalidate_geo_matchers(None).await;
                         dns_service_clone.refresh_all_flows().await;
                     }
                     DnsEvent::RulesChanged { flow_id: Some(flow_id) } => {
@@ -224,10 +223,6 @@ impl LandscapeDnsService {
                             .await;
                     }
                     DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) } => {
-                        dns_service_clone
-                            .matcher_builder
-                            .invalidate_geo_matchers(Some(&changed_keys))
-                            .await;
                         let flow_ids = dns_service_clone
                             .collect_dependent_flows(|deps| {
                                 deps.geo_keys.iter().any(|key| changed_keys.contains(key))

@@ -1,26 +1,12 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use landscape_common::config_service::geo::{
-    GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
-};
 use landscape_common::dns::gen_default_dns_rule_and_upstream;
 use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_core::geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry};
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::server::{CacheRuntimeConfig, LandscapeDnsServer, MatcherBuilder};
-
-struct EmptyGeoSource;
-
-#[async_trait::async_trait]
-impl GeoMatcherSource for EmptyGeoSource {
-    async fn load_geo_domains(
-        &self,
-        _key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
-        Ok(None)
-    }
-}
 
 /// cargo run --package landscape-dns --bin test_dns_server
 #[tokio::main]
@@ -42,7 +28,11 @@ async fn main() -> std::io::Result<()> {
     );
 
     let (default_rule, upstream) = gen_default_dns_rule_and_upstream();
-    let builder = MatcherBuilder::new(Arc::new(EmptyGeoSource));
+    // empty in-memory geo cache: every geo key resolves to "missing"
+    let registry = Arc::new(SiteMatcherRegistry::new(SiteCacheRepository::new(
+        GeoCacheDatabase::site_mem().await,
+    )));
+    let builder = MatcherBuilder::new(registry);
     let (redirect_engine, resolve_engine, _) =
         builder.build_flow(0, vec![default_rule], vec![], vec![], vec![upstream]).await;
     println!("=============================================");

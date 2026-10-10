@@ -4,10 +4,17 @@
 
 mod db;
 mod ip;
+mod matcher;
+mod registry;
 mod site;
+
+#[cfg(test)]
+mod tests;
 
 pub use db::GeoCacheDatabase;
 pub use ip::{IpCacheRepository, IpCidrHit, IpCidrRow};
+pub use matcher::DomainMatcher;
+pub use registry::{GeoMatcherCacheKey, SiteMatcherRegistry};
 pub use site::{SiteCacheRepository, SiteRuleHit, SiteRuleRow};
 
 use landscape_common::database::error::DbError;

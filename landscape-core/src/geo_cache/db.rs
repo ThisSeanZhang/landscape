@@ -80,6 +80,27 @@ impl GeoCacheDatabase {
         .await
     }
 
+    /// Fresh in-memory site cache database (tests and standalone tooling).
+    pub async fn site_mem() -> sqlx::SqlitePool {
+        Self::mem(SITE_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, SITE_DDL]).await
+    }
+
+    async fn mem(schema_version: i64, ddl: &[&str]) -> sqlx::SqlitePool {
+        // every in-memory connection is its own database → one connection
+        let options = SqliteConnectOptions::new()
+            .in_memory(true)
+            .foreign_keys(true)
+            .page_size(8192)
+            .with_regexp();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("in-memory geo cache db connect failed");
+        Self::bootstrap(&pool, schema_version, ddl).await.expect("bootstrap failed");
+        pool
+    }
+
     async fn open(
         path: &Path,
         schema_version: i64,
@@ -183,26 +204,6 @@ impl GeoCacheDatabase {
 
 #[cfg(test)]
 impl GeoCacheDatabase {
-    async fn mem(schema_version: i64, ddl: &[&str]) -> sqlx::SqlitePool {
-        // every in-memory connection is its own database → one connection
-        let options = SqliteConnectOptions::new()
-            .in_memory(true)
-            .foreign_keys(true)
-            .page_size(8192)
-            .with_regexp();
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .expect("in-memory geo cache db connect failed");
-        Self::bootstrap(&pool, schema_version, ddl).await.expect("bootstrap failed");
-        pool
-    }
-
-    pub(crate) async fn site_mem() -> sqlx::SqlitePool {
-        Self::mem(SITE_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, SITE_DDL]).await
-    }
-
     pub(crate) async fn ip_mem() -> sqlx::SqlitePool {
         Self::mem(IP_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, IP_DDL]).await
     }

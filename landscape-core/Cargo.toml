@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 landscape-common = { path = "../landscape-common" }
 
+ahash = { workspace = true }
+aho-corasick = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
@@ -29,6 +31,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 x509-parser = { workspace = true }
+zerotrie = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }

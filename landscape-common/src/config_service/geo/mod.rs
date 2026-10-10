@@ -12,12 +12,3 @@ pub enum RawDatState {
     Started,
     Running,
 }
-
-#[async_trait::async_trait]
-pub trait GeoMatcherSource: Send + Sync {
-    /// `None` means the key does not exist; an empty vector is a valid empty key.
-    async fn load_geo_domains(
-        &self,
-        key: &GeoFileCacheKey,
-    ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError>;
-}

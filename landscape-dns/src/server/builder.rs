@@ -3,46 +3,33 @@ use std::{
     sync::Arc,
 };
 
-use landscape_common::{
-    config_service::geo::{GeoConfigKey, GeoFileCacheKey, GeoMatcherSource},
-    dns::{
-        FlowDnsDependencies,
-        config::DnsUpstreamConfig,
-        redirect::{
-            DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DNSRedirectRule, DynamicDnsRedirectBatch,
-        },
-        rule::{DNSRuleConfig, DomainConfig, RuleSource},
-    },
+use landscape_common::dns::{
+    FlowDnsDependencies,
+    config::DnsUpstreamConfig,
+    redirect::{DEFAULT_STATIC_DNS_REDIRECT_TTL_SECS, DNSRedirectRule, DynamicDnsRedirectBatch},
+    rule::{DNSRuleConfig, DomainConfig, RuleSource},
 };
-use tokio::sync::Mutex;
+use landscape_core::geo_cache::SiteMatcherRegistry;
 use uuid::Uuid;
 
 use crate::connection::pool::ResolvePool;
 use crate::server::{
-    matcher::{DomainMatcher, RuntimeRuleMatcher},
+    matcher::RuntimeRuleMatcher,
     redirect_engine::RedirectEngine,
     resolve_engine::ResolveEngine,
     rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
 };
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct GeoMatcherCacheKey {
-    source: GeoFileCacheKey,
-    attribute_key: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct MatcherBuilder {
-    source: Arc<dyn GeoMatcherSource>,
-    geo_matchers: Arc<Mutex<HashMap<GeoMatcherCacheKey, Arc<DomainMatcher>>>>,
+    registry: Arc<SiteMatcherRegistry>,
     resolvers: Arc<ResolvePool>,
 }
 
 impl MatcherBuilder {
-    pub fn new(source: Arc<dyn GeoMatcherSource>) -> Self {
+    pub fn new(registry: Arc<SiteMatcherRegistry>) -> Self {
         Self {
-            source,
-            geo_matchers: Arc::new(Mutex::new(HashMap::new())),
+            registry,
             resolvers: Arc::new(ResolvePool::default()),
         }
     }
@@ -132,16 +119,6 @@ impl MatcherBuilder {
         (RedirectEngine::new(redirect_runtimes), ResolveEngine::new(resolve_runtimes), dependencies)
     }
 
-    pub async fn invalidate_geo_matchers(&self, changed_keys: Option<&HashSet<GeoFileCacheKey>>) {
-        let mut matchers = self.geo_matchers.lock().await;
-        match changed_keys {
-            Some(changed_keys) => {
-                matchers.retain(|key, _| !changed_keys.contains(&key.source));
-            }
-            None => matchers.clear(),
-        }
-    }
-
     /// Drops every pooled resolver for the given upstream ids so the next
     /// flow refresh rebuilds them unconditionally. Called on
     /// `UpstreamsChanged` before the dependent flows are refreshed.
@@ -175,7 +152,7 @@ impl MatcherBuilder {
                     // effective domains is skipped like a positive one; it is NOT
                     // treated as an empty exclusion set, which would turn the rule
                     // into a match-all and shadow all later rules.
-                    let Some(matcher) = self.get_or_build_geo_matcher(config).await else {
+                    let Some(matcher) = self.registry.get_or_build(&config).await else {
                         continue;
                     };
                     if inverse {
@@ -199,72 +176,23 @@ impl MatcherBuilder {
 
         Some(RuntimeRuleMatcher::new(manual, positive_geo, negative_geo, match_all))
     }
-
-    async fn get_or_build_geo_matcher(&self, config: GeoConfigKey) -> Option<Arc<DomainMatcher>> {
-        let cache_key = GeoMatcherCacheKey {
-            source: config.get_file_cache_key(),
-            attribute_key: config.attribute_key.clone(),
-        };
-        if let Some(matcher) = self.geo_matchers.lock().await.get(&cache_key).cloned() {
-            return Some(matcher);
-        }
-
-        let values = match self.source.load_geo_domains(&cache_key.source).await {
-            Ok(Some(values)) => values,
-            Ok(None) => {
-                tracing::warn!(name = %cache_key.source.name, key = %cache_key.source.key, "skip rule with missing GeoKey");
-                return None;
-            }
-            Err(error) => {
-                tracing::error!(name = %cache_key.source.name, key = %cache_key.source.key, %error, "skip rule with unreadable GeoKey");
-                return None;
-            }
-        };
-        let domains = values
-            .into_iter()
-            .filter(|domain| {
-                cache_key
-                    .attribute_key
-                    .as_ref()
-                    .is_none_or(|attribute| domain.attributes.contains(attribute))
-            })
-            .map(Into::into)
-            .collect::<Vec<_>>();
-        // Confirmed behavior: a key that exists but yields no domains after the
-        // attribute filter is treated the same as a missing key — the source is
-        // skipped and nothing is cached, so a later update that populates the key
-        // is picked up on the next flow rebuild.
-        if domains.is_empty() {
-            tracing::warn!(name = %cache_key.source.name, key = %cache_key.source.key, "skip rule with empty GeoKey");
-            return None;
-        }
-        let matcher = Arc::new(DomainMatcher::new(domains));
-
-        let mut matchers = self.geo_matchers.lock().await;
-        Some(matchers.entry(cache_key).or_insert_with(|| matcher.clone()).clone())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
-    };
+    use std::{collections::HashSet, sync::Arc};
 
     use landscape_common::{
-        config_service::geo::{
-            GeoConfigKey, GeoError, GeoFileCacheKey, GeoMatcherSource, GeoSiteFileConfig,
-        },
+        config_service::geo::{GeoConfigKey, GeoSiteFileConfig},
         dns::{
             config::DnsUpstreamConfig,
             redirect::{DNSRedirectRule, DnsRedirectAnswerMode},
             rule::{DNSRuleConfig, DomainConfig, DomainMatchType, RuleSource},
         },
         flow::mark::FlowMark,
+    };
+    use landscape_core::geo_cache::{
+        GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry, SiteRuleRow,
     };
     use std::net::IpAddr;
 
@@ -277,29 +205,6 @@ mod tests {
         ParsedDomain::new(name).unwrap()
     }
 
-    struct TestGeoSource {
-        values: HashMap<GeoFileCacheKey, Vec<GeoSiteFileConfig>>,
-        reads: AtomicUsize,
-        errors: HashSet<GeoFileCacheKey>,
-    }
-
-    #[async_trait::async_trait]
-    impl GeoMatcherSource for TestGeoSource {
-        async fn load_geo_domains(
-            &self,
-            key: &GeoFileCacheKey,
-        ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
-            self.reads.fetch_add(1, Ordering::Relaxed);
-            if self.errors.contains(key) {
-                return Err(GeoError::MatcherReadFailed {
-                    name: key.name.clone(),
-                    key: key.key.clone(),
-                });
-            }
-            Ok(self.values.get(key).cloned())
-        }
-    }
-
     fn geo_key(attribute_key: Option<&str>) -> GeoConfigKey {
         GeoConfigKey {
             name: "geosite".to_string(),
@@ -309,107 +214,6 @@ mod tests {
         }
     }
 
-    fn domain(value: &str, attributes: &[&str]) -> GeoSiteFileConfig {
-        GeoSiteFileConfig {
-            match_type: DomainMatchType::Full,
-            value: value.to_string(),
-            attributes: attributes.iter().map(|value| value.to_string()).collect(),
-        }
-    }
-
-    fn builder() -> (MatcherBuilder, Arc<TestGeoSource>) {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::from([(
-                geo_key(None).get_file_cache_key(),
-                vec![domain("all.example", &[]), domain("tagged.example", &["tagged"])],
-            )]),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::new(),
-        });
-        (MatcherBuilder::new(source.clone()), source)
-    }
-
-    #[tokio::test]
-    async fn shares_matchers_by_name_key_and_attribute() {
-        let (builder, source) = builder();
-
-        let first = builder.get_or_build_geo_matcher(geo_key(None)).await.unwrap();
-        let same = builder.get_or_build_geo_matcher(geo_key(None)).await.unwrap();
-        let tagged = builder.get_or_build_geo_matcher(geo_key(Some("tagged"))).await.unwrap();
-
-        assert!(Arc::ptr_eq(&first, &same));
-        assert!(!Arc::ptr_eq(&first, &tagged));
-        assert_eq!(source.reads.load(Ordering::Relaxed), 2);
-        assert!(first.is_match_normalized(pd("all.example").name()));
-        assert!(!tagged.is_match_normalized(pd("all.example").name()));
-        assert!(tagged.is_match_normalized(pd("tagged.example").name()));
-    }
-
-    #[tokio::test]
-    async fn invalidating_a_geo_key_rebuilds_all_attribute_variants() {
-        let (builder, source) = builder();
-        let first = builder.get_or_build_geo_matcher(geo_key(None)).await.unwrap();
-        let tagged = builder.get_or_build_geo_matcher(geo_key(Some("tagged"))).await.unwrap();
-        let changed = HashSet::from([geo_key(None).get_file_cache_key()]);
-
-        builder.invalidate_geo_matchers(Some(&changed)).await;
-
-        let rebuilt = builder.get_or_build_geo_matcher(geo_key(None)).await.unwrap();
-        let rebuilt_tagged =
-            builder.get_or_build_geo_matcher(geo_key(Some("tagged"))).await.unwrap();
-        assert!(!Arc::ptr_eq(&first, &rebuilt));
-        assert!(!Arc::ptr_eq(&tagged, &rebuilt_tagged));
-        assert_eq!(source.reads.load(Ordering::Relaxed), 4);
-    }
-
-    #[tokio::test]
-    async fn missing_geo_key_disables_rule_but_records_every_dependency() {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::new(),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::new(),
-        });
-        let builder = MatcherBuilder::new(source);
-        let upstream = DnsUpstreamConfig::default();
-        let missing_a = geo_key(None);
-        let missing_b = GeoConfigKey {
-            name: "geosite".to_string(),
-            key: "OTHER".to_string(),
-            inverse: true,
-            attribute_key: None,
-        };
-        let rule = DNSRuleConfig {
-            id: uuid::Uuid::new_v4(),
-            name: "missing geo".to_string(),
-            index: 10,
-            enable: true,
-            filter: Default::default(),
-            upstream_id: upstream.id,
-            mark: Default::default(),
-            source: vec![
-                RuleSource::GeoKey(missing_a.clone()),
-                RuleSource::GeoKey(missing_b.clone()),
-            ],
-            flow_id: 7,
-            update_at: 0.0,
-        };
-
-        let (_, resolve_engine, dependencies) =
-            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
-
-        assert_eq!(resolve_engine.iter().count(), 0);
-        assert!(dependencies.geo_keys.contains(&missing_a.get_file_cache_key()));
-        assert!(dependencies.geo_keys.contains(&missing_b.get_file_cache_key()));
-        assert_eq!(dependencies.upstream_ids.len(), 1);
-    }
-
-    fn manual(value: &str) -> RuleSource {
-        RuleSource::Config(DomainConfig {
-            match_type: DomainMatchType::Full,
-            value: value.to_string(),
-        })
-    }
-
     fn missing_key(name: &str, inverse: bool) -> GeoConfigKey {
         GeoConfigKey {
             name: "geosite".to_string(),
@@ -417,6 +221,53 @@ mod tests {
             inverse,
             attribute_key: None,
         }
+    }
+
+    fn domain(value: &str, attributes: &[&str]) -> GeoSiteFileConfig {
+        GeoSiteFileConfig {
+            match_type: DomainMatchType::Full,
+            value: value.to_string(),
+            attributes: attributes.iter().map(|value| (*value).to_string()).collect(),
+        }
+    }
+
+    async fn write_geo_entry(
+        repo: &SiteCacheRepository,
+        geo_key: &str,
+        content_hash: &str,
+        values: Vec<GeoSiteFileConfig>,
+    ) {
+        let rules = values
+            .into_iter()
+            .map(|value| SiteRuleRow::new(value.match_type, value.value, value.attributes))
+            .collect();
+        repo.replace_by_name("geosite", geo_key, content_hash, rules).await.unwrap();
+    }
+
+    /// Builder whose registry holds one material key `TEST` (`all.example`
+    /// untagged, `tagged.example` tagged "tagged").
+    async fn builder() -> (MatcherBuilder, SiteCacheRepository) {
+        let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
+        write_geo_entry(
+            &repo,
+            "TEST",
+            "hash-1",
+            vec![domain("all.example", &[]), domain("tagged.example", &["tagged"])],
+        )
+        .await;
+        (MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo.clone()))), repo)
+    }
+
+    async fn empty_builder() -> MatcherBuilder {
+        let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
+        MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)))
+    }
+
+    fn manual(value: &str) -> RuleSource {
+        RuleSource::Config(DomainConfig {
+            match_type: DomainMatchType::Full,
+            value: value.to_string(),
+        })
     }
 
     fn dns_rule(index: u32, source: Vec<RuleSource>, upstream_id: uuid::Uuid) -> DNSRuleConfig {
@@ -450,8 +301,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_geo_key_disables_rule_but_records_every_dependency() {
+        let builder = empty_builder().await;
+        let upstream = DnsUpstreamConfig::default();
+        let missing_a = geo_key(None);
+        let missing_b = missing_key("OTHER", true);
+        let rule = DNSRuleConfig {
+            id: uuid::Uuid::new_v4(),
+            name: "missing geo".to_string(),
+            index: 10,
+            enable: true,
+            filter: Default::default(),
+            upstream_id: upstream.id,
+            mark: Default::default(),
+            source: vec![
+                RuleSource::GeoKey(missing_a.clone()),
+                RuleSource::GeoKey(missing_b.clone()),
+            ],
+            flow_id: 7,
+            update_at: 0.0,
+        };
+
+        let (_, resolve_engine, dependencies) =
+            builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
+
+        assert_eq!(resolve_engine.iter().count(), 0);
+        assert!(dependencies.geo_keys.contains(&missing_a.get_file_cache_key()));
+        assert!(dependencies.geo_keys.contains(&missing_b.get_file_cache_key()));
+        assert_eq!(dependencies.upstream_ids.len(), 1);
+    }
+
+    #[tokio::test]
     async fn missing_geo_key_keeps_manual_domains_in_mixed_rule() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let missing = missing_key("MISSING", false);
         let rule = dns_rule(
@@ -471,12 +353,9 @@ mod tests {
 
     #[tokio::test]
     async fn empty_geo_key_disables_rule_and_redirect() {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::from([(geo_key(None).get_file_cache_key(), vec![])]),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::new(),
-        });
-        let builder = MatcherBuilder::new(source);
+        let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
+        write_geo_entry(&repo, "TEST", "hash-1", vec![]).await;
+        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(10, vec![RuleSource::GeoKey(geo_key(None))], upstream.id);
 
@@ -497,7 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn attribute_filter_emptying_geo_key_keeps_only_manual_domains() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let no_match = geo_key(Some("no-such-attribute"));
         let rule = dns_rule(
@@ -517,12 +396,9 @@ mod tests {
 
     #[tokio::test]
     async fn empty_inverse_geo_key_is_skipped_not_match_all() {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::from([(missing_key("EMPTY", true).get_file_cache_key(), vec![])]),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::new(),
-        });
-        let builder = MatcherBuilder::new(source);
+        let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
+        write_geo_entry(&repo, "EMPTY", "hash-1", vec![]).await;
+        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let inverse = missing_key("EMPTY", true);
         let inverse_rule = dns_rule(10, vec![RuleSource::GeoKey(inverse.clone())], upstream.id);
@@ -543,7 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn rule_with_empty_source_stays_match_all() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(10, vec![], upstream.id);
 
@@ -556,12 +432,7 @@ mod tests {
 
     #[tokio::test]
     async fn redirect_with_missing_geo_key_is_skipped() {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::new(),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::new(),
-        });
-        let builder = MatcherBuilder::new(source);
+        let builder = empty_builder().await;
 
         let (redirect_engine, _, _) = builder
             .build_flow(
@@ -578,7 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn mixed_geo_keys_keep_valid_and_skip_missing() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let valid = geo_key(None);
         let missing = missing_key("MISSING", false);
@@ -601,18 +472,19 @@ mod tests {
 
     #[tokio::test]
     async fn read_failure_keeps_manual_domains() {
-        let source = Arc::new(TestGeoSource {
-            values: HashMap::new(),
-            reads: AtomicUsize::new(0),
-            errors: HashSet::from([geo_key(None).get_file_cache_key()]),
-        });
-        let builder = MatcherBuilder::new(source);
+        let pool = GeoCacheDatabase::site_mem().await;
+        let repo = SiteCacheRepository::new(pool.clone());
+        write_geo_entry(&repo, "TEST", "hash-1", vec![domain("all.example", &[])]).await;
+        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(
             10,
             vec![manual("manual.example"), RuleSource::GeoKey(geo_key(None))],
             upstream.id,
         );
+
+        // close the underlying pool: every read from the registry fails
+        pool.close().await;
 
         let (_, resolve_engine, dependencies) =
             builder.build_flow(7, vec![rule], vec![], vec![], vec![upstream]).await;
@@ -645,7 +517,7 @@ mod tests {
 
     #[tokio::test]
     async fn shares_resolver_for_same_mark_and_upstream() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let rules = vec![
             dns_rule(10, vec![manual("a.example")], upstream.id),
@@ -662,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn keeps_resolver_across_builds_and_rebuilds_after_invalidate() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(10, vec![manual("a.example")], upstream.id);
 
@@ -684,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn different_mark_does_not_share_resolver() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(10, vec![manual("a.example")], upstream.id);
 
@@ -700,7 +572,7 @@ mod tests {
 
     #[tokio::test]
     async fn direct_rules_share_across_flows() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let rule = direct_rule(10, vec![manual("a.example")], upstream.id);
 
@@ -716,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn different_upstream_does_not_share_resolver() {
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream_a = DnsUpstreamConfig::default();
         let upstream_b = DnsUpstreamConfig::default();
 
@@ -737,7 +609,7 @@ mod tests {
         // Every pooled resolver key must equal the per-rule mark the legacy
         // code applied: `mark.get_dns_mark(flow_id)`. This pins the SO_MARK put
         // on shared upstream connections to exactly the old per-rule value.
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let upstream_id = upstream.id;
         let keepgoing5 = dns_rule(10, vec![manual("a.example")], upstream_id);
@@ -773,7 +645,7 @@ mod tests {
         // moved to another flow must still be served by a resolver carrying the
         // new flow's mark (correctness), while the old entry stays pooled
         // (documented leak that is safe to keep).
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let upstream_id = upstream.id;
         let rule = dns_rule(10, vec![manual("a.example")], upstream_id);
@@ -800,7 +672,7 @@ mod tests {
         // A KeepGoing rule in flow 5 and a Redirect-to-flow-5 rule in flow 7
         // compute the same SO_MARK (0x8005), so the legacy behaviour already
         // sent both through the same marked path and pooling must share them.
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let keepgoing5 = dns_rule(10, vec![manual("a.example")], upstream.id);
         let redirect_to_5 = DNSRuleConfig {
@@ -822,7 +694,7 @@ mod tests {
         // 0x8007 but Direct in the same flow marks 0x8000. Keying by the
         // owning flow alone would merge them into one pool and the first-built
         // resolver would serve the other rule with the wrong mark.
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let keepgoing = dns_rule(10, vec![manual("a.example")], upstream.id);
         let direct = direct_rule(20, vec![manual("b.example")], upstream.id);
@@ -840,7 +712,7 @@ mod tests {
         // Redirect rules are marked with their *target* flow id: in flow 7 a
         // KeepGoing rule (0x8007) and a Redirect->5 rule (0x8005) must not
         // share, even though both belong to flow 7.
-        let (builder, _) = builder();
+        let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let upstream_id = upstream.id;
         let keepgoing = dns_rule(10, vec![manual("a.example")], upstream_id);
