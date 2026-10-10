@@ -137,8 +137,8 @@ pub const DEFAULT_METRIC_CLEANUP_INTERVAL_SECS: u64 = 300;
 pub const LANDSCAPE_DB_SQLITE_NAME: &str = "landscape_db.sqlite";
 /// LOG Path
 pub const LANDSCAPE_HOSTAPD_TMP_DIR: &str = "hostapd_tmp";
-/// GEO_CACHE Path
-pub const LANDSCAPE_GEO_CACHE_TMP_DIR: &str = "geo_tmp";
+/// GEO cache sqlite databases (site/ip) path
+pub const LANDSCAPE_GEO_CACHE_DIR: &str = "geo/cache";
 /// GEO raw source files (downloaded originals, format as configured) path
 pub const LANDSCAPE_GEO_RAW_DIR: &str = "geo/raw";
 

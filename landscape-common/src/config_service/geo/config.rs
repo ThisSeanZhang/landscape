@@ -105,13 +105,6 @@ pub struct GeoSiteLookupResult {
     pub values: Vec<GeoSiteFileConfig>,
 }
 
-impl GeoStoreKeyProvider for GeoDomainConfig {
-    type K = GeoFileCacheKey;
-    fn get_store_key(&self) -> GeoFileCacheKey {
-        GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct GeoSiteFileConfig {
@@ -133,15 +126,6 @@ impl From<GeoSiteFileConfig> for DomainConfig {
 pub struct GeoFileCacheKey {
     pub name: String,
     pub key: String,
-}
-
-pub trait GeoStoreKeyProvider {
-    type K;
-    fn get_store_key(&self) -> Self::K;
-
-    fn get_query_key(&self) -> Self::K {
-        self.get_store_key()
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -226,13 +210,6 @@ pub struct GeoIpConfig {
 pub struct GeoIpLookupResult {
     pub key: GeoFileCacheKey,
     pub values: Vec<IpConfig>,
-}
-
-impl GeoStoreKeyProvider for GeoIpConfig {
-    type K = GeoFileCacheKey;
-    fn get_store_key(&self) -> GeoFileCacheKey {
-        GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }
-    }
 }
 
 crate::impl_trivial_validatable!(GeoIpSourceConfig);

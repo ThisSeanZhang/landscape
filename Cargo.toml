@@ -79,8 +79,6 @@ futures-util = { version = "0.3.34", default-features = false }
 # ============================================================================
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151" }
-# Only used by geo's file cache — keep version pinned, do not upgrade
-bincode = { version = "2.0.1", features = ["std", "serde"] }
 toml = "1.1.6"
 toml_edit = "0.25.15"
 bytes = "1.12.1"

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::error::DnsServiceError;
 
 pub fn normalize_domain_name(domain: &str) -> Result<String, DnsServiceError> {
@@ -8,6 +10,17 @@ pub fn normalize_domain_name(domain: &str) -> Result<String, DnsServiceError> {
     let ascii = idna::domain_to_ascii(no_dot)
         .map_err(|_| DnsServiceError::Invalid { domain: domain.to_string() })?;
     Ok(ascii.to_ascii_lowercase())
+}
+
+/// Trims trailing dots and lowercases ASCII uppercase bytes; `Cow` borrows
+/// already-normalized input.
+pub fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
+    let trimmed = domain.trim_end_matches('.');
+    if trimmed.as_bytes().iter().any(u8::is_ascii_uppercase) {
+        Cow::Owned(trimmed.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(trimmed)
+    }
 }
 
 #[cfg(test)]

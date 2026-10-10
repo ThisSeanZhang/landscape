@@ -234,16 +234,14 @@ static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Instant};
+    use std::{collections::HashSet, sync::Arc, time::Instant};
 
     use jemalloc_ctl::{epoch, stats};
 
     use landscape_common::{
-        LANDSCAPE_GEO_CACHE_TMP_DIR,
-        config_service::geo::{GeoDomainConfig, GeoFileCacheKey},
+        config_service::geo::{GeoDomainConfig, GeoSiteFileConfig},
         dns::rule::{DomainConfig, DomainMatchType},
     };
-    use landscape_core::geo_cache::GeoCacheStore;
 
     use super::{DomainMatcher, RuntimeRuleMatcher};
     use crate::domain::ParsedDomain;
@@ -427,18 +425,24 @@ mod tests {
         println!("==== start ====");
         test_memory_usage();
 
-        let mut site_store: GeoCacheStore<GeoFileCacheKey, GeoDomainConfig> = GeoCacheStore::new(
-            PathBuf::from("/root/.landscape-router").join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-            "site".to_string(),
-        );
-
-        println!("==== after GeoCacheStore::new ====");
-        test_memory_usage();
-
-        let all = site_store.list();
+        // Synthetic stand-in for the on-disk geo cache; the sqlite cache is
+        // covered by landscape-core tests. Shape and volume mirror real data.
+        let all: Vec<GeoDomainConfig> = (0..3)
+            .map(|group| GeoDomainConfig {
+                name: format!("geosite-{group}"),
+                key: format!("GROUP-{group}"),
+                values: (0..50_000)
+                    .map(|index| GeoSiteFileConfig {
+                        match_type: DomainMatchType::Domain,
+                        value: format!("host{index}.example{}.com", index % 1000),
+                        attributes: HashSet::new(),
+                    })
+                    .collect(),
+            })
+            .collect();
 
         println!("all size: {}", all.len());
-        println!("==== after list ====");
+        println!("==== after dataset build ====");
         test_memory_usage();
 
         let mut config: Vec<DomainConfig> = vec![];

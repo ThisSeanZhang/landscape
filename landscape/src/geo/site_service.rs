@@ -5,7 +5,7 @@ use landscape_common::{
         GeoSiteLookupResult, GeoSiteSource, RawDatState,
     },
     database::store::{Change, ConfigStore},
-    dns::domain::normalize_domain_name,
+    dns::domain::{normalize_domain_name, normalize_domain_text},
     dns::rule::DomainMatchType,
     service::controller::ConfigStoreController,
     utils::time::{MILL_A_DAY, get_f64_timestamp},
@@ -20,12 +20,13 @@ use std::{
 };
 
 use landscape_common::{
-    LANDSCAPE_GEO_CACHE_TMP_DIR,
     args::LAND_HOME_PATH,
     config_service::geo::{GeoSiteSourceConfig, normalize_adguard_key},
     event::dns::DnsEvent,
 };
-use landscape_core::geo_cache::GeoCacheStore;
+use landscape_core::geo_cache::{
+    CacheWriteOutcome, GeoCacheDatabase, SiteCacheRepository, SiteRuleRow,
+};
 use landscape_database::{
     geo_site::repository::GeoSiteConfigRepository, provider::LandscapeDBServiceProvider,
 };
@@ -37,8 +38,6 @@ use tokio::sync::{Mutex, mpsc};
 use super::raw_file::{raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp};
 
 const A_DAY: u64 = 60 * 60 * 24;
-
-pub type GeoDomainCacheStore = Arc<Mutex<GeoCacheStore<GeoFileCacheKey, GeoDomainConfig>>>;
 
 type GeoContentHash = [u8; 32];
 
@@ -69,6 +68,11 @@ fn update_len_prefixed(hasher: &mut Sha256, length: usize) {
     hasher.update((length as u64).to_be_bytes());
 }
 
+/// Hex content hash stored in the cache for skip-writes.
+fn geo_values_hash_hex(values: &[GeoSiteFileConfig]) -> String {
+    geo_values_hash(values).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn domain_match_type_tag(match_type: &DomainMatchType) -> u8 {
     match match_type {
         DomainMatchType::Plain => 0,
@@ -82,6 +86,16 @@ fn geo_value_matches_lookup(value: &GeoSiteFileConfig, normalized: &str) -> bool
     domain_rule_matches_normalized(&value.match_type, &value.value, normalized)
 }
 
+/// Domain-matching values are normalized for SQL candidate probing; Regex
+/// values are patterns where case and trailing `.` are significant, stored
+/// verbatim.
+fn normalize_site_rule_value(match_type: &DomainMatchType, value: &str) -> String {
+    match match_type {
+        DomainMatchType::Regex => value.to_string(),
+        _ => normalize_domain_text(value).into_owned(),
+    }
+}
+
 #[derive(Debug, Default)]
 struct GeoCacheApplyResult {
     changed_keys: HashSet<GeoFileCacheKey>,
@@ -92,7 +106,7 @@ struct GeoCacheApplyResult {
 #[derive(Clone)]
 pub struct GeoSiteService {
     store: GeoSiteConfigRepository,
-    file_cache: GeoDomainCacheStore,
+    cache: SiteCacheRepository,
     dns_events_tx: mpsc::Sender<DnsEvent>,
     raw_downloading: Arc<Mutex<HashSet<Uuid>>>,
 }
@@ -104,14 +118,13 @@ impl GeoSiteService {
     ) -> Self {
         let store = store.geo_site_rule_store();
 
-        let file_cache = Arc::new(Mutex::new(GeoCacheStore::new(
-            LAND_HOME_PATH.join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-            "site".to_string(),
-        )));
+        let cache = SiteCacheRepository::new(
+            GeoCacheDatabase::open_site(&LAND_HOME_PATH).await.expect("open geo site cache db"),
+        );
 
         let service = Self {
             store,
-            file_cache,
+            cache,
             dns_events_tx,
             raw_downloading: Arc::new(Mutex::new(HashSet::new())),
         };
@@ -128,60 +141,67 @@ impl GeoSiteService {
         service
     }
 
-    async fn snapshot_key_hashes_for_name(
+    /// Replace cache content with `entries` under `name`; keys that vanish
+    /// from `entries` are deleted. Skip-writes are decided inside the
+    /// repository via the stored content hash.
+    async fn apply_geo_values(
         &self,
         name: &str,
-    ) -> HashMap<GeoFileCacheKey, GeoContentHash> {
-        let mut lock = self.file_cache.lock().await;
-        let keys: Vec<_> = lock.keys().into_iter().filter(|key| key.name == name).collect();
-        let mut result = HashMap::with_capacity(keys.len());
-        for key in keys {
-            if let Some(config) = lock.get(&key) {
-                result.insert(key, geo_values_hash(&config.values));
-            }
-        }
-        result
-    }
-
-    fn apply_geo_values<I>(
-        file_cache_lock: &mut GeoCacheStore<GeoFileCacheKey, GeoDomainConfig>,
-        name: &str,
-        entries: I,
-        before: &HashMap<GeoFileCacheKey, GeoContentHash>,
-    ) -> GeoCacheApplyResult
-    where
-        I: IntoIterator<Item = (String, Vec<GeoSiteFileConfig>)>,
-    {
+        entries: Vec<(String, Vec<GeoSiteFileConfig>)>,
+    ) -> GeoCacheApplyResult {
         let mut result = GeoCacheApplyResult::default();
-        let mut existing_keys: HashSet<GeoFileCacheKey> = before.keys().cloned().collect();
+        let mut stale_keys: HashSet<GeoFileCacheKey> =
+            self.cache.keys_for_name(name).await.unwrap_or_default().into_iter().collect();
 
         for (key, values) in entries {
             let cache_key = GeoFileCacheKey {
                 name: name.to_string(),
                 key: key.to_ascii_uppercase(),
             };
-            existing_keys.remove(&cache_key);
+            stale_keys.remove(&cache_key);
 
-            if before.get(&cache_key) == Some(&geo_values_hash(&values)) {
-                result.unchanged_keys += 1;
-                continue;
+            let content_hash = geo_values_hash_hex(&values);
+            let rules: Vec<SiteRuleRow> = values
+                .into_iter()
+                .map(|value| {
+                    let domain = normalize_site_rule_value(&value.match_type, &value.value);
+                    SiteRuleRow {
+                        match_type: value.match_type,
+                        domain,
+                        attributes: value.attributes,
+                    }
+                })
+                .collect();
+
+            match self.cache.replace_by_name(name, &cache_key.key, &content_hash, rules).await {
+                Ok(CacheWriteOutcome::Unchanged) => result.unchanged_keys += 1,
+                Ok(_) => {
+                    result.changed_keys.insert(cache_key);
+                }
+                Err(e) => {
+                    tracing::error!("write geo site cache {}/{} failed: {}", name, cache_key.key, e)
+                }
             }
-
-            file_cache_lock.set(GeoDomainConfig {
-                name: name.to_string(),
-                key: cache_key.key.clone(),
-                values,
-            });
-            result.changed_keys.insert(cache_key);
         }
 
-        for key in existing_keys {
-            file_cache_lock.del(&key);
-            result.changed_keys.insert(key);
-            result.deleted_keys += 1;
+        for key in stale_keys {
+            if self.delete_cache_key(&key).await {
+                result.changed_keys.insert(key);
+                result.deleted_keys += 1;
+            }
         }
 
         result
+    }
+
+    async fn delete_cache_key(&self, key: &GeoFileCacheKey) -> bool {
+        match self.cache.delete_by_name(&key.name, &key.key).await {
+            Ok(deleted) => deleted,
+            Err(e) => {
+                tracing::error!("delete geo site cache {}/{} failed: {}", key.name, key.key, e);
+                false
+            }
+        }
     }
 
     async fn notify_geo_changes(&self, changed_keys: HashSet<GeoFileCacheKey>) {
@@ -204,7 +224,6 @@ impl GeoSiteService {
             _ => return HashSet::new(),
         };
 
-        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
         tracing::debug!("download file: {}", url);
         let time = Instant::now();
 
@@ -236,14 +255,8 @@ impl GeoSiteService {
                             );
                         }
 
-                        let mut file_cache_lock = self.file_cache.lock().await;
-                        let apply_result = Self::apply_geo_values(
-                            &mut file_cache_lock,
-                            &config.name,
-                            result,
-                            &before_hashes,
-                        );
-                        drop(file_cache_lock);
+                        let apply_result =
+                            self.apply_geo_values(&config.name, result.into_iter().collect()).await;
 
                         if let GeoSiteSource::Url { next_update_at, .. } = &mut config.source {
                             *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
@@ -292,7 +305,6 @@ impl GeoSiteService {
 
         tracing::debug!("download adguard rules: {}", url);
         let time = Instant::now();
-        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
 
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => {
@@ -318,14 +330,8 @@ impl GeoSiteService {
                     tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
                 }
 
-                let mut file_cache_lock = self.file_cache.lock().await;
-                let apply_result = Self::apply_geo_values(
-                    &mut file_cache_lock,
-                    &config.name,
-                    std::iter::once((key.clone(), domains)),
-                    &before_hashes,
-                );
-                drop(file_cache_lock);
+                let apply_result =
+                    self.apply_geo_values(&config.name, vec![(key.clone(), domains)]).await;
 
                 if let GeoSiteSource::AdguardHome { next_update_at, key, .. } = &mut config.source {
                     *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
@@ -358,9 +364,8 @@ impl GeoSiteService {
         &self,
         config: &GeoSiteSourceConfig,
     ) -> HashSet<GeoFileCacheKey> {
-        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
         let apply_result = if let GeoSiteSource::Direct { data } = &config.source {
-            self.write_direct_to_cache(&config.name, data, &before_hashes).await
+            self.write_direct_to_cache(&config.name, data).await
         } else {
             GeoCacheApplyResult::default()
         };
@@ -375,8 +380,10 @@ impl GeoSiteService {
     }
 
     async fn has_cached_name(&self, name: &str) -> bool {
-        let lock = self.file_cache.lock().await;
-        lock.keys().into_iter().any(|key| key.name == name)
+        self.cache.has_name(name).await.unwrap_or_else(|e| {
+            tracing::error!("query geo site cache name '{name}' failed: {e}");
+            false
+        })
     }
 
     async fn try_restore_from_raw(&self, config: &GeoSiteSourceConfig) -> HashSet<GeoFileCacheKey> {
@@ -385,19 +392,12 @@ impl GeoSiteService {
             return HashSet::new();
         };
 
-        let before_hashes = self.snapshot_key_hashes_for_name(&config.name).await;
         match &config.source {
             GeoSiteSource::Url { .. } => {
                 match landscape_protobuf::read_geo_sites_from_bytes(bytes).await {
                     Ok(result) => {
-                        let mut file_cache_lock = self.file_cache.lock().await;
-                        let apply_result = Self::apply_geo_values(
-                            &mut file_cache_lock,
-                            &config.name,
-                            result,
-                            &before_hashes,
-                        );
-                        drop(file_cache_lock);
+                        let apply_result =
+                            self.apply_geo_values(&config.name, result.into_iter().collect()).await;
                         tracing::info!(
                             "restored geo site cache '{}' from {:?}",
                             config.name,
@@ -413,14 +413,9 @@ impl GeoSiteService {
             }
             GeoSiteSource::AdguardHome { key, .. } => {
                 let domains = landscape_protobuf::parse_adguard_rules(&bytes);
-                let mut file_cache_lock = self.file_cache.lock().await;
-                let apply_result = Self::apply_geo_values(
-                    &mut file_cache_lock,
-                    &config.name,
-                    std::iter::once((normalize_adguard_key(key), domains)),
-                    &before_hashes,
-                );
-                drop(file_cache_lock);
+                let apply_result = self
+                    .apply_geo_values(&config.name, vec![(normalize_adguard_key(key), domains)])
+                    .await;
                 tracing::info!("restored geo site cache '{}' from {:?}", config.name, dat_path);
                 apply_result.changed_keys
             }
@@ -495,17 +490,21 @@ impl GeoSiteService {
         }
 
         if force {
-            let mut file_cache_lock = self.file_cache.lock().await;
-            let need_to_remove = file_cache_lock
-                .keys()
+            let need_to_remove = self
+                .cache
+                .list_keys()
+                .await
+                .unwrap_or_default()
                 .into_iter()
-                .filter(|k| !config_names.contains(&k.name))
+                .filter(|key| !config_names.contains(&key.name))
                 .collect::<HashSet<GeoFileCacheKey>>();
+            let mut removed = HashSet::new();
             for key in &need_to_remove {
-                file_cache_lock.del(key);
+                if self.delete_cache_key(key).await {
+                    removed.insert(key.clone());
+                }
             }
-            drop(file_cache_lock);
-            self.notify_geo_changes(need_to_remove).await;
+            self.notify_geo_changes(removed).await;
         }
     }
 
@@ -532,15 +531,12 @@ impl GeoSiteService {
         &self,
         name: &str,
         data: &[landscape_common::config_service::geo::GeoSiteDirectItem],
-        before: &HashMap<GeoFileCacheKey, GeoContentHash>,
     ) -> GeoCacheApplyResult {
-        let mut file_cache_lock = self.file_cache.lock().await;
-        Self::apply_geo_values(
-            &mut file_cache_lock,
+        self.apply_geo_values(
             name,
-            data.iter().map(|item| (item.key.clone(), item.values.clone())),
-            before,
+            data.iter().map(|item| (item.key.clone(), item.values.clone())).collect(),
         )
+        .await
     }
 }
 
@@ -550,27 +546,24 @@ impl GeoMatcherSource for GeoSiteService {
         &self,
         key: &GeoFileCacheKey,
     ) -> Result<Option<Vec<GeoSiteFileConfig>>, GeoError> {
-        let mut lock = self.file_cache.lock().await;
-        let key_exists = lock.keys_ref().into_iter().any(|candidate| candidate == key);
-        match lock.get(key) {
-            Some(config) => Ok(Some(config.values)),
-            None if !key_exists => Ok(None),
-            None => {
-                Err(GeoError::MatcherReadFailed { name: key.name.clone(), key: key.key.clone() })
-            }
-        }
+        self.cache
+            .load_entry(&key.name, &key.key)
+            .await
+            .map_err(GeoError::from)
+            .map(|config| config.map(|config| config.values))
     }
 }
 
 impl GeoSiteService {
     pub async fn list_all_keys(&self) -> Vec<GeoFileCacheKey> {
-        let lock = self.file_cache.lock().await;
-        lock.keys()
+        self.cache.list_keys().await.unwrap_or_default()
     }
 
     pub async fn get_cache_value_by_key(&self, key: &GeoFileCacheKey) -> Option<GeoDomainConfig> {
-        let mut lock = self.file_cache.lock().await;
-        lock.get(key)
+        self.cache.load_entry(&key.name, &key.key).await.unwrap_or_else(|e| {
+            tracing::error!("load geo site cache {}/{} failed: {}", key.name, key.key, e);
+            None
+        })
     }
 
     pub async fn query_geo_by_name(&self, name: Option<String>) -> Vec<GeoSiteSourceConfig> {
@@ -580,21 +573,23 @@ impl GeoSiteService {
     pub async fn lookup_domain(&self, domain: &str) -> Result<Vec<GeoSiteLookupResult>, GeoError> {
         let normalized = normalize_domain_name(domain)
             .map_err(|_| GeoError::SiteInvalidLookupDomain(domain.to_string()))?;
-        let mut lock = self.file_cache.lock().await;
-        let mut result = Vec::new();
 
-        // ponytail: on-demand full scan; add a reverse index only if measured lookup latency requires it.
-        for key in lock.keys() {
-            let Some(config) = lock.get(&key) else { continue };
-            let values = config
-                .values
-                .into_iter()
-                .filter(|value| geo_value_matches_lookup(value, &normalized))
-                .collect::<Vec<_>>();
-            if !values.is_empty() {
-                result.push(GeoSiteLookupResult { key, values });
+        let hits = self.cache.lookup_rules_by_domain(&normalized).await.map_err(GeoError::from)?;
+
+        let mut grouped: HashMap<GeoFileCacheKey, Vec<GeoSiteFileConfig>> = HashMap::new();
+        for hit in hits {
+            let candidate = GeoSiteFileConfig {
+                match_type: hit.match_type,
+                value: hit.domain,
+                attributes: hit.attributes,
+            };
+            if geo_value_matches_lookup(&candidate, &normalized) {
+                grouped.entry(hit.key).or_default().push(candidate);
             }
         }
+
+        let mut result: Vec<GeoSiteLookupResult> =
+            grouped.into_iter().map(|(key, values)| GeoSiteLookupResult { key, values }).collect();
         result.sort_by(|a, b| a.key.key.cmp(&b.key.key).then(a.key.name.cmp(&b.key.name)));
         Ok(result)
     }
@@ -635,11 +630,7 @@ impl GeoSiteService {
                     tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
                 }
 
-                let before_hashes = self.snapshot_key_hashes_for_name(&name).await;
-                let mut file_cache_lock = self.file_cache.lock().await;
-                let apply_result =
-                    Self::apply_geo_values(&mut file_cache_lock, &name, result, &before_hashes);
-                drop(file_cache_lock);
+                let apply_result = self.apply_geo_values(&name, result.into_iter().collect()).await;
                 tracing::debug!(
                     "update geo bytes: name={} changed_keys={} unchanged_keys={} deleted_keys={}",
                     name,
@@ -673,9 +664,7 @@ impl ConfigStoreController for GeoSiteService {
         // Refresh Direct configs immediately when updated
         for change in changes {
             if let GeoSiteSource::Direct { ref data } = change.new.source {
-                let before_hashes = self.snapshot_key_hashes_for_name(&change.new.name).await;
-                let apply_result =
-                    self.write_direct_to_cache(&change.new.name, data, &before_hashes).await;
+                let apply_result = self.write_direct_to_cache(&change.new.name, data).await;
                 tracing::debug!(
                     "update direct geo: name={} changed_keys={} unchanged_keys={} deleted_keys={}",
                     change.new.name,
@@ -700,7 +689,10 @@ mod tests {
     use landscape_common::config_service::geo::GeoSiteFileConfig;
     use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
 
-    use super::{GeoContentHash, domain_match_type_tag, geo_value_matches_lookup, geo_values_hash};
+    use super::{
+        GeoContentHash, domain_match_type_tag, geo_value_matches_lookup, geo_values_hash,
+        normalize_site_rule_value,
+    };
 
     fn geo_value(value: &str, attributes: &[&str]) -> GeoSiteFileConfig {
         GeoSiteFileConfig {
@@ -740,6 +732,23 @@ mod tests {
     fn geo_hash_is_a_fixed_size_digest() {
         let hash: GeoContentHash = geo_values_hash(&[]);
         assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn storage_normalization_trims_and_lowercases_domain_types() {
+        assert_eq!(
+            normalize_site_rule_value(&DomainMatchType::Domain, "Example.COM."),
+            "example.com"
+        );
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Full, "WWW.Example.com.."), "www.example.com");
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Plain, "Foo."), "foo");
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Domain, "example.com"), "example.com");
+    }
+
+    #[test]
+    fn storage_normalization_keeps_regex_verbatim() {
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Regex, "[A-Z]+\\."), "[A-Z]+\\.");
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Regex, "^abc."), "^abc.");
     }
 
     #[test]

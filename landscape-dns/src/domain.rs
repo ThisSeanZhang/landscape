@@ -1,19 +1,9 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use hickory_proto::rr::Name;
 use landscape_common::dns::error::DnsServiceError;
 
-/// Normalize user-provided domain text without forcing an allocation in the
-/// common case: trim trailing dots and lowercase only when uppercase bytes are
-/// present. `Cow` is used so already-normalized input can be borrowed directly.
-pub(crate) fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
-    let trimmed = domain.trim_end_matches('.');
-    if trimmed.as_bytes().iter().any(u8::is_ascii_uppercase) {
-        Cow::Owned(trimmed.to_ascii_lowercase())
-    } else {
-        Cow::Borrowed(trimmed)
-    }
-}
+pub(crate) use landscape_common::dns::domain::normalize_domain_text;
 
 /// Canonical per-request representation of a DNS name. Parsed once per query
 /// and shared unchanged across the whole resolution chain (local resolver,

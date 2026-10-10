@@ -2,7 +2,7 @@ use landscape_common::{
     concurrency::{spawn_task, task_label},
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
-        GeoStoreKeyProvider, RawDatState,
+        RawDatState,
     },
     database::store::{Change, ConfigStore},
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
@@ -20,12 +20,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use landscape_common::{LANDSCAPE_GEO_CACHE_TMP_DIR, args::LAND_HOME_PATH, event::dns::DstIpEvent};
-use landscape_core::geo_cache::GeoCacheStore;
+use landscape_common::{args::LAND_HOME_PATH, event::dns::DstIpEvent};
+use landscape_core::geo_cache::{GeoCacheDatabase, IpCacheRepository, IpCidrRow};
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, broadcast};
 
 use super::raw_file::{
@@ -34,12 +35,51 @@ use super::raw_file::{
 
 const A_DAY: u64 = 60 * 60 * 24;
 
-pub type GeoDomainCacheStore = Arc<Mutex<GeoCacheStore<GeoFileCacheKey, GeoIpConfig>>>;
+/// Content hash over the deduplicated, sorted, host-bit-masked CIDR set.
+fn geo_ip_content_hash(values: &[landscape_common::flow::ip_mark::IpConfig]) -> String {
+    fn masked(ip: IpAddr, prefix_len: u32) -> Vec<u8> {
+        match ip {
+            IpAddr::V4(addr) => {
+                let mask = if prefix_len == 0 { 0 } else { u32::MAX << (32 - prefix_len.min(32)) };
+                (u32::from(addr) & mask).to_be_bytes().to_vec()
+            }
+            IpAddr::V6(addr) => {
+                let mask =
+                    if prefix_len == 0 { 0 } else { u128::MAX << (128 - prefix_len.min(128)) };
+                (u128::from(addr) & mask).to_be_bytes().to_vec()
+            }
+        }
+    }
+
+    let mut canonical: Vec<(u8, u32, Vec<u8>)> = values
+        .iter()
+        .map(|config| {
+            let family = match config.ip {
+                IpAddr::V4(_) => 4u8,
+                IpAddr::V6(_) => 6u8,
+            };
+            (family, config.prefix, masked(config.ip, config.prefix))
+        })
+        .collect();
+    canonical.sort_unstable();
+    canonical.dedup();
+
+    let mut hasher = Sha256::new();
+    hasher.update((canonical.len() as u64).to_be_bytes());
+    for (family, prefix, network) in canonical {
+        hasher.update([family]);
+        hasher.update(prefix.to_be_bytes());
+        hasher.update((network.len() as u64).to_be_bytes());
+        hasher.update(&network);
+    }
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 #[derive(Clone)]
 pub struct GeoIpService {
     store: GeoIpSourceConfigRepository,
-    file_cache: GeoDomainCacheStore,
+    cache: IpCacheRepository,
     dst_ip_events_tx: broadcast::Sender<DstIpEvent>,
     raw_downloading: Arc<Mutex<HashSet<Uuid>>>,
 }
@@ -51,14 +91,13 @@ impl GeoIpService {
     ) -> Self {
         let store = store.geo_ip_rule_store();
 
-        let file_cache = Arc::new(Mutex::new(GeoCacheStore::new(
-            LAND_HOME_PATH.join(LANDSCAPE_GEO_CACHE_TMP_DIR),
-            "ip".to_string(),
-        )));
+        let cache = IpCacheRepository::new(
+            GeoCacheDatabase::open_ip(&LAND_HOME_PATH).await.expect("open geo ip cache db"),
+        );
 
         let service = Self {
             store,
-            file_cache,
+            cache,
             dst_ip_events_tx,
             raw_downloading: Arc::new(Mutex::new(HashSet::new())),
         };
@@ -81,11 +120,13 @@ impl GeoIpService {
         &self,
         geo_key: &landscape_common::config_service::geo::GeoConfigKey,
     ) -> Vec<landscape_common::flow::ip_mark::IpConfig> {
-        let mut lock = self.file_cache.lock().await;
-        if let Some(geo_ip_config) = lock.get(&geo_key.get_file_cache_key()) {
-            geo_ip_config.values
-        } else {
-            vec![]
+        match self.cache.load_entry(&geo_key.name, &geo_key.key).await {
+            Ok(Some(geo_ip_config)) => geo_ip_config.values,
+            Ok(None) => vec![],
+            Err(e) => {
+                tracing::error!("load geo ip cache {}/{} failed: {}", geo_key.name, geo_key.key, e);
+                vec![]
+            }
         }
     }
 
@@ -97,7 +138,6 @@ impl GeoIpService {
         &self,
         configs: Vec<WanIpRuleConfig>,
     ) -> Vec<IpMarkInfo> {
-        let mut lock = self.file_cache.lock().await;
         // Deduplicate by cidr (ip + prefix) — keep the first occurrence (highest priority).
         // Configs are sorted by ascending index before calling, so the first seen = highest priority.
         let mut seen = std::collections::HashSet::new();
@@ -108,13 +148,22 @@ impl GeoIpService {
             for each in config.source.into_iter() {
                 match each {
                     WanIPRuleSource::GeoKey(config_key) => {
-                        if let Some(ips) = lock.get(&config_key.get_file_cache_key()) {
-                            result.reserve(ips.values.len());
-                            for cidr in ips.values {
-                                if seen.insert(cidr.clone()) {
-                                    result.push(IpMarkInfo { mark, cidr, priority });
+                        match self.cache.load_entry(&config_key.name, &config_key.key).await {
+                            Ok(Some(ips)) => {
+                                result.reserve(ips.values.len());
+                                for cidr in ips.values {
+                                    if seen.insert(cidr.clone()) {
+                                        result.push(IpMarkInfo { mark, cidr, priority });
+                                    }
                                 }
                             }
+                            Ok(None) => {}
+                            Err(e) => tracing::error!(
+                                "load geo ip cache {}/{} failed: {}",
+                                config_key.name,
+                                config_key.key,
+                                e
+                            ),
                         }
                     }
                     WanIPRuleSource::Config(c) => {
@@ -184,8 +233,10 @@ impl GeoIpService {
     }
 
     async fn has_cached_name(&self, name: &str) -> bool {
-        let lock = self.file_cache.lock().await;
-        lock.keys().into_iter().any(|key| key.name == name)
+        self.cache.has_name(name).await.unwrap_or_else(|e| {
+            tracing::error!("query geo ip cache name '{name}' failed: {e}");
+            false
+        })
     }
 
     async fn try_restore_from_raw(&self, config: &GeoIpSourceConfig) {
@@ -268,14 +319,18 @@ impl GeoIpService {
         }
 
         if force {
-            let mut file_cache_lock = self.file_cache.lock().await;
-            let need_to_remove = file_cache_lock
-                .keys()
+            let need_to_remove = self
+                .cache
+                .list_keys()
+                .await
+                .unwrap_or_default()
                 .into_iter()
-                .filter(|k| !config_names.contains(&k.name))
-                .collect::<HashSet<GeoFileCacheKey>>();
+                .filter(|key| !config_names.contains(&key.name))
+                .collect::<Vec<GeoFileCacheKey>>();
             for key in need_to_remove {
-                file_cache_lock.del(&key);
+                if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
+                    tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
+                }
             }
         }
     }
@@ -308,30 +363,9 @@ impl GeoIpService {
         name: &str,
         data: &[landscape_common::config_service::geo::GeoIpDirectItem],
     ) {
-        let mut file_cache_lock = self.file_cache.lock().await;
-
-        let exist_keys = file_cache_lock
-            .keys()
-            .into_iter()
-            .filter(|k| k.name == name)
-            .collect::<HashSet<GeoFileCacheKey>>();
-
-        let mut new_keys = HashSet::new();
-        for item in data {
-            let info = GeoIpConfig {
-                name: name.to_string(),
-                key: item.key.to_ascii_uppercase(),
-                values: item.values.clone(),
-            };
-            new_keys.insert(info.get_store_key());
-            file_cache_lock.set(info);
-        }
-
-        for key in exist_keys {
-            if !new_keys.contains(&key) {
-                file_cache_lock.del(&key);
-            }
-        }
+        let result: HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>> =
+            data.iter().map(|item| (item.key.clone(), item.values.clone())).collect();
+        self.replace_cache_by_name(name, result).await;
     }
 
     async fn replace_cache_by_name(
@@ -339,25 +373,31 @@ impl GeoIpService {
         name: &str,
         result: HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>>,
     ) {
-        let mut file_cache_lock = self.file_cache.lock().await;
-        let mut exist_keys = file_cache_lock
-            .keys()
-            .into_iter()
-            .filter(|k| k.name == name)
-            .collect::<HashSet<GeoFileCacheKey>>();
+        let mut stale_keys: HashSet<GeoFileCacheKey> =
+            self.cache.keys_for_name(name).await.unwrap_or_default().into_iter().collect();
 
         for (key, values) in result {
-            let info = GeoIpConfig {
-                name: name.to_string(),
-                key: key.to_ascii_uppercase(),
-                values,
-            };
-            exist_keys.remove(&info.get_store_key());
-            file_cache_lock.set(info);
+            let geo_key = key.to_ascii_uppercase();
+            stale_keys.remove(&GeoFileCacheKey { name: name.to_string(), key: geo_key.clone() });
+
+            let content_hash = geo_ip_content_hash(&values);
+            let cidrs: Vec<IpCidrRow> = values
+                .iter()
+                .map(|config| IpCidrRow {
+                    network: config.ip,
+                    prefix_len: config.prefix.min(u8::MAX as u32) as u8,
+                })
+                .collect();
+
+            if let Err(e) = self.cache.replace_by_name(name, &geo_key, &content_hash, cidrs).await {
+                tracing::error!("write geo ip cache {}/{} failed: {}", name, geo_key, e);
+            }
         }
 
-        for key in exist_keys {
-            file_cache_lock.del(&key);
+        for key in stale_keys {
+            if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
+                tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
+            }
         }
     }
 
@@ -397,32 +437,36 @@ impl GeoIpService {
 
 impl GeoIpService {
     pub async fn list_all_keys(&self) -> Vec<GeoFileCacheKey> {
-        let lock = self.file_cache.lock().await;
-        lock.keys()
+        self.cache.list_keys().await.unwrap_or_default()
     }
 
     pub async fn get_cache_value_by_key(&self, key: &GeoFileCacheKey) -> Option<GeoIpConfig> {
-        let mut lock = self.file_cache.lock().await;
-        lock.get(key)
+        self.cache.load_entry(&key.name, &key.key).await.unwrap_or_else(|e| {
+            tracing::error!("load geo ip cache {}/{} failed: {}", key.name, key.key, e);
+            None
+        })
     }
 
     pub async fn lookup_ip(&self, input: &str) -> Result<Vec<GeoIpLookupResult>, GeoError> {
         let ip = input
             .parse::<IpAddr>()
             .map_err(|_| GeoError::IpInvalidLookupAddress(input.to_string()))?;
-        let mut lock = self.file_cache.lock().await;
-        let mut result = Vec::new();
-        for key in lock.keys() {
-            let Some(config) = lock.get(&key) else { continue };
-            let values = config
-                .values
-                .into_iter()
-                .filter(|cidr| cidr_contains(cidr.ip, cidr.prefix, ip))
-                .collect::<Vec<_>>();
-            if !values.is_empty() {
-                result.push(GeoIpLookupResult { key, values });
-            }
+
+        let hits = self.cache.lookup_ip(ip).await.map_err(GeoError::from)?;
+
+        let mut grouped: HashMap<GeoFileCacheKey, Vec<landscape_common::flow::ip_mark::IpConfig>> =
+            HashMap::new();
+        for hit in hits {
+            grouped.entry(hit.key).or_default().push(landscape_common::flow::ip_mark::IpConfig {
+                ip: hit.network,
+                prefix: hit.prefix_len as u32,
+            });
         }
+
+        let mut result = grouped
+            .into_iter()
+            .map(|(key, values)| GeoIpLookupResult { key, values })
+            .collect::<Vec<_>>();
         result.sort_by(|a, b| a.key.key.cmp(&b.key.key).then(a.key.name.cmp(&b.key.name)));
         Ok(result)
     }
@@ -472,20 +516,6 @@ fn read_back(sealed: &SealedRawFile, dat_path: &std::path::Path) -> Result<Vec<u
     sealed.read_back().map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")))
 }
 
-fn cidr_contains(network: IpAddr, prefix: u32, ip: IpAddr) -> bool {
-    match (network, ip) {
-        (IpAddr::V4(network), IpAddr::V4(ip)) if prefix <= 32 => {
-            let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
-            u32::from(network) & mask == u32::from(ip) & mask
-        }
-        (IpAddr::V6(network), IpAddr::V6(ip)) if prefix <= 128 => {
-            let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
-            u128::from(network) & mask == u128::from(ip) & mask
-        }
-        _ => false,
-    }
-}
-
 #[async_trait::async_trait]
 impl ConfigStoreController for GeoIpService {
     type Id = Uuid;
@@ -518,14 +548,22 @@ mod tests {
 
     use std::{net::IpAddr, str::FromStr};
 
-    use super::cidr_contains;
-
     #[test]
-    fn matches_ipv4_and_ipv6_cidrs() {
-        let ip = |value| IpAddr::from_str(value).unwrap();
-        assert!(cidr_contains(ip("10.0.0.0"), 8, ip("10.1.2.3")));
-        assert!(!cidr_contains(ip("10.0.0.0"), 8, ip("11.1.2.3")));
-        assert!(cidr_contains(ip("2001:db8::"), 32, ip("2001:db8::1")));
-        assert!(!cidr_contains(ip("2001:db8::"), 32, ip("2001:db9::1")));
+    fn content_hash_is_masked_and_dedup_stable() {
+        let config = |network: &str, prefix: u32| landscape_common::flow::ip_mark::IpConfig {
+            ip: IpAddr::from_str(network).unwrap(),
+            prefix,
+        };
+        let masked_variants = vec![config("10.1.2.3", 8), config("10.200.0.9", 8)];
+        let canonical = vec![config("10.0.0.0", 8)];
+
+        assert_eq!(
+            super::geo_ip_content_hash(&masked_variants),
+            super::geo_ip_content_hash(&canonical)
+        );
+        assert_ne!(
+            super::geo_ip_content_hash(&masked_variants),
+            super::geo_ip_content_hash(&[config("11.0.0.0", 8)])
+        );
     }
 }
