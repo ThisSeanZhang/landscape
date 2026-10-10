@@ -50,7 +50,6 @@ struct UdpSocketPool {
 }
 
 impl UdpSocketPool {
-
     fn create_socket(&self) -> Result<PooledUdpSocket, NetError> {
         let socket = std::net::UdpSocket::bind(self.dial.udp_bind_addr(self.peer))
             .map_err(NetError::from)?;
@@ -327,7 +326,8 @@ mod tests {
         let query = Query::query(Name::parse("example.com.", None).unwrap(), RecordType::A);
         let request = DnsRequest::from_query(query, options);
 
-        let allowance = crate::exp_conn_pool::allowance::TimeAllowance::new(Duration::from_millis(300));
+        let allowance =
+            crate::exp_conn_pool::allowance::TimeAllowance::new(Duration::from_millis(300));
         let outcome = allowance.complete_within(exchange.query(wire_query(request))).await;
         assert!(matches!(outcome, Err(hickory_resolver::net::NetError::Timeout)));
         assert!(
@@ -356,7 +356,8 @@ mod tests {
         let query = Query::query(Name::parse("example.com.", None).unwrap(), RecordType::A);
         let request = DnsRequest::from_query(query, options);
 
-        let allowance = crate::exp_conn_pool::allowance::TimeAllowance::new(Duration::from_millis(200));
+        let allowance =
+            crate::exp_conn_pool::allowance::TimeAllowance::new(Duration::from_millis(200));
         let outcome = allowance.complete_within(exchange.query(wire_query(request))).await;
         assert!(matches!(outcome, Err(hickory_resolver::net::NetError::Timeout)));
         let count = received.load(std::sync::atomic::Ordering::SeqCst);

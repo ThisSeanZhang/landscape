@@ -206,7 +206,8 @@ impl Scheduler {
         let lease = self.pool.acquire(endpoint.key, allowance).await?;
         let was_reused = lease.has_been_used();
 
-        let (result, rtt) = match allowance.complete_within(send_once(&lease, query.clone())).await {
+        let (result, rtt) = match allowance.complete_within(send_once(&lease, query.clone())).await
+        {
             Ok((result, rtt)) => (result, rtt),
             Err(timeout) => {
                 lease.record_query_timeout();

@@ -313,9 +313,13 @@ async fn server_closing_connection_triggers_transparent_redial() {
         }
     });
 
-    let resolver =
-        PooledDnsResolver::with_config(1, 0, &upstream_config(port, true), UpstreamPoolConfig::default())
-            .unwrap();
+    let resolver = PooledDnsResolver::with_config(
+        1,
+        0,
+        &upstream_config(port, true),
+        UpstreamPoolConfig::default(),
+    )
+    .unwrap();
 
     for i in 0..3 {
         let lookup = resolver.lookup("example.com.", RecordType::A).await.unwrap();
@@ -469,9 +473,13 @@ async fn truncated_udp_falls_back_to_tcp() {
         }
     });
 
-    let resolver =
-        PooledDnsResolver::with_config(1, 0, &upstream_config(port, true), UpstreamPoolConfig::default())
-            .unwrap();
+    let resolver = PooledDnsResolver::with_config(
+        1,
+        0,
+        &upstream_config(port, true),
+        UpstreamPoolConfig::default(),
+    )
+    .unwrap();
 
     let lookup = resolver.lookup("big.example.com.", RecordType::A).await.unwrap();
     assert_eq!(lookup.answers().len(), 1);
@@ -607,4 +615,99 @@ async fn consecutive_timeouts_retire_connection() {
         0,
         "the timeout streak threshold must retire the connection from handout"
     );
+}
+
+#[tokio::test]
+async fn tls_upstream_resolves_and_reuses_connection() {
+    let answers: Answers = HashMap::from([(
+        ("example.com.", RecordType::A),
+        vec![a_record("example.com.", Ipv4Addr::new(1, 2, 3, 4), 300)],
+    )]);
+
+    // Explicit crypto provider: nothing installs a process-level default
+    // and tests must not depend on crate features enabled elsewhere.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let certified = rcgen::generate_simple_self_signed(vec!["dns.example".to_string()]).unwrap();
+    let server_config = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certified.cert.der().clone()],
+            rustls::pki_types::PrivateKeyDer::try_from(certified.signing_key.serialize_der())
+                .unwrap(),
+        )
+        .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
+
+    let tcp_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = tcp_listener.local_addr().unwrap().port();
+    let tls_connections = Arc::new(AtomicUsize::new(0));
+    let tls_queries = Arc::new(AtomicUsize::new(0));
+    tokio::spawn({
+        let answers = answers.clone();
+        let tls_connections = tls_connections.clone();
+        let tls_queries = tls_queries.clone();
+        async move {
+            loop {
+                let Ok((stream, _)) = tcp_listener.accept().await else { break };
+                let Ok(mut stream) = acceptor.accept(stream).await else { continue };
+                tls_connections.fetch_add(1, Ordering::SeqCst);
+                let answers = answers.clone();
+                let tls_queries = tls_queries.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let mut len_buf = [0u8; 2];
+                        if stream.read_exact(&mut len_buf).await.is_err() {
+                            break;
+                        }
+                        let len = u16::from_be_bytes(len_buf) as usize;
+                        let mut msg_buf = vec![0u8; len];
+                        if stream.read_exact(&mut msg_buf).await.is_err() {
+                            break;
+                        }
+                        tls_queries.fetch_add(1, Ordering::SeqCst);
+                        let response =
+                            respond(&msg_buf, &answers, ResponseCode::NoError, Truncation::Off);
+                        let mut out = Vec::with_capacity(response.len() + 2);
+                        out.extend_from_slice(&(response.len() as u16).to_be_bytes());
+                        out.extend_from_slice(&response);
+                        if stream.write_all(&out).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        }
+    });
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certified.cert.der().clone()).unwrap();
+    let client_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let resolver = PooledDnsResolver::with_config_and_tls(
+        1,
+        0,
+        &DnsUpstreamConfig {
+            mode: DnsUpstreamMode::Tls { domain: "dns.example".to_string() },
+            ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            port: Some(port),
+            use_experimental_pool: Some(true),
+            ..DnsUpstreamConfig::default()
+        },
+        fast_config(),
+        hickory_resolver::TlsConfig { config: client_config },
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let lookup = resolver.lookup("example.com.", RecordType::A).await.unwrap();
+        assert_eq!(lookup.answers().len(), 1);
+    }
+
+    assert_eq!(tls_connections.load(Ordering::SeqCst), 1, "both lookups reuse one DoT connection");
+    assert_eq!(tls_queries.load(Ordering::SeqCst), 2);
 }

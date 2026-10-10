@@ -6,16 +6,20 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use hickory_proto::op::DnsResponse;
 use hickory_resolver::PoolContext;
-use hickory_resolver::config::ConnectionConfig;
+use hickory_resolver::config::{ConnectionConfig, ProtocolConfig};
 use hickory_resolver::net::NetError;
 use hickory_resolver::net::xfer::Protocol;
+use rustls::ClientConfig;
+use rustls::pki_types::ServerName;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 use landscape_common::dns::pool_config::UpstreamPoolConfig;
 
 use crate::exp_conn_pool::allowance::TimeAllowance;
 use crate::exp_conn_pool::connection::{EndpointKey, InflightGuard, PooledConnection};
-use crate::exp_conn_pool::transport::{DialParams, Transport, UdpExchange, WireQuery, connect_tcp};
+use crate::exp_conn_pool::transport::{
+    DialParams, Transport, UdpExchange, WireQuery, connect_tcp, connect_tls, dot_client_config,
+};
 
 const REAP_EVERY: u64 = 64;
 
@@ -24,6 +28,7 @@ const TRANSIENT_RETRY: Duration = Duration::from_millis(1);
 pub(crate) struct StreamConnectionPool {
     state: Arc<PoolState>,
     dial: DialParams,
+    tls: Arc<ClientConfig>,
     configs: HashMap<EndpointKey, ConnectionConfig>,
     config: UpstreamPoolConfig,
     next_id: AtomicU64,
@@ -66,7 +71,7 @@ impl EndpointPool {
 impl StreamConnectionPool {
     pub(crate) fn new(
         dial: DialParams,
-        _cx: Arc<PoolContext>,
+        cx: Arc<PoolContext>,
         configs: HashMap<EndpointKey, ConnectionConfig>,
         config: UpstreamPoolConfig,
     ) -> Self {
@@ -87,6 +92,7 @@ impl StreamConnectionPool {
         Self {
             state,
             dial,
+            tls: dot_client_config(cx.tls.clone()),
             configs,
             config,
             next_id: AtomicU64::new(0),
@@ -232,15 +238,25 @@ impl StreamConnectionPool {
     async fn dial(
         &self,
         endpoint: EndpointKey,
-        _config: &ConnectionConfig,
+        config: &ConnectionConfig,
         allowance: TimeAllowance,
     ) -> Result<Transport, NetError> {
         match endpoint.protocol {
             Protocol::Tcp => {
                 connect_tcp(endpoint.addr, self.dial, allowance).await.map(Transport::Tcp)
             }
+            Protocol::Tls => {
+                let ProtocolConfig::Tls { server_name } = &config.protocol else {
+                    return Err(NetError::from("TLS endpoint without a server name"));
+                };
+                let server_name = ServerName::try_from(server_name.to_string())
+                    .map_err(|_| NetError::from("invalid TLS server name"))?;
+                connect_tls(endpoint.addr, server_name, self.tls.clone(), self.dial, allowance)
+                    .await
+                    .map(Transport::Tls)
+            }
             Protocol::Udp => Ok(Transport::Udp(UdpExchange::new(endpoint.addr, self.dial))),
-            // Exhaustiveness arm: `endpoint_configs` produces only Tcp and Udp.
+            // Exhaustiveness arm: `endpoint_configs` produces only Tcp, Udp and Tls.
             _ => Err(NetError::from("protocol not supported by the pooled engine")),
         }
     }
@@ -366,6 +382,7 @@ mod tests {
     use landscape_common::dns::pool_config::UpstreamPoolConfig;
 
     use super::StreamConnectionPool;
+    use crate::exp_conn_pool::allowance::TimeAllowance;
     use crate::exp_conn_pool::connection::EndpointKey;
     use crate::exp_conn_pool::transport::DialParams;
 
@@ -442,7 +459,10 @@ mod tests {
         let (pool, key) = pool_with(
             Protocol::Tcp,
             ProtocolConfig::Tcp,
-            UpstreamPoolConfig { max_conns_per_endpoint: 4, ..UpstreamPoolConfig::default() },
+            UpstreamPoolConfig {
+                max_conns_per_endpoint: 4,
+                ..UpstreamPoolConfig::default()
+            },
         );
         let ep = pool.state.endpoints.get(&key).unwrap();
         assert_eq!(ep.conn_permits.available_permits(), 4);
@@ -487,5 +507,54 @@ mod tests {
             8,
             "total in-flight capacity is conns × per-conn inflight"
         );
+    }
+
+    #[tokio::test]
+    async fn acquire_cancelled_mid_dial_releases_capacity() {
+        // A silent local listener: the TCP handshake completes in the
+        // kernel, but a TLS ClientHello never gets a ServerHello, so
+        // `acquire` parks inside `dial` until cancelled.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = silent.local_addr().expect("read bound address");
+
+        let config = UpstreamPoolConfig {
+            max_conns_per_endpoint: 1,
+            ..UpstreamPoolConfig::default()
+        };
+        let (pool, key) = pool_at(
+            addr,
+            Protocol::Tls,
+            ProtocolConfig::Tls { server_name: Arc::from("localhost") },
+            config,
+        );
+        let pool = Arc::new(pool);
+
+        let dialer = pool.clone();
+        let allowance = TimeAllowance::new(Duration::from_secs(30));
+        let task = tokio::spawn(async move {
+            let _ = dialer.acquire(key, allowance).await;
+        });
+
+        // Wait until the in-flight dial holds the only connection slot.
+        let ep = pool.state.endpoints.get(&key).unwrap();
+        let mut reserved = false;
+        for _ in 0..400 {
+            if ep.conn_permits.available_permits() == 0 {
+                reserved = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(reserved, "the spawned acquire must hold the connection slot");
+
+        task.abort();
+        let _ = task.await;
+        assert_eq!(
+            ep.conn_permits.available_permits(),
+            1,
+            "a cancelled dial must release its connection slot"
+        );
+
+        drop(silent);
     }
 }

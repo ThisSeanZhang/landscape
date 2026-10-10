@@ -54,8 +54,12 @@ impl PooledDnsResolver {
                 tcp.port = port;
                 vec![udp, tcp]
             }
-            DnsUpstreamMode::Tls { .. } => {
-                return Err(NetError::from("TLS upstreams are not supported by the pooled engine"));
+            DnsUpstreamMode::Tls { domain } => {
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Tls {
+                    server_name: domain.clone().into(),
+                });
+                conn.port = port.unwrap_or(853);
+                vec![conn]
             }
             DnsUpstreamMode::Https { .. } => {
                 return Err(NetError::from(
@@ -101,7 +105,47 @@ impl PooledDnsResolver {
         options.attempts = pool_config.attempts as usize;
         options.max_active_requests = pool_config.max_inflight_per_conn;
         let cx = Arc::new(PoolContext::new(options, TlsConfig::new()?));
-        Self::assemble(flow_id, mark_value, bind_config, pool_configs, endpoint_keys, pool_config, cx)
+        Self::assemble(
+            flow_id,
+            mark_value,
+            bind_config,
+            pool_configs,
+            endpoint_keys,
+            pool_config,
+            cx,
+        )
+    }
+
+    // The caller-supplied TLS config lets tests trust an ad-hoc self-signed
+    // certificate instead of the platform verifier.
+    #[cfg(test)]
+    pub(crate) fn with_config_and_tls(
+        flow_id: u32,
+        mark_value: u32,
+        config: &DnsUpstreamConfig,
+        pool_config: UpstreamPoolConfig,
+        tls: TlsConfig,
+    ) -> Result<Self, NetError> {
+        let DnsUpstreamConfig { bind_config, .. } = config;
+        let (pool_configs, endpoint_keys) = Self::endpoint_configs(config)?;
+
+        let mut options = ResolverOpts::default();
+        options.cache_size = 0;
+        options.num_concurrent_reqs = pool_config.concurrency;
+        options.preserve_intermediates = true;
+        options.timeout = pool_config.round_timeout;
+        options.attempts = pool_config.attempts as usize;
+        options.max_active_requests = pool_config.max_inflight_per_conn;
+        let cx = Arc::new(PoolContext::new(options, tls));
+        Self::assemble(
+            flow_id,
+            mark_value,
+            bind_config,
+            pool_configs,
+            endpoint_keys,
+            pool_config,
+            cx,
+        )
     }
 
     fn assemble(

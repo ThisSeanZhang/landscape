@@ -3143,6 +3143,7 @@ dependencies = [
  "moka",
  "nix 0.31.3",
  "quinn",
+ "rcgen",
  "regex",
  "rustls",
  "serde",

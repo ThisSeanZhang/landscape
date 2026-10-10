@@ -1,4 +1,5 @@
 pub(crate) mod stream;
+pub(crate) mod tls;
 pub(crate) mod udp;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -11,9 +12,11 @@ use hickory_resolver::net::NetError;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 pub(crate) use crate::exp_conn_pool::transport::stream::connect_tcp;
+pub(crate) use crate::exp_conn_pool::transport::tls::{connect_tls, dot_client_config};
 pub(crate) use crate::exp_conn_pool::transport::udp::UdpExchange;
 
 use crate::exp_conn_pool::transport::stream::StreamConnection;
+use crate::exp_conn_pool::transport::tls::TlsConnection;
 
 #[derive(Clone)]
 pub(crate) struct WireQuery {
@@ -33,6 +36,7 @@ impl WireQuery {
 
 pub(crate) enum Transport {
     Tcp(StreamConnection<OwnedReadHalf, OwnedWriteHalf>),
+    Tls(TlsConnection),
     Udp(UdpExchange),
 }
 
@@ -40,6 +44,7 @@ impl Transport {
     pub(crate) async fn query(&self, query: WireQuery) -> Result<DnsResponse, NetError> {
         match self {
             Transport::Tcp(conn) => conn.query(query).await,
+            Transport::Tls(conn) => conn.query(query).await,
             Transport::Udp(conn) => conn.query(query).await,
         }
     }
@@ -47,6 +52,7 @@ impl Transport {
     pub(crate) fn is_alive(&self) -> bool {
         match self {
             Transport::Tcp(conn) => conn.is_alive(),
+            Transport::Tls(conn) => conn.is_alive(),
             Transport::Udp(conn) => conn.is_alive(),
         }
     }
@@ -54,6 +60,7 @@ impl Transport {
     pub(crate) fn close(&self) {
         match self {
             Transport::Tcp(conn) => conn.close(),
+            Transport::Tls(conn) => conn.close(),
             Transport::Udp(conn) => conn.close(),
         }
     }

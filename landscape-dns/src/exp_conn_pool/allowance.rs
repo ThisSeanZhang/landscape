@@ -56,7 +56,8 @@ mod tests {
     async fn a_future_that_stalls_fails_with_timeout() {
         let allowance = TimeAllowance::new(Duration::from_millis(25));
 
-        let answer = allowance.complete_within(tokio::time::sleep(Duration::from_millis(500))).await;
+        let answer =
+            allowance.complete_within(tokio::time::sleep(Duration::from_millis(500))).await;
 
         assert!(matches!(answer, Err(hickory_resolver::net::NetError::Timeout)));
     }
