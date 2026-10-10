@@ -66,10 +66,12 @@ impl PooledDnsResolver {
                     "HTTPS upstreams are not supported by the pooled engine",
                 ));
             }
-            DnsUpstreamMode::Quic { .. } => {
-                return Err(NetError::from(
-                    "QUIC upstreams are not supported by the pooled engine",
-                ));
+            DnsUpstreamMode::Quic { domain } => {
+                let mut conn = ConnectionConfig::new(ProtocolConfig::Quic {
+                    server_name: domain.clone().into(),
+                });
+                conn.port = port.unwrap_or(853);
+                vec![conn]
             }
         };
 

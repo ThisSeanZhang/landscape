@@ -711,3 +711,120 @@ async fn tls_upstream_resolves_and_reuses_connection() {
     assert_eq!(tls_connections.load(Ordering::SeqCst), 1, "both lookups reuse one DoT connection");
     assert_eq!(tls_queries.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn quic_upstream_resolves_and_reuses_connection() {
+    let answers: Answers = HashMap::from([(
+        ("example.com.", RecordType::A),
+        vec![a_record("example.com.", Ipv4Addr::new(1, 2, 3, 4), 300)],
+    )]);
+
+    // Explicit crypto provider: nothing installs a process-level default
+    // and tests must not depend on crate features enabled elsewhere.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let certified = rcgen::generate_simple_self_signed(vec!["dns.example".to_string()]).unwrap();
+    let mut server_tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certified.cert.der().clone()],
+            rustls::pki_types::PrivateKeyDer::try_from(certified.signing_key.serialize_der())
+                .unwrap(),
+        )
+        .unwrap();
+    // RFC 9250 §4.1: DoQ is identified by the "doq" ALPN.
+    server_tls.alpn_protocols = vec![b"doq".to_vec()];
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(
+        quinn::crypto::rustls::QuicServerConfig::try_from(server_tls).unwrap(),
+    ));
+
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let endpoint = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(server_config),
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )
+    .unwrap();
+    let port = endpoint.local_addr().unwrap().port();
+
+    let quic_connections = Arc::new(AtomicUsize::new(0));
+    let quic_queries = Arc::new(AtomicUsize::new(0));
+    tokio::spawn({
+        let answers = answers.clone();
+        let quic_connections = quic_connections.clone();
+        let quic_queries = quic_queries.clone();
+        async move {
+            while let Some(incoming) = endpoint.accept().await {
+                let Ok(conn) = incoming.await else { continue };
+                quic_connections.fetch_add(1, Ordering::SeqCst);
+                let answers = answers.clone();
+                let quic_queries = quic_queries.clone();
+                tokio::spawn(async move {
+                    loop {
+                        // One bidirectional stream per query (RFC 9250 §4.2).
+                        let Ok((mut send, mut recv)) = conn.accept_bi().await else { break };
+                        let answers = answers.clone();
+                        let quic_queries = quic_queries.clone();
+                        tokio::spawn(async move {
+                            let mut len_buf = [0u8; 2];
+                            if recv.read_exact(&mut len_buf).await.is_err() {
+                                return;
+                            }
+                            let len = u16::from_be_bytes(len_buf) as usize;
+                            let mut msg_buf = vec![0u8; len];
+                            if recv.read_exact(&mut msg_buf).await.is_err() {
+                                return;
+                            }
+                            quic_queries.fetch_add(1, Ordering::SeqCst);
+                            let response =
+                                respond(&msg_buf, &answers, ResponseCode::NoError, Truncation::Off);
+                            let mut out = Vec::with_capacity(response.len() + 2);
+                            out.extend_from_slice(&(response.len() as u16).to_be_bytes());
+                            out.extend_from_slice(&response);
+                            if send.write_all(&out).await.is_err() {
+                                return;
+                            }
+                            // FIN after the last response (RFC 9250 §4.2).
+                            let _ = send.finish();
+                        });
+                    }
+                });
+            }
+        }
+    });
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certified.cert.der().clone()).unwrap();
+    let client_config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let resolver = PooledDnsResolver::with_config_and_tls(
+        1,
+        0,
+        &DnsUpstreamConfig {
+            mode: DnsUpstreamMode::Quic { domain: "dns.example".to_string() },
+            ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            port: Some(port),
+            use_experimental_pool: Some(true),
+            ..DnsUpstreamConfig::default()
+        },
+        fast_config(),
+        hickory_resolver::TlsConfig { config: client_config },
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let lookup = resolver.lookup("example.com.", RecordType::A).await.unwrap();
+        assert_eq!(lookup.answers().len(), 1);
+    }
+
+    // Both lookups ride one persistent QUIC connection; each query takes
+    // its own stream.
+    assert_eq!(quic_connections.load(Ordering::SeqCst), 1, "both lookups reuse one DoQ connection");
+    assert_eq!(quic_queries.load(Ordering::SeqCst), 2);
+}

@@ -18,7 +18,8 @@ use landscape_common::dns::pool_config::UpstreamPoolConfig;
 use crate::exp_conn_pool::allowance::TimeAllowance;
 use crate::exp_conn_pool::connection::{EndpointKey, InflightGuard, PooledConnection};
 use crate::exp_conn_pool::transport::{
-    DialParams, Transport, UdpExchange, WireQuery, connect_tcp, connect_tls, dot_client_config,
+    DialParams, Transport, UdpExchange, WireQuery, connect_quic, connect_tcp, connect_tls,
+    doq_client_config, dot_client_config,
 };
 
 const REAP_EVERY: u64 = 64;
@@ -29,6 +30,7 @@ pub(crate) struct StreamConnectionPool {
     state: Arc<PoolState>,
     dial: DialParams,
     tls: Arc<ClientConfig>,
+    quic: ClientConfig,
     configs: HashMap<EndpointKey, ConnectionConfig>,
     config: UpstreamPoolConfig,
     next_id: AtomicU64,
@@ -93,6 +95,7 @@ impl StreamConnectionPool {
             state,
             dial,
             tls: dot_client_config(cx.tls.clone()),
+            quic: doq_client_config(cx.tls.clone()),
             configs,
             config,
             next_id: AtomicU64::new(0),
@@ -256,7 +259,21 @@ impl StreamConnectionPool {
                     .map(Transport::Tls)
             }
             Protocol::Udp => Ok(Transport::Udp(UdpExchange::new(endpoint.addr, self.dial))),
-            // Exhaustiveness arm: `endpoint_configs` produces only Tcp, Udp and Tls.
+            Protocol::Quic => {
+                let ProtocolConfig::Quic { server_name } = &config.protocol else {
+                    return Err(NetError::from("QUIC endpoint without a server name"));
+                };
+                connect_quic(
+                    endpoint.addr,
+                    server_name.to_string(),
+                    self.quic.clone(),
+                    self.dial,
+                    allowance,
+                )
+                .await
+                .map(Transport::Doq)
+            }
+            // Exhaustiveness arm: `endpoint_configs` produces only Tcp, Udp, Tls and Quic.
             _ => Err(NetError::from("protocol not supported by the pooled engine")),
         }
     }
