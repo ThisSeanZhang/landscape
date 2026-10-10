@@ -511,7 +511,7 @@ mod tests {
         }
     }
 
-    fn first_resolver(engine: &ResolveEngine) -> Arc<crate::connection::LandscapeMarkDNSResolver> {
+    fn first_resolver(engine: &ResolveEngine) -> Arc<crate::connection::LandscapeResolver> {
         engine.iter().next().expect("expected a resolve rule").1.shared_resolver().clone()
     }
 

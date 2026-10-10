@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use landscape_common::dns::config::DnsUpstreamConfig;
 use uuid::Uuid;
 
-use crate::connection::{LandscapeMarkDNSResolver, create_resolver};
+use crate::connection::{LandscapeResolver, create_resolver};
 
 /// Key under which resolvers are shared: the DNS mark (the SO_MARK applied to
 /// upstream connections, i.e. the flow component plus the always-set reuse
@@ -19,7 +19,8 @@ type ResolverKey = (u32, Uuid);
 
 /// Global resolver pool shared across all flows. `UpstreamsChanged` triggers
 /// `invalidate()` for the affected ids, so the next flow refresh rebuilds
-/// resolvers unconditionally.
+/// resolvers unconditionally. Dropping an entry releases its engine: the
+/// legacy resolver or the experimental pool (idle connections close with it).
 ///
 /// Known tradeoff (accepted for now): entries are ONLY dropped on upstream
 /// change (or process restart). When a rule's mark/flow changes or a rule is
@@ -30,7 +31,7 @@ type ResolverKey = (u32, Uuid);
 /// entries no rule references anymore if this ever becomes a problem.
 #[derive(Debug, Default)]
 pub struct ResolvePool {
-    resolvers: RwLock<HashMap<ResolverKey, Arc<LandscapeMarkDNSResolver>>>,
+    resolvers: RwLock<HashMap<ResolverKey, Arc<LandscapeResolver>>>,
 }
 
 impl ResolvePool {
@@ -42,7 +43,7 @@ impl ResolvePool {
         flow_id: u32,
         dns_mark: u32,
         upstream: &DnsUpstreamConfig,
-    ) -> Option<Arc<LandscapeMarkDNSResolver>> {
+    ) -> Option<Arc<LandscapeResolver>> {
         let key = (dns_mark, upstream.id);
         if let Some(resolver) = self.resolvers.read().unwrap_or_else(|e| e.into_inner()).get(&key) {
             return Some(resolver.clone());

@@ -15,7 +15,7 @@ use landscape_common::{
     flow::DnsRuntimeMarkInfo,
 };
 
-use crate::connection::{LandscapeMarkDNSResolver, pool::ResolvePool};
+use crate::connection::{LandscapeResolver, pool::ResolvePool};
 use crate::domain::ParsedDomain;
 use crate::server::matcher::RuntimeRuleMatcher;
 
@@ -133,7 +133,7 @@ pub struct DNSResolveRuntime {
     filter: FilterResult,
     flow_id: u32,
     mark: DnsRuntimeMarkInfo,
-    resolver: Arc<LandscapeMarkDNSResolver>,
+    resolver: Arc<LandscapeResolver>,
 
     enable_ip_validation: bool,
 }
@@ -178,7 +178,7 @@ impl DNSResolveRuntime {
     }
 
     #[cfg(test)]
-    pub fn shared_resolver(&self) -> &Arc<LandscapeMarkDNSResolver> {
+    pub(crate) fn shared_resolver(&self) -> &Arc<LandscapeResolver> {
         &self.resolver
     }
 

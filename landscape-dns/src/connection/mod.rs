@@ -1,8 +1,13 @@
-use std::{sync::Arc, time::Duration};
+use std::fmt;
+use std::sync::Arc;
+use std::time::Duration;
 
+use hickory_proto::rr::RecordType;
 use hickory_resolver::{
     Resolver,
     config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
+    lookup::Lookup,
+    net::NetError,
 };
 
 use landscape_common::dns::config::DnsUpstreamConfig;
@@ -13,13 +18,56 @@ use crate::connection::provider::{MarkConnectionProvider, MarkRuntimeProvider};
 pub(crate) mod pool;
 pub(crate) mod provider;
 
-pub(crate) type LandscapeMarkDNSResolver = Resolver<MarkConnectionProvider>;
+/// Upstream engine handle. `use_experimental_pool` picks the variant at
+/// build time; both expose the same lookup surface.
+pub(crate) enum LandscapeResolver {
+    /// hickory's built-in name server pool.
+    Legacy(Resolver<MarkConnectionProvider>),
+    /// Experimental self-managed engine, see `exp_conn_pool`.
+    Pooled(crate::exp_conn_pool::PooledDnsResolver),
+}
+
+impl LandscapeResolver {
+    pub(crate) async fn lookup(
+        &self,
+        domain: &str,
+        query_type: RecordType,
+    ) -> Result<Lookup, NetError> {
+        match self {
+            Self::Legacy(resolver) => resolver.lookup(domain, query_type).await,
+            Self::Pooled(resolver) => resolver.lookup(domain, query_type).await,
+        }
+    }
+}
+
+impl fmt::Debug for LandscapeResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Legacy(resolver) => fmt::Debug::fmt(resolver, f),
+            Self::Pooled(resolver) => fmt::Debug::fmt(resolver, f),
+        }
+    }
+}
 
 pub(crate) fn create_resolver(
     flow_id: u32,
     mark_value: u32,
-    DnsUpstreamConfig { mode, ips, port, bind_config, .. }: DnsUpstreamConfig,
-) -> Option<LandscapeMarkDNSResolver> {
+    config: DnsUpstreamConfig,
+) -> Option<LandscapeResolver> {
+    // Opt-in gate: only explicitly opted-in upstreams use the self-managed pool.
+    if config.use_experimental_pool.unwrap_or(false) {
+        return match crate::exp_conn_pool::PooledDnsResolver::new(flow_id, mark_value, &config) {
+            Ok(resolver) => Some(LandscapeResolver::Pooled(resolver)),
+            Err(e) => {
+                tracing::error!(
+                    "[flow: {flow_id}]: failed to build experimental DNS resolver: {e}"
+                );
+                None
+            }
+        };
+    }
+
+    let DnsUpstreamConfig { mode, ips, port, bind_config, .. } = config;
     let name_server: Vec<NameServerConfig> = match mode {
         DnsUpstreamMode::Plaintext => ips
             .iter()
@@ -98,5 +146,5 @@ pub(crate) fn create_resolver(
         }
     };
 
-    Some(resolver)
+    Some(LandscapeResolver::Legacy(resolver))
 }
