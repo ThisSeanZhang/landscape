@@ -34,7 +34,6 @@ pub(crate) mod chain;
 pub(crate) mod handler;
 pub(crate) mod local;
 pub(crate) mod matcher;
-pub use matcher::domain_rule_matches_normalized;
 pub mod redirect_engine;
 pub(crate) mod resolve_engine;
 pub(crate) mod rule;

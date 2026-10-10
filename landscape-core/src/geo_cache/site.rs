@@ -162,9 +162,9 @@ impl SiteCacheRepository {
 
     /// Semantic match for one normalized lowercase domain across all
     /// entries: Domain (self or dot-suffix), Full (exact), Plain (substring,
-    /// LIKE-escaped), Regex (SQL REGEXP from the sqlx `regexp` feature, same
-    /// engine as `domain_rule_matches_normalized`). Invalid Regex rows carry
-    /// `pattern_valid = 0` and never match.
+    /// LIKE-escaped), Regex (SQL REGEXP from the sqlx `regexp` feature,
+    /// sharing the Rust `regex` engine used by the DNS matcher). Invalid
+    /// Regex rows carry `pattern_valid = 0` and never match.
     pub async fn lookup_rules_by_domain(
         &self,
         normalized: &str,
