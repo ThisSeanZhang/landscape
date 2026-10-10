@@ -15,7 +15,6 @@ enum DefaultDnsConfig {
 
   DNSPOD_UDP = "dnspod-udp",
   DNSPOD_DOH = "dnspod-doh",
-  // DNSPOD_DOT = "dnspod-dot",
 
   CLOUDFLARE_UDP = "cloudflare-udp",
   CLOUDFLARE_DOH = "cloudflare-doh",
@@ -84,12 +83,6 @@ const DEFAULT_CONFIGS: Record<
     port: 443,
     enable_ip_validation: false,
   },
-  // [DefaultDnsConfig.DNSPOD_DOT]: {
-  //   mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "dot.pub" },
-  //   ips: ["1.12.12.21", "120.53.53.53"],
-  //   port: 853,
-  //   enable_ip_validation: false,
-  // },
 
   // Cloudflare
   [DefaultDnsConfig.CLOUDFLARE_UDP]: {
@@ -146,6 +139,7 @@ function replace_default(config: DefaultDnsConfig) {
     name: rule.value.name ?? null,
     remark: rule.value?.remark ?? "",
     ...DEFAULT_CONFIGS[config],
+    use_experimental_pool: rule.value?.use_experimental_pool ?? false,
     update_at: rule.value.update_at,
   };
 }
@@ -206,13 +200,8 @@ const btn_size = "small";
           strong
           >DoH</n-button
         >
-        <!-- <n-button
-          @click="replace_default(DefaultDnsConfig.DNSPOD_DOT)"
-          :size="btn_size"
-          secondary
-          strong
-          >DoT</n-button
-        > -->
+        <n-button :size="btn_size" secondary strong disabled>DoT</n-button>
+        <n-button :size="btn_size" secondary strong disabled>DoQ</n-button>
       </n-input-group>
     </n-flex>
     <n-flex vertical :size="8">
@@ -241,6 +230,7 @@ const btn_size = "small";
           strong
           >DoT</n-button
         >
+        <n-button :size="btn_size" secondary strong disabled>DoQ</n-button>
       </n-input-group>
       <n-input-group>
         <n-input-group-label :size="btn_size" class="label-len">
@@ -267,6 +257,7 @@ const btn_size = "small";
           strong
           >DoT</n-button
         >
+        <n-button :size="btn_size" secondary strong disabled>DoQ</n-button>
       </n-input-group>
     </n-flex>
   </n-flex>

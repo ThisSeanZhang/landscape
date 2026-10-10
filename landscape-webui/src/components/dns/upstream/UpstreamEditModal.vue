@@ -45,6 +45,7 @@ async function enter() {
       ips: [],
       port: 53,
       enable_ip_validation: false,
+      use_experimental_pool: false,
     };
   }
   origin_rule_json.value = JSON.stringify(rule.value);
@@ -148,7 +149,7 @@ async function import_rules() {
   <n-modal
     :auto-focus="false"
     v-model:show="show"
-    style="width: 600px"
+    style="width: 620px"
     class="custom-card"
     preset="card"
     :title="t('dns.upstream_edit.title')"
@@ -179,7 +180,7 @@ async function import_rules() {
           <n-input v-model:value="rule.name" />
         </n-form-item-gi>
 
-        <n-form-item-gi :offset="1" :span="2">
+        <n-form-item-gi :span="2">
           <template #label>
             <Notice>
               {{ t("dns.upstream_edit.ip_validation") }}
@@ -196,6 +197,27 @@ async function import_rules() {
             </template>
             <template #unchecked>
               {{ t("dns.upstream_edit.ip_validation_off") }}
+            </template>
+          </n-switch>
+        </n-form-item-gi>
+
+        <n-form-item-gi :span="2">
+          <template #label>
+            <Notice :warn="!!rule.use_experimental_pool">
+              {{ t("dns.upstream_edit.exp_pool") }}
+              <template #msg>
+                {{ t("dns.upstream_edit.exp_pool_desc_1") }} <br />
+                {{ t("dns.upstream_edit.exp_pool_desc_2") }}
+              </template>
+            </Notice>
+          </template>
+
+          <n-switch v-model:value="rule.use_experimental_pool">
+            <template #checked>
+              {{ t("dns.upstream_edit.exp_pool_on") }}
+            </template>
+            <template #unchecked>
+              {{ t("dns.upstream_edit.exp_pool_off") }}
             </template>
           </n-switch>
         </n-form-item-gi>
@@ -295,6 +317,8 @@ async function import_rules() {
 
         <n-form-item-gi :span="8" :label="t('dns.upstream_edit.remark')">
           <n-input
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 4 }"
             :placeholder="t('dns.upstream_edit.remark_placeholder')"
             v-model:value="rule.remark"
           />

@@ -76,6 +76,13 @@ export default {
       "If your custom upstream intentionally returns private IPs, keep it disabled.",
     ip_validation_on: "Filter",
     ip_validation_off: "Do not filter",
+    exp_pool: "Experimental pool",
+    exp_pool_desc_1:
+      "When enabled, this upstream uses the experimental self-managed connection pool engine: connection reuse and concurrent scheduling for TCP/UDP/DoT/DoQ/DoH.",
+    exp_pool_desc_2:
+      "Experimental feature, not yet validated at scale; disable it if you hit issues.",
+    exp_pool_on: "On",
+    exp_pool_off: "Off",
     preset_fill: "Click buttons to apply presets",
     request_mode: "Upstream request mode",
     type_plaintext: "Plaintext",

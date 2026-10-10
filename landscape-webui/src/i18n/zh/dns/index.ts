@@ -67,13 +67,19 @@ export default {
     paste: "粘贴",
     remark: "备注",
     remark_placeholder: "DNS 规则中进行选择时与其他区分",
-    ip_validation: "是否过滤非法结果",
+    ip_validation: "过滤非法结果",
     ip_validation_desc_1:
       "开启后将会过滤 DNS 服务端返回的所有私有地址, 回环地址等.",
     ip_validation_desc_2:
       "假设你使用你自定的上游, 如果有返回私有地址, 就不要开启",
     ip_validation_on: "过滤",
     ip_validation_off: "不过滤",
+    exp_pool: "启用连接池",
+    exp_pool_desc_1:
+      "开启后此上游改用实验性的自管连接池引擎: 连接复用, 并发调度, 支持 TCP/UDP/DoT/DoQ/DoH.",
+    exp_pool_desc_2: "实验功能, 尚未经过大规模验证, 遇到异常请关闭.",
+    exp_pool_on: "启用",
+    exp_pool_off: "停用",
     preset_fill: "点击按钮可以使用预设填充",
     request_mode: "上游请求模式",
     type_plaintext: "无加密",

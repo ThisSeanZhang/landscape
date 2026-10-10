@@ -42,7 +42,7 @@ impl PooledDnsResolver {
 
     fn endpoint_configs(
         config: &DnsUpstreamConfig,
-    ) -> Result<(HashMap<EndpointKey, ConnectionConfig>, Vec<EndpointKey>), NetError> {
+    ) -> (HashMap<EndpointKey, ConnectionConfig>, Vec<EndpointKey>) {
         let DnsUpstreamConfig { mode, ips, port, .. } = config;
 
         let connection_configs: Vec<ConnectionConfig> = match mode {
@@ -95,7 +95,7 @@ impl PooledDnsResolver {
                 endpoint_keys.push(key);
             }
         }
-        Ok((pool_configs, endpoint_keys))
+        (pool_configs, endpoint_keys)
     }
 
     pub(crate) fn with_config(
@@ -105,7 +105,7 @@ impl PooledDnsResolver {
         pool_config: UpstreamPoolConfig,
     ) -> Result<Self, NetError> {
         let DnsUpstreamConfig { bind_config, .. } = config;
-        let (pool_configs, endpoint_keys) = Self::endpoint_configs(config)?;
+        let (pool_configs, endpoint_keys) = Self::endpoint_configs(config);
 
         let mut options = ResolverOpts::default();
         options.cache_size = 0;
@@ -137,7 +137,7 @@ impl PooledDnsResolver {
         tls: TlsConfig,
     ) -> Result<Self, NetError> {
         let DnsUpstreamConfig { bind_config, .. } = config;
-        let (pool_configs, endpoint_keys) = Self::endpoint_configs(config)?;
+        let (pool_configs, endpoint_keys) = Self::endpoint_configs(config);
 
         let mut options = ResolverOpts::default();
         options.cache_size = 0;
