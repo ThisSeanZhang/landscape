@@ -8,6 +8,12 @@ use serde::Serialize;
 
 use super::handle::create_handle;
 
+const NETLINK_EEXIST: i32 = -17;
+
+fn is_netlink_file_exists(error: &rtnetlink::Error) -> bool {
+    matches!(error, rtnetlink::Error::NetlinkError(msg) if msg.raw_code() == NETLINK_EEXIST)
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct LandscapeSingleIpInfo {
     pub address: IpAddr,
@@ -116,31 +122,58 @@ pub async fn set_iface_ip(link_name: &str, ip: IpAddr, prefix_length: u8) -> boo
     };
 
     let mut links = handle.link().get().match_name(link_name.to_string()).execute();
-    if let Some(link) = links.try_next().await.unwrap() {
-        let mut addr_iter = handle.address().get().execute();
+    let link = match links.try_next().await {
+        Ok(Some(link)) => link,
+        Ok(None) => {
+            tracing::warn!("link {link_name} not found, skip setting {ip}/{prefix_length}");
+            return false;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "failed to query link {link_name}: {e:?}, skip setting {ip}/{prefix_length}"
+            );
+            return false;
+        }
+    };
 
-        let mut has_same_ip = false;
-        'search_same_ip: while let Some(addr) = addr_iter.try_next().await.unwrap() {
-            if addr.header.index == link.header.index && addr.header.prefix_len == prefix_length {
-                for nla in addr.attributes.iter() {
-                    if let AddressAttribute::Address(bytes) = nla {
-                        has_same_ip = *bytes == ip;
-                        if has_same_ip {
-                            break 'search_same_ip;
+    let mut addr_iter = handle.address().get().execute();
+
+    let mut has_same_ip = false;
+    'search_same_ip: loop {
+        match addr_iter.try_next().await {
+            Ok(Some(addr)) => {
+                if addr.header.index == link.header.index && addr.header.prefix_len == prefix_length
+                {
+                    for nla in addr.attributes.iter() {
+                        if let AddressAttribute::Address(bytes) = nla {
+                            has_same_ip = *bytes == ip;
+                            if has_same_ip {
+                                break 'search_same_ip;
+                            }
                         }
                     }
                 }
             }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to read addresses for link {link_name}: {e:?}, skip setting {ip}/{prefix_length}"
+                );
+                return false;
+            }
         }
-
-        if !has_same_ip {
-            tracing::info!("without same ip, add it");
-            handle.address().add(link.header.index, ip, prefix_length).execute().await.unwrap();
-        }
-        true
-    } else {
-        false
     }
+
+    if !has_same_ip {
+        tracing::info!("without same ip, add it");
+        if let Err(e) = handle.address().add(link.header.index, ip, prefix_length).execute().await
+            && !is_netlink_file_exists(&e)
+        {
+            tracing::warn!("failed to add {ip}/{prefix_length} on {link_name}: {e:?}");
+            return false;
+        }
+    }
+    true
 }
 
 pub async fn get_ppp_address(
@@ -187,44 +220,70 @@ pub async fn add_address_with_handle(
     handle: Handle,
 ) {
     let mut links = handle.link().get().match_name(link_name.to_string()).execute();
-    if let Some(link) = links.try_next().await.unwrap() {
-        let mut addr_iter = handle.address().get().execute();
-        // 与要添加的 ip 是否相同
-        let mut need_create_ip = true;
-        while let Some(addr) = addr_iter.try_next().await.unwrap() {
-            let perfix_len_equal = addr.header.prefix_len == prefix_length;
-            let mut link_name_equal = false;
-            let mut ip_equal = false;
+    let link = match links.try_next().await {
+        Ok(Some(link)) => link,
+        Ok(None) => {
+            tracing::warn!("link {link_name} not found, skip adding {ip}/{prefix_length}");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "failed to query link {link_name}: {e:?}, skip adding {ip}/{prefix_length}"
+            );
+            return;
+        }
+    };
 
-            for attr in addr.attributes.iter() {
-                match attr {
-                    AddressAttribute::Address(addr) => {
-                        if *addr == ip {
-                            ip_equal = true;
+    let mut addr_iter = handle.address().get().execute();
+    // 与要添加的 ip 是否相同
+    let mut need_create_ip = true;
+    loop {
+        match addr_iter.try_next().await {
+            Ok(Some(addr)) => {
+                let perfix_len_equal = addr.header.prefix_len == prefix_length;
+                let mut link_name_equal = false;
+                let mut ip_equal = false;
+
+                for attr in addr.attributes.iter() {
+                    match attr {
+                        AddressAttribute::Address(addr) => {
+                            if *addr == ip {
+                                ip_equal = true;
+                            }
                         }
+                        AddressAttribute::Label(label) if *label == link_name => {
+                            link_name_equal = true;
+                        }
+                        _ => {}
                     }
-                    AddressAttribute::Label(label) if *label == link_name => {
-                        link_name_equal = true;
+                }
+
+                if link_name_equal {
+                    if ip_equal && perfix_len_equal {
+                        need_create_ip = false;
+                    } else {
+                        tracing::info!("stop dhcp v4 server and del: {addr:?}");
+                        if let Err(e) = handle.address().del(addr).execute().await {
+                            tracing::warn!("failed to del address on {link_name}: {e:?}");
+                            return;
+                        }
+                        need_create_ip = true;
                     }
-                    _ => {}
                 }
             }
-
-            if link_name_equal {
-                if ip_equal && perfix_len_equal {
-                    need_create_ip = false;
-                } else {
-                    tracing::info!("stop dhcp v4 server and del: {addr:?}");
-                    handle.address().del(addr).execute().await.unwrap();
-                    need_create_ip = true;
-                }
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!("failed to read addresses for link {link_name}: {e:?}");
+                return;
             }
         }
+    }
 
-        if need_create_ip {
-            // tracing::info!("need create ip: {need_create_ip:?}");
-            handle.address().add(link.header.index, ip, prefix_length).execute().await.unwrap()
-        }
+    if need_create_ip
+        && let Err(e) = handle.address().add(link.header.index, ip, prefix_length).execute().await
+        && !is_netlink_file_exists(&e)
+    {
+        tracing::warn!("failed to add {ip}/{prefix_length} on {link_name}: {e:?}");
     }
 }
 

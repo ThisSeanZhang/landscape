@@ -1,6 +1,7 @@
-use std::{net::IpAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::IpAddr, panic::AssertUnwindSafe, path::PathBuf, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
+use futures::FutureExt;
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_ebpf::maps::LandscapeMapPath;
 
@@ -171,42 +172,75 @@ impl LandscapeApp {
     pub async fn shutdown(&self) {
         tracing::info!("Shutting down all services...");
 
-        self.preserve_critical_ips().await;
-        tracing::info!("Critical IPs preserved");
+        run_shutdown_phase("preserve_critical_ips", || async {
+            self.preserve_critical_ips().await;
+            tracing::info!("Critical IPs preserved");
+        })
+        .await;
 
-        self.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await;
-        tracing::info!("Gateway service stopped");
+        run_shutdown_phase("gateway_service", || async {
+            self.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await;
+            tracing::info!("Gateway service stopped");
+        })
+        .await;
 
-        self.ddns_service.shutdown_and_wait(Duration::from_secs(10)).await;
-        tracing::info!("DDNS service stopped");
+        run_shutdown_phase("ddns_service", || async {
+            self.ddns_service.shutdown_and_wait(Duration::from_secs(10)).await;
+            tracing::info!("DDNS service stopped");
+        })
+        .await;
 
-        self.cert_service.shutdown_and_wait(Duration::from_secs(10)).await;
-        tracing::info!("Cert service stopped");
+        run_shutdown_phase("cert_service", || async {
+            self.cert_service.shutdown_and_wait(Duration::from_secs(10)).await;
+            tracing::info!("Cert service stopped");
+        })
+        .await;
 
-        tokio::join!(
-            self.wan_link_service.get_service().stop_all(),
-            self.route_wan_service.get_service().stop_all(),
-            self.route_lan_service.get_service().stop_all(),
-            self.dhcp_v4_server_service.get_service().stop_all(),
-            self.lan_ipv6_service.get_service().stop_all(),
-            self.wifi_service.get_service().stop_all(),
-        );
-        tracing::info!("All service managers stopped");
+        run_shutdown_phase("stop_service_managers", || async {
+            tokio::join!(
+                self.wan_link_service.get_service().stop_all(),
+                self.route_wan_service.get_service().stop_all(),
+                self.route_lan_service.get_service().stop_all(),
+                self.dhcp_v4_server_service.get_service().stop_all(),
+                self.lan_ipv6_service.get_service().stop_all(),
+                self.wifi_service.get_service().stop_all(),
+            );
+            tracing::info!("All service managers stopped");
+        })
+        .await;
+
+        run_shutdown_phase("preserve_critical_ips_after_stop", || async {
+            self.preserve_critical_ips().await;
+            tracing::info!("Critical IPs preserved after service stop");
+        })
+        .await;
 
         landscape_ebpf::maps::cleanup_pinned_maps();
 
-        self.metric_service.stop_service().await;
-        tracing::info!("Metric service stopped");
+        run_shutdown_phase("metric_service", || async {
+            self.metric_service.stop_service().await;
+            tracing::info!("Metric service stopped");
+        })
+        .await;
 
-        self.ebpf_service.stop().await;
-        tracing::info!("eBPF system service stopped");
+        run_shutdown_phase("ebpf_service", || async {
+            self.ebpf_service.stop().await;
+            tracing::info!("eBPF system service stopped");
+        })
+        .await;
 
-        self.dns_service.stop().await;
-        tracing::info!("DNS resolver conf restored");
+        run_shutdown_phase("dns_service", || async {
+            self.dns_service.stop().await;
+            tracing::info!("DNS resolver conf restored");
+        })
+        .await;
 
         // Time sync keeps the clock sane for every other service, stop it last.
-        self.time_service.stop().await;
-        tracing::info!("Time sync service stopped");
+        run_shutdown_phase("time_service", || async {
+            self.time_service.stop().await;
+            tracing::info!("Time sync service stopped");
+        })
+        .await;
     }
 
     async fn preserve_critical_ips(&self) {
@@ -243,5 +277,15 @@ impl LandscapeApp {
                     .await;
             }
         }
+    }
+}
+
+async fn run_shutdown_phase<F, Fut>(name: &'static str, phase: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    if let Err(payload) = AssertUnwindSafe(phase()).catch_unwind().await {
+        tracing::error!("shutdown phase '{name}' panicked: {payload:?}; continuing shutdown");
     }
 }
