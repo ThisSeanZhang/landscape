@@ -30,7 +30,6 @@ use landscape_core::geo_cache::{
 use landscape_database::{
     geo_site::repository::GeoSiteConfigRepository, provider::LandscapeDBServiceProvider,
 };
-use landscape_dns::server::domain_rule_matches_normalized;
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, mpsc};
@@ -80,10 +79,6 @@ fn domain_match_type_tag(match_type: &DomainMatchType) -> u8 {
         DomainMatchType::Domain => 2,
         DomainMatchType::Full => 3,
     }
-}
-
-fn geo_value_matches_lookup(value: &GeoSiteFileConfig, normalized: &str) -> bool {
-    domain_rule_matches_normalized(&value.match_type, &value.value, normalized)
 }
 
 /// Domain-matching values are normalized for SQL candidate probing; Regex
@@ -165,11 +160,7 @@ impl GeoSiteService {
                 .into_iter()
                 .map(|value| {
                     let domain = normalize_site_rule_value(&value.match_type, &value.value);
-                    SiteRuleRow {
-                        match_type: value.match_type,
-                        domain,
-                        attributes: value.attributes,
-                    }
+                    SiteRuleRow::new(value.match_type, domain, value.attributes)
                 })
                 .collect();
 
@@ -578,14 +569,11 @@ impl GeoSiteService {
 
         let mut grouped: HashMap<GeoFileCacheKey, Vec<GeoSiteFileConfig>> = HashMap::new();
         for hit in hits {
-            let candidate = GeoSiteFileConfig {
+            grouped.entry(hit.key).or_default().push(GeoSiteFileConfig {
                 match_type: hit.match_type,
                 value: hit.domain,
                 attributes: hit.attributes,
-            };
-            if geo_value_matches_lookup(&candidate, &normalized) {
-                grouped.entry(hit.key).or_default().push(candidate);
-            }
+            });
         }
 
         let mut result: Vec<GeoSiteLookupResult> =
@@ -686,12 +674,13 @@ impl ConfigStoreController for GeoSiteService {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use landscape_common::config_service::geo::GeoSiteFileConfig;
+    use landscape_common::config_service::geo::{GeoFileCacheKey, GeoSiteFileConfig};
     use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
+    use landscape_core::geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteRuleRow};
+    use landscape_dns::server::domain_rule_matches_normalized;
 
     use super::{
-        GeoContentHash, domain_match_type_tag, geo_value_matches_lookup, geo_values_hash,
-        normalize_site_rule_value,
+        GeoContentHash, domain_match_type_tag, geo_values_hash, normalize_site_rule_value,
     };
 
     fn geo_value(value: &str, attributes: &[&str]) -> GeoSiteFileConfig {
@@ -740,9 +729,15 @@ mod tests {
             normalize_site_rule_value(&DomainMatchType::Domain, "Example.COM."),
             "example.com"
         );
-        assert_eq!(normalize_site_rule_value(&DomainMatchType::Full, "WWW.Example.com.."), "www.example.com");
+        assert_eq!(
+            normalize_site_rule_value(&DomainMatchType::Full, "WWW.Example.com.."),
+            "www.example.com"
+        );
         assert_eq!(normalize_site_rule_value(&DomainMatchType::Plain, "Foo."), "foo");
-        assert_eq!(normalize_site_rule_value(&DomainMatchType::Domain, "example.com"), "example.com");
+        assert_eq!(
+            normalize_site_rule_value(&DomainMatchType::Domain, "example.com"),
+            "example.com"
+        );
     }
 
     #[test]
@@ -771,23 +766,71 @@ mod tests {
         assert!(hashes.contains_key(&key));
     }
 
-    #[test]
-    fn lookup_uses_dns_rule_matching_semantics() {
-        let plain = GeoSiteFileConfig {
-            match_type: DomainMatchType::Plain,
-            value: "cloudflare".to_string(),
-            attributes: HashSet::new(),
-        };
-        let domain = geo_value("cloudflare.com", &[]);
-        let generic_regex = GeoSiteFileConfig {
-            match_type: DomainMatchType::Regex,
-            value: "^[a-z][a-z0-9-]+$".to_string(),
-            attributes: HashSet::new(),
-        };
+    #[tokio::test]
+    async fn sql_lookup_matches_rust_reference_semantics() {
+        // Differential pin: the four SQL arms of lookup_rules_by_domain must
+        // agree with domain_rule_matches_normalized on every rule and query.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = SiteCacheRepository::new(GeoCacheDatabase::open_site(dir.path()).await.unwrap());
 
-        assert!(geo_value_matches_lookup(&plain, "cloudflare"));
-        assert!(!geo_value_matches_lookup(&domain, "cloudflare"));
-        assert!(geo_value_matches_lookup(&domain, "www.cloudflare.com"));
-        assert!(geo_value_matches_lookup(&generic_regex, "cloudflare"));
+        let cases: Vec<(&str, &str, DomainMatchType, Vec<&str>)> = vec![
+            ("CN", "google.com", DomainMatchType::Domain, vec![]),
+            // dot boundary: not a suffix of "www.google.com"
+            ("CN", "ogle.com", DomainMatchType::Domain, vec![]),
+            ("CN", "www.google.com", DomainMatchType::Full, vec![]),
+            ("CN", "google.com", DomainMatchType::Full, vec![]),
+            ("CN", "gle.co", DomainMatchType::Plain, vec![]),
+            ("CN", "goog_e", DomainMatchType::Plain, vec![]),
+            ("CN", "100%", DomainMatchType::Plain, vec![]),
+            ("CN", "^www\\.", DomainMatchType::Regex, vec![]),
+            ("CN", "^ftp", DomainMatchType::Regex, vec![]),
+            // invalid pattern: never matches on either path
+            ("CN", "(invalid", DomainMatchType::Regex, vec![]),
+            ("CN", "[A-Z]+\\.", DomainMatchType::Regex, vec![]),
+            ("CN", "example.com", DomainMatchType::Domain, vec!["cn", "ads"]),
+            ("PRIVATE", "lan", DomainMatchType::Domain, vec![]),
+            ("PRIVATE", "router.lan", DomainMatchType::Full, vec![]),
+        ];
+
+        let mut per_key: HashMap<&str, Vec<SiteRuleRow>> = HashMap::new();
+        for (key, value, match_type, attributes) in cases {
+            let attributes: HashSet<String> = attributes.into_iter().map(String::from).collect();
+            let row = SiteRuleRow::new(
+                match_type.clone(),
+                normalize_site_rule_value(&match_type, value),
+                attributes,
+            );
+            per_key.entry(key).or_default().push(row);
+        }
+        for (key, rows) in per_key {
+            repo.replace_by_name("geosite", key, "hash", rows).await.unwrap();
+        }
+
+        for query in ["www.google.com", "google.com", "com", "myhost.lan", "router.lan"] {
+            // attributes round-trip is covered by the repository tests; this
+            // differential compares matching semantics only
+            let mut sql_grouped: HashMap<GeoFileCacheKey, Vec<(DomainMatchType, String)>> =
+                HashMap::new();
+            for hit in repo.lookup_rules_by_domain(query).await.unwrap() {
+                sql_grouped.entry(hit.key).or_default().push((hit.match_type, hit.domain));
+            }
+
+            let mut reference_grouped: HashMap<GeoFileCacheKey, Vec<(DomainMatchType, String)>> =
+                HashMap::new();
+            for cache_key in repo.list_keys().await.unwrap() {
+                let entry =
+                    repo.load_entry(&cache_key.name, &cache_key.key).await.unwrap().unwrap();
+                for value in entry.values {
+                    if domain_rule_matches_normalized(&value.match_type, &value.value, query) {
+                        reference_grouped
+                            .entry(cache_key.clone())
+                            .or_default()
+                            .push((value.match_type, value.value));
+                    }
+                }
+            }
+
+            assert_eq!(sql_grouped, reference_grouped, "mismatch for query {query}");
+        }
     }
 }

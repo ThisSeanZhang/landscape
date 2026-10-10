@@ -10,7 +10,7 @@ use super::db_err;
 
 /// Bump when the DDL below changes. A version mismatch drops and rebuilds the
 /// database; the cache is derivable from the raw sources, no migration needed.
-const SITE_CACHE_SCHEMA_VERSION: i64 = 1;
+const SITE_CACHE_SCHEMA_VERSION: i64 = 2;
 const IP_CACHE_SCHEMA_VERSION: i64 = 1;
 
 const POOL_MAX_CONNECTIONS: u32 = 3;
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS geo_site_rules (
     match_type INTEGER NOT NULL,
     domain     TEXT NOT NULL,
     attributes TEXT,
+    pattern_valid INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (entry_id, seq)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_site_rules_lookup ON geo_site_rules (match_type, domain);";
@@ -95,7 +96,10 @@ impl GeoCacheDatabase {
             .busy_timeout(Duration::from_secs(5))
             // CASCADE deletes in the repositories rely on this
             .foreign_keys(true)
-            .page_size(8192);
+            .page_size(8192)
+            // registers the REGEXP function on every pooled connection;
+            // the site lookup query depends on it
+            .with_regexp();
         let pool = Self::connect_with_retry(options).await?;
         Self::bootstrap(&pool, schema_version, ddl).await?;
         Ok(pool)
@@ -179,25 +183,28 @@ impl GeoCacheDatabase {
 
 #[cfg(test)]
 impl GeoCacheDatabase {
-    async fn mem(ddl: &[&str]) -> sqlx::SqlitePool {
+    async fn mem(schema_version: i64, ddl: &[&str]) -> sqlx::SqlitePool {
         // every in-memory connection is its own database → one connection
-        let options =
-            SqliteConnectOptions::new().in_memory(true).foreign_keys(true).page_size(8192);
+        let options = SqliteConnectOptions::new()
+            .in_memory(true)
+            .foreign_keys(true)
+            .page_size(8192)
+            .with_regexp();
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
             .await
             .expect("in-memory geo cache db connect failed");
-        Self::bootstrap(&pool, 1, ddl).await.expect("bootstrap failed");
+        Self::bootstrap(&pool, schema_version, ddl).await.expect("bootstrap failed");
         pool
     }
 
     pub(crate) async fn site_mem() -> sqlx::SqlitePool {
-        Self::mem(&[ENTRIES_DDL, SITE_DDL]).await
+        Self::mem(SITE_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, SITE_DDL]).await
     }
 
     pub(crate) async fn ip_mem() -> sqlx::SqlitePool {
-        Self::mem(&[ENTRIES_DDL, IP_DDL]).await
+        Self::mem(IP_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, IP_DDL]).await
     }
 }
 

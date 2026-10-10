@@ -364,6 +364,36 @@ mod tests {
     }
 
     #[test]
+    fn rule_semantics_ground_truth() {
+        use super::domain_rule_matches_normalized as matches;
+
+        // Domain: self, dot-suffix, and the dot-boundary negative
+        assert!(matches(&DomainMatchType::Domain, "example.com", "example.com"));
+        assert!(matches(&DomainMatchType::Domain, "example.com", "www.example.com"));
+        assert!(!matches(&DomainMatchType::Domain, "ogle.com", "www.google.com"));
+        assert!(matches(&DomainMatchType::Domain, "lan", "myhost.lan"));
+        // rule side is normalized: case and trailing dot are irrelevant
+        assert!(matches(&DomainMatchType::Domain, "Example.COM.", "www.example.com"));
+        // non-ASCII rules can never match the ASCII-normalized query
+        assert!(!matches(&DomainMatchType::Domain, "例子.com", "www.xn--fsqu00a.com"));
+
+        // Full: exact only
+        assert!(matches(&DomainMatchType::Full, "sub.example.com", "sub.example.com"));
+        assert!(!matches(&DomainMatchType::Full, "example.com", "www.example.com"));
+        assert!(matches(&DomainMatchType::Full, "Sub.Example.COM.", "sub.example.com"));
+
+        // Plain: substring, rule side normalized
+        assert!(matches(&DomainMatchType::Plain, "cloud", "www.cloudflare.com"));
+        assert!(matches(&DomainMatchType::Plain, "Foo.", "www.foo.com"));
+        assert!(!matches(&DomainMatchType::Plain, "cloud", "example.com"));
+
+        // Regex: case-sensitive engine, invalid patterns never match
+        assert!(matches(&DomainMatchType::Regex, "^[a-z]+\\.", "www.example.com"));
+        assert!(!matches(&DomainMatchType::Regex, "[A-Z]+", "www"));
+        assert!(!matches(&DomainMatchType::Regex, "(invalid", "anything"));
+    }
+
+    #[test]
     fn single_rule_lookup_uses_runtime_match_semantics() {
         let domain = pd("Sub.Example.COM");
         for config in [

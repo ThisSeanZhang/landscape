@@ -18,6 +18,7 @@ dashmap = { workspace = true }
 idna = { workspace = true }
 libc = { workspace = true }
 pem = { workspace = true }
+regex = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 serde = { workspace = true }

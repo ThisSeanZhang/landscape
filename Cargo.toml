@@ -170,6 +170,7 @@ sea-orm-migration = { version = "1.1.20" }
 sqlx = { version = "0.8.6", default-features = false, features = [
     "sqlite",
     "runtime-tokio-rustls",
+    "regexp",
 ] }
 arrow-array = "60.0.0"
 arrow-schema = "60.0.0"
