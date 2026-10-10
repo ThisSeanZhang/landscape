@@ -217,21 +217,39 @@ impl SiteCacheRepository {
             .ok_or_else(|| DbError::Internal("invalid match_type in geo site cache".to_string()))
     }
 
-    /// Full rule list of one entry; entries with zero rules still yield
-    /// `Some` with an empty `values`.
-    pub async fn load_entry(
+    /// `content_hash` of one entry, `None` if missing; single-row probe for
+    /// drift detection without re-reading rule rows.
+    pub async fn load_entry_hash(
         &self,
         name: &str,
         geo_key: &str,
-    ) -> Result<Option<GeoDomainConfig>, DbError> {
-        let entry_id: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM geo_cache_entries WHERE name = ? AND geo_key = ?")
-                .bind(name)
-                .bind(geo_key)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db_err)?;
-        let Some(entry_id) = entry_id else {
+    ) -> Result<Option<String>, DbError> {
+        let header: Option<(i64, String)> = sqlx::query_as(
+            "SELECT id, content_hash FROM geo_cache_entries WHERE name = ? AND geo_key = ?",
+        )
+        .bind(name)
+        .bind(geo_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(header.map(|(_, content_hash)| content_hash))
+    }
+
+    /// [`Self::load_entry`] plus the entry's current `content_hash`.
+    pub async fn load_entry_with_hash(
+        &self,
+        name: &str,
+        geo_key: &str,
+    ) -> Result<Option<(GeoDomainConfig, String)>, DbError> {
+        let header: Option<(i64, String)> = sqlx::query_as(
+            "SELECT id, content_hash FROM geo_cache_entries WHERE name = ? AND geo_key = ?",
+        )
+        .bind(name)
+        .bind(geo_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        let Some((entry_id, content_hash)) = header else {
             return Ok(None);
         };
 
@@ -256,11 +274,24 @@ impl SiteCacheRepository {
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| DbError::Internal("invalid match_type in geo site cache".to_string()))?;
 
-        Ok(Some(GeoDomainConfig {
-            name: name.to_string(),
-            key: geo_key.to_string(),
-            values,
-        }))
+        Ok(Some((
+            GeoDomainConfig {
+                name: name.to_string(),
+                key: geo_key.to_string(),
+                values,
+            },
+            content_hash,
+        )))
+    }
+
+    /// Full rule list of one entry; entries with zero rules still yield
+    /// `Some` with an empty `values`.
+    pub async fn load_entry(
+        &self,
+        name: &str,
+        geo_key: &str,
+    ) -> Result<Option<GeoDomainConfig>, DbError> {
+        Ok(self.load_entry_with_hash(name, geo_key).await?.map(|(config, _)| config))
     }
 
     pub async fn keys_for_name(&self, name: &str) -> Result<Vec<GeoFileCacheKey>, DbError> {

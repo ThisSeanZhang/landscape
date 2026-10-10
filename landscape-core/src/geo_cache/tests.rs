@@ -5,7 +5,7 @@
 //! that table (written through the production normalization path) lives in
 //! `landscape/src/geo/site_service.rs`.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use landscape_common::{
     config_service::geo::{GeoConfigKey, GeoFileCacheKey, GeoSiteFileConfig},
@@ -500,11 +500,12 @@ async fn write_entry(
     repo.replace_by_name("geosite", geo_key, content_hash, rules).await.unwrap();
 }
 
+fn source_key(key: &str) -> GeoFileCacheKey {
+    GeoFileCacheKey { name: "geosite".to_string(), key: key.to_string() }
+}
+
 fn changed_test_key() -> HashSet<GeoFileCacheKey> {
-    HashSet::from([GeoFileCacheKey {
-        name: "geosite".to_string(),
-        key: "TEST".to_string(),
-    }])
+    HashSet::from([source_key("TEST")])
 }
 
 #[tokio::test]
@@ -532,7 +533,7 @@ async fn get_or_build_shares_matchers_by_name_key_and_attribute() {
 }
 
 #[tokio::test]
-async fn refresh_matchers_rebuilds_all_attribute_variants() {
+async fn reconcile_rebuilds_all_attribute_variants() {
     let repo = repo().await;
     write_entry(
         &repo,
@@ -542,11 +543,14 @@ async fn refresh_matchers_rebuilds_all_attribute_variants() {
     )
     .await;
     let registry = SiteMatcherRegistry::new(repo.clone());
+    // hold both Arcs: referenced entries survive the GC segment
     let first = registry.get_or_build(&geo_key(None)).await.unwrap();
     let tagged = registry.get_or_build(&geo_key(Some("tagged"))).await.unwrap();
 
     write_entry(&repo, "TEST", "hash-2", vec![geo_value("renamed.example", &[])]).await;
-    registry.refresh_matchers(&changed_test_key()).await;
+    let drift = registry.reconcile().await;
+    // both definite outcomes (fresh swap + absent removal) report the key
+    assert_eq!(drift, changed_test_key());
 
     let rebuilt = registry.get_or_build(&geo_key(None)).await.unwrap();
     assert!(!Arc::ptr_eq(&first, &rebuilt));
@@ -587,4 +591,145 @@ async fn unreadable_repo_yields_none() {
     pool.close().await;
 
     assert!(registry.get_or_build(&geo_key(None)).await.is_none());
+}
+
+#[tokio::test]
+async fn failed_reconcile_keeps_previous_matcher() {
+    let pool = GeoCacheDatabase::site_mem().await;
+    let repo = SiteCacheRepository::new(pool.clone());
+    write_entry(&repo, "TEST", "hash-1", vec![geo_value("all.example", &[])]).await;
+    let registry = SiteMatcherRegistry::new(repo);
+    let first = registry.get_or_build(&geo_key(None)).await.unwrap();
+
+    // environmental read failure after a (hypothetical) data change
+    pool.close().await;
+    let drift = registry.reconcile().await;
+
+    // the previous matcher keeps serving; the next reconcile re-examines
+    assert!(drift.is_empty());
+    let kept = registry.get_or_build(&geo_key(None)).await.unwrap();
+    assert!(Arc::ptr_eq(&first, &kept));
+    assert!(kept.is_match_normalized(&norm("all.example")));
+    assert_eq!(registry.materialized_len().await, 1);
+}
+
+#[tokio::test]
+async fn reconcile_silently_gcs_unreferenced_matchers() {
+    let repo = repo().await;
+    write_entry(&repo, "TEST", "hash-1", vec![geo_value("all.example", &[])]).await;
+    // zero grace: no young-orphan protection here (that branch is covered
+    // by fresh_swap_survives_the_immediately_following_heartbeat)
+    let registry = SiteMatcherRegistry::with_gc_grace(repo, Duration::ZERO);
+
+    // drop the only consumer reference: the registry's Arc is the last one
+    drop(registry.get_or_build(&geo_key(None)).await.unwrap());
+
+    // unreferenced entries are collected without a change event — no
+    // engine depends on them
+    assert!(registry.reconcile().await.is_empty());
+    assert_eq!(registry.materialized_len().await, 0);
+
+    // a later build re-materializes the entry on demand
+    let rebuilt = registry.get_or_build(&geo_key(None)).await.unwrap();
+    assert!(rebuilt.is_match_normalized(&norm("all.example")));
+    assert_eq!(registry.materialized_len().await, 1);
+}
+
+#[tokio::test]
+async fn fresh_swap_survives_the_immediately_following_heartbeat() {
+    let repo = repo().await;
+    write_entry(&repo, "TEST", "hash-1", vec![geo_value("all.example", &[])]).await;
+    let registry = SiteMatcherRegistry::new(repo.clone());
+    let first = registry.get_or_build(&geo_key(None)).await.unwrap();
+
+    // a notify swaps in a new matcher; its consumer hasn't taken the Arc
+    // yet (the event is still in flight)
+    write_entry(&repo, "TEST", "hash-2", vec![geo_value("renamed.example", &[])]).await;
+    let resolved = registry.reconcile_sources(&changed_test_key()).await;
+    assert_eq!(resolved, changed_test_key());
+
+    // the heartbeat right after must not collect the fresh swap
+    assert!(registry.reconcile().await.is_empty());
+    assert_eq!(registry.materialized_len().await, 1);
+
+    // the consumer's pickup finds the ready matcher — no recompile
+    let picked = registry.get_or_build(&geo_key(None)).await.unwrap();
+    assert!(!Arc::ptr_eq(&first, &picked));
+    assert!(picked.is_match_normalized(&norm("renamed.example")));
+    assert!(!picked.is_match_normalized(&norm("all.example")));
+}
+
+#[tokio::test]
+async fn reconcile_keeps_referenced_matchers_and_reports_drift() {
+    let repo = repo().await;
+    write_entry(&repo, "TEST", "hash-1", vec![geo_value("all.example", &[])]).await;
+    let registry = SiteMatcherRegistry::new(repo.clone());
+    let held = registry.get_or_build(&geo_key(None)).await.unwrap();
+
+    // external rewrite, e.g. a change whose event was missed
+    write_entry(&repo, "TEST", "hash-2", vec![geo_value("renamed.example", &[])]).await;
+    let drift = registry.reconcile().await;
+
+    // the held Arc survives the GC segment; the hash probe reports the drift
+    assert_eq!(drift, changed_test_key());
+    let rebuilt = registry.get_or_build(&geo_key(None)).await.unwrap();
+    assert!(!Arc::ptr_eq(&held, &rebuilt));
+    assert!(rebuilt.is_match_normalized(&norm("renamed.example")));
+    // the old generation keeps serving its holder (snapshot semantics)
+    assert!(held.is_match_normalized(&norm("all.example")));
+    assert_eq!(registry.materialized_len().await, 1);
+}
+
+#[tokio::test]
+async fn reconcile_without_changes_is_idempotent() {
+    let repo = repo().await;
+    write_entry(
+        &repo,
+        "TEST",
+        "hash-1",
+        vec![geo_value("all.example", &[]), geo_value("tagged.example", &["tagged"])],
+    )
+    .await;
+    let registry = SiteMatcherRegistry::new(repo);
+    let first = registry.get_or_build(&geo_key(None)).await.unwrap();
+    let tagged = registry.get_or_build(&geo_key(Some("tagged"))).await.unwrap();
+
+    // a pass over unchanged data: no GC, no rebuild, no event
+    assert!(registry.reconcile().await.is_empty());
+
+    let again = registry.get_or_build(&geo_key(None)).await.unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    let tagged_again = registry.get_or_build(&geo_key(Some("tagged"))).await.unwrap();
+    assert!(Arc::ptr_eq(&tagged, &tagged_again));
+    assert_eq!(registry.materialized_len().await, 2);
+}
+
+#[tokio::test]
+async fn scoped_reconcile_only_touches_target_sources() {
+    let repo = repo().await;
+    write_entry(&repo, "A", "hash-a1", vec![geo_value("a.example", &[])]).await;
+    write_entry(&repo, "B", "hash-b1", vec![geo_value("b.example", &[])]).await;
+    let registry = SiteMatcherRegistry::new(repo.clone());
+    let a = registry.get_or_build(&keyed("A", None)).await.unwrap();
+    let b = registry.get_or_build(&keyed("B", None)).await.unwrap();
+
+    // both sources drift, but only A's change is announced
+    write_entry(&repo, "A", "hash-a2", vec![geo_value("renamed-a.example", &[])]).await;
+    write_entry(&repo, "B", "hash-b2", vec![geo_value("renamed-b.example", &[])]).await;
+    let reported = registry.reconcile_sources(&HashSet::from([source_key("A")])).await;
+    assert_eq!(reported, HashSet::from([source_key("A")]));
+
+    // A rebuilt, B untouched by the scoped pass
+    let rebuilt_a = registry.get_or_build(&keyed("A", None)).await.unwrap();
+    assert!(!Arc::ptr_eq(&a, &rebuilt_a));
+    assert!(rebuilt_a.is_match_normalized(&norm("renamed-a.example")));
+    let kept_b = registry.get_or_build(&keyed("B", None)).await.unwrap();
+    assert!(Arc::ptr_eq(&b, &kept_b));
+    assert!(!kept_b.is_match_normalized(&norm("renamed-b.example")));
+
+    // the full heartbeat still catches B's drift
+    let drift = registry.reconcile().await;
+    assert_eq!(drift, HashSet::from([source_key("B")]));
+    let rebuilt_b = registry.get_or_build(&keyed("B", None)).await.unwrap();
+    assert!(rebuilt_b.is_match_normalized(&norm("renamed-b.example")));
 }

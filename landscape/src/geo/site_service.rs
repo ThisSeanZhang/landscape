@@ -205,9 +205,10 @@ impl GeoSiteService {
         if changed_keys.is_empty() {
             return;
         }
-        // recompile the affected matchers first: the engine rebuilds
-        // triggered by the event below must observe fresh data
-        self.matcher_registry.refresh_matchers(&changed_keys).await;
+        // rebuild the changed sources' matchers first so the engine
+        // rebuilds below observe fresh data; drift discovery and GC stay
+        // with the daily heartbeat
+        self.matcher_registry.reconcile_sources(&changed_keys).await;
         let _ = self
             .dns_events_tx
             .send(DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) })
@@ -505,6 +506,17 @@ impl GeoSiteService {
                 }
             }
             self.notify_geo_changes(removed).await;
+        }
+
+        // heartbeat: GC unreferenced matchers and self-heal drift (incl.
+        // matchers kept from an earlier failure); a definite outcome gets
+        // its own event so engines rebuild
+        let drift = self.matcher_registry.reconcile().await;
+        if !drift.is_empty() {
+            let _ = self
+                .dns_events_tx
+                .send(DnsEvent::GeoSitesChanged { changed_keys: Some(drift) })
+                .await;
         }
     }
 
