@@ -31,11 +31,15 @@ pub fn to_common_records(records: Vec<Record>) -> Vec<CommonRecord> {
 
 pub(crate) mod connection;
 pub(crate) mod domain;
+#[cfg(feature = "pool-exp")]
 pub(crate) mod exp_conn_pool;
 
 pub mod listener;
 pub mod mdns;
 pub mod server;
+
+#[cfg(all(feature = "pool-exp", feature = "pool-native"))]
+compile_error!("features `pool-exp` and `pool-native` are mutually exclusive: enable exactly one");
 
 static RESOLVER_CONF: &str = "/etc/resolv.conf";
 static RESOLVER_CONF_LD_BACK: &str = "/etc/resolv.conf.ld_back";

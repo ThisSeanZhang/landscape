@@ -148,6 +148,8 @@ rustls = { version = "0.23.45", default-features = false, features = [
     "tls12",
 ] }
 rustls-pki-types = "1.15.1"
+rustls-platform-verifier = "0.7"
+webpki-roots = "0.26"
 pem = "4.0.0"
 rcgen = "0.14.10"
 instant-acme = "0.8.5"

@@ -9,12 +9,17 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["pool-native"]
+pool-exp = []
+pool-native = ["dep:rand", "dep:webpki-roots", "dep:rustls-platform-verifier"]
+
 [dependencies]
 landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
-hickory-server = { workspace = true, features = ["https-ring"] }
+hickory-server = { workspace = true, features = ["https-ring", "quic-ring"] }
 hickory-resolver = { workspace = true, features = [
     "system-config",
     "__tls",
@@ -22,9 +27,7 @@ hickory-resolver = { workspace = true, features = [
     "quic-ring",
     "rustls-platform-verifier",
 ] }
-hickory-proto = { workspace = true, features = [
-    "mdns",
-] }
+hickory-proto = { workspace = true, features = ["mdns"] }
 
 uuid = { workspace = true }
 serde = { workspace = true }
@@ -56,7 +59,13 @@ moka = { workspace = true }
 dashmap = { workspace = true }
 idna = { workspace = true }
 
+# pool-native only
+rand = { workspace = true, optional = true }
+webpki-roots = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 homedir = { workspace = true }
 rcgen = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

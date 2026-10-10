@@ -15,11 +15,24 @@ use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
 
-pub type MarkConnectionProvider = MarkRuntimeProvider;
+pub type MarkConnectionProvider = HickoryMarkProvider;
 
-/// The Tokio Runtime for async execution
+/// Plain socket factory used by the native upstream pool (ported verbatim
+/// from the `fix/dns-connection-p0p1` branch). Re-exported under the
+/// historical name so the ported tree's `provider::MarkRuntimeProvider`
+/// references resolve unchanged.
+#[cfg(feature = "pool-native")]
+pub(crate) mod mark;
+#[cfg(feature = "pool-native")]
+pub(crate) use mark::MarkRuntimeProvider;
+
+/// Socket provider for the legacy hickory `Resolver` path: implements
+/// hickory's `RuntimeProvider` so `Resolver::builder_with_config` accepts
+/// it. The native pool has its own plain socket factory in
+/// [`crate::connection::provider::mark`] (re-exported as
+/// `MarkRuntimeProvider` under the `pool-native` feature).
 #[derive(Clone)]
-pub struct MarkRuntimeProvider {
+pub struct HickoryMarkProvider {
     handler: TokioHandle,
     mark_value: u32,
     bind_addr4: Option<Ipv4Addr>,
@@ -27,20 +40,20 @@ pub struct MarkRuntimeProvider {
     quic_binder: MarkQuicSocketBinder,
 }
 
-impl fmt::Debug for MarkRuntimeProvider {
+impl fmt::Debug for HickoryMarkProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MarkRuntimeProvider")
+        f.debug_struct("HickoryMarkProvider")
             .field("mark_value", &self.mark_value)
-            // .field("secret", &self.secret) // 手动跳过
+            // .field("secret", self.secret) // 手动跳过
             .finish()
     }
 }
 
-impl MarkRuntimeProvider {
+impl HickoryMarkProvider {
     /// Create a Tokio runtime with a specific mark value
     pub fn new(mark_value: u32, bind_config: DnsBindConfig) -> Self {
         let DnsBindConfig { bind_addr4, bind_addr6 } = bind_config;
-        MarkRuntimeProvider {
+        HickoryMarkProvider {
             handler: TokioHandle::default(),
             mark_value,
             bind_addr4,
@@ -50,7 +63,7 @@ impl MarkRuntimeProvider {
     }
 }
 
-impl RuntimeProvider for MarkRuntimeProvider {
+impl RuntimeProvider for HickoryMarkProvider {
     type Handle = TokioHandle;
     type Timer = TokioTime;
     type Udp = TokioUdpSocket;

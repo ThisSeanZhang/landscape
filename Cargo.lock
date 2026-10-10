@@ -3143,9 +3143,11 @@ dependencies = [
  "moka",
  "nix 0.31.3",
  "quinn",
+ "rand 0.10.3",
  "rcgen",
  "regex",
  "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "socket2 0.6.5",
@@ -3156,6 +3158,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
