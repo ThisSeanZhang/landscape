@@ -36,7 +36,6 @@ uuid = { workspace = true }
 libc = { workspace = true }
 idna = { workspace = true }
 
-paste = { workspace = true }
 deku = { workspace = true }
 
 dhcproto = { workspace = true, features = ["serde"] }

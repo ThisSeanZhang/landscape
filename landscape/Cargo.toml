@@ -22,7 +22,6 @@ anyhow = { workspace = true }
 
 thiserror = { workspace = true }
 
-paste = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 sha2 = { workspace = true }
