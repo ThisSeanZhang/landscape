@@ -1,6 +1,10 @@
 import { get_all_wan_links, get_wan_link_status } from "@/api/service_wan_link";
+import { get_route_status } from "@/api/route/status";
 import { WanLink } from "@/lib/wan_link";
-import type { WanLinkStatus } from "@landscape-router/types/api/schemas";
+import type {
+  WanLinkHealthState,
+  WanLinkStatus,
+} from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { computed, ComputedRef, ref } from "vue";
 
@@ -13,19 +17,35 @@ export const useWanLinkStore = defineStore("wan_link", () => {
   const status = ref<Map<string, WanLinkStatus>>(
     new Map<string, WanLinkStatus>(),
   );
+  const health = ref<Map<string, WanLinkHealthState>>(
+    new Map<string, WanLinkHealthState>(),
+  );
 
   async function UPDATE_INFO() {
-    // Both requests fail independently (e.g. backend restarting): keep the
+    // Every request fails independently (e.g. backend restarting): keep the
     // last values so the global poll loop stays alive.
-    const [links_result, status_result] = await Promise.all([
+    const [links_result, status_result, route_result] = await Promise.all([
       get_all_wan_links().catch(() => undefined),
       get_wan_link_status().catch(() => undefined),
+      get_route_status().catch(() => undefined),
     ]);
     if (links_result !== undefined) {
       links.value = links_result;
     }
     if (status_result !== undefined) {
       status.value = status_result;
+    }
+    if (route_result !== undefined) {
+      const health_map = new Map<string, WanLinkHealthState>();
+      for (const entry of [
+        ...(route_result.ipv4_wan ?? []),
+        ...(route_result.ipv6_wan ?? []),
+      ]) {
+        if ("Link" in entry.owner) {
+          health_map.set(entry.owner.Link, entry.health ?? "unknown");
+        }
+      }
+      health.value = health_map;
     }
   }
 
@@ -79,13 +99,24 @@ export const useWanLinkStore = defineStore("wan_link", () => {
     );
   }
 
+  /** Health-check verdict of a link, reported through its WAN routes. */
+  function GET_HEALTH_BY_ID(
+    id: string | undefined,
+  ): ComputedRef<WanLinkHealthState | undefined> {
+    return computed(() =>
+      id === undefined ? undefined : health.value.get(id),
+    );
+  }
+
   return {
     links,
     status,
+    health,
     UPDATE_INFO,
     GET_LINK_BY_IFACE,
     GET_PPPD_LINK_BY_IFACE,
     RESOLVE_NODE_LINK,
     GET_STATUS_BY_ID,
+    GET_HEALTH_BY_ID,
   };
 });

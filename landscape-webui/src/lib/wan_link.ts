@@ -14,6 +14,38 @@ export const DEFAULT_CLAMP_SIZE = 1492;
 export const DEFAULT_EXPECTED_PD_LEN = 60;
 export const DEFAULT_REQUESTED_MRU = 1492;
 
+// Mirrors the backend runtime defaults (`None` = these values).
+export const DEFAULT_HEALTH_INTERVAL_SECS = 10;
+export const DEFAULT_HEALTH_TIMEOUT_MS = 1000;
+export const DEFAULT_HEALTH_FAILURE_THRESHOLD = 3;
+export const DEFAULT_HEALTH_RECOVERY_THRESHOLD = 3;
+export const DEFAULT_HEALTH_RELIABILITY = 1;
+
+// Mirrors the backend `MAX_HEALTH_TARGETS` validation cap.
+export const MAX_HEALTH_TARGETS = 4;
+
+export type HealthCheckConfig = {
+  enable: boolean;
+  probe: { t: "icmp"; targets: string[]; probe_gateway: boolean };
+  interval_secs: number;
+  timeout_ms: number;
+  failure_threshold: number;
+  recovery_threshold: number;
+  reliability: number;
+};
+
+export function default_health_check(): HealthCheckConfig {
+  return {
+    enable: false,
+    probe: { t: "icmp", targets: [], probe_gateway: false },
+    interval_secs: DEFAULT_HEALTH_INTERVAL_SECS,
+    timeout_ms: DEFAULT_HEALTH_TIMEOUT_MS,
+    failure_threshold: DEFAULT_HEALTH_FAILURE_THRESHOLD,
+    recovery_threshold: DEFAULT_HEALTH_RECOVERY_THRESHOLD,
+    reliability: DEFAULT_HEALTH_RELIABILITY,
+  };
+}
+
 function default_nat_range(): Range {
   return new Range(DEFAULT_NAT_RANGE_START, DEFAULT_NAT_RANGE_END);
 }
@@ -39,6 +71,7 @@ export class WanLink {
   };
   firewall: { enable: boolean };
   mss: { enable: boolean; clamp_size: number };
+  health_check: HealthCheckConfig;
   update_at?: number;
 
   constructor(obj?: Partial<WanLink> & { attach_iface_name?: string }) {
@@ -61,6 +94,7 @@ export class WanLink {
     };
     this.firewall = obj?.firewall ?? { enable: false };
     this.mss = obj?.mss ?? { enable: false, clamp_size: DEFAULT_CLAMP_SIZE };
+    this.health_check = obj?.health_check ?? default_health_check();
     this.update_at = obj?.update_at;
   }
 
@@ -167,8 +201,49 @@ export function wan_link_from_payload(payload: WanLinkConfig): WanLink {
         (raw.mss as { clamp_size?: number | null } | undefined)?.clamp_size ??
         DEFAULT_CLAMP_SIZE,
     },
+    health_check: health_check_from_raw(raw.health_check),
     update_at: raw.update_at as number | undefined,
   });
+}
+
+function health_check_from_raw(raw_section: unknown): HealthCheckConfig {
+  const section = raw_section as
+    | {
+        enable?: boolean;
+        probe?: {
+          t?: string;
+          targets?: string[] | null;
+          probe_gateway?: boolean;
+        };
+        interval_secs?: number | null;
+        timeout_ms?: number | null;
+        failure_threshold?: number | null;
+        recovery_threshold?: number | null;
+        reliability?: number | null;
+      }
+    | undefined;
+  const defaults = default_health_check();
+  if (!section) {
+    return defaults;
+  }
+  return {
+    enable: section.enable ?? false,
+    probe: {
+      t: "icmp",
+      targets: section.probe?.t === "icmp" ? (section.probe.targets ?? []) : [],
+      probe_gateway:
+        section.probe?.t === "icmp"
+          ? (section.probe.probe_gateway ?? false)
+          : false,
+    },
+    interval_secs: section.interval_secs ?? DEFAULT_HEALTH_INTERVAL_SECS,
+    timeout_ms: section.timeout_ms ?? DEFAULT_HEALTH_TIMEOUT_MS,
+    failure_threshold:
+      section.failure_threshold ?? DEFAULT_HEALTH_FAILURE_THRESHOLD,
+    recovery_threshold:
+      section.recovery_threshold ?? DEFAULT_HEALTH_RECOVERY_THRESHOLD,
+    reliability: section.reliability ?? DEFAULT_HEALTH_RELIABILITY,
+  };
 }
 
 // ── pppd modal form adapter (keeps the legacy form shape) ────────────

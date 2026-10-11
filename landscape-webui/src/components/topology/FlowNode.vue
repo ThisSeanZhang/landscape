@@ -2,6 +2,7 @@
 import { Handle, Position } from "@vue-flow/core";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
 import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
+import HealthCheckEditModal from "@/components/health_check/HealthCheckEditModal.vue";
 import LanIPv6EditModal from "@/components/lan_ipv6/LanIPv6EditModal.vue";
 import IpConfigModal from "@/components/ipconfig/IpConfigModal.vue";
 import IPv6PDEditModal from "@/components/ipv6pd/IPv6PDEditModal.vue";
@@ -59,6 +60,7 @@ const themeVars = useThemeVars();
 const show_switch = computed(() => new ServiceExhibitSwitch(props.node));
 const ifaceNodeStore = useIfaceNodeStore();
 const show_mss_clamp_edit = ref(false);
+const show_health_check_edit = ref(false);
 const iface_dhcp_v4_service_edit_show = ref(false);
 const iface_wifi_edit_show = ref(false);
 const iface_firewall_edit_show = ref(false);
@@ -120,6 +122,27 @@ const route_wan_status = computed(
 const mss_clamp_status = computed(() =>
   node_link.value?.mss.enable ? link_status.value?.mss : undefined,
 );
+const health_check_status = computed(() =>
+  node_link.value?.health_check.enable
+    ? link_status.value?.health_check
+    : undefined,
+);
+const link_health = computed(() => {
+  const link = node_link.value;
+  return link?.health_check.enable
+    ? (wanLinkStore.health.get(link.id) ?? "unknown")
+    : undefined;
+});
+const health_tag_type = computed(() => {
+  switch (link_health.value) {
+    case "healthy":
+      return "success";
+    case "unhealthy":
+      return "error";
+    default:
+      return "default";
+  }
+});
 
 const is_virtual_pppd = computed(() => props.node.virtual);
 const pppd_link = computed(() =>
@@ -226,6 +249,21 @@ function serviceStatusStyle(status?: ServiceStatus) {
   };
 }
 
+function serviceItemTooltip(item: {
+  label: string;
+  status?: ServiceStatus;
+  verdict?: string;
+}) {
+  if (is_virtual_pppd.value) {
+    return `${item.label} · ${t("pppoe.service_locked_hint")}`;
+  }
+  const parts = [item.label, serviceStatusText(item.status)];
+  if (item.verdict !== undefined) {
+    parts.push(item.verdict);
+  }
+  return parts.join(" · ");
+}
+
 async function refreshGraph() {
   await ifaceNodeStore.UPDATE_INFO();
 }
@@ -266,6 +304,9 @@ function openServiceEditor(service_key: string) {
     case "mss_clamp":
       show_mss_clamp_edit.value = true;
       break;
+    case "health_check":
+      show_health_check_edit.value = true;
+      break;
     case "pppd":
       show_pppd_create_modal.value = true;
       break;
@@ -278,6 +319,7 @@ const service_items = computed(() => {
     label: string;
     short_label: string;
     status?: ServiceStatus;
+    verdict?: string;
   }> = [];
 
   if (show_switch.value.mss_clamp) {
@@ -286,6 +328,17 @@ const service_items = computed(() => {
       label: t("topology.panel.open_mss_clamp"),
       short_label: "MSS",
       status: mss_clamp_status.value,
+    });
+  }
+  if (show_switch.value.health_check) {
+    items.push({
+      key: "health_check",
+      label: t("topology.panel.open_health_check"),
+      short_label: "HC",
+      status: health_check_status.value,
+      verdict: link_health.value
+        ? t(`route_status.health_${link_health.value}`)
+        : undefined,
     });
   }
   if (show_switch.value.ip_config) {
@@ -498,6 +551,9 @@ const node_style = computed(() => ({
             <n-tag size="tiny" :type="zone_type" round>
               {{ node.zone_type }}
             </n-tag>
+            <n-tag v-if="link_health" size="tiny" :type="health_tag_type" round>
+              {{ t(`route_status.health_${link_health}`) }}
+            </n-tag>
             <n-tag v-for="tag in role_tags" :key="tag" size="tiny" tertiary>
               {{ tag }}
             </n-tag>
@@ -571,11 +627,7 @@ const node_style = computed(() => ({
               <span>{{ item.short_label }}</span>
             </span>
           </template>
-          {{
-            is_virtual_pppd
-              ? `${item.label} · ${t("pppoe.service_locked_hint")}`
-              : `${item.label} · ${serviceStatusText(item.status)}`
-          }}
+          {{ serviceItemTooltip(item) }}
         </n-tooltip>
       </div>
     </div>
@@ -640,6 +692,11 @@ const node_style = computed(() => ({
     <MSSClampServiceEditModal
       v-model:show="show_mss_clamp_edit"
       :iface_name="node.name"
+    />
+    <HealthCheckEditModal
+      v-model:show="show_health_check_edit"
+      :iface_name="node.name"
+      @refresh="refreshGraph"
     />
     <RouteLanServiceEditModal
       v-model:show="show_route_lan_drawer"

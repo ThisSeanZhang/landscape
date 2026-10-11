@@ -63,6 +63,7 @@ export default {
     open_route_lan: "LAN Route",
     open_route_wan: "WAN Route",
     open_mss_clamp: "MSS Clamp",
+    open_health_check: "Health Check",
     no_services: "No service entry available",
     change_zone: "Change Zone",
     enable_boot: "Enable in Boot",

@@ -43,4 +43,32 @@ export default {
     title: "配置 TCP MSS 钳制",
     clamp_value: "钳制值",
   },
+  health_check: {
+    title: "WAN 链路健康检查",
+    targets: "探测目标 (IPv4)",
+    targets_tooltip:
+      "最多配置 4 个 IPv4 地址。开启网关探测后，每轮会额外探测会话学习到的网关。",
+    target_placeholder: "例如 1.1.1.1",
+    add_target: "添加探测目标",
+    probe_gateway: "探测默认网关",
+    probe_gateway_hint: "额外探测会话（DHCP/PPPoE）学习到的网关地址。",
+    interval_secs: "探测间隔 (秒)",
+    interval_tooltip: "每轮探测之间的间隔时间。取值 1-65535 秒，默认 10 秒。",
+    timeout_ms: "超时 (毫秒)",
+    timeout_tooltip:
+      "单个探测等待应答的超时时间。取值 1-10000 毫秒，默认 1000 毫秒，且必须小于探测间隔。",
+    failure_threshold: "失败阈值",
+    failure_threshold_tooltip:
+      "连续失败多少轮后判定链路不健康。取值 1-100，默认 3。",
+    recovery_threshold: "恢复阈值",
+    recovery_threshold_tooltip:
+      "判定不健康后，连续成功多少轮才恢复为健康。取值 1-100，默认 3；建议不小于失败阈值，以避免状态反复抖动。",
+    reliability: "每轮最少应答目标数",
+    reliability_tooltip:
+      "每轮探测会向所有已启用的目标（配置的目标 + 网关，如开启）发送 ping。至少需要该数量的目标应答，本轮才算成功。连续达到「失败阈值」轮失败后判定链路不健康；连续达到「恢复阈值」轮成功后恢复。取值 1-100，且不能超过目标总数。示例：目标 1.1.1.1、8.8.8.8 加网关共 3 个，设为 2 时单个目标失联不影响判定。",
+    reliability_range: "可靠度取值范围为 1-100",
+    invalid_target: "探测目标必须是有效的 IPv4 地址",
+    nothing_to_probe: "没有可探测目标：请添加至少一个目标或启用网关探测",
+    save_failed: "保存失败",
+  },
 };

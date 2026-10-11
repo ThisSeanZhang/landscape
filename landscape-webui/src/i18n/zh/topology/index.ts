@@ -63,6 +63,7 @@ export default {
     open_route_lan: "LAN 路由",
     open_route_wan: "WAN 路由",
     open_mss_clamp: "MSS 钳制",
+    open_health_check: "健康检查",
     no_services: "当前没有可用的服务入口",
     change_zone: "修改区域",
     enable_boot: "开机启用",

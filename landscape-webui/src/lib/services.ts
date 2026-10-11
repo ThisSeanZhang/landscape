@@ -99,6 +99,7 @@ export class ServiceExhibitSwitch {
   station: boolean;
   dhcp_v4: boolean;
   mss_clamp: boolean;
+  health_check: boolean;
   route_lan: boolean;
   route_wan: boolean;
 
@@ -117,6 +118,7 @@ export class ServiceExhibitSwitch {
     this.station = false;
     this.dhcp_v4 = false;
     this.mss_clamp = false;
+    this.health_check = false;
 
     this.route_lan = false;
     this.route_wan = false;
@@ -151,6 +153,7 @@ export class ServiceExhibitSwitch {
       this.ipv6pd = true;
       this.firewall = true;
       this.mss_clamp = true;
+      this.health_check = true;
       this.route_wan = true;
     } else if (dev.name === "docker0") {
       this.zone_type = false;
@@ -169,6 +172,7 @@ export class ServiceExhibitSwitch {
       this.ipv6pd = true;
       this.firewall = true;
       this.mss_clamp = true;
+      this.health_check = true;
       this.route_wan = true;
     }
   }
