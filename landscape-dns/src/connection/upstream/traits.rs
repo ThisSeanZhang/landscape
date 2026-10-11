@@ -83,6 +83,13 @@ pub(crate) trait DnsConn: Send + Sync + Debug {
 
     /// Closes the connection and releases its resources.
     fn shutdown(&self);
+
+    /// Test-only local-address introspection (source-port rotation
+    /// assertions); `None` for connections that do not expose it.
+    #[cfg(test)]
+    fn test_local_addr(&self) -> Option<std::net::SocketAddr> {
+        None
+    }
 }
 
 /// Builds connections to one upstream endpoint (ip + protocol).

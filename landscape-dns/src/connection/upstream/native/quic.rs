@@ -70,7 +70,6 @@ pub(super) fn connector(
         query_timeout: config.query_timeout,
         max_active_requests: config.max_active_requests,
         transport_config: Arc::new(transport_config),
-        endpoint: std::sync::OnceLock::new(),
         #[cfg(test)]
         idle_timeout: idle,
         #[cfg(test)]
@@ -79,9 +78,13 @@ pub(super) fn connector(
 }
 
 /// One connector: dials (and re-dials) DoQ connections to a single endpoint.
-/// All connections share one quinn endpoint (one UDP socket per upstream,
-/// created lazily on the first connect), which also enables session
-/// resumption across re-dials.
+/// Every dial builds a fresh quinn endpoint — a fresh UDP socket, so the OS
+/// picks a new random source port each time. A re-dial after the old
+/// five-tuple was QoS'd or blackholed therefore lands on a new port instead
+/// of hammering the dead one, matching the TCP/DoT/DoH paths (whose dials
+/// also bind a new ephemeral source port). Session resumption survives the
+/// per-dial sockets: the TLS session store lives behind an `Arc` inside the
+/// shared `rustls::ClientConfig`, not inside the endpoint.
 #[derive(Debug)]
 struct NativeQuicConnector {
     addr: SocketAddr,
@@ -96,12 +99,6 @@ struct NativeQuicConnector {
     /// multiplexer's `max_active_requests`).
     max_active_requests: usize,
     transport_config: Arc<quinn::TransportConfig>,
-    /// Shared endpoint, built lazily on the first `connect` (quinn spawns the
-    /// endpoint driver task at creation, which requires a running runtime).
-    /// Only successful builds are cached: a transient failure (fd exhaustion,
-    /// a momentary bind failure) must not poison the connector for its
-    /// lifetime, or a DoQ upstream would never recover.
-    endpoint: std::sync::OnceLock<Arc<quinn::Endpoint>>,
     /// Test-only introspection of the applied idle timeout.
     #[cfg(test)]
     idle_timeout: Duration,
@@ -111,8 +108,8 @@ struct NativeQuicConnector {
 }
 
 impl NativeQuicConnector {
-    /// Builds the shared endpoint: SO_MARK + bind through the provider,
-    /// DoQ ALPN, transport tuning, and the default client config.
+    /// Builds a fresh endpoint (one UDP socket): SO_MARK + bind through the
+    /// provider, DoQ ALPN, transport tuning, and the default client config.
     fn build_endpoint(&self) -> Result<quinn::Endpoint, io::Error> {
         let Some(tls_config) = &self.tls_config else {
             return Err(io::Error::other("missing TLS config"));
@@ -149,29 +146,16 @@ impl NativeQuicConnector {
         endpoint.set_default_client_config(client_config);
         Ok(endpoint)
     }
-
-    /// Returns the shared endpoint, building it on first use. Only success is
-    /// cached: a failed build can be retried by a later `connect`.
-    fn endpoint(&self) -> Result<Arc<quinn::Endpoint>, DnsConnError> {
-        if let Some(endpoint) = self.endpoint.get() {
-            return Ok(endpoint.clone());
-        }
-        let endpoint =
-            Arc::new(self.build_endpoint().map_err(|e| DnsConnError::Io(e.to_string()))?);
-        match self.endpoint.set(endpoint.clone()) {
-            Ok(()) => Ok(endpoint),
-            // A concurrent build won the cache race: drop our duplicate (its
-            // socket closes with the local Arc) and share the winner, so at
-            // most one endpoint driver and bound socket live per connector.
-            Err(_) => Ok(self.endpoint.get().expect("race loser: winner must be set").clone()),
-        }
-    }
 }
 
 #[async_trait]
 impl DnsConnector for NativeQuicConnector {
     async fn connect(&self) -> Result<Arc<dyn DnsConn>, DnsConnError> {
-        let endpoint = self.endpoint()?;
+        // A fresh endpoint (fresh UDP socket → fresh OS-chosen source port)
+        // per dial, so a re-dial never reuses the previous five-tuple (see
+        // the connector docs). The connect future owns its endpoint state,
+        // so the handle can move into the connection once established.
+        let endpoint = self.build_endpoint().map_err(|e| DnsConnError::Io(e.to_string()))?;
         let Some(server_name) = &self.server_name else {
             return Err(DnsConnError::Internal("missing DoQ server name".into()));
         };
@@ -185,6 +169,7 @@ impl DnsConnector for NativeQuicConnector {
             .map_err(map_conn_error)?;
 
         Ok(Arc::new(NativeQuicConn {
+            endpoint,
             connection,
             ip: self.addr.ip(),
             query_timeout: self.query_timeout,
@@ -214,8 +199,17 @@ impl DnsConnector for NativeQuicConnector {
     }
 }
 
-/// One established DoQ connection.
+/// One established DoQ connection, owning the endpoint (UDP socket) it was
+/// dialed through. Holding the handle keeps quinn's endpoint driver alive
+/// for exactly as long as the connection lives; when the pool retires the
+/// connection, the socket — and with it the source port — is released, and
+/// the next dial binds a fresh one.
 struct NativeQuicConn {
+    /// Held for its lifetime, not read: owning the endpoint keeps quinn's
+    /// driver (and the UDP socket) alive for exactly as long as the
+    /// connection lives. Only the `#[cfg(test)]` introspection reads it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    endpoint: quinn::Endpoint,
     connection: quinn::Connection,
     ip: IpAddr,
     query_timeout: Duration,
@@ -313,6 +307,13 @@ impl DnsConn for NativeQuicConn {
 
     fn shutdown(&self) {
         self.connection.close(quinn::VarInt::from_u32(0), b"Shutdown");
+    }
+
+    /// Test-only source-port introspection (port-rotation assertions): the
+    /// locally bound address of this connection's endpoint.
+    #[cfg(test)]
+    fn test_local_addr(&self) -> Option<SocketAddr> {
+        self.endpoint.local_addr().ok()
     }
 }
 

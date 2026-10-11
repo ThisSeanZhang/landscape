@@ -1,6 +1,7 @@
 //! Native quinn DoQ connector tests against a minimal echo peer (the
 //! hickory-net `test_quic_stream` pattern): round-trip fidelity, the RFC 9250
-//! id-0 validation, stream reuse across sequential queries, and IPv6.
+//! id-0 validation, stream reuse across sequential queries, source-port
+//! rotation across dials, and IPv6.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
@@ -62,6 +63,32 @@ async fn doq_native_connector_reuses_connection_across_queries() {
         assert_eq!(message.answers.len(), 1);
         assert_eq!(message.metadata.id, 0);
     }
+}
+
+/// Every dial builds a fresh endpoint (a fresh UDP socket), so each
+/// connection rides a new OS-chosen source port — the DoQ counterpart of
+/// the DoT/DoH paths, whose dials also bind a new ephemeral port. A re-dial
+/// after the old five-tuple was QoS'd or blackholed therefore lands on a
+/// new port instead of reusing the dead one. The first connection is kept
+/// alive while the second dials, so two simultaneously bound sockets —
+/// which can never share a port — make the assertion deterministic.
+#[tokio::test]
+async fn doq_native_connector_rotates_source_port_on_redial() {
+    let tls = test_tls();
+    let server = spawn_quic_echo_server(&tls, IpAddr::V4(Ipv4Addr::LOCALHOST), false);
+    let connector = quic_connector(server.port(), &tls, Duration::from_secs(60), true);
+
+    let first = connector.connect().await.unwrap();
+    assert_www_query(first.as_ref()).await;
+    let first_port =
+        first.test_local_addr().expect("DoQ connections expose their local addr").port();
+
+    let second = connector.connect().await.unwrap();
+    assert_www_query(second.as_ref()).await;
+    let second_port =
+        second.test_local_addr().expect("DoQ connections expose their local addr").port();
+
+    assert_ne!(first_port, second_port, "a fresh dial must bind a fresh source port");
 }
 
 /// IPv6 path: the connector binds its QUIC socket on the v6 unspecified
