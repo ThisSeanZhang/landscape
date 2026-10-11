@@ -1,12 +1,14 @@
 import { WanLink, wan_link_from_payload } from "@/lib/wan_link";
 import type {
   WanLinkConfig,
+  WanLinkSectionsSnapshot,
   WanLinkStatus,
 } from "@landscape-router/types/api/schemas";
 import {
   createWanLink,
   deleteWanLink,
   getAllWanLinkStatus,
+  getWanLinkRuntimeStatus,
   listWanLinks,
   updateWanLink,
 } from "@landscape-router/types/api/wan-link/wan-link";
@@ -27,6 +29,14 @@ export async function get_wan_link_status(): Promise<
     map.set(key, value as WanLinkStatus);
   }
   return map;
+}
+
+export async function get_wan_link_runtime_status(
+  id: string,
+): Promise<WanLinkSectionsSnapshot> {
+  return (await getWanLinkRuntimeStatus(id, {
+    silent: true,
+  })) as WanLinkSectionsSnapshot;
 }
 
 export async function create_wan_link(link: WanLink): Promise<WanLink> {

@@ -118,7 +118,7 @@ export function merge_pppd_placeholders(
         mac: undefined,
         perm_mac: undefined,
         dev_type: "ppp",
-        dev_kind: "ppp",
+        dev_kind: "unknow",
         dev_status: { t: DevStateType.Down },
         controller_id: undefined,
         carrier: false,

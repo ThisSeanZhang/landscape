@@ -8,12 +8,19 @@ import {
   change_iface_status,
   delete_bridge,
 } from "@/api/network";
-import {
-  get_runtime_ip_addresses,
-  type RuntimeIpAddress,
-} from "@/api/service_ipconfig";
+import { get_wan_link_runtime_status } from "@/api/service_wan_link";
 import { DevStateType, NetDev, WifiMode, WLANTypeTag } from "@/lib/dev";
+import {
+  formatHealthRuntime,
+  formatPdRuntime,
+  formatServiceStatus,
+  formatV4Runtime,
+  type RuntimeDisplay,
+  type RuntimeMask,
+  type RuntimeT,
+} from "@/lib/wan_runtime";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import type { WanLinkSectionsSnapshot } from "@landscape-router/types/api/schemas";
 import {
   canManageBridgeAttachment,
   getBridgeAttachIssue,
@@ -21,9 +28,10 @@ import {
 import { ServiceExhibitSwitch } from "@/lib/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useIfaceNodeStore } from "@/stores/iface_node";
+import { useWanLinkStore } from "@/stores/wan_link";
 import { useDialog, useMessage, useThemeVars } from "naive-ui";
 import { changeColor } from "seemly";
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 const props = defineProps<{
@@ -41,7 +49,6 @@ const themeVars = useThemeVars();
 const show_zone_change = ref(false);
 const show_cpu_balance_btn = ref(false);
 const delete_loading = ref(false);
-const runtime_addresses = ref<RuntimeIpAddress[]>([]);
 const selected_bridge_ifindex = ref<number | null>(null);
 const disable_guard_modal = ref<InstanceType<
   typeof IfaceDisableGuardModal
@@ -55,32 +62,158 @@ watch(
   { immediate: true },
 );
 
+const show_switch = computed(() => new ServiceExhibitSwitch(props.node));
+
+const wanLinkStore = useWanLinkStore();
+const node_link = computed(
+  () => wanLinkStore.RESOLVE_NODE_LINK(props.node.name).value,
+);
+
+const runtime_snapshot = ref<WanLinkSectionsSnapshot | undefined>(undefined);
+const runtime_state = ref<"pending" | "ok" | "not_running" | "unavailable">(
+  "pending",
+);
+let runtime_timer: ReturnType<typeof setInterval> | undefined;
+
+const runtime_rt: RuntimeT = (key, params) => t(key, params ?? {});
+const runtime_mask: RuntimeMask = (value) =>
+  frontEndStore.MASK_INFO(value) || value;
+
+async function refresh_runtime_status(link_id: string) {
+  try {
+    const snapshot = await get_wan_link_runtime_status(link_id);
+    if (node_link.value?.id !== link_id) {
+      return;
+    }
+    runtime_snapshot.value = snapshot;
+    runtime_state.value = "ok";
+  } catch (err) {
+    if (node_link.value?.id !== link_id) {
+      return;
+    }
+    runtime_state.value =
+      (err as { error_id?: string })?.error_id === "service.config_not_found"
+        ? "not_running"
+        : "unavailable";
+  }
+}
+
 watch(
-  () => props.node.name,
-  async (iface_name) => {
-    runtime_addresses.value = [];
-    try {
-      const addresses = await get_runtime_ip_addresses(iface_name);
-      if (iface_name === props.node.name) {
-        runtime_addresses.value = [...addresses]
-          .filter(
-            (address, index, list) =>
-              list.findIndex(
-                (item) =>
-                  item.address === address.address &&
-                  item.prefix_length === address.prefix_length,
-              ) === index,
-          )
-          .sort((a, b) => a.address.localeCompare(b.address));
-      }
-    } catch {
-      // Runtime addresses are supplemental and must not block interface actions.
+  () => node_link.value?.id,
+  (link_id) => {
+    if (runtime_timer !== undefined) {
+      clearInterval(runtime_timer);
+      runtime_timer = undefined;
+    }
+    runtime_snapshot.value = undefined;
+    runtime_state.value = "pending";
+    if (link_id !== undefined) {
+      void refresh_runtime_status(link_id);
+      runtime_timer = setInterval(
+        () => void refresh_runtime_status(link_id),
+        2000,
+      );
     }
   },
   { immediate: true },
 );
 
-const show_switch = computed(() => new ServiceExhibitSwitch(props.node));
+onUnmounted(() => {
+  if (runtime_timer !== undefined) {
+    clearInterval(runtime_timer);
+  }
+});
+
+function deviceKindText(kind: NetDev["dev_kind"]): string | undefined {
+  if (kind === null || kind === undefined) {
+    return undefined;
+  }
+  const text = typeof kind === "string" ? kind : kind.other;
+  return text === "" || text === "unknow" ? undefined : text;
+}
+
+const device_type_label = computed(() => {
+  const type = displayValue(props.node.dev_type);
+  const kind = deviceKindText(props.node.dev_kind);
+  if (kind === undefined || kind === type) {
+    return type;
+  }
+  return `${type}/${kind}`;
+});
+
+interface RuntimeRow {
+  label: string;
+  display: RuntimeDisplay;
+  details?: string[];
+}
+
+const runtime_rows = computed<RuntimeRow[]>(() => {
+  const link = node_link.value;
+  const snapshot = runtime_snapshot.value;
+  if (link === undefined || snapshot === undefined) {
+    return [];
+  }
+  const rows: RuntimeRow[] = [];
+  if (link.v4.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_v4"),
+      display: formatV4Runtime(snapshot.v4, runtime_rt, runtime_mask),
+    });
+  }
+  if (link.pd.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_pd"),
+      display: formatPdRuntime(snapshot.pd, runtime_rt, runtime_mask),
+    });
+  }
+  if (link.nat.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_nat"),
+      display: formatServiceStatus(snapshot.nat, runtime_rt),
+    });
+  }
+  if (link.mss.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_mss"),
+      display: formatServiceStatus(snapshot.mss, runtime_rt),
+    });
+  }
+  if (link.firewall.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_firewall"),
+      display: formatServiceStatus(snapshot.firewall, runtime_rt),
+    });
+  }
+  if (link.health_check.enable) {
+    const health = formatHealthRuntime(
+      snapshot.health_check,
+      runtime_rt,
+      runtime_mask,
+    );
+    rows.push({
+      label: t("topology.panel.runtime_health"),
+      display: health.verdict,
+      details: health.details,
+    });
+  }
+  return rows;
+});
+
+const runtime_placeholder = computed(() => {
+  if (runtime_state.value === "pending") {
+    return "…";
+  }
+  if (runtime_state.value === "not_running") {
+    return t("topology.panel.runtime_not_running");
+  }
+  if (runtime_state.value === "unavailable") {
+    return t("topology.panel.runtime_unavailable");
+  }
+  if (runtime_rows.value.length === 0) {
+    return t("topology.panel.runtime_not_running");
+  }
+  return undefined;
+});
 
 const has_controller = computed(() => props.node.controller_id !== undefined);
 const controller_dev = computed(() => {
@@ -140,16 +273,16 @@ const action_sections = computed(() => {
       short_label: props.node.dev_status.t === DevStateType.Up ? "OFF" : "ON",
       label:
         props.node.dev_status.t === DevStateType.Up
-          ? t("topology.node.action_disable")
-          : t("topology.node.action_enable"),
+          ? t("topology.panel.action_toggle_off", { name: props.node.name })
+          : t("topology.panel.action_toggle_on", { name: props.node.name }),
     });
 
     sections.push({
       key: "boot",
       short_label: "BOOT",
       label: props.node.enable_in_boot
-        ? t("topology.panel.disable_boot")
-        : t("topology.panel.enable_boot"),
+        ? t("topology.panel.action_boot_disable", { name: props.node.name })
+        : t("topology.panel.action_boot_enable", { name: props.node.name }),
     });
   }
 
@@ -157,20 +290,23 @@ const action_sections = computed(() => {
     sections.push({
       key: "change_zone",
       short_label: "ZONE",
-      label: t("topology.panel.change_zone"),
+      label: t("topology.panel.action_zone", {
+        name: props.node.name,
+        zone: props.node.zone_type,
+      }),
     });
   }
   sections.push({
     key: "cpu_balance",
     short_label: "CPU",
-    label: t("topology.panel.edit_cpu_balance"),
+    label: t("topology.panel.action_cpu", { name: props.node.name }),
   });
 
   if (props.node.dev_kind === "bridge" && props.node.name !== "docker0") {
     sections.push({
       key: "delete_bridge",
       short_label: "DEL",
-      label: t("topology.panel.delete_bridge"),
+      label: t("topology.panel.action_del_bridge", { name: props.node.name }),
     });
   }
 
@@ -273,10 +409,6 @@ function displayValue(value?: string | number | null) {
     return "N/A";
   }
   return `${value}`;
-}
-
-function boolLabel(value: boolean) {
-  return value ? t("topology.panel.yes") : t("topology.panel.no");
 }
 
 function statusTagType(state: string) {
@@ -460,6 +592,7 @@ async function handleDeleteBridge() {
           v-for="section in action_sections"
           :key="section.key"
           trigger="hover"
+          placement="left"
         >
           <template #trigger>
             <button
@@ -486,24 +619,75 @@ async function handleDeleteBridge() {
       <div class="topology-detail__header">
         <div class="topology-detail__header-main">
           <div class="topology-detail__title-row">
-            <h3 class="topology-detail__title">{{ node.name }}</h3>
-            <n-button quaternary circle size="small" @click="closePanel">
-              ×
-            </n-button>
+            <h3 class="topology-detail__title">
+              {{ node.name
+              }}<span
+                class="topology-detail__title-suffix"
+                :title="t('topology.panel.ifindex')"
+                :style="{ color: themeVars.textColor3 }"
+              >
+                #{{ node.index }}</span
+              >
+            </h3>
+            <div class="topology-detail__title-actions">
+              <n-tag size="small" :type="zoneTagType(node.zone_type)" round>
+                {{ node.zone_type }}
+              </n-tag>
+              <n-button quaternary circle size="small" @click="closePanel">
+                ×
+              </n-button>
+            </div>
           </div>
-          <n-flex size="small" wrap>
+          <n-flex size="small" wrap align="center">
+            <n-tag
+              size="small"
+              round
+              :type="node.carrier ? 'success' : 'default'"
+            >
+              <span
+                class="topology-detail__carrier-dot"
+                :style="{
+                  backgroundColor: node.carrier
+                    ? themeVars.successColor
+                    : themeVars.borderColor,
+                }"
+              />
+              {{
+                node.carrier
+                  ? t("topology.panel.carrier_connected")
+                  : t("topology.panel.carrier_disconnected")
+              }}
+            </n-tag>
             <n-tag size="small" :type="statusTagType(node.dev_status.t)" round>
               {{ node.dev_status.t }}
             </n-tag>
-            <n-tag size="small" :type="zoneTagType(node.zone_type)" round>
-              {{ node.zone_type }}
+            <n-tag
+              size="small"
+              round
+              :type="node.enable_in_boot ? 'success' : 'default'"
+            >
+              {{
+                node.enable_in_boot
+                  ? t("topology.panel.boot_enabled")
+                  : t("topology.panel.boot_disabled")
+              }}
             </n-tag>
-            <n-tag size="small" tertiary>
-              {{ node.dev_kind || node.dev_type }}
+          </n-flex>
+          <n-flex size="small" wrap align="center">
+            <n-tag size="small" tertiary round>
+              {{ device_type_label }}
             </n-tag>
-            <n-tag v-if="node.wifi_info" size="small" tertiary>
+            <n-tag v-if="node.wifi_info" size="small" tertiary round>
               {{ node.wifi_info.wifi_type.t }}
             </n-tag>
+            <n-tooltip trigger="hover" placement="bottom-start">
+              <template #trigger>
+                <n-tag size="small" tertiary round>
+                  {{ maskValue(node.mac) }}
+                </n-tag>
+              </template>
+              {{ t("topology.node.perm_mac") }}: {{ maskValue(node.perm_mac) }}
+            </n-tooltip>
           </n-flex>
         </div>
       </div>
@@ -511,74 +695,49 @@ async function handleDeleteBridge() {
       <n-scrollbar class="topology-detail__content nowheel">
         <div class="topology-detail__content-inner">
           <n-flex vertical size="large">
-            <n-card size="small" embedded class="topology-detail__card--plain">
+            <n-card
+              v-if="node_link !== undefined"
+              size="small"
+              embedded
+              class="topology-detail__card--plain"
+            >
               <template #header>
-                {{ t("topology.panel.basic_info") }}
+                {{ t("topology.panel.runtime_status") }}
               </template>
-              <n-descriptions label-placement="left" :column="1" size="small">
-                <n-descriptions-item :label="t('topology.node.iface_name')">
-                  {{ node.name }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.ifindex')">
-                  {{ node.index }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.node.device_type')">
-                  {{ displayValue(node.dev_type) }}/{{
-                    displayValue(node.dev_kind)
-                  }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.node.status')">
-                  {{ node.dev_status.t }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.carrier')">
-                  {{ boolLabel(node.carrier) }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.boot')">
-                  {{ boolLabel(node.enable_in_boot) }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.zone')">
-                  {{ node.zone_type }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.node.mac_addr')">
-                  {{ maskValue(node.mac) }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.node.perm_mac')">
-                  {{ maskValue(node.perm_mac) }}
-                </n-descriptions-item>
-                <n-descriptions-item
-                  :label="t('topology.panel.runtime_addresses')"
+              <div
+                v-if="runtime_placeholder === undefined"
+                class="topology-detail__runtime-list"
+              >
+                <div
+                  v-for="row in runtime_rows"
+                  :key="row.label"
+                  class="topology-detail__runtime-row"
                 >
-                  <n-flex v-if="runtime_addresses.length" vertical size="small">
-                    <span
-                      v-for="address in runtime_addresses"
-                      :key="`${address.address}/${address.prefix_length}`"
+                  <span class="topology-detail__runtime-label">
+                    {{ row.label }}
+                  </span>
+                  <div class="topology-detail__runtime-value">
+                    <n-tag
+                      class="topology-detail__runtime-tag"
+                      size="small"
+                      round
+                      :type="row.display.tone"
                     >
-                      {{ maskValue(address.address) }}/{{
-                        address.prefix_length
-                      }}
-                      ·
-                      {{
-                        address.is_permanent
-                          ? t("topology.panel.address_permanent")
-                          : t("topology.panel.address_dynamic")
-                      }}
+                      {{ row.display.text }}
+                    </n-tag>
+                    <span
+                      v-for="detail in row.details ?? []"
+                      :key="detail"
+                      class="topology-detail__runtime-detail"
+                    >
+                      {{ detail }}
                     </span>
-                  </n-flex>
-                  <span v-else>{{
-                    t("topology.panel.no_runtime_addresses")
-                  }}</span>
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.wifi_type')">
-                  {{
-                    node.wifi_info
-                      ? node.wifi_info.wifi_type.t
-                      : displayValue(undefined)
-                  }}
-                </n-descriptions-item>
-                <n-descriptions-item :label="t('topology.panel.peer_link')">
-                  {{ displayValue(node.peer_link_id) }}
-                </n-descriptions-item>
-              </n-descriptions>
+                  </div>
+                </div>
+              </div>
+              <span v-else class="topology-detail__runtime-placeholder">
+                {{ runtime_placeholder }}
+              </span>
             </n-card>
 
             <n-card size="small" embedded class="topology-detail__card--plain">
@@ -619,6 +778,9 @@ async function handleDeleteBridge() {
                       </n-tag>
                     </n-flex>
                     <span v-else>{{ t("topology.panel.no_children") }}</span>
+                  </n-descriptions-item>
+                  <n-descriptions-item :label="t('topology.panel.peer_link')">
+                    {{ displayValue(node.peer_link_id) }}
                   </n-descriptions-item>
                 </n-descriptions>
 
@@ -730,8 +892,77 @@ async function handleDeleteBridge() {
 
 .topology-detail__title {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 20px;
   line-height: 1.1;
+}
+
+.topology-detail__title-suffix {
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.topology-detail__title-actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+}
+
+.topology-detail__carrier-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  margin-right: 5px;
+  display: inline-block;
+}
+
+.topology-detail__runtime-placeholder {
+  color: var(--n-text-color-disabled, inherit);
+  font-size: 13px;
+}
+
+.topology-detail__runtime-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.topology-detail__runtime-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topology-detail__runtime-label {
+  flex: none;
+  font-size: 13px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.topology-detail__runtime-value {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.topology-detail__runtime-tag {
+  white-space: nowrap;
+}
+
+.topology-detail__runtime-detail {
+  font-size: 12px;
+  color: var(--n-text-color-disabled, inherit);
+  white-space: nowrap;
 }
 
 .topology-detail__rail-shell {
@@ -820,7 +1051,7 @@ async function handleDeleteBridge() {
 }
 
 .topology-detail__content-inner {
-  padding: 16px;
+  padding: 12px;
 }
 
 .topology-detail :deep(.n-card) {
@@ -831,6 +1062,8 @@ async function handleDeleteBridge() {
 .topology-detail :deep(.topology-detail__card--plain.n-card) {
   border-color: transparent;
   box-shadow: none;
+  --n-padding-left: 8px;
+  --n-padding-right: 8px;
 }
 
 .topology-detail__controller-box {

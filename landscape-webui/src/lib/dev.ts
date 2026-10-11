@@ -1,4 +1,5 @@
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
+import type { DeviceKind } from "@landscape-router/types/api/schemas";
 import type { WanLink } from "@/lib/wan_link";
 
 export class NetDev {
@@ -7,7 +8,7 @@ export class NetDev {
   mac: string | undefined;
   perm_mac: string | undefined;
   dev_type: string;
-  dev_kind: string;
+  dev_kind: DeviceKind | undefined;
   dev_status: DevState;
   controller_name: string | undefined;
   controller_id: number | undefined;
