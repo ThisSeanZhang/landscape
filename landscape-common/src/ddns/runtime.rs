@@ -160,6 +160,7 @@ impl DdnsFamilyRuntime {
 pub enum DdnsTaskPhase {
     ResolvingSource,
     Publishing,
+    CleaningUp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

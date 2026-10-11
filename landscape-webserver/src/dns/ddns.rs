@@ -65,7 +65,10 @@ async fn get_ddns_job(
     path = "/ddns",
     tag = "DDNS",
     request_body = ApiDdnsJob,
-    responses((status = 200, description = "Success", body = CommonApiResp<ApiDdnsJob>))
+    responses(
+        (status = 200, description = "Success", body = CommonApiResp<ApiDdnsJob>),
+        (status = 409, description = "A task is already running for this job; cancel it first")
+    )
 )]
 async fn create_ddns_job(
     State(app): State<LandscapeApp>,
@@ -127,7 +130,10 @@ async fn cancel_ddns_job_sync(
     tag = "DDNS",
     params(("id" = Uuid, Path, description = "DDNS job ID")),
     request_body = ApiDdnsJob,
-    responses((status = 200, description = "Success", body = CommonApiResp<ApiDdnsJob>))
+    responses(
+        (status = 200, description = "Success", body = CommonApiResp<ApiDdnsJob>),
+        (status = 409, description = "A task is already running for this job; cancel it first")
+    )
 )]
 async fn update_ddns_job(
     State(app): State<LandscapeApp>,
@@ -143,12 +149,15 @@ async fn update_ddns_job(
     path = "/ddns/{id}",
     tag = "DDNS",
     params(("id" = Uuid, Path, description = "DDNS job ID")),
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Success"),
+        (status = 409, description = "A task is already running for this job; cancel it first")
+    )
 )]
 async fn delete_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.ddns_service.delete(id).await?;
+    app.ddns_service.checked_delete(id).await?;
     LandscapeApiResp::success(())
 }

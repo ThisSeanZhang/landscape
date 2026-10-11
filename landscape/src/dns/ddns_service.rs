@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -52,6 +53,8 @@ type DdnsRuntimeMap = Arc<RwLock<HashMap<Uuid, DdnsJobRuntime>>>;
 struct DdnsTaskEntry {
     cancel: CancellationToken,
     progress: DdnsTaskProgress,
+    /// Reconcile-loop dirty flag: set by triggers arriving while this task runs.
+    pending: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Default)]
@@ -59,7 +62,20 @@ struct DdnsTaskRegistry {
     entries: Arc<ArcSwap<HashMap<Uuid, DdnsTaskEntry>>>,
 }
 
+enum DdnsTaskStart {
+    Started(CancellationToken),
+    MarkedPending,
+}
+
+enum DdnsTaskFinish {
+    /// The pending flag was set: keep the entry and run another round.
+    Continue,
+    /// No pending work: the entry was removed.
+    Stopped,
+}
+
 impl DdnsTaskRegistry {
+    /// Strict insert for user-initiated sync: fails when a task already runs.
     fn insert(&self, id: Uuid) -> Result<CancellationToken, ()> {
         let cancel = CancellationToken::new();
         let mut duplicate = false;
@@ -75,11 +91,77 @@ impl DdnsTaskRegistry {
                 DdnsTaskEntry {
                     cancel: cancel.clone(),
                     progress: DdnsTaskProgress::new(id),
+                    pending: Arc::new(AtomicBool::new(false)),
                 },
             );
             Arc::new(next)
         });
         if duplicate { Err(()) } else { Ok(cancel) }
+    }
+
+    /// Start when the slot is free, else mark the running task's pending flag.
+    fn start_or_mark(&self, id: Uuid) -> DdnsTaskStart {
+        let mut started = None;
+        self.entries.rcu(|current| {
+            // rcu retries under contention: drop any token from a lost
+            // attempt so we never report an orphaned start.
+            started = None;
+            if let Some(entry) = current.get(&id) {
+                entry.pending.store(true, Ordering::Release);
+                return current.clone();
+            }
+            let cancel = CancellationToken::new();
+            let mut next = HashMap::clone(current);
+            next.insert(
+                id,
+                DdnsTaskEntry {
+                    cancel: cancel.clone(),
+                    progress: DdnsTaskProgress::new(id),
+                    pending: Arc::new(AtomicBool::new(false)),
+                },
+            );
+            started = Some(cancel);
+            Arc::new(next)
+        });
+        match started {
+            Some(cancel) => DdnsTaskStart::Started(cancel),
+            None => DdnsTaskStart::MarkedPending,
+        }
+    }
+
+    /// Consume a pending mark (keep the entry, reset progress) or remove the
+    /// entry; one rcu so a racing mark is never discarded with the entry.
+    fn finish_or_continue(&self, id: Uuid) -> DdnsTaskFinish {
+        let mut keep_going = false;
+        self.entries.rcu(|current| {
+            let Some(entry) = current.get(&id) else {
+                keep_going = false;
+                return current.clone();
+            };
+            let mut next = HashMap::clone(current);
+            // The pending flag lives on a shared Arc, so a failed rcu attempt
+            // may already have consumed a mark; honor it across retries.
+            keep_going = entry.pending.swap(false, Ordering::AcqRel) || keep_going;
+            if keep_going {
+                next.insert(
+                    id,
+                    DdnsTaskEntry {
+                        cancel: entry.cancel.clone(),
+                        progress: DdnsTaskProgress::new(id),
+                        pending: entry.pending.clone(),
+                    },
+                );
+            } else {
+                keep_going = false;
+                next.remove(&id);
+            }
+            Arc::new(next)
+        });
+        if keep_going { DdnsTaskFinish::Continue } else { DdnsTaskFinish::Stopped }
+    }
+
+    fn has_task(&self, id: Uuid) -> bool {
+        self.entries.load().contains_key(&id)
     }
 
     fn remove(&self, id: Uuid) {
@@ -101,7 +183,14 @@ impl DdnsTaskRegistry {
             let mut next = HashMap::clone(current);
             let mut progress = entry.progress.clone();
             progress.advance(phase, detail.clone());
-            next.insert(id, DdnsTaskEntry { cancel: entry.cancel.clone(), progress });
+            next.insert(
+                id,
+                DdnsTaskEntry {
+                    cancel: entry.cancel.clone(),
+                    progress,
+                    pending: entry.pending.clone(),
+                },
+            );
             Arc::new(next)
         });
     }
@@ -124,6 +213,45 @@ impl DdnsTaskRegistry {
     fn progress_snapshot(&self) -> Vec<DdnsTaskProgress> {
         self.entries.load().values().map(|entry| entry.progress.clone()).collect()
     }
+}
+
+/// A (record, family) pair previously published by this process and thus
+/// owned for remote cleanup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DdnsRecordCleanupTarget {
+    record_name: String,
+    family: IpFamily,
+}
+
+fn family_label(family: IpFamily) -> &'static str {
+    match family {
+        IpFamily::Ipv4 => "ipv4",
+        IpFamily::Ipv6 => "ipv6",
+    }
+}
+
+fn family_runtime_mut(record: &mut DdnsRecordRuntime, family: IpFamily) -> &mut DdnsFamilyRuntime {
+    match family {
+        IpFamily::Ipv4 => &mut record.ipv4,
+        IpFamily::Ipv6 => &mut record.ipv6,
+    }
+}
+
+/// Only families with recorded published IPs are eligible for remote cleanup.
+fn cleanup_targets_from_runtime(runtime: &DdnsJobRuntime) -> Vec<DdnsRecordCleanupTarget> {
+    runtime
+        .records
+        .iter()
+        .flat_map(|record| {
+            [(IpFamily::Ipv4, &record.ipv4), (IpFamily::Ipv6, &record.ipv6)]
+                .into_iter()
+                .filter(|(_, family)| !family.last_published_ips.is_empty())
+                .map(|(family, _)| DdnsRecordCleanupTarget {
+                    record_name: record.name.clone(),
+                    family,
+                })
+        })
+        .collect()
 }
 
 struct ResolveRecordIpError {
@@ -218,7 +346,7 @@ impl DdnsService {
             self.store.find_by_id(job_id).await?.ok_or_else(|| DdnsError::JobNotFound(job_id))?;
 
         if job.enable {
-            if !self.spawn_job_sync(job.clone()) {
+            if !self.spawn_job_sync_strict(job.clone()) {
                 return Err(DdnsError::TaskInProgress(job_id));
             }
         } else {
@@ -413,6 +541,9 @@ impl DdnsService {
     }
 
     pub async fn checked_set_job(&self, mut config: DdnsJob) -> Result<DdnsJob, DdnsError> {
+        if self.tasks.has_task(config.id) {
+            return Err(DdnsError::TaskInProgress(config.id));
+        }
         config.normalize_for_save().map_err(DdnsError::InvalidConfig)?;
         config.validate().map_err(DdnsError::InvalidConfig)?;
         let profile = self
@@ -425,13 +556,41 @@ impl DdnsService {
         validate_provider_zone_access(&profile.provider_config, &config.zone_name)
             .await
             .map_err(|e| DdnsError::ZoneAccessDenied(e.to_string()))?;
+
+        // Capture before save: the notify rebuild drops last_published_ips.
+        let disable_cleanup = match self.store.find_by_id(config.id).await? {
+            Some(old) if old.enable && !config.enable => {
+                Some((old, self.cleanup_targets(config.id).await))
+            }
+            _ => None,
+        };
+
         let saved = self.checked_set(config).await?;
         if saved.enable {
             self.sync_enabled_job_now(&saved).await;
         } else {
+            if let Some((old, targets)) = disable_cleanup
+                && !targets.is_empty()
+            {
+                self.spawn_job_cleanup(old, targets);
+            }
             self.sync_runtime_for_job(&saved).await;
         }
         Ok(saved)
+    }
+
+    pub async fn checked_delete(&self, id: Uuid) -> Result<Option<DdnsJob>, DdnsError> {
+        if self.tasks.has_task(id) {
+            return Err(DdnsError::TaskInProgress(id));
+        }
+        let targets = self.cleanup_targets(id).await;
+        let deleted = self.delete(id).await?;
+        if let Some(old) = &deleted
+            && !targets.is_empty()
+        {
+            self.spawn_job_cleanup(old.clone(), targets);
+        }
+        Ok(deleted)
     }
 
     async fn refresh_runtime_from_store(&self) {
@@ -507,17 +666,57 @@ impl DdnsService {
         }
     }
 
-    fn spawn_job_sync(&self, job: DdnsJob) -> bool {
+    /// Background entry: start or mark pending.
+    fn spawn_job_sync(&self, job: DdnsJob) {
+        if let DdnsTaskStart::Started(cancel) = self.tasks.start_or_mark(job.id) {
+            self.spawn_sync_reconcile_loop(job, cancel);
+        }
+    }
+
+    /// Strict entry for manual sync: returns false instead of queueing.
+    fn spawn_job_sync_strict(&self, job: DdnsJob) -> bool {
         let Ok(cancel) = self.tasks.insert(job.id) else {
             return false;
         };
+        self.spawn_sync_reconcile_loop(job, cancel);
+        true
+    }
+
+    /// Runs full-state sync rounds until the pending flag stops being set.
+    fn spawn_sync_reconcile_loop(&self, job: DdnsJob, cancel: CancellationToken) {
         let svc = self.clone();
         self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
-            let runtime = svc.sync_one_job(&job, &cancel).await;
-            svc.runtime.write().await.insert(job.id, runtime);
-            svc.tasks.remove(job.id);
+            let mut job = job;
+            loop {
+                let runtime = svc.sync_one_job(&job, &cancel).await;
+
+                match svc.store.find_by_id(job.id).await {
+                    Ok(Some(current)) => {
+                        job = current;
+                        if job.enable {
+                            svc.runtime.write().await.insert(job.id, runtime);
+                        } else {
+                            svc.tasks.remove(job.id);
+                            break;
+                        }
+                    }
+                    _ => {
+                        svc.tasks.remove(job.id);
+                        break;
+                    }
+                }
+
+                if cancel.is_cancelled() {
+                    svc.tasks.remove(job.id);
+                    break;
+                }
+
+                match svc.tasks.finish_or_continue(job.id) {
+                    DdnsTaskFinish::Continue => continue,
+                    DdnsTaskFinish::Stopped => break,
+                }
+            }
         });
-        true
     }
 
     pub async fn cancel_job_sync(&self, job_id: Uuid) -> Result<DdnsJobRuntime, DdnsError> {
@@ -531,6 +730,123 @@ impl DdnsService {
             .get(&job_id)
             .cloned()
             .unwrap_or_else(|| DdnsJobRuntime::from_config(&job)))
+    }
+
+    async fn cleanup_targets(&self, job_id: Uuid) -> Vec<DdnsRecordCleanupTarget> {
+        let runtime = self.runtime.read().await;
+        runtime.get(&job_id).map(cleanup_targets_from_runtime).unwrap_or_default()
+    }
+
+    fn spawn_job_cleanup(&self, job: DdnsJob, targets: Vec<DdnsRecordCleanupTarget>) {
+        let Ok(cancel) = self.tasks.insert(job.id) else {
+            tracing::warn!(
+                "ddns cleanup for job {}: task slot busy, skipping remote cleanup",
+                job.id
+            );
+            self.tasks.cancel_task(job.id);
+            return;
+        };
+        let svc = self.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
+            svc.cleanup_one_job(&job, &targets, &cancel).await;
+            svc.tasks.remove(job.id);
+        });
+    }
+
+    async fn cleanup_one_job(
+        &self,
+        job: &DdnsJob,
+        targets: &[DdnsRecordCleanupTarget],
+        cancel: &CancellationToken,
+    ) {
+        let profile = match self.profile_store.find_by_id(job.provider_profile_id).await {
+            Ok(Some(profile)) => profile,
+            Ok(None) => {
+                tracing::warn!(
+                    "ddns cleanup for job {}: provider profile not found, remote records left as-is",
+                    job.id
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("ddns cleanup for job {}: profile lookup failed: {e:?}", job.id);
+                return;
+            }
+        };
+
+        let total = targets.len();
+        self.tasks.update_phase(job.id, DdnsTaskPhase::CleaningUp, None);
+
+        for (idx, target) in targets.iter().enumerate() {
+            if cancel.is_cancelled() {
+                break;
+            }
+            self.tasks.update_phase(
+                job.id,
+                DdnsTaskPhase::CleaningUp,
+                Some(format!(
+                    "{} ({}, {}/{total})",
+                    target.record_name,
+                    family_label(target.family),
+                    idx + 1,
+                )),
+            );
+            let result = tokio::select! {
+                _ = cancel.cancelled() => break,
+                result = delete_dns_records(
+                    &profile.provider_config,
+                    &job.zone_name,
+                    &target.record_name,
+                    target.family,
+                ) => result,
+            };
+            let now = landscape_common::utils::time::get_f64_timestamp();
+            let mut runtime = self.runtime.write().await;
+            let Some(runtime) = runtime.get_mut(&job.id) else { continue };
+            let Some(family_runtime) = runtime
+                .records
+                .iter_mut()
+                .find(|record| record.name.eq_ignore_ascii_case(&target.record_name))
+                .map(|record| family_runtime_mut(record, target.family))
+            else {
+                continue;
+            };
+            match result {
+                Ok(()) => {
+                    family_runtime.last_published_ips.clear();
+                    family_runtime.last_sync_at = Some(now);
+                    apply_family_runtime_state(
+                        family_runtime,
+                        DdnsJobStatus::Idle,
+                        DdnsRuntimeReason::Disabled,
+                        Some(runtime_message_for_reason(DdnsRuntimeReason::Disabled).to_string()),
+                        None,
+                        false,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    let (reason, retryable) = classify_provider_error(&e);
+                    tracing::warn!(
+                        "ddns cleanup for job {} record '{}' failed: {e}",
+                        job.id,
+                        target.record_name
+                    );
+                    family_runtime.last_sync_at = Some(now);
+                    apply_family_runtime_state(
+                        family_runtime,
+                        DdnsJobStatus::Error,
+                        reason,
+                        Some(runtime_message_for_reason(reason).to_string()),
+                        Some(e),
+                        retryable,
+                        None,
+                    );
+                }
+            }
+            runtime.last_update_at = Some(now);
+            apply_job_runtime_summary(runtime);
+        }
     }
 
     async fn sync_one_job(&self, job: &DdnsJob, cancel: &CancellationToken) -> DdnsJobRuntime {
@@ -580,24 +896,75 @@ impl DdnsService {
                 .map(|cfg| cfg.enable)
                 .unwrap_or(false);
             if !enabled {
-                apply_family_runtime_state(
-                    &mut record.ipv4,
-                    DdnsJobStatus::Idle,
-                    DdnsRuntimeReason::Disabled,
-                    None,
-                    None,
-                    false,
-                    None,
-                );
-                apply_family_runtime_state(
-                    &mut record.ipv6,
-                    DdnsJobStatus::Idle,
-                    DdnsRuntimeReason::Disabled,
-                    None,
-                    None,
-                    false,
-                    None,
-                );
+                for family in [IpFamily::Ipv4, IpFamily::Ipv6] {
+                    {
+                        let family_runtime = family_runtime_mut(record, family);
+                        if family_runtime.last_published_ips.is_empty() {
+                            apply_family_runtime_state(
+                                family_runtime,
+                                DdnsJobStatus::Idle,
+                                DdnsRuntimeReason::Disabled,
+                                None,
+                                None,
+                                false,
+                                None,
+                            );
+                            continue;
+                        }
+                    }
+
+                    if cancel.is_cancelled() {
+                        break 'records;
+                    }
+
+                    self.tasks.update_phase(
+                        job.id,
+                        DdnsTaskPhase::CleaningUp,
+                        Some(format!("{} ({})", record.name, family_label(family))),
+                    );
+                    let result = tokio::select! {
+                        _ = cancel.cancelled() => break 'records,
+                        result = delete_dns_records(
+                            &profile.provider_config,
+                            &job.zone_name,
+                            &record.name,
+                            family,
+                        ) => result,
+                    };
+                    let now = landscape_common::utils::time::get_f64_timestamp();
+                    let family_runtime = family_runtime_mut(record, family);
+                    family_runtime.last_sync_at = Some(now);
+                    match result {
+                        Ok(()) => {
+                            family_runtime.last_published_ips.clear();
+                            apply_family_runtime_state(
+                                family_runtime,
+                                DdnsJobStatus::Idle,
+                                DdnsRuntimeReason::Disabled,
+                                Some(
+                                    runtime_message_for_reason(DdnsRuntimeReason::Disabled)
+                                        .to_string(),
+                                ),
+                                None,
+                                false,
+                                None,
+                            );
+                        }
+                        Err(e) => {
+                            // Keep last_published_ips so the periodic sync retries.
+                            let (reason, retryable) = classify_provider_error(&e);
+                            apply_family_runtime_state(
+                                family_runtime,
+                                DdnsJobStatus::Error,
+                                reason,
+                                Some(runtime_message_for_reason(reason).to_string()),
+                                Some(e),
+                                retryable,
+                                None,
+                            );
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -634,10 +1001,7 @@ impl DdnsService {
                     Some(format!(
                         "{} ({}, {}/{total_steps})",
                         record.name,
-                        match family {
-                            IpFamily::Ipv4 => "ipv4",
-                            IpFamily::Ipv6 => "ipv6",
-                        },
+                        family_label(family),
                         step,
                     )),
                 );
@@ -1270,6 +1634,26 @@ async fn reconcile_dns_records(
         .map_err(|e| e.to_string())
 }
 
+/// Reconcile to an empty desired set: the provider deletes every record
+/// under this exact (fqdn, record_type) and leaves anything else untouched.
+async fn delete_dns_records(
+    provider: &DnsProviderConfig,
+    zone_name: &str,
+    record_name: &str,
+    family: IpFamily,
+) -> Result<(), String> {
+    let record_type = match family {
+        IpFamily::Ipv4 => "A",
+        IpFamily::Ipv6 => "AAAA",
+    };
+    let record_name = relative_record_name_for_ddns(zone_name, record_name)?;
+    let updater = build_record_updater(provider).map_err(|e| e.to_string())?;
+    updater
+        .reconcile_records(zone_name, &record_name, record_type, &[], DEFAULT_DDNS_RECORD_TTL)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[async_trait::async_trait]
 impl ConfigStoreController for DdnsService {
     type Id = Uuid;
@@ -1280,6 +1664,8 @@ impl ConfigStoreController for DdnsService {
         &self.store
     }
 
+    // Remote cleanup on disable/delete is triggered by the API layer
+    // (checked_set_job/checked_delete), not here; notify only rebuilds state.
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         let jobs: Vec<DdnsJob> = changes.iter().map(|c| c.new.clone()).collect();
         self.apply_changes_to_runtime(&changes).await;
@@ -1356,6 +1742,80 @@ mod tests {
         registry.cancel_all();
         assert!(first_token.is_cancelled());
         assert!(second_token.is_cancelled());
+    }
+
+    #[test]
+    fn task_registry_start_or_mark_and_finish_or_continue() {
+        let registry = DdnsTaskRegistry::default();
+        let id = Uuid::new_v4();
+
+        assert!(!registry.has_task(id));
+        let DdnsTaskStart::Started(token) = registry.start_or_mark(id) else {
+            panic!("free slot should start");
+        };
+        assert!(registry.has_task(id));
+
+        assert!(matches!(registry.start_or_mark(id), DdnsTaskStart::MarkedPending));
+        assert!(!token.is_cancelled(), "marking pending must not cancel the task");
+
+        // Pending was set: the entry survives and progress resets.
+        assert!(matches!(registry.finish_or_continue(id), DdnsTaskFinish::Continue));
+        assert!(registry.has_task(id));
+        assert_eq!(registry.progress_snapshot().len(), 1);
+
+        // No new mark: the entry is removed.
+        assert!(matches!(registry.finish_or_continue(id), DdnsTaskFinish::Stopped));
+        assert!(!registry.has_task(id));
+
+        // Slot is free again for a fresh start.
+        assert!(matches!(registry.start_or_mark(id), DdnsTaskStart::Started(_)));
+    }
+
+    #[test]
+    fn task_registry_strict_insert_rejects_busy_slot() {
+        let registry = DdnsTaskRegistry::default();
+        let id = Uuid::new_v4();
+        registry.insert(id).expect("insert should succeed");
+        assert!(registry.has_task(id));
+        assert!(registry.insert(id).is_err());
+    }
+
+    #[test]
+    fn cleanup_targets_only_include_published_families() {
+        let mut job = test_job(vec![DdnsSource::LocalWan {
+            iface_name: "wan0".to_string(),
+            link_id: Uuid::nil(),
+            family: IpFamily::Ipv4,
+        }]);
+        job.records.push(landscape_common::ddns::DdnsRecordConfig {
+            name: "home".to_string(),
+            enable: true,
+        });
+
+        let mut runtime = DdnsJobRuntime::from_config(&job);
+        runtime.records[0].ipv4.last_published_ips =
+            vec![IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 10))];
+        runtime.records[1].ipv6.last_published_ips = vec![IpAddr::V6(Ipv6Addr::LOCALHOST)];
+
+        let mut targets = cleanup_targets_from_runtime(&runtime);
+        targets.sort_by(|a, b| a.record_name.cmp(&b.record_name));
+        assert_eq!(
+            targets,
+            vec![
+                DdnsRecordCleanupTarget {
+                    record_name: "@".to_string(),
+                    family: IpFamily::Ipv4
+                },
+                DdnsRecordCleanupTarget {
+                    record_name: "home".to_string(),
+                    family: IpFamily::Ipv6
+                },
+            ]
+        );
+
+        runtime.records[0].ipv4.last_published_ips.clear();
+        runtime.records[1].ipv6.last_published_ips.clear();
+        assert!(cleanup_targets_from_runtime(&runtime).is_empty());
     }
 
     fn test_job(sources: Vec<DdnsSource>) -> DdnsJob {

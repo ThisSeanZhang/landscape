@@ -334,10 +334,8 @@ function aggregateStatus(job: DdnsJob) {
 }
 
 function renderFamilyStatus(status?: string) {
-  return h(
-    NTag,
-    { size: "small", type: statusType(status) },
-    () => status ?? "idle",
+  return h(NTag, { size: "small", type: statusType(status) }, () =>
+    statusLabel(status),
   );
 }
 
@@ -358,6 +356,10 @@ function formatTimestamp(ts?: number | null) {
 
 function runtimeReasonLabel(reason?: string | null) {
   return reason ? t(`ddns.ddns_reason_${reason}`) : "-";
+}
+
+function statusLabel(status?: string | null) {
+  return t(`ddns.status_${status ?? "idle"}`);
 }
 
 function formatRetry(runtime?: {
@@ -643,7 +645,7 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
       const tag = h(
         NTag,
         { size: "small", type: statusType(aggregateStatus(row)) },
-        () => aggregateStatus(row),
+        () => statusLabel(aggregateStatus(row)),
       );
       const task = row.id ? taskProgress.value.get(row.id) : undefined;
       if (!task) {
@@ -810,7 +812,7 @@ onMounted(async () => {
                 size="small"
                 :type="statusType(aggregateStatus(selectedDetailJob))"
               >
-                {{ aggregateStatus(selectedDetailJob) }}
+                {{ statusLabel(aggregateStatus(selectedDetailJob)) }}
               </n-tag>
             </n-flex>
 
@@ -846,7 +848,7 @@ onMounted(async () => {
                         size="small"
                         :type="statusType(record.ipv4.status)"
                       >
-                        {{ record.ipv4.status ?? "idle" }}
+                        {{ statusLabel(record.ipv4.status) }}
                       </n-tag>
                     </td>
                     <td>{{ formatIp(record.ipv4.last_published_ips) }}</td>
@@ -858,7 +860,7 @@ onMounted(async () => {
                         size="small"
                         :type="statusType(record.ipv6.status)"
                       >
-                        {{ record.ipv6.status ?? "idle" }}
+                        {{ statusLabel(record.ipv6.status) }}
                       </n-tag>
                     </td>
                     <td>{{ formatIp(record.ipv6.last_published_ips) }}</td>
