@@ -81,22 +81,16 @@ const wan_columns = computed<DataTableColumns<WanRouteEntry>>(() => [
     render: (row) => {
       switch (row.health) {
         case "healthy":
-          return h(
-            NTag,
-            { size: "small", type: "success" },
-            () => t("route_status.health_healthy"),
+          return h(NTag, { size: "small", type: "success" }, () =>
+            t("route_status.health_healthy"),
           );
         case "unhealthy":
-          return h(
-            NTag,
-            { size: "small", type: "error" },
-            () => t("route_status.health_unhealthy"),
+          return h(NTag, { size: "small", type: "error" }, () =>
+            t("route_status.health_unhealthy"),
           );
         case "unknown":
-          return h(
-            NTag,
-            { size: "small" },
-            () => t("route_status.health_unknown"),
+          return h(NTag, { size: "small" }, () =>
+            t("route_status.health_unknown"),
           );
         default:
           return "-";

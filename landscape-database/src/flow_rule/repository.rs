@@ -656,8 +656,7 @@ mod cascade_delete_tests {
     async fn checked_upsert_rejects_reserved_default_flow_id() {
         let provider = LandscapeDBServiceProvider::mem_test_db().await;
 
-        let result =
-            provider.flow_rule_store().checked_upsert(flow(Uuid::new_v4(), 0)).await;
+        let result = provider.flow_rule_store().checked_upsert(flow(Uuid::new_v4(), 0)).await;
 
         assert!(matches!(result, Err(DbError::Validation(_))));
         assert!(provider.flow_rule_store().list().await.unwrap().is_empty());

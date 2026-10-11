@@ -17,7 +17,8 @@ export default {
     remark: "Remark",
     duplicate_id_warning:
       "**ID** cannot be -1 and must be unique, or it may overwrite existing rules",
-    reserved_id_warning: "**ID** 0 is reserved for the default flow and cannot be used",
+    reserved_id_warning:
+      "**ID** 0 is reserved for the default flow and cannot be used",
     duplicate_entry_warning: "Duplicate entry match rule found: {dup}",
     all_zero_weight_warning:
       "At least one egress target must have a positive weight",
