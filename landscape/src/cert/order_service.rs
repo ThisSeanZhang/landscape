@@ -5,12 +5,15 @@ use std::time::Duration;
 
 use crate::cert::ensure_auto_api_fallback_cert;
 use crate::dns::redirect_service::DNSRedirectService;
+use arc_swap::ArcSwap;
 use chrono::{Datelike, Duration as ChronoDuration, Utc};
 use instant_acme::{
     Account, ChallengeType as AcmeChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
     RevocationRequest,
 };
 use landscape_common::cert::CertError;
+use landscape_common::cert::CertIssuePhase;
+use landscape_common::cert::CertTaskProgress;
 use landscape_common::cert::account::AccountStatus;
 use landscape_common::cert::order::{
     AcmeCertConfig, CertConfig, CertParsedInfo, CertStatus, CertType, ChallengeType,
@@ -24,6 +27,7 @@ use landscape_common::dns::redirect::{
 };
 use landscape_common::memtrack::{TaggedFuture, subsystem_from_task_label};
 use landscape_common::service::controller::ConfigStoreController;
+use landscape_common::utils::time::get_f64_timestamp;
 use landscape_core::cert::{
     CertSnapshotProvider, CertUsage, SharedSniResolver, build_certified_key_from_pem,
     extract_cert_dns_names_from_pem, reload_tls_resolver, validate_certified_key_from_pem,
@@ -36,7 +40,6 @@ use rcgen::{
 };
 use rustls_pki_types::CertificateDer;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle as TokioJoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -58,14 +61,98 @@ pub struct CertService {
     api_tls_resolver: SharedSniResolver,
     gateway_tls_resolver: SharedSniResolver,
     api_dns_redirect_service: Option<DNSRedirectService>,
-    tasks: Arc<Mutex<HashMap<Uuid, CertIssueTask>>>,
+    tasks: CertTaskRegistry,
     stop_token: CancellationToken,
     tracker: TaskTracker,
 }
 
 #[derive(Clone)]
-struct CertIssueTask {
+struct CertTaskEntry {
     cancel: CancellationToken,
+    progress: CertTaskProgress,
+}
+
+#[derive(Clone, Default)]
+struct CertTaskRegistry {
+    entries: Arc<ArcSwap<HashMap<Uuid, CertTaskEntry>>>,
+}
+
+impl CertTaskRegistry {
+    fn insert(&self, id: Uuid) -> Result<CancellationToken, CertError> {
+        let cancel = CancellationToken::new();
+        let mut duplicate = false;
+        self.entries.rcu(|current| {
+            if current.contains_key(&id) {
+                duplicate = true;
+                return current.clone();
+            }
+            duplicate = false;
+            let mut next = HashMap::clone(current);
+            next.insert(
+                id,
+                CertTaskEntry {
+                    cancel: cancel.clone(),
+                    progress: CertTaskProgress::new(id),
+                },
+            );
+            Arc::new(next)
+        });
+        if duplicate {
+            return Err(CertError::InvalidStatusTransition(
+                "issuance task is already running; cancel it first".to_string(),
+            ));
+        }
+        Ok(cancel)
+    }
+
+    fn remove(&self, id: Uuid) {
+        self.entries.rcu(|current| {
+            if !current.contains_key(&id) {
+                return current.clone();
+            }
+            let mut next = HashMap::clone(current);
+            next.remove(&id);
+            Arc::new(next)
+        });
+    }
+
+    fn update_phase(
+        &self,
+        id: Uuid,
+        phase: CertIssuePhase,
+        detail: Option<String>,
+        deadline: Option<f64>,
+    ) {
+        self.entries.rcu(|current| {
+            let Some(entry) = current.get(&id) else {
+                return current.clone();
+            };
+            let mut next = HashMap::clone(current);
+            let mut progress = entry.progress.clone();
+            progress.advance(phase, detail.clone(), deadline);
+            next.insert(id, CertTaskEntry { cancel: entry.cancel.clone(), progress });
+            Arc::new(next)
+        });
+    }
+
+    fn cancel_task(&self, id: Uuid) -> bool {
+        if let Some(entry) = self.entries.load().get(&id) {
+            entry.cancel.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn cancel_all(&self) {
+        for entry in self.entries.load().values() {
+            entry.cancel.cancel();
+        }
+    }
+
+    fn progress_snapshot(&self) -> Vec<CertTaskProgress> {
+        self.entries.load().values().map(|entry| entry.progress.clone()).collect()
+    }
 }
 
 enum DoIssueResult {
@@ -96,7 +183,7 @@ impl CertService {
             api_tls_resolver: SharedSniResolver::new(),
             gateway_tls_resolver: SharedSniResolver::new(),
             api_dns_redirect_service,
-            tasks: Arc::new(Mutex::new(HashMap::new())),
+            tasks: CertTaskRegistry::default(),
             stop_token: CancellationToken::new(),
             tracker: TaskTracker::new(),
         };
@@ -165,13 +252,7 @@ impl CertService {
 
     pub async fn shutdown_and_wait(&self, timeout: Duration) {
         self.stop_token.cancel();
-        let cancels: Vec<CancellationToken> = {
-            let tasks = self.tasks.lock().await;
-            tasks.values().map(|task| task.cancel.clone()).collect()
-        };
-        for cancel in cancels {
-            cancel.cancel();
-        }
+        self.tasks.cancel_all();
         self.tracker.close();
         match tokio::time::timeout(timeout, self.tracker.wait()).await {
             Ok(()) => tracing::info!("cert background tasks stopped"),
@@ -485,16 +566,7 @@ impl CertService {
     }
 
     async fn enqueue_issuance_task(&self, id: Uuid) -> Result<(), CertError> {
-        let cancel = CancellationToken::new();
-        {
-            let mut tasks = self.tasks.lock().await;
-            if tasks.contains_key(&id) {
-                return Err(CertError::InvalidStatusTransition(
-                    "issuance task is already running; cancel it first".to_string(),
-                ));
-            }
-            tasks.insert(id, CertIssueTask { cancel: cancel.clone() });
-        }
+        let cancel = self.tasks.insert(id)?;
 
         let svc = self.clone();
         self.spawn_tracked(task_label::task::CERT_ORDER_REFRESH, async move {
@@ -553,13 +625,8 @@ impl CertService {
             }
         };
 
-        {
-            let tasks = self.tasks.lock().await;
-            for cert_id in &tx_result.cancelled_cert_ids {
-                if let Some(task) = tasks.get(cert_id) {
-                    task.cancel.cancel();
-                }
-            }
+        for cert_id in &tx_result.cancelled_cert_ids {
+            self.tasks.cancel_task(*cert_id);
         }
 
         if !tx_result.changed_cert_ids.is_empty() && self.reload_api_tls_mapping().await.is_err() {
@@ -569,8 +636,7 @@ impl CertService {
 
     async fn run_issue_task(&self, id: Uuid, cancel: CancellationToken) -> Result<(), CertError> {
         let result = self.do_issue_cert(id, &cancel).await;
-        let mut tasks = self.tasks.lock().await;
-        tasks.remove(&id);
+        self.tasks.remove(id);
         result
     }
 
@@ -627,17 +693,16 @@ impl CertService {
             return Err(CertError::InvalidStatusTransition(format!("{:?}", config.status)));
         }
 
-        {
-            let tasks = self.tasks.lock().await;
-            if let Some(task) = tasks.get(&id) {
-                task.cancel.cancel();
-            }
-        }
+        self.tasks.cancel_task(id);
 
         config.status = CertStatus::Cancelled;
         config.status_message = Some("cancelled by user".to_string());
         let saved = self.set_and_notify(config).await?;
         Ok(saved)
+    }
+
+    pub fn task_progress_snapshot(&self) -> Vec<CertTaskProgress> {
+        self.tasks.progress_snapshot()
     }
 
     /// The actual ACME issuance logic (runs in background worker).
@@ -653,6 +718,7 @@ impl CertService {
             if cancel.is_cancelled() {
                 return Ok(DoIssueResult::Cancelled);
             }
+            self.tasks.update_phase(id, CertIssuePhase::ResolvingAccount, None, None);
             let solver = match acme.challenge_type {
                 ChallengeType::Dns { provider_profile_id } => {
                     let profile = self.resolve_dns_provider_profile(provider_profile_id).await?;
@@ -700,6 +766,9 @@ impl CertService {
                 .do_issue(credentials_json, &config, solver.as_ref(), cancel, &mut dns_records)
                 .await;
 
+            if !dns_records.is_empty() {
+                self.tasks.update_phase(id, CertIssuePhase::CleaningUpDns, None, None);
+            }
             for (domain, value) in &dns_records {
                 if let Err(e) = solver.cleanup_txt_record(domain, value).await {
                     tracing::warn!("Failed to clean up DNS record for {domain}: {e}");
@@ -776,6 +845,8 @@ impl CertService {
 
         // Phase 1: create all DNS TXT records
         {
+            let total = config.domains.len();
+            let mut index = 0usize;
             let mut authz_stream = order.authorizations();
             while let Some(result) = authz_stream.next().await {
                 let mut authz = result.map_err(|e| {
@@ -793,6 +864,13 @@ impl CertService {
                 let domain = raw_domain.strip_prefix("*.").unwrap_or(&raw_domain).to_string();
                 let dns_value = challenge.key_authorization().dns_value();
 
+                index += 1;
+                self.tasks.update_phase(
+                    config.id,
+                    CertIssuePhase::CreatingDnsRecord,
+                    Some(format!("{domain} ({index}/{total})")),
+                    None,
+                );
                 tokio::select! {
                     _ = cancel.cancelled() => return Ok(DoIssueResult::Cancelled),
                     create_result = solver.create_txt_record(&domain, &dns_value) => {
@@ -805,12 +883,20 @@ impl CertService {
 
         // Wait for DNS propagation before notifying ACME server
         tracing::info!("Waiting 45s for DNS propagation...");
+        self.tasks.update_phase(
+            config.id,
+            CertIssuePhase::WaitingDnsPropagation,
+            None,
+            Some(get_f64_timestamp() + 45_000.0),
+        );
         if cancellable_sleep(cancel, Duration::from_secs(45)).await {
             return Ok(DoIssueResult::Cancelled);
         }
 
         // Phase 2: notify ACME server that challenges are ready
         {
+            let total = config.domains.len();
+            let mut index = 0usize;
             let mut authz_stream = order.authorizations();
             while let Some(result) = authz_stream.next().await {
                 let mut authz = result.map_err(|e| {
@@ -823,6 +909,13 @@ impl CertService {
                     )
                 })?;
 
+                index += 1;
+                self.tasks.update_phase(
+                    config.id,
+                    CertIssuePhase::NotifyingChallenges,
+                    Some(format!("({index}/{total})")),
+                    None,
+                );
                 tokio::select! {
                     _ = cancel.cancelled() => return Ok(DoIssueResult::Cancelled),
                     ready_result = challenge.set_ready() => {
@@ -840,6 +933,12 @@ impl CertService {
         }
 
         // Wait briefly for ACME server to start validating
+        self.tasks.update_phase(
+            config.id,
+            CertIssuePhase::WaitingValidation,
+            None,
+            Some(get_f64_timestamp() + 310_000.0),
+        );
         if cancellable_sleep(cancel, Duration::from_secs(10)).await {
             return Ok(DoIssueResult::Cancelled);
         }
@@ -862,6 +961,7 @@ impl CertService {
         }
 
         // Finalize: auto-generates CSR, returns private key PEM
+        self.tasks.update_phase(config.id, CertIssuePhase::Finalizing, None, None);
         let private_key_pem = tokio::select! {
             _ = cancel.cancelled() => return Ok(DoIssueResult::Cancelled),
             key = order.finalize() => key
@@ -869,6 +969,7 @@ impl CertService {
         .map_err(|e| CertError::IssuanceFailed(format!("Order finalize failed: {e}")))?;
 
         // Get certificate chain PEM
+        self.tasks.update_phase(config.id, CertIssuePhase::FetchingCertificate, None, None);
         let cert_chain_pem = tokio::select! {
             _ = cancel.cancelled() => return Ok(DoIssueResult::Cancelled),
             chain = order.poll_certificate(&retry_policy) => chain
@@ -1289,6 +1390,74 @@ fn pem_to_der(pem_str: &str) -> Result<Vec<u8>, CertError> {
 mod tests {
     use super::*;
     use landscape_common::cert::order::GeneratedCertConfig;
+
+    #[test]
+    fn task_registry_insert_and_duplicate() {
+        let registry = CertTaskRegistry::default();
+        let id = Uuid::new_v4();
+
+        let token = registry.insert(id).expect("first insert should succeed");
+        assert!(registry.insert(id).is_err(), "duplicate insert should fail");
+
+        let snapshot = registry.progress_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].cert_id, id);
+        assert_eq!(snapshot[0].phase, CertIssuePhase::ResolvingAccount);
+
+        drop(token);
+    }
+
+    #[test]
+    fn task_registry_cancel_token_survives_phase_updates() {
+        let registry = CertTaskRegistry::default();
+        let id = Uuid::new_v4();
+        let token = registry.insert(id).expect("insert should succeed");
+
+        registry.update_phase(
+            id,
+            CertIssuePhase::CreatingDnsRecord,
+            Some("a.com (1/2)".into()),
+            None,
+        );
+        registry.update_phase(id, CertIssuePhase::WaitingDnsPropagation, None, Some(45.0));
+
+        assert!(registry.cancel_task(id));
+        assert!(token.is_cancelled());
+
+        let snapshot = registry.progress_snapshot();
+        assert_eq!(snapshot[0].phase, CertIssuePhase::WaitingDnsPropagation);
+        assert_eq!(snapshot[0].phase_detail.as_deref(), None);
+        assert_eq!(snapshot[0].phase_deadline, Some(45.0));
+        assert!(snapshot[0].updated_at >= snapshot[0].started_at);
+    }
+
+    #[test]
+    fn task_registry_remove_and_cancel_missing() {
+        let registry = CertTaskRegistry::default();
+        let id = Uuid::new_v4();
+        registry.insert(id).expect("insert should succeed");
+
+        registry.remove(id);
+        registry.remove(id);
+
+        assert!(registry.progress_snapshot().is_empty());
+        assert!(!registry.cancel_task(id));
+        registry.update_phase(id, CertIssuePhase::Finalizing, None, None);
+        assert!(registry.progress_snapshot().is_empty());
+    }
+
+    #[test]
+    fn task_registry_cancel_all() {
+        let registry = CertTaskRegistry::default();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let first_token = registry.insert(first).expect("insert should succeed");
+        let second_token = registry.insert(second).expect("insert should succeed");
+
+        registry.cancel_all();
+        assert!(first_token.is_cancelled());
+        assert!(second_token.is_cancelled());
+    }
 
     #[test]
     fn generated_certificate_uses_requested_domains_and_validity() {

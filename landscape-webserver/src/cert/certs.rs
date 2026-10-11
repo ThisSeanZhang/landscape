@@ -2,6 +2,7 @@ use axum::extract::{Path, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::cert::CertError;
 use landscape_common::cert::order::{CertConfig, CertParsedInfo};
+use landscape_common::cert::runtime::CertTaskProgress;
 use landscape_common::config::ConfigId;
 use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
@@ -16,10 +17,23 @@ pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(list_certs, create_cert))
         .routes(routes!(get_cert, delete_cert))
         .routes(routes!(get_cert_info))
+        .routes(routes!(list_cert_tasks))
         .routes(routes!(issue_cert))
         .routes(routes!(cancel_cert))
         .routes(routes!(revoke_cert))
         .routes(routes!(renew_cert))
+}
+
+#[utoipa::path(
+    get,
+    path = "/certs/tasks",
+    tag = "Certificates",
+    responses((status = 200, description = "In-flight issuance task progress", body = CommonApiResp<Vec<CertTaskProgress>>))
+)]
+async fn list_cert_tasks(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<CertTaskProgress>> {
+    LandscapeApiResp::success(state.cert_service.task_progress_snapshot())
 }
 
 #[utoipa::path(

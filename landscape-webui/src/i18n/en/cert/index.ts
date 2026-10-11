@@ -75,6 +75,15 @@ export default {
   status_expired: "Expired",
   status_revoked: "Revoked",
 
+  phase_resolving_account: "Preparing account",
+  phase_creating_dns_record: "Creating DNS records",
+  phase_waiting_dns_propagation: "Waiting for DNS propagation",
+  phase_notifying_challenges: "Notifying ACME challenges",
+  phase_waiting_validation: "Waiting for ACME validation",
+  phase_finalizing: "Finalizing order",
+  phase_fetching_certificate: "Fetching certificate",
+  phase_cleaning_up_dns: "Cleaning up DNS records",
+
   provider_lets_encrypt: "Let's Encrypt",
   provider_zero_ssl: "ZeroSSL",
 

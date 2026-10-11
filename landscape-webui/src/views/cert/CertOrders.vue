@@ -1,13 +1,17 @@
 <script lang="ts" setup>
 import {
   get_certs,
+  get_cert_tasks,
   delete_cert,
   issue_cert,
   cancel_cert,
   revoke_cert,
   renew_cert,
 } from "@/api/cert/order";
-import type { CertConfig } from "@landscape-router/types/api/schemas";
+import type {
+  CertConfig,
+  CertTaskProgress,
+} from "@landscape-router/types/api/schemas";
 import { h, ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -22,6 +26,8 @@ import CertInfoModal from "@/components/cert/order/CertInfoModal.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
 const items = ref<CertConfig[]>([]);
+const task_progress = ref<Map<string, CertTaskProgress>>(new Map());
+const now_ms = ref(Date.now());
 const { t } = useI18n();
 const frontEndStore = useFrontEndStore();
 const show_edit_modal = ref(false);
@@ -47,7 +53,10 @@ async function refresh() {
   refresh_promise = (async () => {
     do {
       refresh_queued = false;
-      items.value = await get_certs();
+      const [certs, tasks] = await Promise.all([get_certs(), get_cert_tasks()]);
+      items.value = certs;
+      task_progress.value = new Map(tasks.map((task) => [task.cert_id, task]));
+      now_ms.value = Date.now();
     } while (refresh_queued);
   })();
 
@@ -103,6 +112,26 @@ function status_type(status?: string) {
     default:
       return "default";
   }
+}
+
+function phase_remaining(progress: CertTaskProgress): number | null {
+  if (progress.phase_deadline == null) return null;
+  return Math.max(
+    0,
+    Math.floor((progress.phase_deadline - now_ms.value) / 1000),
+  );
+}
+
+function phase_label(progress: CertTaskProgress): string {
+  const parts = [t(`cert.phase_${progress.phase}`)];
+  if (progress.phase_detail) {
+    parts.push(frontEndStore.MASK_INFO(progress.phase_detail));
+  }
+  const remaining = phase_remaining(progress);
+  if (remaining != null && remaining > 0) {
+    parts.push(`~${remaining}s`);
+  }
+  return parts.join(" · ");
 }
 
 function cert_type_label(ct?: CertConfig["cert_type"]) {
@@ -260,11 +289,25 @@ const columns = computed<DataTableColumns<CertConfig>>(() => [
   {
     title: t("cert.cert_status"),
     key: "status",
-    width: 100,
+    width: 160,
     render(row) {
-      return h(NTag, { size: "small", type: status_type(row.status) }, () =>
-        t(`cert.status_${row.status}`),
+      const tag = h(
+        NTag,
+        { size: "small", type: status_type(row.status) },
+        () => t(`cert.status_${row.status}`),
       );
+      const progress = task_progress.value.get(row.id!);
+      if (row.status !== "processing" || !progress) {
+        return tag;
+      }
+      return h(NFlex, { vertical: true, size: 2 }, () => [
+        tag,
+        h(
+          "span",
+          { style: "font-size: 12px; color: var(--n-text-color-disabled);" },
+          () => phase_label(progress),
+        ),
+      ]);
     },
   },
   {

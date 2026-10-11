@@ -75,6 +75,15 @@ export default {
   status_expired: "已过期",
   status_revoked: "已撤销",
 
+  phase_resolving_account: "准备账户",
+  phase_creating_dns_record: "写入 DNS 记录",
+  phase_waiting_dns_propagation: "等待 DNS 生效",
+  phase_notifying_challenges: "通知 ACME 验证",
+  phase_waiting_validation: "等待 ACME 验证",
+  phase_finalizing: "生成证书",
+  phase_fetching_certificate: "获取证书",
+  phase_cleaning_up_dns: "清理 DNS 记录",
+
   provider_lets_encrypt: "Let's Encrypt",
   provider_zero_ssl: "ZeroSSL",
 

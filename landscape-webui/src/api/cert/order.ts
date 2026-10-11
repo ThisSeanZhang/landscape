@@ -8,10 +8,12 @@ import {
   cancelCert,
   revokeCert,
   renewCert,
+  listCertTasks,
 } from "@landscape-router/types/api/certificates/certificates";
 import type {
   CertConfig,
   CertParsedInfo,
+  CertTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
 export async function get_certs(): Promise<CertConfig[]> {
@@ -48,4 +50,8 @@ export async function renew_cert(id: string): Promise<CertConfig> {
 
 export async function get_cert_info(id: string): Promise<CertParsedInfo> {
   return getCertInfo(id);
+}
+
+export async function get_cert_tasks(): Promise<CertTaskProgress[]> {
+  return listCertTasks();
 }
