@@ -7,7 +7,8 @@ use landscape_common::service::ServiceConfigError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::service::controller::{ConfigStoreController, ConfigStoreServiceController};
 use landscape_common::wan_link::{
-    CreateWanLinkConfig, UpdateWanLinkConfig, WanLinkConfig, WanLinkKind, WanLinkStatus,
+    CreateWanLinkConfig, UpdateWanLinkConfig, WanLinkConfig, WanLinkKind, WanLinkSectionsSnapshot,
+    WanLinkStatus,
 };
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -21,6 +22,7 @@ pub fn get_wan_link_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(list_wan_links, create_wan_link))
         .routes(routes!(get_all_wan_link_status))
+        .routes(routes!(get_wan_link_runtime_status))
         .routes(routes!(get_wan_link, update_wan_link, delete_wan_link))
 }
 
@@ -48,6 +50,28 @@ async fn get_all_wan_link_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, WanLinkStatus>> {
     LandscapeApiResp::success(state.wan_link_service.get_link_statuses().await)
+}
+
+#[utoipa::path(
+    get,
+    path = "/wan-links/{id}/runtime-status",
+    tag = "WAN Link",
+    operation_id = "get_wan_link_runtime_status",
+    params(("id" = Uuid, Path, description = "WAN link ID")),
+    responses(
+        (status = 200, description = "Success", body = CommonApiResp<WanLinkSectionsSnapshot>),
+        (status = 404, description = "Not found")
+    )
+)]
+async fn get_wan_link_runtime_status(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<WanLinkSectionsSnapshot> {
+    if let Some(snapshot) = state.wan_link_service.get_section_runtime_status(id) {
+        LandscapeApiResp::success(snapshot)
+    } else {
+        Err(ServiceConfigError::NotFound { service_name: "WAN Link runtime status" })?
+    }
 }
 
 #[utoipa::path(

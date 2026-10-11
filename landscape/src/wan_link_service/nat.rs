@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_link::{RuntimeWanLinkNatConfig, SessionIface};
+use landscape_common::wan_link::{RuntimeWanLinkNatConfig, SessionIface, swap_if_changed};
 use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
 
@@ -10,6 +11,7 @@ pub(super) async fn run(
     config: RuntimeWanLinkNatConfig,
     service_status: ServiceHandle,
     dataplane: Arc<dyn NatDataplane>,
+    runtime: Arc<ArcSwap<ServiceStatus>>,
 ) {
     let nat_config = NatConfig {
         tcp_range: config.tcp_range,
@@ -21,14 +23,17 @@ pub(super) async fn run(
         Err(err) => {
             tracing::error!("failed to start nat for {}: {err}", iface.iface_name);
             service_status.just_change_status(ServiceStatus::Failed);
+            swap_if_changed(&runtime, ServiceStatus::Failed);
             return;
         }
     };
 
     service_status.just_change_status(ServiceStatus::Running);
+    swap_if_changed(&runtime, ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
 
     drop(nat);
 
     service_status.just_change_status(ServiceStatus::Stop);
+    swap_if_changed(&runtime, ServiceStatus::Stop);
 }

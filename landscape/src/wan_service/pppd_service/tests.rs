@@ -6,10 +6,12 @@ use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
+use landscape_common::wan_link::V4Runtime;
 use landscape_common::wan_service::pppd::PPPDConfig;
 use landscape_common::wan_service::pppd::PPPoEPlugin;
 use tokio::sync::mpsc;
@@ -21,6 +23,10 @@ use super::{PppdConfigStore, create_pppd_thread};
 
 const ATTACH: &str = "eth0";
 const PPP: &str = "ppp0";
+
+fn v4_slot() -> Arc<ArcSwap<V4Runtime>> {
+    Arc::new(ArcSwap::from_pointee(V4Runtime::Idle))
+}
 
 fn running_status() -> ServiceHandle {
     let status = ServiceHandle::new();
@@ -234,7 +240,15 @@ fn spawn_supervisor(
     timings: PppdTimings,
 ) -> tokio::task::JoinHandle<bool> {
     let env_dyn: Arc<dyn PppdEnv> = env.clone();
-    tokio::spawn(run_pppd_supervisor(PPP.to_string(), true, status, env_dyn, timings, None))
+    tokio::spawn(run_pppd_supervisor(
+        PPP.to_string(),
+        true,
+        status,
+        env_dyn,
+        timings,
+        None,
+        v4_slot(),
+    ))
 }
 
 // ── fake route sink / config store ───────────────────────────
@@ -729,6 +743,7 @@ async fn lifecycle_normal_stop_sets_stop_and_deletes_config() {
         env_dyn,
         store_dyn,
         None,
+        v4_slot(),
     ));
 
     tokio::time::timeout(
@@ -764,6 +779,7 @@ async fn config_write_failure_sets_failed_without_side_effects() {
         env_dyn,
         store_dyn,
         None,
+        v4_slot(),
     )
     .await;
 
@@ -790,6 +806,7 @@ async fn supervisor_panic_sets_failed_and_cleans_up() {
         env_dyn,
         store_dyn,
         None,
+        v4_slot(),
     )
     .await;
 

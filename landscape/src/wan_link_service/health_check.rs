@@ -7,12 +7,14 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use futures::future::join_all;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::RouteOwner;
+use landscape_common::wan_link::{HealthCheckRuntime, HealthProbeStatus};
 use landscape_common::wan_link::{
     HealthEvaluator, LinkStateHandle, RuntimeWanHealthProbe, RuntimeWanLinkHealthCheckConfig,
-    SessionIface, TargetProbe, WanLinkHealthState,
+    SessionIface, TargetProbe, WanLinkHealthInfo, WanLinkHealthState, swap_if_changed,
 };
 use uuid::Uuid;
 
@@ -35,6 +37,7 @@ enum RoundOutcome {
     Blind { errored: usize },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     link_id: Uuid,
     iface: SessionIface,
@@ -43,6 +46,7 @@ pub(super) async fn run(
     service_status: ServiceHandle,
     probe: Arc<dyn WanHealthProbe>,
     route_service: IpRouteService,
+    runtime: Arc<ArcSwap<HealthCheckRuntime>>,
 ) {
     let stop = service_status.stop_token();
 
@@ -50,6 +54,7 @@ pub(super) async fn run(
     // address is stable for this whole run.
     let Some(IpAddr::V4(src)) = link_state.snapshot().session.v4_ip() else {
         service_status.just_change_status(ServiceStatus::Failed);
+        swap_if_changed(&runtime, HealthCheckRuntime::Stopped);
         return;
     };
 
@@ -65,6 +70,17 @@ pub(super) async fn run(
     route_service.update_link_health(evaluator.info().clone()).await;
 
     service_status.just_change_status(ServiceStatus::Running);
+    swap_if_changed(
+        &runtime,
+        HealthCheckRuntime::Running {
+            state: evaluator.info().state,
+            rtt_ewma_ms: evaluator.info().rtt_ewma_ms,
+            probes: targets
+                .iter()
+                .map(|target| HealthProbeStatus { target: *target, rtt_ms: None })
+                .collect(),
+        },
+    );
 
     let mut ticker = tokio::time::interval(Duration::from_secs(config.interval_secs.max(1).into()));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -104,6 +120,12 @@ pub(super) async fn run(
                             }
                         }
                         route_service.update_link_health(evaluator.info().clone()).await;
+                        publish_round(
+                            &runtime,
+                            evaluator.info(),
+                            &round_targets,
+                            Some(&results),
+                        );
                     }
                     RoundOutcome::Blind { errored } => {
                         blind_rounds += 1;
@@ -118,6 +140,7 @@ pub(super) async fn run(
                             failed = true;
                             break;
                         }
+                        publish_round(&runtime, evaluator.info(), &round_targets, None);
                     }
                 }
             }
@@ -130,6 +153,34 @@ pub(super) async fn run(
     } else {
         ServiceStatus::Stop
     });
+    swap_if_changed(&runtime, HealthCheckRuntime::Stopped);
+}
+
+fn publish_round(
+    runtime: &Arc<ArcSwap<HealthCheckRuntime>>,
+    info: &WanLinkHealthInfo,
+    attempted: &[Ipv4Addr],
+    evidence: Option<&Vec<TargetProbe>>,
+) {
+    let probes = attempted
+        .iter()
+        .map(|target| HealthProbeStatus {
+            target: *target,
+            rtt_ms: evidence.and_then(|ev| {
+                ev.iter()
+                    .find(|p| p.target == *target)
+                    .and_then(|p| p.rtt.map(|rtt| rtt.as_millis() as u64))
+            }),
+        })
+        .collect();
+    swap_if_changed(
+        runtime,
+        HealthCheckRuntime::Running {
+            state: info.state,
+            rtt_ewma_ms: info.rtt_ewma_ms,
+            probes,
+        },
+    );
 }
 
 /// The round's target list: configured targets plus the link's current

@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net_proto::ppp::PointToPoint;
 use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_link::{LinkStateHandle, SessionIface, WanV4Lease};
+use landscape_common::wan_link::{
+    LinkStateHandle, PppoeRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
+};
 use landscape_common::wan_service::pppoe::PppoeDataplane;
 
 use super::PPPoEClientConfig;
@@ -35,6 +38,7 @@ pub async fn run(
     route_service: IpRouteService,
     dataplane: Arc<dyn PppoeDataplane>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     status_rx.just_change_status(ServiceStatus::Staring);
 
@@ -60,6 +64,13 @@ pub async fn run(
         if retry_count > 0 {
             let backoff_base = config.redial_backoff_base_secs.unwrap_or(5 * 60);
             let delay = Duration::from_secs((backoff_base * retry_count).min(30 * 60));
+            swap_if_changed(
+                &v4_runtime,
+                V4Runtime::Pppoe(PppoeRuntime::RedialBackoff {
+                    retry_count,
+                    retry_in_secs: delay.as_secs(),
+                }),
+            );
             tokio::select! {
                 _ = sleep(delay) => {},
                 _ = stop_token.cancelled() => {
@@ -87,6 +98,7 @@ pub async fn run(
             }
         }
 
+        swap_if_changed(&v4_runtime, V4Runtime::Pppoe(PppoeRuntime::Dialing));
         let lcp_result = match super::lcp::run(&config, &mut tx, &mut rx, &status_rx).await {
             Ok(r) => {
                 retry_count = 0;
@@ -149,6 +161,7 @@ pub async fn run(
             "LCP phase completed"
         );
 
+        swap_if_changed(&v4_runtime, V4Runtime::Pppoe(PppoeRuntime::Negotiating));
         let nego_result =
             match super::negotiation::run(&config, &lcp_result, &mut tx, &mut rx, &status_rx).await
             {
@@ -222,6 +235,14 @@ pub async fn run(
         {
             Ok(handle) => {
                 session_handle = Some(handle);
+                swap_if_changed(
+                    &v4_runtime,
+                    V4Runtime::Pppoe(PppoeRuntime::Online {
+                        local_ip: nego_result.client_ip,
+                        peer_ip: nego_result.server_ip,
+                        session_id: lcp_result.session_id,
+                    }),
+                );
                 if let Some(session) = session.as_ref() {
                     session.session_up(
                         SessionIface::new(
@@ -297,6 +318,8 @@ pub async fn run(
             }
         }
     }
+
+    swap_if_changed(&v4_runtime, V4Runtime::Stopped);
 }
 
 async fn keepalive(

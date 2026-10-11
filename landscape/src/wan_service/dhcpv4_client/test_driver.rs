@@ -1,8 +1,9 @@
+use arc_swap::ArcSwap;
 use landscape_common::net_proto::dhcp::{
     DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OptionCode as OptionCode,
 };
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_link::{LinkState, LinkStateHandle};
+use landscape_common::wan_link::{DhcpV4Runtime, LinkState, LinkStateHandle, V4Runtime};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
@@ -77,6 +78,7 @@ struct Harness {
     modes: Arc<Mutex<Vec<bool>>>,
     ops_calls: Arc<Mutex<Vec<OpsCall>>>,
     link_rx: tokio::sync::watch::Receiver<LinkState>,
+    runtime: Arc<ArcSwap<V4Runtime>>,
     status: ServiceHandle,
     task: JoinHandle<()>,
 }
@@ -89,9 +91,20 @@ fn spawn_driver() -> Harness {
     let ops_calls = Arc::new(Mutex::new(Vec::new()));
     let ops = MockOps { calls: ops_calls.clone() };
     let (link, link_rx) = LinkStateHandle::new(None);
+    let runtime = Arc::new(ArcSwap::from_pointee(V4Runtime::Idle));
     let status = ServiceHandle::new();
-    let task = tokio::spawn(run_with(test_config(), io, ops, Some(link), status.clone()));
-    Harness { tx, sent, modes, ops_calls, link_rx, status, task }
+    let task =
+        tokio::spawn(run_with(test_config(), io, ops, Some(link), runtime.clone(), status.clone()));
+    Harness {
+        tx,
+        sent,
+        modes,
+        ops_calls,
+        link_rx,
+        runtime,
+        status,
+        task,
+    }
 }
 
 fn test_config() -> DhcpV4ClientServiceRuntimeConfig {
@@ -117,7 +130,9 @@ async fn wait_for(cond: impl Fn() -> bool) {
 
 async fn shutdown(h: Harness) {
     h.status.just_change_status(ServiceStatus::Stopping);
+    let runtime = h.runtime.clone();
     h.task.await.unwrap();
+    assert_eq!(**runtime.load(), V4Runtime::Stopped);
 }
 
 fn sent_len(h: &Harness) -> usize {
@@ -132,12 +147,18 @@ fn modes_contains(h: &Harness, v: bool) -> bool {
     h.modes.lock().unwrap().contains(&v)
 }
 
+fn runtime_now(h: &Harness) -> V4Runtime {
+    (**h.runtime.load()).clone()
+}
+
 async fn complete_dora(h: &Harness) {
     wait_for(|| sent_len(h) >= 1).await;
     let (discover, dest) = sent_at(h, 0);
     assert_eq!(msg_type_of(&discover), Some(MessageType::Discover));
     assert_eq!(dest, Ipv4Addr::BROADCAST);
     let xid = discover.xid();
+
+    assert!(matches!(runtime_now(h), V4Runtime::Dhcp(DhcpV4Runtime::Discovering { .. })));
 
     let mut offer = server_msg(MessageType::Offer, xid);
     offer.set_yiaddr(OFFER_IP);
@@ -147,6 +168,8 @@ async fn complete_dora(h: &Harness) {
     let (request, dest) = sent_at(h, 1);
     assert_eq!(msg_type_of(&request), Some(MessageType::Request));
     assert_eq!(dest, Ipv4Addr::BROADCAST);
+
+    assert_eq!(runtime_now(h), V4Runtime::Dhcp(DhcpV4Runtime::Requesting { offered_ip: OFFER_IP }));
 
     h.tx.send(ack_msg(xid, OFFER_IP, 100)).await.unwrap();
     wait_for(|| {
@@ -172,6 +195,10 @@ async fn dora_binds_lease_and_raises_session() {
     assert_eq!(modes.first(), Some(&true), "discovery must start in raw mode");
     assert!(!*modes.last().unwrap(), "Bound phase must switch to udp mode");
     assert_eq!(h.status.current(), ServiceStatus::Running);
+
+    assert!(
+        matches!(runtime_now(&h), V4Runtime::Dhcp(DhcpV4Runtime::Bound { ip, .. }) if ip == OFFER_IP)
+    );
 
     shutdown(h).await;
 }
@@ -247,6 +274,7 @@ async fn stop_releases_lease_and_finalizes_status() {
     wait_for(|| modes_contains(&h, false)).await;
 
     h.status.just_change_status(ServiceStatus::Stopping);
+    let runtime = h.runtime.clone();
     h.task.await.unwrap();
 
     let calls = h.ops_calls.lock().unwrap().clone();
@@ -257,4 +285,5 @@ async fn stop_releases_lease_and_finalizes_status() {
     );
     assert_eq!(calls.last(), Some(&OpsCall::Release), "release must be the final ops call");
     assert_eq!(h.status.current(), ServiceStatus::Stop);
+    assert_eq!(**runtime.load(), V4Runtime::Stopped);
 }

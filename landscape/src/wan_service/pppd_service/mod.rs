@@ -5,9 +5,10 @@ mod tests;
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
-use landscape_common::wan_link::LinkStateHandle;
+use landscape_common::wan_link::{LinkStateHandle, V4Runtime, swap_if_changed};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
 
@@ -45,6 +46,7 @@ impl PppdConfigStore for SystemPppdConfigStore {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_pppd_thread(
     attach_iface_name: String,
     ppp_iface_name: String,
@@ -53,12 +55,14 @@ pub(crate) async fn create_pppd_thread(
     env: Arc<dyn PppdEnv>,
     config_store: Arc<dyn PppdConfigStore>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     service_status.just_change_status(ServiceStatus::Staring);
     service_status.just_change_status(ServiceStatus::Running);
 
     let Ok(_) = config_store.write(&pppd_conf, &attach_iface_name, &ppp_iface_name) else {
         tracing::error!("pppd config write error");
+        swap_if_changed(&v4_runtime, V4Runtime::Stopped);
         service_status.just_change_status(ServiceStatus::Failed);
         return;
     };
@@ -73,11 +77,13 @@ pub(crate) async fn create_pppd_thread(
         env,
         PppdTimings::default(),
         session,
+        v4_runtime.clone(),
     )
     .await;
 
     tracing::info!("PPPD worker thread exited");
     config_store.delete(&pppd_conf, &ppp_iface_name);
+    swap_if_changed(&v4_runtime, V4Runtime::Stopped);
     service_status.just_change_status(if !graceful {
         ServiceStatus::Failed
     } else {
@@ -95,6 +101,7 @@ pub(crate) async fn run_pppd_for_link(
     addr_binding: Arc<dyn WanAddrBinding>,
     link_id: uuid::Uuid,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding, link_id));
     let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
@@ -106,6 +113,7 @@ pub(crate) async fn run_pppd_for_link(
         env,
         config_store,
         session,
+        v4_runtime,
     )
     .await
 }

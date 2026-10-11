@@ -5,9 +5,11 @@ use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
+use arc_swap::ArcSwap;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{
-    LinkStateHandle, SectionKind, SessionIface, WanLinkConfig, WanLinkStatusHandle, WanV4Lease,
+    HealthCheckRuntime, LinkStateHandle, SectionKind, SessionIface, WanLinkConfig,
+    WanLinkStatusHandle, WanV4Lease,
 };
 
 use super::{SectionRunner, SectionTag, config_change_tags, run_dependent_section};
@@ -343,6 +345,7 @@ async fn health_check_runner_judges_and_cleans_up() {
         link_status.clone(),
         probe,
         route_service.clone(),
+        runtime_slot(),
     ));
 
     // Round 0 is warmup-tolerated, round 1 fails with threshold 1.
@@ -391,6 +394,7 @@ async fn health_check_persistently_blind_rounds_fail_the_section() {
         link_status.clone(),
         probe,
         route_service.clone(),
+        runtime_slot(),
     ));
 
     wait_status(&link_status, ServiceStatus::Failed).await;
@@ -445,6 +449,7 @@ async fn health_check_local_error_target_carries_no_link_evidence() {
         link_status.clone(),
         probe,
         route_service.clone(),
+        runtime_slot(),
     ));
 
     wait_health(&route_service, link_id, WanLinkHealthState::Unhealthy).await;
@@ -498,6 +503,7 @@ async fn health_check_local_error_target_does_not_block_recovery() {
         link_status.clone(),
         probe,
         route_service.clone(),
+        runtime_slot(),
     ));
 
     wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
@@ -555,6 +561,7 @@ async fn health_check_local_error_target_does_not_wedge_full_reliability() {
         link_status.clone(),
         probe,
         route_service.clone(),
+        runtime_slot(),
     ));
 
     wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
@@ -569,6 +576,10 @@ async fn health_check_local_error_target_does_not_wedge_full_reliability() {
         .await
         .expect("runner did not stop")
         .unwrap();
+}
+
+fn runtime_slot() -> Arc<ArcSwap<HealthCheckRuntime>> {
+    Arc::new(ArcSwap::from_pointee(HealthCheckRuntime::Idle))
 }
 
 fn health_config(

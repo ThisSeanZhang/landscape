@@ -10,6 +10,7 @@ use landscape_common::net_proto::udp::dhcp::{
     v6::{self, DhcpOption, DhcpOptions, Message, OptionCode},
 };
 
+use arc_swap::ArcSwap;
 use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
 use uuid::Uuid;
@@ -25,6 +26,7 @@ use landscape_common::{
     lan_service::lan_ipv6::checked_allocate_subnet,
     service::{ServiceHandle, ServiceStatus},
     utils::time::get_f64_timestamp,
+    wan_link::runtime_status::{PdLease, PdRuntime, swap_if_changed},
     wan_service::addr_binding::WanAddrBinding,
     wan_service::ipv6_pd::LDIAPrefix,
 };
@@ -277,6 +279,7 @@ pub async fn dhcp_v6_pd_client(
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
+    pd_runtime: Arc<ArcSwap<PdRuntime>>,
 ) {
     let client_id = gen_client_id(config_mac);
     service_status.just_change_status(ServiceStatus::Staring);
@@ -297,6 +300,7 @@ pub async fn dhcp_v6_pd_client(
         Err(e) => {
             tracing::error!("failed to create DHCPv6 PD socket on {}: {e:?}", iface_name);
             service_status.just_change_status(ServiceStatus::Failed);
+            swap_if_changed(&pd_runtime, PdRuntime::Stopped);
             return;
         }
     };
@@ -351,6 +355,7 @@ pub async fn dhcp_v6_pd_client(
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
 
     let mut status = IpV6PdState::init_status();
+    swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
     #[cfg(debug_assertions)]
     let time = tokio::time::Instant::now();
     let mut current_wan_addr: Option<Ipv6Addr> = None;
@@ -407,6 +412,7 @@ pub async fn dhcp_v6_pd_client(
                     timeout_times = 0;
                 }
                 timeout_times = get_status_timeout_config(&status, timeout_times, active_send.as_mut());
+                swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
                 // active_send.as_mut().set(tokio::time::sleep(Duration::from_secs(current_timeout_time * timeout_times)));
                 // timeout_times += 1;
             },
@@ -440,6 +446,7 @@ pub async fn dhcp_v6_pd_client(
                             // current_timeout_time = t2;
 
                         }
+                        swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
                     }
                     // message_rx close
                     None => break
@@ -495,6 +502,7 @@ pub async fn dhcp_v6_pd_client(
             ServiceStatus::Failed
         });
     }
+    swap_if_changed(&pd_runtime, PdRuntime::Stopped);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -534,6 +542,37 @@ impl SendStatusOutcome {
     const NO_CHANGE: Self = Self { reset_timeout: false, prefix_expired: false };
     const RESET_TIMEOUT: Self = Self { reset_timeout: true, prefix_expired: false };
     const PREFIX_EXPIRED: Self = Self { reset_timeout: true, prefix_expired: true };
+}
+
+fn lease_projection(iapd: &v6::IAPD) -> Option<PdLease> {
+    match iapd.opts.get(OptionCode::IAPrefix) {
+        Some(DhcpOption::IAPrefix(p)) => Some(PdLease {
+            prefix_ip: p.prefix_ip,
+            prefix_len: p.prefix_len,
+            valid_secs: p.valid_lifetime,
+            preferred_secs: p.preferred_lifetime,
+        }),
+        _ => None,
+    }
+}
+
+fn pd_runtime_projection(status: &IpV6PdState) -> PdRuntime {
+    match status {
+        IpV6PdState::Solicit { .. } | IpV6PdState::Confirm => PdRuntime::Soliciting,
+        IpV6PdState::Request { .. } => PdRuntime::Requesting,
+        IpV6PdState::Bound { iapd, .. } => {
+            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Bound)
+        }
+        IpV6PdState::Renew { iapd, .. } | IpV6PdState::WaitToRebind { iapd, .. } => {
+            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Renewing)
+        }
+        IpV6PdState::Rebind { iapd, .. } => {
+            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Rebinding)
+        }
+        IpV6PdState::Release { .. } | IpV6PdState::Decline | IpV6PdState::Stop => {
+            PdRuntime::Stopped
+        }
+    }
 }
 
 fn active_prefix_lease(status: &IpV6PdState) -> Option<(&v6::IAPD, &Instant)> {
@@ -1149,6 +1188,72 @@ mod tests {
 
         assert_eq!(outcome, SendStatusOutcome::PREFIX_EXPIRED);
         assert!(matches!(status, IpV6PdState::Solicit { .. }));
+    }
+
+    #[test]
+    fn pd_runtime_projection_maps_fsm_phases() {
+        assert!(matches!(
+            pd_runtime_projection(&IpV6PdState::init_status()),
+            PdRuntime::Soliciting
+        ));
+
+        let request = IpV6PdState::Request {
+            xid: 1,
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            service_sock: "[::1]:547".parse().unwrap(),
+            server_unicast: None,
+            send_times: 0,
+        };
+        assert!(matches!(pd_runtime_projection(&request), PdRuntime::Requesting));
+
+        let bound = IpV6PdState::Bound {
+            xid: 1,
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            server_unicast: None,
+            bound_time: Instant::now(),
+        };
+        assert_eq!(
+            pd_runtime_projection(&bound),
+            PdRuntime::Bound(PdLease {
+                prefix_ip: "2001:db8:1200::".parse().unwrap(),
+                prefix_len: 56,
+                valid_secs: 30,
+                preferred_secs: 30,
+            })
+        );
+
+        let renew = IpV6PdState::Renew {
+            xid: 1,
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            server_unicast: None,
+            renew_time: Instant::now(),
+            bound_time: Instant::now(),
+        };
+        assert!(matches!(pd_runtime_projection(&renew), PdRuntime::Renewing(_)));
+
+        let wait_to_rebind = IpV6PdState::WaitToRebind {
+            xid: 1,
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            server_unicast: None,
+            bound_time: Instant::now(),
+        };
+        assert!(matches!(pd_runtime_projection(&wait_to_rebind), PdRuntime::Renewing(_)));
+
+        let rebind = IpV6PdState::Rebind {
+            xid: 1,
+            service_id: Vec::new(),
+            iapd: iapd(4, 8, 30),
+            server_unicast: None,
+            rebind_time: Instant::now(),
+            bound_time: Instant::now(),
+        };
+        assert!(matches!(pd_runtime_projection(&rebind), PdRuntime::Rebinding(_)));
+
+        assert!(matches!(pd_runtime_projection(&IpV6PdState::Stop), PdRuntime::Stopped));
     }
 
     #[test]

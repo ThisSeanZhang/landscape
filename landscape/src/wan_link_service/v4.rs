@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::args::LAND_HOSTNAME;
 use landscape_common::dev::LandscapeInterface;
@@ -8,8 +9,8 @@ use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, 
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::wan_link::{
-    LinkStateHandle, RuntimeWanLinkConfig, RuntimeWanLinkKind, SessionIface, WanLinkV4Model,
-    WanV4Lease,
+    LinkStateHandle, RuntimeWanLinkConfig, RuntimeWanLinkKind, SessionIface, V4Runtime,
+    WanLinkV4Model, WanV4Lease, swap_if_changed,
 };
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
@@ -30,6 +31,7 @@ pub(super) async fn run(
     addr_binding: Arc<dyn WanAddrBinding>,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     let attach_iface_name = runtime.attach_iface_name.clone();
     let link_id = runtime.id;
@@ -41,12 +43,13 @@ pub(super) async fn run(
         RuntimeWanLinkKind::Ethernet => {
             if !v4_enable {
                 // No v4 acquisition: anchor the net iface for PD if needed.
-                run_idle_until_stopped(iface, service_status, session, pd_enable).await;
+                run_idle_until_stopped(iface, service_status, session, pd_enable, v4_runtime).await;
                 return;
             }
             match v4_model {
                 WanLinkV4Model::Nothing | WanLinkV4Model::Ipcp { .. } => {
-                    run_idle_until_stopped(iface, service_status, session, pd_enable).await;
+                    run_idle_until_stopped(iface, service_status, session, pd_enable, v4_runtime)
+                        .await;
                 }
                 WanLinkV4Model::Static {
                     ipv4,
@@ -66,6 +69,7 @@ pub(super) async fn run(
                         route_service,
                         addr_binding,
                         session,
+                        v4_runtime,
                     )
                     .await;
                 }
@@ -79,12 +83,14 @@ pub(super) async fn run(
                         route_service,
                         addr_binding,
                         session,
+                        v4_runtime,
                     )
                     .await;
                 }
             }
         }
         RuntimeWanLinkKind::Pppd { ppp_iface_name, peer_id, password, ac, plugin } => {
+            swap_if_changed(&v4_runtime, V4Runtime::Idle);
             let default_router =
                 v4_enable && matches!(v4_model, WanLinkV4Model::Ipcp { default_router: true });
             let pppd_config = PPPDConfig {
@@ -103,6 +109,7 @@ pub(super) async fn run(
                 addr_binding,
                 link_id,
                 session,
+                v4_runtime,
             )
             .await;
         }
@@ -114,6 +121,7 @@ pub(super) async fn run(
             lcp_echo_interval,
             redial_backoff_base_secs,
         } => {
+            swap_if_changed(&v4_runtime, V4Runtime::Idle);
             let default_router =
                 v4_enable && matches!(v4_model, WanLinkV4Model::Ipcp { default_router: true });
             run_pppoe_native(
@@ -130,6 +138,7 @@ pub(super) async fn run(
                 route_service,
                 pppoe_dataplane,
                 session,
+                v4_runtime,
             )
             .await;
         }
@@ -144,15 +153,20 @@ async fn run_idle_until_stopped(
     service_status: ServiceHandle,
     session: Option<LinkStateHandle>,
     publish_session: bool,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     if publish_session && let Some(session) = session.as_ref() {
         session.session_up(SessionIface::new(iface.index, iface.name.clone(), iface.mac), None);
+        swap_if_changed(&v4_runtime, V4Runtime::IdleAnchor);
+    } else {
+        swap_if_changed(&v4_runtime, V4Runtime::Idle);
     }
     service_status.just_change_status(ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
     if publish_session && let Some(session) = session.as_ref() {
         session.session_down();
     }
+    swap_if_changed(&v4_runtime, V4Runtime::Stopped);
     service_status.just_change_status(ServiceStatus::Stop);
 }
 
@@ -168,11 +182,12 @@ async fn run_static_v4(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     // TODO: IPV6 的设置
     let (Some(ipv4), Some(ipv4_mask)) = (ipv4, ipv4_mask) else {
         tracing::warn!("static v4 model without ipv4/ipv4_mask, running idle");
-        run_idle_until_stopped(iface, service_status, session, false).await;
+        run_idle_until_stopped(iface, service_status, session, false, v4_runtime).await;
         return;
     };
 
@@ -231,6 +246,7 @@ async fn run_static_v4(
         );
     }
 
+    swap_if_changed(&v4_runtime, V4Runtime::Static { ip: ipv4 });
     service_status.just_change_status(ServiceStatus::Running);
     service_status.stop_token().cancelled().await;
 
@@ -248,6 +264,7 @@ async fn run_static_v4(
     route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
     addr_binding.unbind_ipv4(iface.index);
+    swap_if_changed(&v4_runtime, V4Runtime::Stopped);
     service_status.just_change_status(ServiceStatus::Stop);
 }
 
@@ -261,6 +278,7 @@ async fn run_dhcp_v4(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     if let Some(mac_addr) = iface.mac {
         let hostname = hostname.filter(|h| !h.is_empty()).unwrap_or_else(|| LAND_HOSTNAME.clone());
@@ -277,9 +295,11 @@ async fn run_dhcp_v4(
             route_service,
             addr_binding,
             session,
+            runtime: v4_runtime,
         };
         crate::wan_service::dhcpv4_client::run(config, services, service_status).await;
     } else {
+        swap_if_changed(&v4_runtime, V4Runtime::Stopped);
         service_status.just_change_status(ServiceStatus::Failed);
     }
 }
@@ -299,6 +319,7 @@ async fn run_pppoe_native(
     route_service: IpRouteService,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
     if let Some(mac_addr) = iface.mac {
         let mut config = crate::wan_service::pppoe_client::PPPoEClientConfig::new(
@@ -320,9 +341,11 @@ async fn run_pppoe_native(
             route_service,
             pppoe_dataplane,
             session,
+            v4_runtime,
         )
         .await;
     } else {
+        swap_if_changed(&v4_runtime, V4Runtime::Stopped);
         service_status.just_change_status(ServiceStatus::Failed);
     }
 }

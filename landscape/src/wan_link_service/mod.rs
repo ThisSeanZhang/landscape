@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use futures::future::BoxFuture;
 use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
@@ -28,7 +29,8 @@ use landscape_common::service::{
 };
 use landscape_common::wan_link::{
     LinkState, LinkStateHandle, RuntimeWanLinkConfig, SectionKind, SessionIface, SessionPhase,
-    SessionState, WanHealthProbeConfig, WanLinkConfig, WanLinkStatus, WanLinkStatusHandle,
+    SessionState, V4Runtime, WanHealthProbeConfig, WanLinkConfig, WanLinkRuntimeStatusStore,
+    WanLinkSectionsSnapshot, WanLinkSectionsStatus, WanLinkStatus, WanLinkStatusHandle,
     WanLinkStatusStore,
 };
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
@@ -93,6 +95,7 @@ pub struct WanLinkService {
     iface_events: broadcast::Sender<IfaceObserverAction>,
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
     status_store: WanLinkStatusStore,
+    runtime_status_store: WanLinkRuntimeStatusStore,
 }
 
 impl WanLinkService {
@@ -111,6 +114,7 @@ impl WanLinkService {
         iface_events: broadcast::Sender<IfaceObserverAction>,
         config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
         status_store: WanLinkStatusStore,
+        runtime_status_store: WanLinkRuntimeStatusStore,
     ) -> Self {
         Self {
             route_service,
@@ -126,6 +130,7 @@ impl WanLinkService {
             iface_events,
             config_channels,
             status_store,
+            runtime_status_store,
         }
     }
 }
@@ -150,6 +155,12 @@ impl ServiceStarterTrait for WanLinkService {
             );
         }
         let (link_state, state_rx) = LinkStateHandle::new(carrier);
+
+        let sections = Arc::new(WanLinkSectionsStatus::default());
+        sections.set_v4(V4Runtime::Idle);
+        self.runtime_status_store.install(config.id, sections.clone());
+        let v4_runtime = sections.v4_slot();
+        let pd_runtime = sections.pd_slot();
 
         // Per-link config watch, so `handle_service_config` can deliver updates
         // without a full link restart.
@@ -208,6 +219,7 @@ impl ServiceStarterTrait for WanLinkService {
             let pppoe_dataplane = self.pppoe_dataplane.clone();
             let attach = config.attach_iface_name.clone();
             let board = board.clone();
+            let v4_runtime = v4_runtime.clone();
             status.spawn_task_with_resource(
                 task_label::task::WAN_LINK_V4_SUPERVISOR,
                 attach.clone(),
@@ -222,6 +234,7 @@ impl ServiceStarterTrait for WanLinkService {
                         route_service,
                         addr_binding,
                         pppoe_dataplane,
+                        v4_runtime,
                         DEFAULT_RESTART_BACKOFF,
                     )
                     .await;
@@ -242,14 +255,17 @@ impl ServiceStarterTrait for WanLinkService {
             |state| state.has_v4_lease(),
             {
                 let dataplane = self.nat_dataplane.clone();
+                let nat_runtime = sections.nat_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
+                    let nat_runtime = nat_runtime.clone();
                     Box::pin(async move {
                         nat::run(
                             iface,
                             RuntimeWanLinkConfig::from_config(&cfg).nat,
                             status,
                             dataplane,
+                            nat_runtime,
                         )
                         .await;
                     })
@@ -270,14 +286,17 @@ impl ServiceStarterTrait for WanLinkService {
             |state| state.is_up(),
             {
                 let dataplane = self.mss_dataplane.clone();
+                let mss_runtime = sections.mss_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
+                    let mss_runtime = mss_runtime.clone();
                     Box::pin(async move {
                         mss::run(
                             iface,
                             RuntimeWanLinkConfig::from_config(&cfg).mss,
                             status,
                             dataplane,
+                            mss_runtime,
                         )
                         .await;
                     })
@@ -298,14 +317,17 @@ impl ServiceStarterTrait for WanLinkService {
             |state| state.is_up(),
             {
                 let dataplane = self.firewall_dataplane.clone();
+                let firewall_runtime = sections.firewall_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
+                    let firewall_runtime = firewall_runtime.clone();
                     Box::pin(async move {
                         firewall::run(
                             iface,
                             RuntimeWanLinkConfig::from_config(&cfg).firewall,
                             status,
                             dataplane,
+                            firewall_runtime,
                         )
                         .await;
                     })
@@ -330,6 +352,7 @@ impl ServiceStarterTrait for WanLinkService {
                 let prefix_map = self.prefix_map.clone();
                 let prefix_sender = self.prefix_sender.clone();
                 let shared_wan_iid = self.shared_wan_iid.clone();
+                let pd_runtime = pd_runtime.clone();
                 Arc::new(move |iface, cfg, status| {
                     let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                     let route_service = route_service.clone();
@@ -337,6 +360,7 @@ impl ServiceStarterTrait for WanLinkService {
                     let prefix_map = prefix_map.clone();
                     let prefix_sender = prefix_sender.clone();
                     let shared_wan_iid = shared_wan_iid.clone();
+                    let pd_runtime = pd_runtime.clone();
                     Box::pin(async move {
                         pd::run(
                             runtime.id,
@@ -348,6 +372,7 @@ impl ServiceStarterTrait for WanLinkService {
                             prefix_map,
                             shared_wan_iid,
                             prefix_sender,
+                            pd_runtime,
                         )
                         .await;
                     })
@@ -370,10 +395,12 @@ impl ServiceStarterTrait for WanLinkService {
                 let probe = self.health_probe.clone();
                 let route_service = self.route_service.clone();
                 let link_state = link_state.clone();
+                let health_runtime = sections.health_check_slot();
                 Arc::new(move |iface, cfg, status| {
                     let probe = probe.clone();
                     let route_service = route_service.clone();
                     let link_state = link_state.clone();
+                    let health_runtime = health_runtime.clone();
                     Box::pin(async move {
                         health_check::run(
                             cfg.id,
@@ -383,6 +410,7 @@ impl ServiceStarterTrait for WanLinkService {
                             status,
                             probe,
                             route_service,
+                            health_runtime,
                         )
                         .await;
                     })
@@ -629,6 +657,7 @@ async fn run_v4_supervisor(
     route_service: IpRouteService,
     addr_binding: Arc<dyn WanAddrBinding>,
     pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
     backoff: Duration,
 ) {
     let stop = link_status.stop_token();
@@ -665,12 +694,13 @@ async fn run_v4_supervisor(
         let rs = route_service.clone();
         let ab = addr_binding.clone();
         let dp = pppoe_dataplane.clone();
+        let vr = v4_runtime.clone();
         let resource = iface.name.clone();
         let join = run.spawn_task_with_resource(
             task_label::task::WAN_LINK_V4_SUPERVISOR,
             resource,
             async move {
-                v4::run(iface, runtime, run_child, rs, ab, dp, session).await;
+                v4::run(iface, runtime, run_child, rs, ab, dp, session, vr).await;
             },
         );
         tokio::pin!(join);
@@ -843,6 +873,7 @@ pub struct WanLinkServiceManagerService {
     prefix_map: IAPrefixMap,
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
     status_store: WanLinkStatusStore,
+    runtime_status_store: WanLinkRuntimeStatusStore,
 }
 
 #[async_trait::async_trait]
@@ -891,6 +922,7 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         let Some(old) = old else { return Ok(None) };
         let status = self.get_service().stop_service(id.to_string()).await;
         self.status_store.write().await.remove(&id);
+        self.runtime_status_store.remove(&id);
         self.config_channels.lock().unwrap().remove(&id);
         self.notify_deleted(old).await;
         Ok(status)
@@ -919,6 +951,7 @@ impl WanLinkServiceManagerService {
         let config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let status_store: WanLinkStatusStore = Arc::default();
+        let runtime_status_store: WanLinkRuntimeStatusStore = Default::default();
 
         let starter = WanLinkService::new(
             route_service,
@@ -934,6 +967,7 @@ impl WanLinkServiceManagerService {
             iface_events.clone(),
             config_channels.clone(),
             status_store.clone(),
+            runtime_status_store.clone(),
         );
         let service = ServiceManager::init(store.list().await.unwrap(), starter).await;
 
@@ -956,6 +990,7 @@ impl WanLinkServiceManagerService {
             prefix_map,
             config_channels,
             status_store,
+            runtime_status_store,
         }
     }
 
@@ -984,6 +1019,10 @@ impl WanLinkServiceManagerService {
             .iter()
             .map(|(id, status)| (id.to_string(), status.clone()))
             .collect()
+    }
+
+    pub fn get_section_runtime_status(&self, id: Uuid) -> Option<WanLinkSectionsSnapshot> {
+        self.runtime_status_store.get(&id).map(|sections| sections.snapshot())
     }
 
     pub async fn get_pd_prefix_contexts(&self) -> PdPrefixContextMap {

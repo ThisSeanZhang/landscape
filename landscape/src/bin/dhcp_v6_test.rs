@@ -41,6 +41,8 @@ async fn main() {
     };
 
     let service_status = ServiceHandle::new();
+    let pd_runtime =
+        Arc::new(arc_swap::ArcSwap::from_pointee(landscape_common::wan_link::PdRuntime::Idle));
     let rt = Arc::new(EbpfRuntime::init("dhcp_v6_test", None).expect("init ebpf maps"));
     let ip_route = IpRouteService::new(rt.clone().route_table());
     let status = service_status.clone();
@@ -74,6 +76,7 @@ async fn main() {
             prefix_map,
             std::sync::Arc::new(2),
             prefix_sender,
+            pd_runtime,
         )
         .await;
     });

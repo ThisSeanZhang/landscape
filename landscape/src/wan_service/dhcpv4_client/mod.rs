@@ -9,9 +9,10 @@ mod test_driver;
 #[cfg(test)]
 mod test_fsm;
 
+use arc_swap::ArcSwap;
 use landscape_common::net::MacAddr;
 use landscape_common::service::ServiceHandle;
-use landscape_common::wan_link::LinkStateHandle;
+use landscape_common::wan_link::{LinkStateHandle, V4Runtime};
 use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -33,6 +34,7 @@ pub struct DhcpV4ClientServices {
     pub route_service: IpRouteService,
     pub addr_binding: Arc<dyn WanAddrBinding>,
     pub session: Option<LinkStateHandle>,
+    pub runtime: Arc<ArcSwap<V4Runtime>>,
 }
 
 pub async fn run(

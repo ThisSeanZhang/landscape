@@ -2,12 +2,29 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use futures::FutureExt;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
-use landscape_common::wan_link::{LinkStateHandle, SessionIface, WanV4Lease};
+use landscape_common::wan_link::{
+    LinkStateHandle, PppdRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
+};
 
 use super::env::{PppIpv4State, PppdChild, PppdEnv, PppdTimings};
+
+impl From<&PppIpv4State> for PppdRuntime {
+    fn from(state: &PppIpv4State) -> Self {
+        match state {
+            PppIpv4State::Missing => PppdRuntime::Spawning,
+            PppIpv4State::Partial { local, peer, .. } => {
+                PppdRuntime::WaitingAddr { local: *local, peer: *peer }
+            }
+            PppIpv4State::Ready { local, peer, .. } => {
+                PppdRuntime::Online { local_ip: *local, peer_ip: *peer }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackoffOutcome {
@@ -178,6 +195,7 @@ pub(crate) async fn run_pppd_supervisor(
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) -> bool {
     let graceful = AssertUnwindSafe(supervise_loop(
         ppp_iface_name.clone(),
@@ -186,6 +204,7 @@ pub(crate) async fn run_pppd_supervisor(
         env.clone(),
         timings,
         session.clone(),
+        v4_runtime,
     ))
     .catch_unwind()
     .await
@@ -208,6 +227,7 @@ async fn supervise_loop(
     env: Arc<dyn PppdEnv>,
     timings: PppdTimings,
     session: Option<LinkStateHandle>,
+    v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) -> bool {
     let mut retry = PppdRetryController::new();
     let mut ticker = tokio::time::interval(timings.poll_interval);
@@ -237,12 +257,21 @@ async fn supervise_loop(
                     backoff,
                     retry.failure_count()
                 );
+                swap_if_changed(
+                    &v4_runtime,
+                    V4Runtime::Pppd(PppdRuntime::RestartBackoff {
+                        failure_count: retry.failure_count(),
+                        retry_in_secs: backoff.as_secs(),
+                    }),
+                );
                 match wait_backoff(&service_status, backoff).await {
                     BackoffOutcome::Stop => return true,
                     BackoffOutcome::Elapsed => continue 'restart,
                 }
             }
         };
+
+        swap_if_changed(&v4_runtime, V4Runtime::Pppd(PppdRuntime::Spawning));
 
         let mut should_stop = false;
         loop {
@@ -274,6 +303,7 @@ async fn supervise_loop(
                         retry.note_healthy();
                     }
                     last_state = state;
+                    swap_if_changed(&v4_runtime, V4Runtime::Pppd(PppdRuntime::from(&last_state)));
 
                     if !health.is_healthy() && tokio::time::Instant::now() >= startup_deadline {
                         tracing::warn!(
@@ -302,6 +332,13 @@ async fn supervise_loop(
             "pppd connection lost, retrying after {:?} (failure_count={})",
             backoff,
             retry.failure_count()
+        );
+        swap_if_changed(
+            &v4_runtime,
+            V4Runtime::Pppd(PppdRuntime::RestartBackoff {
+                failure_count: retry.failure_count(),
+                retry_in_secs: backoff.as_secs(),
+            }),
         );
         match wait_backoff(&service_status, backoff).await {
             BackoffOutcome::Stop => return true,

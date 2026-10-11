@@ -102,7 +102,17 @@ pub(super) fn start_client(
                     .expect("ebpf runtime in client ns"),
             );
             let route_service = IpRouteService::new(ebpf_rt.clone().route_table());
-            run(cfg, status_for_task, route_service, ebpf_rt.pppoe_dataplane(), None).await;
+            run(
+                cfg,
+                status_for_task,
+                route_service,
+                ebpf_rt.pppoe_dataplane(),
+                None,
+                std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                    landscape_common::wan_link::V4Runtime::Idle,
+                )),
+            )
+            .await;
         });
 
         let _ = done_tx.send(());

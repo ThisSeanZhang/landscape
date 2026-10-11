@@ -3,6 +3,7 @@ use landscape_common::net_proto::dhcp::{
     DhcpV4Message, DhcpV4MessageType as MessageType, DhcpV4OpCode, DhcpV4Option as DhcpOption,
     DhcpV4OptionCode as OptionCode, DhcpV4Options,
 };
+use landscape_common::wan_link::DhcpV4Runtime;
 use std::net::Ipv4Addr;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -123,14 +124,28 @@ impl DhcpV4Fsm {
             DhcpState::Bound { lease }
             | DhcpState::Renewing { lease }
             | DhcpState::WaitToRebind { lease }
-            | DhcpState::Rebind { lease } => {
-                if lease.yiaddr.is_unspecified() {
-                    Some(lease.ciaddr)
-                } else {
-                    Some(lease.yiaddr)
-                }
-            }
+            | DhcpState::Rebind { lease } => Some(lease_ip(lease)),
             _ => None,
+        }
+    }
+
+    pub(crate) fn runtime_status(&self) -> DhcpV4Runtime {
+        match &self.state {
+            DhcpState::Discovering { .. } => DhcpV4Runtime::Discovering {
+                attempts: self.attempts,
+                backoff_rounds: self.connect_failure_count,
+            },
+            DhcpState::Requesting { offer, .. } => {
+                DhcpV4Runtime::Requesting { offered_ip: offer.yiaddr }
+            }
+            DhcpState::Bound { lease } => {
+                let (ip, prefix, lease_secs, renew_secs) = lease_projection(lease);
+                DhcpV4Runtime::Bound { ip, prefix, lease_secs, renew_secs }
+            }
+            DhcpState::Renewing { lease } => DhcpV4Runtime::Renewing { ip: lease_ip(lease) },
+            DhcpState::WaitToRebind { lease } | DhcpState::Rebind { lease } => {
+                DhcpV4Runtime::Rebinding { ip: lease_ip(lease) }
+            }
         }
     }
 
@@ -455,6 +470,20 @@ impl DhcpV4Fsm {
             _ => false,
         }
     }
+}
+
+fn lease_ip(lease: &LeaseContext) -> Ipv4Addr {
+    if lease.yiaddr.is_unspecified() { lease.ciaddr } else { lease.yiaddr }
+}
+
+fn lease_projection(lease: &LeaseContext) -> (Ipv4Addr, u8, u64, u64) {
+    let ip = lease_ip(lease);
+    let prefix = match lease.options.get(OptionCode::SubnetMask) {
+        Some(DhcpOption::SubnetMask(mask)) => u32::from_be_bytes(mask.octets()).count_ones() as u8,
+        _ => 0,
+    };
+    let (renew_secs, _, lease_secs) = get_renew_times(&lease.options).unwrap_or((0, 0, 0));
+    (ip, prefix, lease_secs, renew_secs)
 }
 
 pub(crate) fn get_renew_times(options: &DhcpV4Options) -> Option<(u64, u64, u64)> {

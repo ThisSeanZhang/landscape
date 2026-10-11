@@ -1,9 +1,13 @@
+use arc_swap::ArcSwap;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT;
 use landscape_common::net_proto::udp::dhcp::DhcpV4Message;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::wan_link::{LinkStateHandle, SessionIface, WanV4Lease};
+use landscape_common::wan_link::{
+    LinkStateHandle, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
+};
 use std::io;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::fsm::{DhcpV4Fsm, FsmAction, FsmEvent, LeaseParams};
@@ -75,8 +79,9 @@ pub(crate) async fn run(
         LANDSCAPE_DEFAULE_DHCP_V4_SERVER_PORT,
     );
     let session = services.session.clone();
+    let runtime = services.runtime.clone();
     let ops = RealSystemOps { config: config.clone(), services, applied: None };
-    run_with(config, io, ops, session, service_status).await;
+    run_with(config, io, ops, session, runtime, service_status).await;
 }
 
 pub(crate) async fn run_with<IO, OPS>(
@@ -84,6 +89,7 @@ pub(crate) async fn run_with<IO, OPS>(
     mut io: IO,
     mut ops: OPS,
     session: Option<LinkStateHandle>,
+    runtime: Arc<ArcSwap<V4Runtime>>,
     service_status: ServiceHandle,
 ) where
     IO: DhcpV4Io,
@@ -95,6 +101,8 @@ pub(crate) async fn run_with<IO, OPS>(
     ops.setup(&config.iface_name).await;
 
     let mut fsm = DhcpV4Fsm::new(config.mac_addr, config.hostname.clone());
+
+    swap_if_changed(&runtime, fsm.runtime_status().into());
 
     let mut timer = Box::pin(tokio::time::sleep(Duration::ZERO));
     let stop_token = service_status.stop_token();
@@ -141,6 +149,8 @@ pub(crate) async fn run_with<IO, OPS>(
             }
         }
 
+        swap_if_changed(&runtime, fsm.runtime_status().into());
+
         if from_recv && let Some(session) = session.as_ref() {
             match fsm.leased_ip() {
                 Some(ip) => session.session_up(
@@ -159,6 +169,8 @@ pub(crate) async fn run_with<IO, OPS>(
     tracing::info!("DHCPv4 Client Stop: {:#?}", service_status);
 
     ops.release().await;
+
+    swap_if_changed(&runtime, V4Runtime::Stopped);
 
     if !service_status.is_stop() {
         service_status.just_change_status(if service_status.is_exit() {

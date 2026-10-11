@@ -44,6 +44,9 @@ async fn main() {
                 route_service: IpRouteService::new(rt.clone().route_table()),
                 addr_binding: rt.wan_addr_binding(),
                 session: None,
+                runtime: Arc::new(arc_swap::ArcSwap::from_pointee(
+                    landscape_common::wan_link::V4Runtime::Idle,
+                )),
             };
             landscape::wan_service::dhcpv4_client::run(config, services, status).await;
         }
