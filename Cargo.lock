@@ -3039,6 +3039,7 @@ name = "landscape-common"
 version = "0.26.2"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "bytes",
  "clap 4.6.7",
