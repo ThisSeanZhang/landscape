@@ -10,6 +10,10 @@ pub enum DdnsError {
     #[api_error(id = "ddns.job_not_found", status = 404)]
     JobNotFound(ConfigId),
 
+    #[error("DDNS job '{0}' sync task is already running; cancel it first")]
+    #[api_error(id = "ddns.task_in_progress", status = 409)]
+    TaskInProgress(ConfigId),
+
     #[error("Invalid DDNS job config: {0}")]
     #[api_error(id = "ddns.invalid_config", status = 422)]
     InvalidConfig(String),

@@ -1,15 +1,18 @@
 import {
+  cancelDdnsJobSync,
   createDdnsJob,
   deleteDdnsJob,
   getDdnsJob,
-  listDdnsJobs,
   listDdnsJobStatus,
+  listDdnsJobs,
+  listDdnsTasks,
   triggerDdnsJobSync,
   updateDdnsJob,
 } from "@landscape-router/types/api/ddns/ddns";
 import type {
   ApiDdnsJob as DdnsJob,
   DdnsJobRuntime,
+  DdnsTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
 export async function get_ddns_jobs(): Promise<DdnsJob[]> {
@@ -37,4 +40,14 @@ export async function delete_ddns_job(id: string): Promise<void> {
 
 export async function sync_ddns_job(id: string): Promise<DdnsJobRuntime> {
   return triggerDdnsJobSync(id);
+}
+
+export async function cancel_ddns_job_sync(
+  id: string,
+): Promise<DdnsJobRuntime> {
+  return cancelDdnsJobSync(id);
+}
+
+export async function get_ddns_tasks(): Promise<DdnsTaskProgress[]> {
+  return listDdnsTasks();
 }

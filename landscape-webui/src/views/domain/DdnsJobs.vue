@@ -1,9 +1,11 @@
 <script lang="ts" setup>
 import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
 import {
+  cancel_ddns_job_sync,
   delete_ddns_job,
   get_ddns_job_status,
   get_ddns_jobs,
+  get_ddns_tasks,
   push_ddns_job,
   sync_ddns_job,
 } from "@/api/domain/ddns";
@@ -16,10 +18,11 @@ import type {
   DdnsFamilyRuntime,
   DdnsJobRuntime,
   DdnsRecordConfig,
+  DdnsTaskProgress,
   DnsProviderProfile,
   IpFamily,
 } from "@landscape-router/types/api/schemas";
-import { computed, h, onMounted, ref } from "vue";
+import { computed, h, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   NButton,
   NFlex,
@@ -40,6 +43,7 @@ const message = useMessage();
 const frontEndStore = useFrontEndStore();
 const items = ref<DdnsJob[]>([]);
 const runtimeMap = ref<Map<string, DdnsJobRuntime>>(new Map());
+const taskProgress = ref<Map<string, DdnsTaskProgress>>(new Map());
 const providerProfiles = ref<DnsProviderProfile[]>([]);
 const wanLinks = ref<WanLink[]>([]);
 const ifaceOptions = ref<{ label: string; value: string }[]>([]);
@@ -192,18 +196,20 @@ function resetForm(item?: DdnsJob) {
 async function refresh() {
   loading.value = true;
   try {
-    const [jobs, runtimeStatuses, profiles, links, prefixInfos] =
+    const [jobs, runtimeStatuses, profiles, links, prefixInfos, tasks] =
       await Promise.all([
         get_ddns_jobs(),
         get_ddns_job_status(),
         get_dns_provider_profiles(),
         get_all_wan_links(),
         get_current_ip_prefix_info(),
+        get_ddns_tasks(),
       ]);
     items.value = jobs;
     runtimeMap.value = new Map(
       runtimeStatuses.map((item) => [item.job_id, item]),
     );
+    taskProgress.value = new Map(tasks.map((task) => [task.job_id, task]));
     providerProfiles.value = profiles;
     wanLinks.value = links;
     ifaceOptions.value = wan_link_options(links);
@@ -217,6 +223,53 @@ async function refresh() {
     loading.value = false;
   }
 }
+
+async function refresh_status() {
+  try {
+    const [runtimeStatuses, tasks] = await Promise.all([
+      get_ddns_job_status(),
+      get_ddns_tasks(),
+    ]);
+    runtimeMap.value = new Map(
+      runtimeStatuses.map((item) => [item.job_id, item]),
+    );
+    taskProgress.value = new Map(tasks.map((task) => [task.job_id, task]));
+  } catch {
+    // The axios interceptor already surfaces API errors; keep polling silent.
+  }
+}
+
+const has_syncing = computed(
+  () =>
+    taskProgress.value.size > 0 ||
+    [...runtimeMap.value.values()].some(
+      (runtime) => runtime.status === "syncing",
+    ),
+);
+
+let poll_timer: ReturnType<typeof setInterval> | null = null;
+
+function start_polling() {
+  if (poll_timer) return;
+  poll_timer = setInterval(refresh_status, 5000);
+}
+
+function stop_polling() {
+  if (poll_timer) {
+    clearInterval(poll_timer);
+    poll_timer = null;
+  }
+}
+
+watch(has_syncing, (val) => {
+  if (val) {
+    start_polling();
+  } else {
+    stop_polling();
+  }
+});
+
+onUnmounted(stop_polling);
 
 function providerName(id: string) {
   return providerProfiles.value.find((item) => item.id === id)?.name ?? id;
@@ -510,10 +563,28 @@ async function syncNow(id: string) {
   syncingIds.value.add(id);
   try {
     await sync_ddns_job(id);
-    await refresh();
+    await refresh_status();
   } finally {
     syncingIds.value.delete(id);
   }
+}
+
+async function cancelSync(id: string) {
+  syncingIds.value.add(id);
+  try {
+    await cancel_ddns_job_sync(id);
+    await refresh_status();
+  } finally {
+    syncingIds.value.delete(id);
+  }
+}
+
+function phase_label(task: DdnsTaskProgress): string {
+  const parts = [t(`ddns.phase_${task.phase}`)];
+  if (task.phase_detail) {
+    parts.push(frontEndStore.MASK_INFO(task.phase_detail));
+  }
+  return parts.join(" · ");
 }
 
 function openDetailDrawer(job: DdnsJob) {
@@ -567,11 +638,26 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
   {
     title: t("common.status"),
     key: "status",
-    width: 100,
-    render: (row) =>
-      h(NTag, { size: "small", type: statusType(aggregateStatus(row)) }, () =>
-        aggregateStatus(row),
-      ),
+    width: 150,
+    render: (row) => {
+      const tag = h(
+        NTag,
+        { size: "small", type: statusType(aggregateStatus(row)) },
+        () => aggregateStatus(row),
+      );
+      const task = row.id ? taskProgress.value.get(row.id) : undefined;
+      if (!task) {
+        return tag;
+      }
+      return h(NFlex, { vertical: true, size: 2 }, () => [
+        tag,
+        h(
+          "span",
+          { style: "font-size: 12px; color: var(--n-text-color-disabled);" },
+          () => phase_label(task),
+        ),
+      ]);
+    },
   },
   {
     title: t("cert.cert_status_message"),
@@ -582,62 +668,89 @@ const columns = computed<DataTableColumns<DdnsJob>>(() => [
   {
     title: t("common.actions"),
     key: "actions",
-    width: 360,
-    render: (row) => [
-      h(
-        NButton,
-        {
-          size: "small",
-          secondary: true,
-          onClick: () => openDetailDrawer(row),
-        },
-        () => t("common.details"),
-      ),
-      h(
-        NButton,
-        {
-          size: "small",
-          type: "primary",
-          secondary: true,
-          style: "margin-left: 8px",
-          loading: row.id ? syncingIds.value.has(row.id) : false,
-          disabled: !row.enable,
-          onClick: () => row.id && syncNow(row.id),
-        },
-        () => t("ddns.sync_now"),
-      ),
-      h(
-        NButton,
-        {
-          size: "small",
-          secondary: true,
-          style: "margin-left: 8px",
-          onClick: () => {
-            resetForm(row);
-            showModal.value = true;
+    width: 420,
+    render: (row) => {
+      const buttons: any[] = [
+        h(
+          NButton,
+          {
+            size: "small",
+            secondary: true,
+            onClick: () => openDetailDrawer(row),
           },
-        },
-        () => t("common.edit"),
-      ),
-      h(
-        NPopconfirm,
-        { onPositiveClick: () => remove(row.id!) },
-        {
-          trigger: () =>
-            h(
-              NButton,
-              {
-                size: "small",
-                type: "error",
-                secondary: true,
-                style: "margin-left: 8px",
-              },
-              () => t("common.delete"),
-            ),
-          default: () => t("common.confirm_delete"),
-        },
-      ),
-    ],
+          () => t("common.details"),
+        ),
+        h(
+          NButton,
+          {
+            size: "small",
+            type: "primary",
+            secondary: true,
+            style: "margin-left: 8px",
+            loading: row.id ? syncingIds.value.has(row.id) : false,
+            disabled: !row.enable,
+            onClick: () => row.id && syncNow(row.id),
+          },
+          () => t("ddns.sync_now"),
+        ),
+      ];
+      if (row.id && taskProgress.value.has(row.id)) {
+        buttons.push(
+          h(
+            NPopconfirm,
+            { onPositiveClick: () => cancelSync(row.id!) },
+            {
+              trigger: () =>
+                h(
+                  NButton,
+                  {
+                    size: "small",
+                    type: "warning",
+                    secondary: true,
+                    style: "margin-left: 8px",
+                  },
+                  () => t("ddns.cancel_sync"),
+                ),
+              default: () => t("ddns.confirm_cancel_sync"),
+            },
+          ),
+        );
+      }
+      buttons.push(
+        h(
+          NButton,
+          {
+            size: "small",
+            secondary: true,
+            style: "margin-left: 8px",
+            onClick: () => {
+              resetForm(row);
+              showModal.value = true;
+            },
+          },
+          () => t("common.edit"),
+        ),
+        h(
+          NPopconfirm,
+          { onPositiveClick: () => remove(row.id!) },
+          {
+            trigger: () =>
+              h(
+                NButton,
+                {
+                  size: "small",
+                  type: "error",
+                  secondary: true,
+                  style: "margin-left: 8px",
+                },
+                () => t("common.delete"),
+              ),
+            default: () => t("common.confirm_delete"),
+          },
+        ),
+      );
+      return buttons;
+    },
   },
 ]);
 

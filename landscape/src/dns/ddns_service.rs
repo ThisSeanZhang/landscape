@@ -4,12 +4,13 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use landscape_common::cert::order::DnsProviderConfig;
 use landscape_common::concurrency::task_label;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::ddns::{
     DdnsError, DdnsFamilyRuntime, DdnsJob, DdnsJobRuntime, DdnsJobStatus, DdnsRecordRuntime,
-    DdnsRuntimeReason, DdnsSource, IpFamily, fqdn_for_zone_record,
+    DdnsRuntimeReason, DdnsSource, DdnsTaskPhase, DdnsTaskProgress, IpFamily, fqdn_for_zone_record,
 };
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::event::hub::{
@@ -28,7 +29,7 @@ use landscape_database::{
     provider::LandscapeDBServiceProvider,
 };
 
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TokioJoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -46,7 +47,84 @@ const DDNS_RETRY_INTERVAL_SECS: u64 = 5;
 const DEFAULT_DDNS_RECORD_TTL: u32 = 120;
 
 type DdnsRuntimeMap = Arc<RwLock<HashMap<Uuid, DdnsJobRuntime>>>;
-type DdnsSyncLock = Arc<Mutex<()>>;
+
+#[derive(Clone)]
+struct DdnsTaskEntry {
+    cancel: CancellationToken,
+    progress: DdnsTaskProgress,
+}
+
+#[derive(Clone, Default)]
+struct DdnsTaskRegistry {
+    entries: Arc<ArcSwap<HashMap<Uuid, DdnsTaskEntry>>>,
+}
+
+impl DdnsTaskRegistry {
+    fn insert(&self, id: Uuid) -> Result<CancellationToken, ()> {
+        let cancel = CancellationToken::new();
+        let mut duplicate = false;
+        self.entries.rcu(|current| {
+            if current.contains_key(&id) {
+                duplicate = true;
+                return current.clone();
+            }
+            duplicate = false;
+            let mut next = HashMap::clone(current);
+            next.insert(
+                id,
+                DdnsTaskEntry {
+                    cancel: cancel.clone(),
+                    progress: DdnsTaskProgress::new(id),
+                },
+            );
+            Arc::new(next)
+        });
+        if duplicate { Err(()) } else { Ok(cancel) }
+    }
+
+    fn remove(&self, id: Uuid) {
+        self.entries.rcu(|current| {
+            if !current.contains_key(&id) {
+                return current.clone();
+            }
+            let mut next = HashMap::clone(current);
+            next.remove(&id);
+            Arc::new(next)
+        });
+    }
+
+    fn update_phase(&self, id: Uuid, phase: DdnsTaskPhase, detail: Option<String>) {
+        self.entries.rcu(|current| {
+            let Some(entry) = current.get(&id) else {
+                return current.clone();
+            };
+            let mut next = HashMap::clone(current);
+            let mut progress = entry.progress.clone();
+            progress.advance(phase, detail.clone());
+            next.insert(id, DdnsTaskEntry { cancel: entry.cancel.clone(), progress });
+            Arc::new(next)
+        });
+    }
+
+    fn cancel_task(&self, id: Uuid) -> bool {
+        if let Some(entry) = self.entries.load().get(&id) {
+            entry.cancel.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn cancel_all(&self) {
+        for entry in self.entries.load().values() {
+            entry.cancel.cancel();
+        }
+    }
+
+    fn progress_snapshot(&self) -> Vec<DdnsTaskProgress> {
+        self.entries.load().values().map(|entry| entry.progress.clone()).collect()
+    }
+}
 
 struct ResolveRecordIpError {
     status: DdnsJobStatus,
@@ -62,7 +140,7 @@ pub struct DdnsService {
     profile_store: DnsProviderProfileRepository,
     route_service: IpRouteService,
     runtime: DdnsRuntimeMap,
-    sync_lock: DdnsSyncLock,
+    tasks: DdnsTaskRegistry,
     prefix_map: IAPrefixMap,
     directory: Arc<LanDeviceDirectory>,
     stop_token: CancellationToken,
@@ -83,7 +161,7 @@ impl DdnsService {
             profile_store: store.dns_provider_profile_store(),
             route_service,
             runtime: Arc::new(RwLock::new(HashMap::new())),
-            sync_lock: Arc::new(Mutex::new(())),
+            tasks: DdnsTaskRegistry::default(),
             prefix_map,
             directory,
             stop_token: CancellationToken::new(),
@@ -100,6 +178,10 @@ impl DdnsService {
 
     pub async fn get_runtime_statuses(&self) -> HashMap<Uuid, DdnsJobRuntime> {
         self.runtime.read().await.clone()
+    }
+
+    pub fn task_progress_snapshot(&self) -> Vec<DdnsTaskProgress> {
+        self.tasks.progress_snapshot()
     }
 
     /// Tracked spawn: registers the task into this service's tracker, keeping
@@ -121,6 +203,7 @@ impl DdnsService {
     /// a 30s request timeout, this is the shutdown-side ceiling).
     pub async fn shutdown_and_wait(&self, timeout: Duration) {
         self.stop_token.cancel();
+        self.tasks.cancel_all();
         self.tracker.close();
         match tokio::time::timeout(timeout, self.tracker.wait()).await {
             Ok(()) => tracing::info!("ddns background loops stopped"),
@@ -135,7 +218,9 @@ impl DdnsService {
             self.store.find_by_id(job_id).await?.ok_or_else(|| DdnsError::JobNotFound(job_id))?;
 
         if job.enable {
-            self.sync_jobs_now(vec![job.clone()]).await;
+            if !self.spawn_job_sync(job.clone()) {
+                return Err(DdnsError::TaskInProgress(job_id));
+            }
         } else {
             self.sync_runtime_for_job(&job).await;
         }
@@ -303,10 +388,10 @@ impl DdnsService {
                                     svc.sync_jobs_now(matching).await;
                                 }
                             }
-                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                                 tracing::warn!("ddns pd prefix loop: lagged by {n} messages");
                             }
-                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 }
@@ -417,22 +502,44 @@ impl DdnsService {
     }
 
     async fn sync_jobs_now(&self, jobs: Vec<DdnsJob>) {
-        if jobs.is_empty() {
-            return;
-        }
-
-        let _guard = self.sync_lock.lock().await;
         for job in jobs {
-            let runtime = self.sync_one_job(&job).await;
-            self.runtime.write().await.insert(job.id, runtime);
+            self.spawn_job_sync(job);
         }
     }
 
-    async fn sync_one_job(&self, job: &DdnsJob) -> DdnsJobRuntime {
+    fn spawn_job_sync(&self, job: DdnsJob) -> bool {
+        let Ok(cancel) = self.tasks.insert(job.id) else {
+            return false;
+        };
+        let svc = self.clone();
+        self.spawn_tracked(task_label::task::DNS_DDNS_JOB, async move {
+            let runtime = svc.sync_one_job(&job, &cancel).await;
+            svc.runtime.write().await.insert(job.id, runtime);
+            svc.tasks.remove(job.id);
+        });
+        true
+    }
+
+    pub async fn cancel_job_sync(&self, job_id: Uuid) -> Result<DdnsJobRuntime, DdnsError> {
+        let job =
+            self.store.find_by_id(job_id).await?.ok_or_else(|| DdnsError::JobNotFound(job_id))?;
+        self.tasks.cancel_task(job_id);
+        Ok(self
+            .runtime
+            .read()
+            .await
+            .get(&job_id)
+            .cloned()
+            .unwrap_or_else(|| DdnsJobRuntime::from_config(&job)))
+    }
+
+    async fn sync_one_job(&self, job: &DdnsJob, cancel: &CancellationToken) -> DdnsJobRuntime {
         let mut runtime = {
             let current = self.runtime.read().await.get(&job.id).cloned();
             build_job_runtime(job, current)
         };
+
+        self.tasks.update_phase(job.id, DdnsTaskPhase::ResolvingSource, None);
 
         let profile = match self.profile_store.find_by_id(job.provider_profile_id).await {
             Ok(Some(profile)) => profile,
@@ -458,7 +565,14 @@ impl DdnsService {
             }
         };
 
-        for record in &mut runtime.records {
+        let configured_families = [IpFamily::Ipv4, IpFamily::Ipv6]
+            .into_iter()
+            .filter(|family| job.has_source_for_family(*family))
+            .count();
+        let total_steps = job.records.iter().filter(|cfg| cfg.enable).count() * configured_families;
+        let mut step = 0usize;
+
+        'records: for record in &mut runtime.records {
             let enabled = job
                 .records
                 .iter()
@@ -508,17 +622,37 @@ impl DdnsService {
                     continue;
                 }
 
+                if cancel.is_cancelled() {
+                    break 'records;
+                }
+
                 let current_ips = self.resolve_record_ip(&job.sources, family).await;
-                self.sync_one_record_family(
-                    &profile.provider_config,
-                    &job.zone_name,
-                    record,
-                    family,
-                    current_ips,
-                    effective_ddns_ttl(job, &profile),
-                    effective_ttl_config_updated_at(job, &profile),
-                )
-                .await;
+                step += 1;
+                self.tasks.update_phase(
+                    job.id,
+                    DdnsTaskPhase::Publishing,
+                    Some(format!(
+                        "{} ({}, {}/{total_steps})",
+                        record.name,
+                        match family {
+                            IpFamily::Ipv4 => "ipv4",
+                            IpFamily::Ipv6 => "ipv6",
+                        },
+                        step,
+                    )),
+                );
+                tokio::select! {
+                    _ = cancel.cancelled() => break 'records,
+                    _ = self.sync_one_record_family(
+                        &profile.provider_config,
+                        &job.zone_name,
+                        record,
+                        family,
+                        current_ips,
+                        effective_ddns_ttl(job, &profile),
+                        effective_ttl_config_updated_at(job, &profile),
+                    ) => {}
+                }
             }
         }
 
@@ -717,16 +851,6 @@ impl DdnsService {
                 return;
             }
         };
-
-        apply_family_runtime_state(
-            family_runtime,
-            DdnsJobStatus::Syncing,
-            DdnsRuntimeReason::Publishing,
-            Some(runtime_message_for_reason(DdnsRuntimeReason::Publishing).to_string()),
-            None,
-            false,
-            None,
-        );
 
         let current_set: HashSet<IpAddr> = current_ips.iter().cloned().collect();
         let last_set: HashSet<IpAddr> = family_runtime.last_published_ips.iter().cloned().collect();
@@ -1171,6 +1295,68 @@ impl ConfigStoreController for DdnsService {
 mod tests {
     use super::*;
     use crate::sys_service::route::WanRouteEventKind;
+
+    #[test]
+    fn task_registry_insert_and_duplicate() {
+        let registry = DdnsTaskRegistry::default();
+        let id = Uuid::new_v4();
+
+        assert!(registry.progress_snapshot().is_empty());
+        let token = registry.insert(id).expect("first insert should succeed");
+        assert_eq!(registry.progress_snapshot().len(), 1);
+        assert!(registry.insert(id).is_err(), "duplicate insert should fail");
+
+        let snapshot = registry.progress_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].job_id, id);
+        assert_eq!(snapshot[0].phase, DdnsTaskPhase::ResolvingSource);
+
+        drop(token);
+    }
+
+    #[test]
+    fn task_registry_cancel_token_survives_phase_updates() {
+        let registry = DdnsTaskRegistry::default();
+        let id = Uuid::new_v4();
+        let token = registry.insert(id).expect("insert should succeed");
+
+        registry.update_phase(id, DdnsTaskPhase::Publishing, Some("@ (ipv4, 1/2)".into()));
+        assert!(registry.cancel_task(id));
+        assert!(token.is_cancelled());
+
+        let snapshot = registry.progress_snapshot();
+        assert_eq!(snapshot[0].phase, DdnsTaskPhase::Publishing);
+        assert_eq!(snapshot[0].phase_detail.as_deref(), Some("@ (ipv4, 1/2)"));
+        assert!(snapshot[0].updated_at >= snapshot[0].started_at);
+    }
+
+    #[test]
+    fn task_registry_remove_and_cancel_missing() {
+        let registry = DdnsTaskRegistry::default();
+        let id = Uuid::new_v4();
+        registry.insert(id).expect("insert should succeed");
+
+        registry.remove(id);
+        registry.remove(id);
+
+        assert!(registry.progress_snapshot().is_empty());
+        assert!(!registry.cancel_task(id));
+        registry.update_phase(id, DdnsTaskPhase::Publishing, None);
+        assert!(registry.progress_snapshot().is_empty());
+    }
+
+    #[test]
+    fn task_registry_cancel_all() {
+        let registry = DdnsTaskRegistry::default();
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let first_token = registry.insert(first).expect("insert should succeed");
+        let second_token = registry.insert(second).expect("insert should succeed");
+
+        registry.cancel_all();
+        assert!(first_token.is_cancelled());
+        assert!(second_token.is_cancelled());
+    }
 
     fn test_job(sources: Vec<DdnsSource>) -> DdnsJob {
         DdnsJob {

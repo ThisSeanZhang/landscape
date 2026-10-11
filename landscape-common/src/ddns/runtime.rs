@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use uuid::Uuid;
 
 use super::config::{DdnsJob, IpFamily};
+use crate::utils::time::get_f64_timestamp;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -150,5 +151,59 @@ impl DdnsFamilyRuntime {
             retryable: false,
             next_retry_at: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum DdnsTaskPhase {
+    ResolvingSource,
+    Publishing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DdnsTaskProgress {
+    #[cfg_attr(feature = "openapi", schema(value_type = String))]
+    pub job_id: Uuid,
+    pub phase: DdnsTaskPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub phase_detail: Option<String>,
+    pub started_at: f64,
+    pub updated_at: f64,
+}
+
+impl DdnsTaskProgress {
+    pub fn new(job_id: Uuid) -> Self {
+        let now = get_f64_timestamp();
+        Self {
+            job_id,
+            phase: DdnsTaskPhase::ResolvingSource,
+            phase_detail: None,
+            started_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn advance(&mut self, phase: DdnsTaskPhase, detail: Option<String>) {
+        self.phase = phase;
+        self.phase_detail = detail;
+        self.updated_at = get_f64_timestamp();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ddns_task_progress_timestamps_use_milliseconds() {
+        let mut progress = DdnsTaskProgress::new(Uuid::new_v4());
+        assert!(progress.started_at > 1_000_000_000_000.0);
+        progress.advance(DdnsTaskPhase::Publishing, None);
+        assert!(progress.updated_at >= progress.started_at);
+        assert!(progress.updated_at > 1_000_000_000_000.0);
     }
 }
