@@ -264,20 +264,21 @@ async fn run_dhcp_v4(
 ) {
     if let Some(mac_addr) = iface.mac {
         let hostname = hostname.filter(|h| !h.is_empty()).unwrap_or_else(|| LAND_HOSTNAME.clone());
-        crate::wan_service::dhcpv4_client::v4::dhcp_v4_client(
-            iface.index,
-            iface.name,
+        let config = crate::wan_service::dhcpv4_client::DhcpV4ClientServiceRuntimeConfig {
+            link_id,
+            ifindex: iface.index,
+            iface_name: iface.name,
             mac_addr,
-            LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
-            service_status,
+            client_port: LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
             hostname,
             default_router,
+        };
+        let services = crate::wan_service::dhcpv4_client::DhcpV4ClientServices {
             route_service,
             addr_binding,
-            link_id,
             session,
-        )
-        .await;
+        };
+        crate::wan_service::dhcpv4_client::run(config, services, service_status).await;
     } else {
         service_status.just_change_status(ServiceStatus::Failed);
     }

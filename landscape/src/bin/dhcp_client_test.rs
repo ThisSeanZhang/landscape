@@ -1,7 +1,4 @@
-use landscape::{
-    get_iface_by_name, sys_service::route::IpRouteService,
-    wan_service::dhcpv4_client::v4::dhcp_v4_client,
-};
+use landscape::{get_iface_by_name, sys_service::route::IpRouteService};
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
     service::{ServiceHandle, ServiceStatus},
@@ -34,20 +31,21 @@ async fn main() {
         if let Some(iface) = get_iface_by_name(&args.iface_name).await
             && let Some(mac) = iface.mac
         {
-            dhcp_v4_client(
-                iface.index,
-                iface.name,
-                mac,
-                LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
-                status,
-                "TEST-PC".to_string(),
-                false,
-                IpRouteService::new(rt.clone().route_table()),
-                rt.wan_addr_binding(),
-                uuid::Uuid::new_v4(),
-                None,
-            )
-            .await;
+            let config = landscape::wan_service::dhcpv4_client::DhcpV4ClientServiceRuntimeConfig {
+                link_id: uuid::Uuid::new_v4(),
+                ifindex: iface.index,
+                iface_name: iface.name,
+                mac_addr: mac,
+                client_port: LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT,
+                hostname: "TEST-PC".to_string(),
+                default_router: false,
+            };
+            let services = landscape::wan_service::dhcpv4_client::DhcpV4ClientServices {
+                route_service: IpRouteService::new(rt.clone().route_table()),
+                addr_binding: rt.wan_addr_binding(),
+                session: None,
+            };
+            landscape::wan_service::dhcpv4_client::run(config, services, status).await;
         }
     });
 
