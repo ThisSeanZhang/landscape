@@ -3,6 +3,7 @@ use std::{fmt, net::IpAddr};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::DEFAULT_FLOW_ID;
 use crate::config_service::geo::GeoConfigKey;
 use crate::database::repository::LandscapeDBStore;
 use crate::flow::mark::FlowMark;
@@ -56,6 +57,13 @@ pub const MAX_FLOW_TARGETS: usize = 16;
 
 impl crate::database::validator::ValidatableConfig for FlowConfig {
     fn validate(&self) -> Result<(), ServiceConfigError> {
+        if self.flow_id == DEFAULT_FLOW_ID {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "flow_id {DEFAULT_FLOW_ID} is reserved for the default flow and cannot be used by a flow config"
+                ),
+            });
+        }
         for rule in &self.flow_match_rules {
             rule.validate()?;
         }
@@ -297,6 +305,24 @@ mod tests {
                 "weight": 3
             })
         );
+    }
+
+    #[test]
+    fn rejects_reserved_default_flow_id() {
+        let config = FlowConfig {
+            id: Uuid::nil(),
+            enable: true,
+            flow_id: DEFAULT_FLOW_ID,
+            flow_match_rules: vec![],
+            flow_targets: vec![],
+            name: String::new(),
+            remark: String::new(),
+            update_at: 0.0,
+        };
+
+        let result = crate::database::validator::ValidatableConfig::validate(&config);
+
+        assert!(result.is_err(), "flow_id 0 is reserved for the default flow");
     }
 
     #[test]

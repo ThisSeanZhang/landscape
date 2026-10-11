@@ -98,6 +98,11 @@ async function saveRule() {
     return;
   }
 
+  if (rule.value.flow_id === 0) {
+    message.warning(t("flow.edit.reserved_id_warning"));
+    return;
+  }
+
   if (
     rule.value.flow_targets.length > 0 &&
     rule.value.flow_targets.every((target) => (target.weight ?? 1) === 0)

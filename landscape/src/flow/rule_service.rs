@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
+    database::error::DbError,
     database::store::{Change, ConfigStore},
     event::dns::DnsEvent,
     event::hub::EnrolledDeviceEventReader,
@@ -93,6 +94,20 @@ impl FlowRuleService {
             Vec::new()
         });
         self.route_service.sync_flow_wan_targets(&configs).await;
+    }
+
+    pub async fn delete_flow_cascade(&self, id: Uuid) -> Result<Option<FlowConfig>, DbError> {
+        let old = self.store.delete_flow_with_rules(id).await?;
+        if let Some(old) = &old {
+            let flow_id = old.flow_id;
+            self.notify_deleted(old.clone()).await;
+            // DnsEvent::FlowUpdated is a no-op in the DNS service; only RulesChanged rebuilds the flow's rule group.
+            let _ =
+                self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(flow_id) }).await;
+            self.dataplane.set_dst_ip_marks(flow_id, vec![]);
+            self.dataplane.invalidate_lan_cache();
+        }
+        Ok(old)
     }
 }
 

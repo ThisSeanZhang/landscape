@@ -81,6 +81,18 @@ impl ConfigStoreController for DNSRuleService {
         &self.store
     }
 
+    async fn checked_set(&self, config: DNSRuleConfig) -> Result<DNSRuleConfig, DbError> {
+        let change = self.store.checked_upsert_flow_rule(config).await?;
+        self.notify_changed(vec![change.clone()]).await;
+        Ok(change.new)
+    }
+
+    async fn checked_set_list(&self, configs: Vec<DNSRuleConfig>) -> Result<(), DbError> {
+        let changes = self.store.checked_upsert_flow_rules(configs).await?;
+        self.notify_changed(changes).await;
+        Ok(())
+    }
+
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         let flow_id = (changes.len() == 1).then(|| changes[0].new.flow_id);
         let _ = self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id }).await;

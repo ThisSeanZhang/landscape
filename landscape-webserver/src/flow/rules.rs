@@ -110,6 +110,6 @@ async fn del_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.flow_rule_service.delete(id).await?;
+    state.flow_rule_service.delete_flow_cascade(id).await?;
     LandscapeApiResp::success(())
 }

@@ -16,6 +16,7 @@ export default {
     name_placeholder: "可选，便于辨识；留空时显示备注",
     remark: "备注",
     duplicate_id_warning: "**ID** 值不能为 -1, 且不能重复, 否则将会覆盖规则",
+    reserved_id_warning: "**ID** 0 为默认 Flow 保留, 不能用于新建 Flow",
     duplicate_entry_warning: "入口匹配规则存在重复项: {dup}",
     all_zero_weight_warning: "至少需要一个出口权重大于 0",
     entry_rules_title: "分流入口匹配规则",

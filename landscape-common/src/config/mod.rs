@@ -31,6 +31,11 @@ use uuid::Uuid;
 pub type FlowId = u32;
 pub type ConfigId = Uuid;
 
+/// Implicit "default flow" for unmatched traffic. It owns seeded rules
+/// (e.g. the default DNS rule) and is editable from the UI, but has no
+/// `FlowConfig` row — flow-existence checks must exempt it.
+pub const DEFAULT_FLOW_ID: FlowId = 0;
+
 pub fn metric_db_max_mb_to_bytes(mb: u64) -> u64 {
     if mb == 0 {
         return 0;

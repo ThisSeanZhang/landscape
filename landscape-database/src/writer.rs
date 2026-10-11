@@ -38,38 +38,40 @@ macro_rules! txn_retry_loop {
             match result {
                 Ok(value) => match txn.commit().await {
                     Ok(()) => return Ok(value),
-                    Err(err) if is_retryable_db_error(&err) => {
+                    Err(err) if $crate::writer::is_retryable_db_error(&err) => {
                         // A failed COMMIT terminates the transaction; nothing to roll back.
                         retries += 1;
-                        if retries >= MAX_RETRIES {
-                            return Err(upsert_retry_exhausted(
-                                retryable_code(&err).unwrap_or_default(),
+                        if retries >= $crate::writer::MAX_RETRIES {
+                            return Err($crate::writer::upsert_retry_exhausted(
+                                $crate::writer::retryable_code(&err).unwrap_or_default(),
                             ));
                         }
-                        tokio::time::sleep(retry_delay(retries)).await;
+                        tokio::time::sleep($crate::writer::retry_delay(retries)).await;
                     }
                     Err(err) => return Err(err.into()),
                 },
-                Err(UpsertErr::Conflict) => {
-                    rollback_txn(txn).await;
-                    return Err(DbError::Conflict);
+                Err($crate::writer::UpsertErr::Conflict) => {
+                    $crate::writer::rollback_txn(txn).await;
+                    return Err(::landscape_common::database::error::DbError::Conflict);
                 }
-                Err(UpsertErr::Retry(code)) => {
-                    rollback_txn(txn).await;
+                Err($crate::writer::UpsertErr::Retry(code)) => {
+                    $crate::writer::rollback_txn(txn).await;
                     retries += 1;
-                    if retries >= MAX_RETRIES {
-                        return Err(upsert_retry_exhausted(code));
+                    if retries >= $crate::writer::MAX_RETRIES {
+                        return Err($crate::writer::upsert_retry_exhausted(code));
                     }
-                    tokio::time::sleep(retry_delay(retries)).await;
+                    tokio::time::sleep($crate::writer::retry_delay(retries)).await;
                 }
-                Err(UpsertErr::Database(e)) => {
-                    rollback_txn(txn).await;
+                Err($crate::writer::UpsertErr::Database(e)) => {
+                    $crate::writer::rollback_txn(txn).await;
                     return Err(e);
                 }
             }
         }
     }};
 }
+
+pub(crate) use txn_retry_loop;
 
 /// Max attempts for a retryable write race.
 ///
@@ -84,7 +86,7 @@ macro_rules! txn_retry_loop {
 /// backoff below give ~1.3s; the previous 5 attempts / ~35ms budget let a
 /// loaded test runner starve the winner past the loser's retries, surfacing
 /// "concurrent write retry exhausted" instead of `DbError::Conflict`.
-const MAX_RETRIES: u32 = 12;
+pub(crate) const MAX_RETRIES: u32 = 12;
 
 /// Per-retry backoff cap; delays are jitter + min(2^retries, this cap) ms.
 const RETRY_BACKOFF_CAP_MS: u64 = 256;
@@ -95,7 +97,7 @@ const RETRY_BACKOFF_CAP_MS: u64 = 256;
 /// while sustained lock contention backs off up to `RETRY_BACKOFF_CAP_MS`.
 /// Entropy mixes a global counter with the wall clock so two racing
 /// writers can never reproduce each other's retry rhythm.
-fn retry_delay(retries: u32) -> std::time::Duration {
+pub(crate) fn retry_delay(retries: u32) -> std::time::Duration {
     static RETRY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = RETRY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let ns = std::time::SystemTime::now()
@@ -110,7 +112,7 @@ fn retry_delay(retries: u32) -> std::time::Duration {
 }
 
 /// Outcome of one `upsert_inner` attempt.
-enum UpsertErr {
+pub(crate) enum UpsertErr {
     /// Optimistic-lock mismatch: stored `update_at` differs from the incoming one.
     Conflict,
     /// Retryable transient failure: another transaction committed the same
@@ -240,7 +242,10 @@ where
 
     /// Runs each upsert in `configs` inside one transaction; retry semantics
     /// are those of `txn_retry_loop!`.
-    async fn upsert_many_inner(
+    ///
+    /// `pub(crate)` for repositories that hand-roll a cross-domain txn
+    /// (REPO_DESIGN): their in-txn checks must share the write txn.
+    pub(crate) async fn upsert_many_inner(
         &self,
         txn: &DatabaseTransaction,
         configs: &[D],
@@ -253,7 +258,9 @@ where
         Ok(changes)
     }
 
-    async fn upsert_inner(
+    /// `pub(crate)` counterpart of the above: runs against a caller-provided
+    /// txn so cross-domain checks can join the same write txn (REPO_DESIGN).
+    pub(crate) async fn upsert_inner(
         &self,
         txn: &DatabaseTransaction,
         mut config: D,
@@ -334,7 +341,7 @@ fn is_retryable_code(code: Option<&str>) -> bool {
     matches!(code, Some("1555") | Some("5") | Some("517"))
 }
 
-fn is_retryable_db_error(err: &DbErr) -> bool {
+pub(crate) fn is_retryable_db_error(err: &DbErr) -> bool {
     let runtime = match err {
         DbErr::Exec(runtime) | DbErr::Query(runtime) => runtime,
         _ => return false,
@@ -347,7 +354,7 @@ fn is_retryable_db_error(err: &DbErr) -> bool {
     }
 }
 
-fn retryable_code(err: &DbErr) -> Option<String> {
+pub(crate) fn retryable_code(err: &DbErr) -> Option<String> {
     let runtime = match err {
         DbErr::Exec(runtime) | DbErr::Query(runtime) => runtime,
         _ => return None,
@@ -360,12 +367,12 @@ fn retryable_code(err: &DbErr) -> Option<String> {
     }
 }
 
-fn upsert_retry_exhausted(code: String) -> DbError {
+pub(crate) fn upsert_retry_exhausted(code: String) -> DbError {
     tracing::warn!("write retry exhausted after {MAX_RETRIES} attempts (last db code {code})");
     DbError::Database(DbErr::Custom("concurrent write retry exhausted".to_string()))
 }
 
-async fn rollback_txn(txn: DatabaseTransaction) {
+pub(crate) async fn rollback_txn(txn: DatabaseTransaction) {
     if let Err(rollback_err) = txn.rollback().await {
         tracing::warn!("failed to rollback transaction: {rollback_err}");
     }

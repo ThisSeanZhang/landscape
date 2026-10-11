@@ -9,9 +9,11 @@ use landscape_common::flow::{
     ResolvedFlowEntryRule, RuntimeFlowConfig,
 };
 use migration::Expr;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait};
 
 use crate::DBId;
+use crate::dns_rule::entity::{DNSRuleConfigColumn, DNSRuleConfigEntity};
+use crate::dst_ip_rule::entity::{DstIpRuleConfigColumn, DstIpRuleConfigEntity};
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
 use crate::flow_rule::entity::Column;
 
@@ -69,6 +71,26 @@ impl FlowConfigRepository {
             FlowConfigEntity::find().filter(Column::FlowId.eq(flow_id)).one(&self.db).await?;
 
         Ok(result.map(From::from))
+    }
+
+    pub async fn delete_flow_with_rules(&self, id: DBId) -> Result<Option<FlowConfig>, DbError> {
+        crate::writer::txn_retry_loop!(self, |txn| async move {
+            let model = FlowConfigEntity::find_by_id(id).one(txn).await?;
+            let Some(model) = model else {
+                return Ok::<_, crate::writer::UpsertErr>(None);
+            };
+            let flow_id = model.flow_id;
+            DNSRuleConfigEntity::delete_many()
+                .filter(DNSRuleConfigColumn::FlowId.eq(flow_id))
+                .exec(txn)
+                .await?;
+            DstIpRuleConfigEntity::delete_many()
+                .filter(DstIpRuleConfigColumn::FlowId.eq(flow_id))
+                .exec(txn)
+                .await?;
+            FlowConfigEntity::delete_by_id(id).exec(txn).await?;
+            Ok::<_, crate::writer::UpsertErr>(Some(model.into()))
+        })
     }
 
     /// 查询是否有其他 flow config（排除 exclude_id）包含相同的入口匹配规则
@@ -538,5 +560,118 @@ mod wan_link_ref_tests {
         let result =
             provider.flow_rule_store().checked_upsert(flow_config(Uuid::new_v4(), "ppp0")).await;
         assert!(result.is_err(), "an unknown link_id must be rejected");
+    }
+}
+
+#[cfg(test)]
+mod cascade_delete_tests {
+    use landscape_common::config::FlowId;
+    use landscape_common::database::error::DbError;
+    use landscape_common::database::store::{ConfigFlowStore, ConfigStore};
+    use landscape_common::dns::rule::{DNSRuleConfig, FilterResult};
+    use landscape_common::flow::config::FlowConfig;
+    use landscape_common::flow::ip_mark::WanIpRuleConfig;
+    use sea_orm::prelude::Uuid;
+
+    use crate::provider::LandscapeDBServiceProvider;
+
+    fn flow(id: Uuid, flow_id: FlowId) -> FlowConfig {
+        FlowConfig {
+            id,
+            enable: true,
+            flow_id,
+            flow_match_rules: vec![],
+            flow_targets: vec![],
+            name: String::new(),
+            remark: String::new(),
+            update_at: 0.0,
+        }
+    }
+
+    fn dns_rule(id: Uuid, flow_id: FlowId) -> DNSRuleConfig {
+        DNSRuleConfig {
+            id,
+            name: format!("dns-{flow_id}"),
+            index: 0,
+            enable: true,
+            filter: FilterResult::default(),
+            upstream_id: Uuid::new_v4(),
+            mark: Default::default(),
+            source: vec![],
+            flow_id,
+            update_at: 0.0,
+        }
+    }
+
+    fn ip_rule(id: Uuid, flow_id: FlowId) -> WanIpRuleConfig {
+        WanIpRuleConfig {
+            id,
+            name: None,
+            index: 0,
+            enable: true,
+            mark: Default::default(),
+            source: vec![],
+            remark: String::new(),
+            flow_id,
+            override_dns: false,
+            update_at: 0.0,
+        }
+    }
+
+    async fn setup_rules(
+        victim_flow_id: FlowId,
+        other_flow_id: FlowId,
+    ) -> (LandscapeDBServiceProvider, Uuid) {
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let victim_flow_uuid = Uuid::new_v4();
+
+        provider.flow_rule_store().upsert(flow(victim_flow_uuid, victim_flow_id)).await.unwrap();
+        provider.flow_rule_store().upsert(flow(Uuid::new_v4(), other_flow_id)).await.unwrap();
+
+        provider.dns_rule_store().upsert(dns_rule(Uuid::new_v4(), victim_flow_id)).await.unwrap();
+        provider.dns_rule_store().upsert(dns_rule(Uuid::new_v4(), other_flow_id)).await.unwrap();
+
+        provider.dst_ip_rule_store().upsert(ip_rule(Uuid::new_v4(), victim_flow_id)).await.unwrap();
+        provider.dst_ip_rule_store().upsert(ip_rule(Uuid::new_v4(), other_flow_id)).await.unwrap();
+
+        (provider, victim_flow_uuid)
+    }
+
+    #[tokio::test]
+    async fn deleting_a_flow_removes_its_dns_and_dst_ip_rules() {
+        let (provider, victim_flow_uuid) = setup_rules(7, 8).await;
+
+        let deleted =
+            provider.flow_rule_store().delete_flow_with_rules(victim_flow_uuid).await.unwrap();
+
+        assert_eq!(deleted.map(|config| config.flow_id), Some(7));
+        assert!(provider.flow_rule_store().find_by_id(victim_flow_uuid).await.unwrap().is_none());
+        assert!(provider.dns_rule_store().find_by_flow_id(7).await.unwrap().is_empty());
+        assert!(provider.dst_ip_rule_store().find_by_flow_id(7).await.unwrap().is_empty());
+        assert_eq!(provider.dns_rule_store().find_by_flow_id(8).await.unwrap().len(), 1);
+        assert_eq!(provider.dst_ip_rule_store().find_by_flow_id(8).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn checked_upsert_rejects_reserved_default_flow_id() {
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+
+        let result =
+            provider.flow_rule_store().checked_upsert(flow(Uuid::new_v4(), 0)).await;
+
+        assert!(matches!(result, Err(DbError::Validation(_))));
+        assert!(provider.flow_rule_store().list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_missing_flow_deletes_nothing() {
+        let (provider, _) = setup_rules(7, 8).await;
+
+        let deleted =
+            provider.flow_rule_store().delete_flow_with_rules(Uuid::new_v4()).await.unwrap();
+
+        assert!(deleted.is_none());
+        assert_eq!(provider.dns_rule_store().find_by_flow_id(7).await.unwrap().len(), 1);
+        assert_eq!(provider.dst_ip_rule_store().find_by_flow_id(7).await.unwrap().len(), 1);
     }
 }

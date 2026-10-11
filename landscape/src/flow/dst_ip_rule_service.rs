@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
+    database::error::DbError,
     database::store::Change,
     event::dns::DstIpEvent,
     flow::{dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
@@ -103,6 +104,18 @@ impl ConfigStoreController for DstIpRuleService {
 
     fn get_store(&self) -> &Self::Store {
         &self.store
+    }
+
+    async fn checked_set(&self, config: WanIpRuleConfig) -> Result<WanIpRuleConfig, DbError> {
+        let change = self.store.checked_upsert_flow_rule(config).await?;
+        self.notify_changed(vec![change.clone()]).await;
+        Ok(change.new)
+    }
+
+    async fn checked_set_list(&self, configs: Vec<WanIpRuleConfig>) -> Result<(), DbError> {
+        let changes = self.store.checked_upsert_flow_rules(configs).await?;
+        self.notify_changed(changes).await;
+        Ok(())
     }
 
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {

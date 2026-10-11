@@ -48,7 +48,11 @@ async function refresh() {
 
 async function del() {
   if (props.config.id) {
-    await delFlowRule(props.config.id);
+    try {
+      await delFlowRule(props.config.id);
+    } catch {
+      return;
+    }
     await refresh();
   }
 }
