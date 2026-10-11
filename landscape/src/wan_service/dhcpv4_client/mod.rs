@@ -5,6 +5,8 @@ mod socket;
 mod system;
 
 #[cfg(test)]
+mod test_driver;
+#[cfg(test)]
 mod test_fsm;
 
 use landscape_common::net::MacAddr;
@@ -16,6 +18,7 @@ use uuid::Uuid;
 
 use crate::sys_service::route::IpRouteService;
 
+#[derive(Clone)]
 pub struct DhcpV4ClientServiceRuntimeConfig {
     pub link_id: Uuid,
     pub ifindex: u32,

@@ -9,9 +9,9 @@ use tokio::time::Instant;
 
 use super::fsm::{DhcpState, DhcpV4Fsm, FsmAction, FsmEvent, LeaseContext, get_renew_times};
 
-const TEST_MAC: MacAddr = MacAddr(0x02, 0x00, 0x00, 0x00, 0x00, 0x01);
-const OFFER_IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
-const SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+pub(crate) const TEST_MAC: MacAddr = MacAddr(0x02, 0x00, 0x00, 0x00, 0x00, 0x01);
+pub(crate) const OFFER_IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
+pub(crate) const SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 
 fn new_fsm() -> DhcpV4Fsm {
     DhcpV4Fsm::new(TEST_MAC, "test-host".to_string())
@@ -27,7 +27,7 @@ fn current_xid(fsm: &DhcpV4Fsm) -> u32 {
     }
 }
 
-fn server_msg(msg_type: MessageType, xid: u32) -> DhcpV4Message {
+pub(crate) fn server_msg(msg_type: MessageType, xid: u32) -> DhcpV4Message {
     let mut msg = DhcpV4Message::default();
     msg.set_opcode(DhcpV4OpCode::BootReply);
     msg.set_xid(xid);
@@ -35,7 +35,7 @@ fn server_msg(msg_type: MessageType, xid: u32) -> DhcpV4Message {
     msg
 }
 
-fn ack_msg(xid: u32, yiaddr: Ipv4Addr, lease_secs: u32) -> DhcpV4Message {
+pub(crate) fn ack_msg(xid: u32, yiaddr: Ipv4Addr, lease_secs: u32) -> DhcpV4Message {
     let mut msg = server_msg(MessageType::Ack, xid);
     msg.set_yiaddr(yiaddr);
     msg.set_siaddr(SERVER_IP);
@@ -89,7 +89,7 @@ fn bind_lease(actions: &[FsmAction]) -> Option<&super::fsm::LeaseParams> {
     })
 }
 
-fn msg_type_of(msg: &DhcpV4Message) -> Option<MessageType> {
+pub(crate) fn msg_type_of(msg: &DhcpV4Message) -> Option<MessageType> {
     match msg.opts().get(OptionCode::MessageType) {
         Some(DhcpOption::MessageType(t)) => Some(*t),
         _ => None,
@@ -142,12 +142,22 @@ async fn discover_round_waits_then_backoff() {
     let mut fsm = new_fsm();
     let first_xid = current_xid(&fsm);
 
-    for (n, wait) in [(1u64, 4u64), (2, 8), (3, 12), (4, 16)] {
+    // RFC 2131 §4.1: retransmission waits double from 4s and every value is
+    // randomized by a uniform -1..=+1 jitter.
+    for (n, base) in [(1u64, 4u64), (2, 8), (3, 16), (4, 32)] {
         let actions = fsm.on_event(FsmEvent::TimerFired);
         assert_eq!(sends(&actions).len(), 1, "one discover per timer fire");
         assert_eq!(sends(&actions)[0].1, Ipv4Addr::BROADCAST);
         assert_eq!(msg_type_of(sends(&actions)[0].0), Some(MessageType::Discover));
-        assert_eq!(timers(&actions), vec![Duration::from_secs(wait)]);
+        assert!(sends(&actions)[0].0.flags().broadcast());
+        assert!(sends(&actions)[0].0.opts().get(OptionCode::RequestedIpAddress).is_none());
+        let wait = timers(&actions)[0].as_secs();
+        assert!(
+            (base - 1..=base + 1).contains(&wait),
+            "attempt {n} wait {wait}s outside {}-{}s",
+            base - 1,
+            base + 1
+        );
         assert_eq!(fsm.attempts, n);
     }
 
@@ -160,7 +170,8 @@ async fn discover_round_waits_then_backoff() {
 
     let actions = fsm.on_event(FsmEvent::TimerFired);
     assert_eq!(sends(&actions).len(), 1);
-    assert_eq!(timers(&actions), vec![Duration::from_secs(4)]);
+    let wait = timers(&actions)[0].as_secs();
+    assert!((3..=5).contains(&wait), "post-backoff wait {wait}s outside 3-5s");
 
     for _ in 0..3 {
         fsm.on_event(FsmEvent::TimerFired);
@@ -189,6 +200,32 @@ async fn discover_backoff_caps_at_ten_minutes() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn discover_with_requested_ip_toggles_broadcast_after_two_attempts() {
+    let mut fsm = new_fsm();
+    fsm.state = DhcpState::init(Some(OFFER_IP));
+
+    for (n, expect_broadcast) in [(1u64, true), (2, true), (3, false), (4, false)] {
+        let actions = fsm.on_event(FsmEvent::TimerFired);
+        assert_eq!(fsm.attempts, n);
+        let (msg, dest) = sends(&actions)[0];
+        assert_eq!(dest, Ipv4Addr::BROADCAST);
+        assert_eq!(msg_type_of(msg), Some(MessageType::Discover));
+        assert_eq!(
+            msg.flags().broadcast(),
+            expect_broadcast,
+            "attempt {n} broadcast flag must follow use_broadcast"
+        );
+        // RFC 2131 Table 5: a DISCOVER with a requested address carries it in
+        // the option, never in ciaddr.
+        assert_eq!(msg.ciaddr(), Ipv4Addr::UNSPECIFIED);
+        assert!(matches!(
+            msg.opts().get(OptionCode::RequestedIpAddress),
+            Some(DhcpOption::RequestedIpAddress(ip)) if *ip == OFFER_IP
+        ));
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn offer_request_ack_binds_lease() {
     let mut fsm = new_fsm();
     let xid = current_xid(&fsm);
@@ -202,7 +239,8 @@ async fn offer_request_ack_binds_lease() {
     let actions = fsm.on_event(FsmEvent::TimerFired);
     assert_eq!(sends(&actions).len(), 1);
     assert_eq!(msg_type_of(sends(&actions)[0].0), Some(MessageType::Request));
-    assert_eq!(timers(&actions), vec![Duration::from_secs(4)]);
+    let wait = timers(&actions)[0].as_secs();
+    assert!((3..=5).contains(&wait), "request retransmit wait {wait}s outside 3-5s");
 
     let actions = fsm.on_event(FsmEvent::Recv(ack_msg(xid, OFFER_IP, 100)));
     let params = bind_lease(&actions).expect("ack must bind lease");
@@ -242,6 +280,7 @@ async fn nak_restarts_discover_immediately() {
     let actions = fsm.on_event(FsmEvent::Recv(server_msg(MessageType::Nak, xid)));
     assert!(sends(&actions).is_empty());
     assert_eq!(timers(&actions), vec![Duration::ZERO]);
+    assert!(!actions.iter().any(|a| matches!(a, FsmAction::ReleaseLease)));
     assert_ne!(current_xid(&fsm), xid);
 
     let actions = fsm.on_event(FsmEvent::TimerFired);
@@ -328,6 +367,7 @@ async fn renew_near_t2_waits_to_rebind_then_broadcasts() {
     let actions = fsm.on_event(FsmEvent::TimerFired);
     assert_eq!(sends(&actions).len(), 1);
     assert_eq!(msg_type_of(sends(&actions)[0].0), Some(MessageType::Discover));
+    assert!(actions.iter().any(|a| matches!(a, FsmAction::ReleaseLease)));
     assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
     assert_eq!(fsm.leased_ip(), None);
 }
@@ -352,6 +392,10 @@ async fn rebind_request_omits_server_identifier() {
     assert!(msg.opts().get(OptionCode::ServerIdentifier).is_none());
     assert_eq!(msg.ciaddr(), OFFER_IP);
     assert_eq!(msg_type_of(msg), Some(MessageType::Request));
+    // RFC 2131 §4.3.2 only mandates the IP destination be broadcast (asserted
+    // above); §4.1 says a client that can receive unicast datagrams (i.e. holds
+    // an address in REBINDING) SHOULD clear the BROADCAST flag.
+    assert!(!msg.flags().broadcast(), "REBINDING request must clear the BROADCAST flag");
 }
 
 #[tokio::test(start_paused = true)]
@@ -369,6 +413,28 @@ async fn requesting_falls_back_to_siaddr_as_server_identifier() {
     assert!(matches!(
         msg.opts().get(OptionCode::ServerIdentifier),
         Some(DhcpOption::ServerIdentifier(ip)) if *ip == SERVER_IP
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn requesting_ignores_hostile_offer_ciaddr() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    offer.set_ciaddr(Ipv4Addr::new(192, 0, 2, 123));
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    // RFC 2131 §4.3.2: the SELECTING request sends ciaddr = 0 and the offered
+    // address in the option, even if the OFFER carried a nonzero ciaddr.
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    let (msg, _) = sends(&actions)[0];
+    assert_eq!(msg.ciaddr(), Ipv4Addr::UNSPECIFIED);
+    assert!(msg.flags().broadcast());
+    assert!(matches!(
+        msg.opts().get(OptionCode::RequestedIpAddress),
+        Some(DhcpOption::RequestedIpAddress(ip)) if *ip == OFFER_IP
     ));
 }
 
@@ -429,4 +495,239 @@ async fn expired_wait_to_rebind_deadline_rebinds_immediately_without_panicking()
     let actions = fsm.on_event(FsmEvent::TimerFired);
     assert_eq!(sends(&actions).len(), 1);
     assert!(matches!(&fsm.state, DhcpState::Rebind { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn is_initial_phase_truth_table_across_lifecycle() {
+    let mut fsm = new_fsm();
+    assert!(fsm.is_initial_phase(), "Discovering must use raw socket");
+
+    let xid = current_xid(&fsm);
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+    assert!(fsm.is_initial_phase(), "Requesting must use raw socket");
+
+    fsm.on_event(FsmEvent::Recv(ack_msg(xid, OFFER_IP, 1000)));
+    assert!(matches!(&fsm.state, DhcpState::Bound { .. }));
+    assert!(!fsm.is_initial_phase(), "Bound must use udp socket");
+
+    tokio::time::advance(Duration::from_secs(500)).await;
+    fsm.on_event(FsmEvent::TimerFired);
+    assert!(matches!(&fsm.state, DhcpState::Renewing { .. }));
+    assert!(!fsm.is_initial_phase(), "Renewing must use udp socket");
+
+    // t = 900s: past T2 (875s) but before lease expiry, so the next tick
+    // lands in WaitToRebind and then Rebind instead of a lease-expired Discover.
+    tokio::time::advance(Duration::from_secs(400)).await;
+    fsm.on_event(FsmEvent::TimerFired);
+    assert!(matches!(&fsm.state, DhcpState::WaitToRebind { .. }));
+    assert!(!fsm.is_initial_phase(), "WaitToRebind must use udp socket");
+
+    fsm.on_event(FsmEvent::TimerFired);
+    assert!(matches!(&fsm.state, DhcpState::Rebind { .. }));
+    assert!(fsm.is_initial_phase(), "Rebind must use raw socket");
+}
+
+#[tokio::test(start_paused = true)]
+async fn inbound_filters_drop_invalid_packets() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+
+    let mut boot_request = server_msg(MessageType::Offer, xid);
+    boot_request.set_opcode(DhcpV4OpCode::BootRequest);
+    assert!(fsm.on_event(FsmEvent::Recv(boot_request)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
+
+    let mut no_type = DhcpV4Message::default();
+    no_type.set_opcode(DhcpV4OpCode::BootReply);
+    no_type.set_xid(xid);
+    assert!(fsm.on_event(FsmEvent::Recv(no_type)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
+
+    let unhandleable = server_msg(MessageType::Ack, xid);
+    assert!(fsm.on_event(FsmEvent::Recv(unhandleable)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
+
+    let mut nak = server_msg(MessageType::Nak, xid);
+    nak.set_yiaddr(OFFER_IP);
+    assert!(fsm.on_event(FsmEvent::Recv(nak)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn ack_with_mismatched_xid_discarded() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    let actions = fsm.on_event(FsmEvent::Recv(ack_msg(xid.wrapping_add(7), OFFER_IP, 100)));
+    assert!(actions.is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Requesting { .. }));
+    assert_eq!(fsm.leased_ip(), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn renew_dest_prefers_server_identifier_option_then_siaddr_then_broadcast() {
+    // RFC 2131 §4.1: the 'server identifier' option wins over siaddr.
+    let mut fsm = bound_fsm(50, 80, 200);
+    if let DhcpState::Bound { lease } = &mut fsm.state {
+        lease.siaddr = Ipv4Addr::new(192, 0, 2, 250);
+        lease.options.insert(DhcpOption::ServerIdentifier(SERVER_IP));
+    }
+    tokio::time::advance(Duration::from_secs(50)).await;
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    assert_eq!(sends(&actions)[0].1, SERVER_IP);
+    assert!(matches!(&fsm.state, DhcpState::Renewing { .. }));
+
+    // siaddr alone is still a valid unicast destination.
+    let mut fsm = bound_fsm(50, 80, 200);
+    tokio::time::advance(Duration::from_secs(50)).await;
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    assert_eq!(sends(&actions)[0].1, SERVER_IP);
+    assert!(matches!(&fsm.state, DhcpState::Renewing { .. }));
+
+    // Neither is known: fall back to broadcast.
+    let mut fsm = bound_fsm(50, 80, 200);
+    if let DhcpState::Bound { lease } = &mut fsm.state {
+        lease.siaddr = Ipv4Addr::UNSPECIFIED;
+    }
+    tokio::time::advance(Duration::from_secs(50)).await;
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    assert_eq!(sends(&actions)[0].1, Ipv4Addr::BROADCAST);
+    assert!(matches!(&fsm.state, DhcpState::Renewing { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn nak_during_renewing_halts_lease() {
+    let mut fsm = bound_fsm(50, 87, 100);
+    tokio::time::advance(Duration::from_secs(50)).await;
+    fsm.on_event(FsmEvent::TimerFired);
+
+    let renew_xid = current_xid(&fsm);
+    assert_eq!(fsm.leased_ip(), Some(OFFER_IP));
+    let actions = fsm.on_event(FsmEvent::Recv(server_msg(MessageType::Nak, renew_xid)));
+    assert_eq!(timers(&actions), vec![Duration::ZERO]);
+    assert!(actions.iter().any(|a| matches!(a, FsmAction::ReleaseLease)));
+    assert!(matches!(&fsm.state, DhcpState::Discovering { .. }));
+    assert_eq!(fsm.leased_ip(), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn request_wire_fields_follow_rfc_tables() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    offer.set_siaddr(SERVER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    let (msg, _) = sends(&actions)[0];
+    assert!(msg.flags().broadcast(), "SELECTING request must set broadcast flag");
+    assert_eq!(msg.ciaddr(), Ipv4Addr::UNSPECIFIED);
+    assert!(matches!(
+        msg.opts().get(OptionCode::RequestedIpAddress),
+        Some(DhcpOption::RequestedIpAddress(ip)) if *ip == OFFER_IP
+    ));
+
+    let mut fsm = bound_fsm(50, 87, 100);
+    tokio::time::advance(Duration::from_secs(50)).await;
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    let (msg, _) = sends(&actions)[0];
+    assert!(!msg.flags().broadcast(), "RENEWING request must not set broadcast flag");
+    assert_eq!(msg.ciaddr(), OFFER_IP);
+    assert!(msg.opts().get(OptionCode::RequestedIpAddress).is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn ack_missing_required_options_keeps_requesting() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    let mut no_lease_time = server_msg(MessageType::Ack, xid);
+    no_lease_time.set_yiaddr(OFFER_IP);
+    no_lease_time.opts_mut().insert(DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)));
+    assert!(fsm.on_event(FsmEvent::Recv(no_lease_time)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Requesting { .. }));
+
+    let mut no_mask = server_msg(MessageType::Ack, xid);
+    no_mask.set_yiaddr(OFFER_IP);
+    no_mask.opts_mut().insert(DhcpOption::AddressLeaseTime(100));
+    assert!(fsm.on_event(FsmEvent::Recv(no_mask)).is_empty());
+    assert!(matches!(&fsm.state, DhcpState::Requesting { .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn explicit_t1_t2_flow_to_scheduler() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    let mut ack = ack_msg(xid, OFFER_IP, 1000);
+    ack.opts_mut().insert(DhcpOption::Renewal(200));
+    ack.opts_mut().insert(DhcpOption::Rebinding(400));
+    let actions = fsm.on_event(FsmEvent::Recv(ack));
+    let params = bind_lease(&actions).expect("ack must bind lease");
+    assert_eq!(params.renew_time, 200);
+    assert_eq!(timers(&actions), vec![Duration::from_secs(200)]);
+
+    tokio::time::advance(Duration::from_secs(200)).await;
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    assert!(matches!(&fsm.state, DhcpState::Renewing { .. }));
+    // (T2 - T1) / 2 = 100s exceeds the 60s floor, so this pins the explicit
+    // T2: the RFC default T2 (875s) would schedule (875 - 200) / 2 = 337s.
+    assert_eq!(timers(&actions), vec![Duration::from_secs(100)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn request_carries_client_identifier_and_param_list() {
+    let mut fsm = new_fsm();
+    let xid = current_xid(&fsm);
+    let mut offer = server_msg(MessageType::Offer, xid);
+    offer.set_yiaddr(OFFER_IP);
+    fsm.on_event(FsmEvent::Recv(offer));
+
+    let actions = fsm.on_event(FsmEvent::TimerFired);
+    let (msg, _) = sends(&actions)[0];
+    let expected_id: Vec<u8> = std::iter::once(1u8).chain(TEST_MAC.octets()).collect();
+    assert!(matches!(
+        msg.opts().get(OptionCode::ClientIdentifier),
+        Some(DhcpOption::ClientIdentifier(id)) if *id == expected_id
+    ));
+    assert!(matches!(
+        msg.opts().get(OptionCode::ParameterRequestList),
+        Some(DhcpOption::ParameterRequestList(list)) if list.len() == 10
+    ));
+    assert!(matches!(
+        msg.opts().get(OptionCode::ClassIdentifier),
+        Some(DhcpOption::ClassIdentifier(v)) if v.as_slice() == b"MSFT 5.0"
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn rebind_ack_restores_bound() {
+    let mut fsm = bound_fsm(50, 80, 200);
+    tokio::time::advance(Duration::from_secs(50)).await;
+    fsm.on_event(FsmEvent::TimerFired);
+
+    tokio::time::advance(Duration::from_secs(60)).await;
+    fsm.on_event(FsmEvent::TimerFired);
+    fsm.on_event(FsmEvent::TimerFired);
+    assert!(matches!(&fsm.state, DhcpState::Rebind { .. }));
+
+    let rebind_xid = current_xid(&fsm);
+    let actions = fsm.on_event(FsmEvent::Recv(ack_msg(rebind_xid, OFFER_IP, 100)));
+    assert!(bind_lease(&actions).is_some());
+    assert_eq!(timers(&actions), vec![Duration::from_secs(50)]);
+    assert!(matches!(&fsm.state, DhcpState::Bound { .. }));
+    assert_eq!(fsm.leased_ip(), Some(OFFER_IP));
 }

@@ -24,13 +24,18 @@ fn get_new_ipv4_xid() -> u32 {
     rand::random()
 }
 
+/// RFC 2131 §4.1: retransmission delay starts at 4s and doubles with each
+/// retransmission up to 64s, and every value is randomized by a uniform
+/// -1..=+1 jitter.
 fn retry_wait(attempts: u64) -> Duration {
-    Duration::from_secs(DEFAULT_TIME_OUT * attempts.max(1))
+    let exp = attempts.saturating_sub(1).min(4);
+    let base = DEFAULT_TIME_OUT.saturating_mul(1u64 << exp);
+    let jitter = rand::random::<u8>() % 3;
+    Duration::from_secs(base - 1 + jitter as u64)
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct OfferContext {
-    pub(crate) ciaddr: Ipv4Addr,
     pub(crate) yiaddr: Ipv4Addr,
     pub(crate) siaddr: Ipv4Addr,
     pub(crate) options: DhcpV4Options,
@@ -84,6 +89,7 @@ pub(crate) enum FsmAction {
     Send { msg: DhcpV4Message, dest: Ipv4Addr },
     ScheduleTimer(Duration),
     BindLease(LeaseParams),
+    ReleaseLease,
 }
 
 pub(crate) struct DhcpV4Fsm {
@@ -175,10 +181,13 @@ impl DhcpV4Fsm {
                 {
                     options.insert(DhcpOption::ServerIdentifier(offer.siaddr));
                 }
+                // RFC 2131 §4.3.2: the SELECTING request always sends ciaddr =
+                // 0 and the offered address in the 'requested IP address'
+                // option, regardless of what the OFFER carried.
                 let msg = gen_request(
                     xid,
                     self.mac_addr,
-                    offer.ciaddr,
+                    Ipv4Addr::UNSPECIFIED,
                     offer.yiaddr,
                     options,
                     &self.hostname,
@@ -199,16 +208,13 @@ impl DhcpV4Fsm {
                 self.on_timer()
             }
             DhcpState::Renewing { lease } => {
-                let dest = if lease.siaddr.is_unspecified() {
-                    if let Some(DhcpOption::ServerIdentifier(addr)) =
-                        lease.options.get(OptionCode::ServerIdentifier)
-                    {
-                        *addr
-                    } else {
-                        Ipv4Addr::BROADCAST
-                    }
-                } else {
-                    lease.siaddr
+                // RFC 2131 §4.1: unicast requests MUST use the IP address
+                // from the 'server identifier' option; siaddr is only a
+                // fallback, broadcast the last resort.
+                let dest = match lease.options.get(OptionCode::ServerIdentifier) {
+                    Some(DhcpOption::ServerIdentifier(addr)) => *addr,
+                    _ if !lease.siaddr.is_unspecified() => lease.siaddr,
+                    _ => Ipv4Addr::BROADCAST,
                 };
 
                 let mut request_options = DhcpV4Options::default();
@@ -254,7 +260,11 @@ impl DhcpV4Fsm {
                     tracing::warn!("Rebind turn to Discover");
                     self.state = DhcpState::init(None);
                     self.attempts = 0;
-                    return self.on_timer();
+                    // RFC 2131 §4.4.5: an expired lease MUST be dropped
+                    // (address, routes, session) before restarting discovery.
+                    let mut actions = vec![FsmAction::ReleaseLease];
+                    actions.extend(self.on_timer());
+                    return actions;
                 }
                 let wait = (lease.lease_at.saturating_duration_since(Instant::now()) / 2)
                     .max(Duration::from_secs(60));
@@ -306,7 +316,6 @@ impl DhcpV4Fsm {
             (MessageType::Offer, DhcpState::Discovering { .. }) => {
                 let xid = dhcp.xid();
                 let offer = OfferContext {
-                    ciaddr: dhcp.ciaddr(),
                     yiaddr: dhcp.yiaddr(),
                     siaddr: dhcp.siaddr(),
                     options: dhcp.opts().clone(),
@@ -330,9 +339,22 @@ impl DhcpV4Fsm {
                 | DhcpState::WaitToRebind { .. }
                 | DhcpState::Rebind { .. },
             ) => {
+                // RFC 2131 §3.1/§3.2: a NAK restarts configuration; a lease
+                // held in Renewing/WaitToRebind/Rebind must be torn down
+                // locally. Requesting never applied an address.
+                let had_lease = matches!(
+                    self.state,
+                    DhcpState::Renewing { .. }
+                        | DhcpState::WaitToRebind { .. }
+                        | DhcpState::Rebind { .. }
+                );
                 self.state = DhcpState::init(None);
                 self.attempts = 0;
-                vec![FsmAction::ScheduleTimer(Duration::ZERO)]
+                let mut actions = vec![FsmAction::ScheduleTimer(Duration::ZERO)];
+                if had_lease {
+                    actions.insert(0, FsmAction::ReleaseLease);
+                }
+                actions
             }
             _ => vec![],
         }

@@ -1,7 +1,7 @@
 use landscape_common::SYSCTL_IPV4_RP_FILTER_PATTERN;
 use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::net_proto::dhcp::{
-    DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode,
+    DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
 };
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use std::net::{IpAddr, Ipv4Addr};
@@ -54,35 +54,17 @@ pub(crate) async fn apply_lease(
     if let Some(prev) = applied.take()
         && (prev.ip != params.yiaddr || prev.prefix != params.prefix as u8)
     {
-        run_ip_cmd(&[
-            "addr".to_string(),
-            "del".to_string(),
-            format!("{}/{}", prev.ip, prev.prefix),
-            "dev".to_string(),
-            config.iface_name.clone(),
-        ])
-        .await;
+        run_ip_cmd(&build_del_args(prev.ip, prev.prefix, &config.iface_name)).await;
     }
 
-    let mut args = vec![
-        "addr".to_string(),
-        "replace".to_string(),
-        format!("{}/{}", params.yiaddr, params.prefix),
-    ];
-
-    if let Some(DhcpOption::BroadcastAddr(broadcast)) =
-        params.options.get(OptionCode::BroadcastAddr)
-    {
-        args.extend(["brd".to_string(), format!("{}", broadcast)]);
-    }
-    args.extend([
-        "dev".to_string(),
-        config.iface_name.clone(),
-        "valid_lft".to_string(),
-        format!("{}", params.lease_time),
-        "preferred_lft".to_string(),
-        format!("{}", params.renew_time),
-    ]);
+    let args = build_replace_args(
+        params.yiaddr,
+        params.prefix,
+        &params.options,
+        &config.iface_name,
+        params.renew_time,
+        params.lease_time,
+    );
 
     tracing::info!("{:?}", args);
     run_ip_cmd(&args).await;
@@ -147,14 +129,7 @@ pub(crate) async fn release(
     services: &DhcpV4ClientServices,
 ) {
     if let Some(prev) = applied {
-        run_ip_cmd(&[
-            "addr".to_string(),
-            "del".to_string(),
-            format!("{}/{}", prev.ip, prev.prefix),
-            "dev".to_string(),
-            config.iface_name.clone(),
-        ])
-        .await;
+        run_ip_cmd(&build_del_args(prev.ip, prev.prefix, &config.iface_name)).await;
     }
 
     if let Some(session) = services.session.as_ref() {
@@ -167,4 +142,88 @@ pub(crate) async fn release(
     services.route_service.remove_ipv4_link_route(config.link_id).await;
     services.route_service.remove_ipv4_lan_route(&config.iface_name).await;
     services.addr_binding.unbind_ipv4(config.ifindex);
+}
+
+fn build_del_args(ip: Ipv4Addr, prefix: u8, iface_name: &str) -> Vec<String> {
+    vec![
+        "addr".to_string(),
+        "del".to_string(),
+        format!("{}/{}", ip, prefix),
+        "dev".to_string(),
+        iface_name.to_string(),
+    ]
+}
+
+fn build_replace_args(
+    yiaddr: Ipv4Addr,
+    prefix: u32,
+    options: &DhcpV4Options,
+    iface_name: &str,
+    renew_time: u64,
+    lease_time: u64,
+) -> Vec<String> {
+    let mut args =
+        vec!["addr".to_string(), "replace".to_string(), format!("{}/{}", yiaddr, prefix)];
+
+    if let Some(DhcpOption::BroadcastAddr(broadcast)) = options.get(OptionCode::BroadcastAddr) {
+        args.extend(["brd".to_string(), format!("{}", broadcast)]);
+    }
+    args.extend([
+        "dev".to_string(),
+        iface_name.to_string(),
+        "valid_lft".to_string(),
+        format!("{}", lease_time),
+        "preferred_lft".to_string(),
+        format!("{}", renew_time),
+    ]);
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_args_include_broadcast_and_lifetimes() {
+        let mut options = DhcpV4Options::default();
+        options.insert(DhcpOption::BroadcastAddr(Ipv4Addr::new(192, 0, 2, 255)));
+        let args = build_replace_args(Ipv4Addr::new(192, 0, 2, 10), 24, &options, "ens4", 50, 100);
+        assert_eq!(
+            args,
+            vec![
+                "addr",
+                "replace",
+                "192.0.2.10/24",
+                "brd",
+                "192.0.2.255",
+                "dev",
+                "ens4",
+                "valid_lft",
+                "100",
+                "preferred_lft",
+                "50",
+            ]
+        );
+    }
+
+    #[test]
+    fn replace_args_omit_broadcast_when_absent() {
+        let args = build_replace_args(
+            Ipv4Addr::new(192, 0, 2, 10),
+            24,
+            &DhcpV4Options::default(),
+            "ens4",
+            50,
+            100,
+        );
+        assert!(!args.contains(&"brd".to_string()));
+    }
+
+    #[test]
+    fn del_args_format() {
+        assert_eq!(
+            build_del_args(Ipv4Addr::new(192, 0, 2, 10), 24, "ens4"),
+            vec!["addr", "del", "192.0.2.10/24", "dev", "ens4"]
+        );
+    }
 }

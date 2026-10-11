@@ -87,4 +87,16 @@ mod tests {
         assert!(decode_raw_frame(&frame, 68, 68).is_none());
         assert!(decode_raw_frame(&frame, 69, 67).is_none());
     }
+
+    #[test]
+    fn decode_rejects_empty_truncated_and_non_ip_input() {
+        assert!(decode_raw_frame(&[], 68, 67).is_none());
+        assert!(decode_raw_frame(&[0x00, 0x01, 0x02], 68, 67).is_none());
+
+        let mut arp = vec![0xffu8; 14];
+        arp[12] = 0x08;
+        arp[13] = 0x06;
+        arp.extend_from_slice(&[0u8; 28]);
+        assert!(decode_raw_frame(&arp, 68, 67).is_none());
+    }
 }

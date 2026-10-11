@@ -21,7 +21,7 @@ const REQUEST_PARAMS: [OptionCode; 10] = [
 pub(crate) fn gen_discover(
     xid: u32,
     mac_addr: MacAddr,
-    ciaddr: Option<Ipv4Addr>,
+    requested_ip: Option<Ipv4Addr>,
     hostname: &str,
     use_broadcast: bool,
 ) -> DhcpV4Message {
@@ -29,15 +29,17 @@ pub(crate) fn gen_discover(
     msg.set_opcode(DhcpV4OpCode::BootRequest);
     msg.set_xid(xid);
     let mut flags = DhcpV4Flags::default();
-    if use_broadcast || ciaddr.is_none() {
+    if use_broadcast || requested_ip.is_none() {
         flags = flags.set_broadcast();
     }
     msg.set_flags(flags);
-    msg.set_ciaddr(ciaddr.unwrap_or(Ipv4Addr::UNSPECIFIED));
+    // RFC 2131 Table 5: DHCPDISCOVER 'ciaddr' must be 0; a remembered
+    // address travels only in the 'requested IP address' option.
+    msg.set_ciaddr(Ipv4Addr::UNSPECIFIED);
     msg.set_chaddr(&mac_addr.octets());
 
     msg.opts_mut().insert(DhcpOption::MessageType(MessageType::Discover));
-    if let Some(ip) = ciaddr {
+    if let Some(ip) = requested_ip {
         msg.opts_mut().insert(DhcpOption::RequestedIpAddress(ip));
     }
     msg.opts_mut().insert(DhcpOption::Hostname(hostname.to_string()));
