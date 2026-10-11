@@ -10,6 +10,10 @@ pub enum GeoError {
     #[api_error(id = "geo_site.not_found", status = 404)]
     SiteNotFound(ConfigId),
 
+    #[error("Geo site config '{0}' not found")]
+    #[api_error(id = "geo_site.config_not_found", status = 404)]
+    SiteConfigNotFound(String),
+
     #[error("Geo site cache key '{0}' not found")]
     #[api_error(id = "geo_site.cache_not_found", status = 404)]
     SiteCacheNotFound(String),
@@ -33,6 +37,14 @@ pub enum GeoError {
     #[error("Geo raw dat download already running")]
     #[api_error(id = "geo.raw_dat_download_running", status = 409)]
     RawDatDownloadRunning,
+
+    #[error("A geo task is already running for this source")]
+    #[api_error(id = "geo.task_already_running", status = 409)]
+    TaskAlreadyRunning,
+
+    #[error("Geo task cancelled")]
+    #[api_error(id = "geo.task_cancelled", status = 409)]
+    TaskCancelled,
 
     #[error("Geo raw dat read failed: {0}")]
     #[api_error(id = "geo.raw_dat_read_failed", status = 500)]

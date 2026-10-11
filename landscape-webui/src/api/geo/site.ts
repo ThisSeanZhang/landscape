@@ -11,6 +11,8 @@ import {
   lookupGeoSiteDomain,
   getGeoSiteCacheDetail,
   updateGeoSiteByUpload as _updateGeoSiteByUpload,
+  getGeoSiteTasks,
+  cancelGeoSiteTask,
 } from "@landscape-router/types/api/geo-sites/geo-sites";
 import type {
   GeoFileCacheKey,
@@ -18,9 +20,10 @@ import type {
   GeoDomainConfig,
   GeoSiteSourceConfig,
   GeoSiteLookupResult,
+  GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoSiteLookupResult };
+export type { GeoSiteLookupResult, GeoTaskProgress };
 
 export async function lookup_geo_site_domain(
   domain: string,
@@ -91,4 +94,12 @@ export async function update_geo_site_by_upload(
 
 export async function refresh_geo_site_by_name(name: string): Promise<void> {
   await refreshGeoSiteConfigByName(name);
+}
+
+export async function get_geo_site_tasks(): Promise<GeoTaskProgress[]> {
+  return getGeoSiteTasks();
+}
+
+export async function cancel_geo_site_task(id: string): Promise<boolean> {
+  return cancelGeoSiteTask(id);
 }

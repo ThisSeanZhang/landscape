@@ -92,23 +92,43 @@ impl Drop for SealedRawFile {
     }
 }
 
+#[derive(Debug)]
+pub enum StreamToTmpError {
+    Cancelled,
+    Io(std::io::Error),
+}
+
 /// Stream download chunks straight into `{final}.tmp`, then fsync.
+///
+/// `should_stop` is polled before every chunk; `on_progress` receives the
+/// cumulative number of bytes written.
 pub async fn stream_to_tmp<S, C, E>(
     mut stream: S,
     final_path: &Path,
-) -> std::io::Result<SealedRawFile>
+    should_stop: &(dyn Fn() -> bool + Send + Sync),
+    on_progress: &mut (dyn FnMut(u64) + Send + Sync),
+) -> Result<SealedRawFile, StreamToTmpError>
 where
     S: futures::Stream<Item = Result<C, E>> + Unpin,
     C: AsRef<[u8]>,
     E: std::error::Error + Send + Sync + 'static,
 {
     use futures::StreamExt;
-    let mut tmp = RawTmpFile::create(final_path)?;
+    let mut tmp = RawTmpFile::create(final_path).map_err(StreamToTmpError::Io)?;
+    let mut written = 0u64;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(std::io::Error::other)?;
-        tmp.write_chunk(chunk.as_ref())?;
+        if should_stop() {
+            return Err(StreamToTmpError::Cancelled);
+        }
+        let chunk = chunk.map_err(|e| StreamToTmpError::Io(std::io::Error::other(e)))?;
+        tmp.write_chunk(chunk.as_ref()).map_err(StreamToTmpError::Io)?;
+        written += chunk.as_ref().len() as u64;
+        on_progress(written);
     }
-    tmp.seal()
+    if should_stop() {
+        return Err(StreamToTmpError::Cancelled);
+    }
+    tmp.seal().map_err(StreamToTmpError::Io)
 }
 
 /// Buffer already-in-memory bytes through the same tmp + fsync path.
@@ -207,5 +227,38 @@ mod tests {
     #[test]
     fn remove_missing_file_is_silent() {
         remove_raw_dat("ip", Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn stream_to_tmp_reports_cumulative_progress_and_seals() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ip-00000000-0000-0000-0000-000000000000.raw");
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+            vec![Ok(vec![1u8; 2]), Ok(vec![2u8; 3]), Ok(vec![3u8; 4])];
+        let stream = futures::stream::iter(chunks);
+
+        let mut seen = Vec::new();
+        let sealed = stream_to_tmp(stream, &path, &|| false, &mut |written| seen.push(written))
+            .await
+            .unwrap();
+
+        assert_eq!(seen, vec![2, 5, 9]);
+        assert_eq!(sealed.read_back().unwrap().len(), 9);
+    }
+
+    #[tokio::test]
+    async fn stream_to_tmp_cancelled_midway_leaves_no_files() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ip-00000000-0000-0000-0000-000000000000.raw");
+        let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+            vec![Ok(vec![1u8; 4]), Ok(vec![2u8; 4]), Ok(vec![3u8; 4])];
+        let stream = futures::stream::iter(chunks);
+
+        let result = stream_to_tmp(stream, &path, &|| true, &mut |_| {}).await;
+
+        assert!(matches!(result, Err(StreamToTmpError::Cancelled)));
+        let entries: Vec<_> = fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).collect();
+        assert!(entries.is_empty());
+        assert!(!path.exists());
     }
 }

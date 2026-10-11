@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use landscape_common::config_service::geo::GeoSiteFileConfig;
+use landscape_common::config_service::geo::{GeoError, GeoSiteFileConfig};
 use landscape_common::dns::rule::DomainMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,11 +264,21 @@ fn adguard_rules_overlap(candidate: &ParsedAdguardRule, negative: &ParsedAdguard
 /// - Cosmetic/regex rules -> skipped
 /// - Comments (`!`/`#`) and rules shorter than 4 chars -> skipped
 pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
+    parse_adguard_rules_with(contents, &|| false).unwrap_or_default()
+}
+
+pub fn parse_adguard_rules_with(
+    contents: &[u8],
+    should_stop: &dyn Fn() -> bool,
+) -> Result<Vec<GeoSiteFileConfig>, GeoError> {
     let text = String::from_utf8_lossy(contents);
     let mut candidates = Vec::<ParsedAdguardRule>::new();
     let mut negative_rules = Vec::<ParsedAdguardRule>::new();
 
     for line in text.lines() {
+        if should_stop() {
+            return Err(GeoError::TaskCancelled);
+        }
         let line = line.trim();
 
         if line.is_empty() || line.starts_with('!') || line.starts_with('#') {
@@ -362,7 +372,7 @@ pub fn parse_adguard_rules(contents: &[u8]) -> Vec<GeoSiteFileConfig> {
         });
     }
 
-    result
+    Ok(result)
 }
 
 #[cfg(test)]

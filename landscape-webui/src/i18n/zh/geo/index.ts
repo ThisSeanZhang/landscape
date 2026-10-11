@@ -70,6 +70,13 @@ export default {
     force_refresh: "强制刷新",
     force_refresh_confirm: "强制刷新将从来源 URL 重新下载并解析规则。",
   },
+  task_status: "任务状态",
+  phase_downloading: "下载中",
+  phase_verifying: "校验中",
+  phase_parsing: "解析中",
+  phase_applying: "应用中",
+  cancel_task: "取消任务",
+  confirm_cancel_task: "确定取消正在进行的任务吗?",
   detail_drawer: {
     rule_details: "规则细节",
   },

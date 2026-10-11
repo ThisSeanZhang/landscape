@@ -72,6 +72,13 @@ export default {
     force_refresh_confirm:
       "Force refresh will re-download and re-parse the rules from the source URL.",
   },
+  task_status: "Task Status",
+  phase_downloading: "Downloading",
+  phase_verifying: "Verifying",
+  phase_parsing: "Parsing",
+  phase_applying: "Applying",
+  cancel_task: "Cancel Task",
+  confirm_cancel_task: "Cancel the in-flight task?",
   detail_drawer: {
     rule_details: "Rule Details",
   },

@@ -1,20 +1,22 @@
 use landscape_common::{
-    concurrency::{spawn_task, task_label},
+    concurrency::task_label,
     config_service::geo::{
         GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteFileConfig, GeoSiteLookupResult,
-        GeoSiteSource, RawDatState,
+        GeoSiteSource, GeoSourceKind, GeoTaskPhase, GeoTaskProgress, RawDatState,
     },
     database::store::{Change, ConfigStore},
     dns::domain::{normalize_domain_name, normalize_domain_text},
     dns::rule::DomainMatchType,
+    memtrack::{TaggedFuture, subsystem_from_task_label},
     service::controller::ConfigStoreController,
-    utils::time::{MILL_A_DAY, get_f64_timestamp},
+    utils::time::get_f64_timestamp,
 };
 use uuid::Uuid;
 
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    future::Future,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,9 +34,17 @@ use landscape_database::{
 };
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
+use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tracing::Instrument;
 
-use super::raw_file::{raw_dat_path, remove_raw_dat, stream_to_tmp, write_bytes_to_tmp};
+use super::raw_file::{
+    SealedRawFile, StreamToTmpError, raw_dat_path, remove_raw_dat, stream_to_tmp,
+    write_bytes_to_tmp,
+};
+use super::{GEO_PROGRESS_PUBLISH_INTERVAL, GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
 const A_DAY: u64 = 60 * 60 * 24;
 
@@ -104,7 +114,9 @@ pub struct GeoSiteService {
     cache: SiteCacheRepository,
     matcher_registry: Arc<SiteMatcherRegistry>,
     dns_events_tx: mpsc::Sender<DnsEvent>,
-    raw_downloading: Arc<Mutex<HashSet<Uuid>>>,
+    tasks: GeoTaskRegistry,
+    stop_token: CancellationToken,
+    tracker: TaskTracker,
 }
 
 impl GeoSiteService {
@@ -127,19 +139,67 @@ impl GeoSiteService {
             cache,
             matcher_registry,
             dns_events_tx,
-            raw_downloading: Arc::new(Mutex::new(HashSet::new())),
+            tasks: GeoTaskRegistry::default(),
+            stop_token: CancellationToken::new(),
+            tracker: TaskTracker::new(),
         };
         let service_clone = service.clone();
-        spawn_task(task_label::task::GEO_SITE_OBSERVER, async move {
+        let stop_token = service.stop_token.clone();
+        service.spawn_tracked(task_label::task::GEO_SITE_OBSERVER, async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(A_DAY));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             // The current network may not be ready; delaying the update check.
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            loop {
-                service_clone.refresh(false).await;
-                ticker.tick().await;
+            tokio::select! {
+                _ = stop_token.cancelled() => {},
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    loop {
+                        tokio::select! {
+                            _ = stop_token.cancelled() => break,
+                            _ = ticker.tick() => {
+                                service_clone.refresh(false).await;
+                            }
+                        }
+                    }
+                }
             }
+            tracing::info!("geo site daily refresh loop stopped");
         });
         service
+    }
+
+    fn spawn_tracked<Fut>(
+        &self,
+        label: &'static str,
+        future: Fut,
+    ) -> tokio::task::JoinHandle<Fut::Output>
+    where
+        Fut: Future + Send + 'static,
+        Fut::Output: Send + 'static,
+    {
+        let tag = subsystem_from_task_label(label);
+        self.tracker.spawn(
+            TaggedFuture::new(tag, future).instrument(tracing::info_span!("task", task = label)),
+        )
+    }
+
+    pub async fn shutdown_and_wait(&self, timeout: Duration) {
+        self.stop_token.cancel();
+        self.tasks.cancel_all();
+        self.tracker.close();
+        match tokio::time::timeout(timeout, self.tracker.wait()).await {
+            Ok(()) => tracing::info!("geo site background tasks stopped"),
+            Err(_) => tracing::warn!(
+                "geo site shutdown timed out after {timeout:?}; in-flight refresh may still be draining"
+            ),
+        }
+    }
+
+    pub fn task_progress_snapshot(&self) -> Vec<GeoTaskProgress> {
+        self.tasks.progress_snapshot()
+    }
+
+    pub fn cancel_geo_task(&self, id: Uuid) -> bool {
+        self.tasks.cancel_task(id)
     }
 
     /// Replace cache content with `entries` under `name`; keys that vanish
@@ -215,150 +275,275 @@ impl GeoSiteService {
             .await;
     }
 
-    async fn refresh_url_config(
+    fn spawn_geo_task(
         &self,
-        client: &Client,
-        config: &mut GeoSiteSourceConfig,
-    ) -> HashSet<GeoFileCacheKey> {
-        let url = match &config.source {
-            GeoSiteSource::Url { url, .. } => url.clone(),
-            _ => return HashSet::new(),
-        };
+        config: GeoSiteSourceConfig,
+        mode: GeoTaskMode,
+        cancel: CancellationToken,
+    ) {
+        let service = self.clone();
+        let source_id = config.id;
+        self.spawn_tracked(task_label::task::GEO_SITE_OBSERVER, async move {
+            let _guard = TaskGuard::new(service.tasks.clone(), source_id);
+            service.run_geo_task(config, mode, &cancel).await;
+        });
+    }
 
-        tracing::debug!("download file: {}", url);
-        let time = Instant::now();
-
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                let dat_path = raw_dat_path("site", config.id);
-                let sealed = match stream_to_tmp(resp.bytes_stream(), &dat_path).await {
-                    Ok(sealed) => sealed,
-                    Err(e) => {
-                        tracing::error!("download {} to {dat_path:?} failed: {}", url, e);
-                        return HashSet::new();
-                    }
-                };
-                let bytes = match sealed.read_back() {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        sealed.abort();
-                        tracing::error!("read back {dat_path:?} failed: {}", e);
-                        return HashSet::new();
-                    }
-                };
-                match landscape_protobuf::read_geo_sites_from_bytes(bytes).await {
-                    Ok(result) => {
-                        if let Err(e) = sealed.commit() {
-                            tracing::warn!(
-                                "persist raw geo site file {:?} failed: {}",
-                                dat_path,
-                                e
-                            );
-                        }
-
-                        let apply_result =
-                            self.apply_geo_values(&config.name, result.into_iter().collect()).await;
-
-                        if let GeoSiteSource::Url { next_update_at, .. } = &mut config.source {
-                            *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
-                        }
-                        let _ = self.store.upsert(config.clone()).await;
-
-                        tracing::debug!(
-                            "handle file done: {}, time: {}ms changed_keys={} unchanged_keys={} deleted_keys={}",
-                            url,
-                            time.elapsed().as_millis(),
-                            apply_result.changed_keys.len(),
-                            apply_result.unchanged_keys,
-                            apply_result.deleted_keys,
-                        );
-                        apply_result.changed_keys
-                    }
-                    Err(e) => {
-                        sealed.abort();
-                        tracing::error!("parse geosite dat from {} failed: {}", url, e);
-                        HashSet::new()
-                    }
-                }
+    fn try_spawn_download_task(&self, config: GeoSiteSourceConfig) -> bool {
+        match self.tasks.insert(config.id, GeoSourceKind::Site) {
+            Ok(cancel) => {
+                self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
+                true
             }
-            Ok(resp) => {
-                tracing::error!("download {} error, HTTP status: {}", url, resp.status());
-                HashSet::new()
-            }
-            Err(e) => {
-                tracing::error!("request {} error: {}", url, e);
-                HashSet::new()
-            }
+            Err(()) => false,
         }
     }
 
-    async fn refresh_adguard_config(
+    fn spawn_restore_task(&self, config: &GeoSiteSourceConfig) {
+        if let Ok(cancel) = self.tasks.insert(config.id, GeoSourceKind::Site) {
+            self.spawn_geo_task(config.clone(), GeoTaskMode::RestoreOnly, cancel);
+        }
+    }
+
+    async fn download_to_sealed(
         &self,
-        client: &Client,
-        config: &mut GeoSiteSourceConfig,
-    ) -> HashSet<GeoFileCacheKey> {
-        let (url, key) = match &config.source {
-            GeoSiteSource::AdguardHome { url, key, .. } => {
-                (url.clone(), normalize_adguard_key(key))
+        source_id: Uuid,
+        url: &str,
+        dat_path: &std::path::Path,
+        cancel: &CancellationToken,
+    ) -> Result<SealedRawFile, GeoError> {
+        self.tasks.advance(source_id, GeoTaskPhase::Downloading);
+        // TODO: every download task builds its own client instead of sharing
+        // one connection pool across tasks.
+        let client = Client::new();
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| GeoError::RawDatReadFailed(format!("request {url} error: {e}")))?;
+        if !response.status().is_success() {
+            return Err(GeoError::RawDatReadFailed(format!(
+                "{url} returned HTTP {}",
+                response.status()
+            )));
+        }
+        let bytes_total = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        let registry = self.tasks.clone();
+        let mut last_publish: Option<Instant> = None;
+        let should_stop = || cancel.is_cancelled();
+        stream_to_tmp(response.bytes_stream(), dat_path, &should_stop, &mut |written| {
+            let now = Instant::now();
+            let due = last_publish
+                .is_none_or(|last| now.duration_since(last) >= GEO_PROGRESS_PUBLISH_INTERVAL);
+            if due {
+                registry.update_download(source_id, written, bytes_total);
+                last_publish = Some(now);
             }
-            _ => return HashSet::new(),
+        })
+        .await
+        .map_err(|e| match e {
+            StreamToTmpError::Cancelled => GeoError::TaskCancelled,
+            StreamToTmpError::Io(e) => {
+                GeoError::RawDatReadFailed(format!("download {} to {dat_path:?} failed: {e}", url))
+            }
+        })
+    }
+
+    async fn parse_dat_entries(
+        &self,
+        bytes: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<(String, Vec<GeoSiteFileConfig>)>, GeoError> {
+        if cancel.is_cancelled() {
+            return Err(GeoError::TaskCancelled);
+        }
+        let result = tokio::task::spawn_blocking(move || {
+            landscape_protobuf::read_geo_sites_from_bytes(bytes)
+        })
+        .await
+        .map_err(|e| GeoError::RawDatReadFailed(format!("parse worker join failed: {e}")))??;
+        if cancel.is_cancelled() {
+            return Err(GeoError::TaskCancelled);
+        }
+        Ok(result.into_iter().collect())
+    }
+
+    async fn parse_source_bytes(
+        &self,
+        source: &GeoSiteSource,
+        bytes: Vec<u8>,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<(String, Vec<GeoSiteFileConfig>)>, GeoError> {
+        match source {
+            GeoSiteSource::Url { .. } => self.parse_dat_entries(bytes, cancel).await,
+            GeoSiteSource::AdguardHome { key, .. } => {
+                let key = normalize_adguard_key(key);
+                let cancel = cancel.clone();
+                let domains = tokio::task::spawn_blocking(move || {
+                    landscape_protobuf::parse_adguard_rules_with(&bytes, &|| cancel.is_cancelled())
+                })
+                .await
+                .map_err(|e| {
+                    GeoError::RawDatReadFailed(format!("parse worker join failed: {e}"))
+                })??;
+                Ok(vec![(key, domains)])
+            }
+            GeoSiteSource::Direct { .. } => Ok(vec![]),
+        }
+    }
+
+    async fn run_geo_task(
+        &self,
+        config: GeoSiteSourceConfig,
+        mode: GeoTaskMode,
+        cancel: &CancellationToken,
+    ) {
+        let source_id = config.id;
+        let dat_path = raw_dat_path("site", source_id);
+        let upload_mode = matches!(mode, GeoTaskMode::Upload(_));
+
+        let sealed = match mode {
+            GeoTaskMode::Download => {
+                let url = match &config.source {
+                    GeoSiteSource::Url { url, .. } | GeoSiteSource::AdguardHome { url, .. } => {
+                        url.clone()
+                    }
+                    _ => return,
+                };
+                tracing::debug!("download file: {}", url);
+                let time = Instant::now();
+                match self.download_to_sealed(source_id, &url, &dat_path, cancel).await {
+                    Ok(sealed) => {
+                        tracing::debug!(
+                            "handle file done: {}, time: {}ms",
+                            url,
+                            time.elapsed().as_millis()
+                        );
+                        Some(sealed)
+                    }
+                    Err(GeoError::TaskCancelled) => {
+                        tracing::info!("refresh geo site source {} cancelled", config.name);
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("refresh geo site source {} error: {}", config.name, e);
+                        return;
+                    }
+                }
+            }
+            GeoTaskMode::RestoreOnly => {
+                let Ok(bytes) = fs::read(&dat_path) else {
+                    return;
+                };
+                self.tasks.advance(source_id, GeoTaskPhase::Parsing);
+                match self.parse_source_bytes(&config.source, bytes, cancel).await {
+                    Ok(entries) if !entries.is_empty() => {
+                        let apply_result = self.apply_geo_values(&config.name, entries).await;
+                        tracing::info!(
+                            "restored geo site cache '{}' from {:?}",
+                            config.name,
+                            dat_path
+                        );
+                        self.notify_geo_changes(apply_result.changed_keys).await;
+                    }
+                    Ok(_) => {}
+                    Err(GeoError::TaskCancelled) => {}
+                    Err(e) => {
+                        tracing::warn!("restore geo site cache from {:?} failed: {}", dat_path, e);
+                    }
+                }
+                return;
+            }
+            GeoTaskMode::Upload(file_bytes) => {
+                if matches!(config.source, GeoSiteSource::Direct { .. }) {
+                    tracing::warn!(
+                        "upload is not supported for direct geo site source '{}'",
+                        config.name
+                    );
+                    return;
+                }
+                match write_bytes_to_tmp(&dat_path, &file_bytes) {
+                    Ok(sealed) => Some(sealed),
+                    Err(e) => {
+                        tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
+                        return;
+                    }
+                }
+            }
         };
 
-        tracing::debug!("download adguard rules: {}", url);
-        let time = Instant::now();
+        let Some(sealed) = sealed else { return };
+        if cancel.is_cancelled() {
+            sealed.abort();
+            return;
+        }
 
-        match client.get(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                let dat_path = raw_dat_path("site", config.id);
-                let sealed = match stream_to_tmp(resp.bytes_stream(), &dat_path).await {
-                    Ok(sealed) => sealed,
-                    Err(e) => {
-                        tracing::error!("download {} to {dat_path:?} failed: {}", url, e);
-                        return HashSet::new();
-                    }
-                };
-                let bytes = match sealed.read_back() {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        sealed.abort();
-                        tracing::error!("read back {dat_path:?} failed: {}", e);
-                        return HashSet::new();
-                    }
-                };
-                let domains = landscape_protobuf::parse_adguard_rules(&bytes);
-                drop(bytes);
-                if let Err(e) = sealed.commit() {
-                    tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
-                }
-
-                let apply_result =
-                    self.apply_geo_values(&config.name, vec![(key.clone(), domains)]).await;
-
-                if let GeoSiteSource::AdguardHome { next_update_at, key, .. } = &mut config.source {
-                    *next_update_at = get_f64_timestamp() + MILL_A_DAY as f64;
-                    *key = normalize_adguard_key(key);
-                }
-                let _ = self.store.upsert(config.clone()).await;
-
-                tracing::debug!(
-                    "handle adguard rules done: {}, time: {}ms changed_keys={} unchanged_keys={} deleted_keys={}",
-                    url,
-                    time.elapsed().as_millis(),
-                    apply_result.changed_keys.len(),
-                    apply_result.unchanged_keys,
-                    apply_result.deleted_keys,
-                );
-                apply_result.changed_keys
+        self.tasks.advance(source_id, GeoTaskPhase::Verifying);
+        let bytes = match sealed.read_back() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                sealed.abort();
+                tracing::error!("read back {dat_path:?} failed: {}", e);
+                return;
             }
-            Ok(resp) => {
-                tracing::error!("download {} error, HTTP status: {}", url, resp.status());
-                HashSet::new()
+        };
+
+        self.tasks.advance(source_id, GeoTaskPhase::Parsing);
+        let parsed = if upload_mode {
+            self.parse_dat_entries(bytes, cancel).await
+        } else {
+            self.parse_source_bytes(&config.source, bytes, cancel).await
+        };
+        let entries = match parsed {
+            Ok(entries) => entries,
+            Err(GeoError::TaskCancelled) => {
+                sealed.abort();
+                return;
             }
             Err(e) => {
-                tracing::error!("request {} error: {}", url, e);
-                HashSet::new()
+                sealed.abort();
+                tracing::error!("parse geo site data for '{}' failed: {}", config.name, e);
+                return;
+            }
+        };
+        if cancel.is_cancelled() {
+            sealed.abort();
+            return;
+        }
+
+        // TODO: a task whose config was deleted mid-flight can still commit
+        // here and resurrect the raw dat file that `notify_deleted` removed.
+        if let Err(e) = sealed.commit() {
+            tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
+        }
+        self.tasks.advance(source_id, GeoTaskPhase::Applying);
+        let apply_result = self.apply_geo_values(&config.name, entries).await;
+
+        match self.store.bump_refresh_schedule(source_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::debug!(
+                    "geo site config {} deleted during task; skip schedule update",
+                    config.name
+                );
+            }
+            Err(e) => {
+                tracing::warn!("bump geo site refresh schedule {} failed: {}", config.name, e);
             }
         }
+
+        tracing::debug!(
+            "apply geo site done: name={} changed_keys={} unchanged_keys={} deleted_keys={}",
+            config.name,
+            apply_result.changed_keys.len(),
+            apply_result.unchanged_keys,
+            apply_result.deleted_keys,
+        );
+        self.notify_geo_changes(apply_result.changed_keys).await;
     }
 
     async fn refresh_direct_config(
@@ -387,43 +572,6 @@ impl GeoSiteService {
         })
     }
 
-    async fn try_restore_from_raw(&self, config: &GeoSiteSourceConfig) -> HashSet<GeoFileCacheKey> {
-        let dat_path = raw_dat_path("site", config.id);
-        let Ok(bytes) = fs::read(&dat_path) else {
-            return HashSet::new();
-        };
-
-        match &config.source {
-            GeoSiteSource::Url { .. } => {
-                match landscape_protobuf::read_geo_sites_from_bytes(bytes).await {
-                    Ok(result) => {
-                        let apply_result =
-                            self.apply_geo_values(&config.name, result.into_iter().collect()).await;
-                        tracing::info!(
-                            "restored geo site cache '{}' from {:?}",
-                            config.name,
-                            dat_path
-                        );
-                        apply_result.changed_keys
-                    }
-                    Err(e) => {
-                        tracing::warn!("restore geo site cache from {:?} failed: {}", dat_path, e);
-                        HashSet::new()
-                    }
-                }
-            }
-            GeoSiteSource::AdguardHome { key, .. } => {
-                let domains = landscape_protobuf::parse_adguard_rules(&bytes);
-                let apply_result = self
-                    .apply_geo_values(&config.name, vec![(normalize_adguard_key(key), domains)])
-                    .await;
-                tracing::info!("restored geo site cache '{}' from {:?}", config.name, dat_path);
-                apply_result.changed_keys
-            }
-            GeoSiteSource::Direct { .. } => HashSet::new(),
-        }
-    }
-
     pub async fn get_raw_dat_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
         let dat_path = raw_dat_path("site", id);
         if dat_path.exists() {
@@ -439,57 +587,44 @@ impl GeoSiteService {
             return Err(GeoError::RawDatNotReady);
         }
 
-        let mut tasks = self.raw_downloading.lock().await;
-        if !tasks.insert(id) {
-            return Ok(RawDatState::Running);
+        match self.tasks.insert(id, GeoSourceKind::Site) {
+            Ok(cancel) => {
+                self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
+                Ok(RawDatState::Started)
+            }
+            Err(()) => Ok(RawDatState::Running),
         }
-        drop(tasks);
-
-        let service = self.clone();
-        let name = config.name.clone();
-        spawn_task(task_label::task::GEO_SITE_OBSERVER, async move {
-            service.refresh_one(&name).await;
-            service.raw_downloading.lock().await.remove(&id);
-        });
-        Ok(RawDatState::Started)
     }
 
     pub async fn refresh(&self, force: bool) {
         let configs: Vec<GeoSiteSourceConfig> = self.store.list().await.unwrap();
 
-        let client = Client::new();
         let mut config_names = HashSet::new();
         let now = get_f64_timestamp();
 
-        for mut config in configs {
+        for config in configs {
             config_names.insert(config.name.clone());
 
-            let changed = match &config.source {
-                GeoSiteSource::Url { next_update_at, .. } => {
-                    if !self.has_cached_name(&config.name).await {
-                        let changed = self.try_restore_from_raw(&config).await;
-                        self.notify_geo_changes(changed).await;
+            match &config.source {
+                GeoSiteSource::Url { next_update_at, .. }
+                | GeoSiteSource::AdguardHome { next_update_at, .. } => {
+                    let due = force || *next_update_at < now;
+                    if !due && !self.has_cached_name(&config.name).await {
+                        self.spawn_restore_task(&config);
                     }
-                    if !force && *next_update_at >= now {
-                        continue;
+                    if due && !self.try_spawn_download_task(config.clone()) {
+                        tracing::debug!("geo site source {} refresh already running", config.name);
                     }
-                    self.refresh_url_config(&client, &mut config).await
                 }
-                GeoSiteSource::Direct { .. } => self.refresh_direct_config(&config).await,
-                GeoSiteSource::AdguardHome { next_update_at, .. } => {
-                    if !self.has_cached_name(&config.name).await {
-                        let changed = self.try_restore_from_raw(&config).await;
-                        self.notify_geo_changes(changed).await;
-                    }
-                    if !force && *next_update_at >= now {
-                        continue;
-                    }
-                    self.refresh_adguard_config(&client, &mut config).await
+                GeoSiteSource::Direct { .. } => {
+                    let changed = self.refresh_direct_config(&config).await;
+                    self.notify_geo_changes(changed).await;
                 }
-            };
-            self.notify_geo_changes(changed).await;
+            }
         }
 
+        // TODO: the daily non-force refresh should also sweep orphan cache
+        // rows left behind by deleted configs.
         if force {
             let need_to_remove = self
                 .cache
@@ -520,23 +655,24 @@ impl GeoSiteService {
         }
     }
 
-    pub async fn refresh_one(&self, name: &str) {
-        let configs: Vec<GeoSiteSourceConfig> = self.store.list().await.unwrap();
-        let Some(mut config) = configs.into_iter().find(|c| c.name == name) else {
-            tracing::warn!("refresh_one: config '{}' not found", name);
-            return;
+    pub async fn refresh_one(&self, name: &str) -> Result<(), GeoError> {
+        let configs: Vec<GeoSiteSourceConfig> = self.store.list().await?;
+        let Some(config) = configs.into_iter().find(|c| c.name == name) else {
+            return Err(GeoError::SiteConfigNotFound(name.to_string()));
         };
 
-        let client = Client::new();
-
-        let changed = match &config.source {
-            GeoSiteSource::Url { .. } => self.refresh_url_config(&client, &mut config).await,
-            GeoSiteSource::AdguardHome { .. } => {
-                self.refresh_adguard_config(&client, &mut config).await
+        match &config.source {
+            GeoSiteSource::Url { .. } | GeoSiteSource::AdguardHome { .. } => {
+                if !self.try_spawn_download_task(config) {
+                    return Err(GeoError::TaskAlreadyRunning);
+                }
             }
-            GeoSiteSource::Direct { .. } => self.refresh_direct_config(&config).await,
-        };
-        self.notify_geo_changes(changed).await;
+            GeoSiteSource::Direct { .. } => {
+                let changed = self.refresh_direct_config(&config).await;
+                self.notify_geo_changes(changed).await;
+            }
+        }
+        Ok(())
     }
 
     async fn write_direct_to_cache(
@@ -595,57 +731,29 @@ impl GeoSiteService {
         Ok(result)
     }
 
-    pub async fn update_geo_config_by_bytes(&self, name: String, file_bytes: impl Into<Vec<u8>>) {
-        let file_bytes = file_bytes.into();
+    pub async fn update_geo_config_by_bytes(
+        &self,
+        name: String,
+        file_bytes: impl Into<Vec<u8>>,
+    ) -> Result<(), GeoError> {
         let Some(config) = self
             .query_geo_by_name(Some(name.clone()))
             .await
             .into_iter()
             .find(|config| config.name == name)
         else {
+            // TODO: uploading an unknown name reports success to the client
+            // while the payload is silently dropped (the geo ip side already
+            // answers 404 here).
             tracing::warn!("update_geo_config_by_bytes: config '{}' not found", name);
-            return;
+            return Ok(());
         };
-
-        let dat_path = raw_dat_path("site", config.id);
-        let sealed = match write_bytes_to_tmp(&dat_path, &file_bytes) {
-            Ok(sealed) => sealed,
-            Err(e) => {
-                tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
-                return;
-            }
-        };
-        drop(file_bytes);
-        let bytes = match sealed.read_back() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                sealed.abort();
-                tracing::warn!("read back {dat_path:?} failed: {}", e);
-                return;
-            }
-        };
-
-        match landscape_protobuf::read_geo_sites_from_bytes(bytes).await {
-            Ok(result) => {
-                if let Err(e) = sealed.commit() {
-                    tracing::warn!("persist raw geo site file {:?} failed: {}", dat_path, e);
-                }
-
-                let apply_result = self.apply_geo_values(&name, result.into_iter().collect()).await;
-                tracing::debug!(
-                    "update geo bytes: name={} changed_keys={} unchanged_keys={} deleted_keys={}",
-                    name,
-                    apply_result.changed_keys.len(),
-                    apply_result.unchanged_keys,
-                    apply_result.deleted_keys,
-                );
-                self.notify_geo_changes(apply_result.changed_keys).await;
-            }
-            Err(e) => {
-                sealed.abort();
-                tracing::error!("parse uploaded geosite dat for '{}' failed: {}", name, e);
-            }
-        }
+        let cancel = self
+            .tasks
+            .insert(config.id, GeoSourceKind::Site)
+            .map_err(|()| GeoError::TaskAlreadyRunning)?;
+        self.spawn_geo_task(config, GeoTaskMode::Upload(file_bytes.into()), cancel);
+        Ok(())
     }
 }
 
@@ -664,6 +772,7 @@ impl ConfigStoreController for GeoSiteService {
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         // Refresh Direct configs immediately when updated
         for change in changes {
+            self.tasks.cancel_task(change.new.id);
             if let GeoSiteSource::Direct { ref data } = change.new.source {
                 let apply_result = self.write_direct_to_cache(&change.new.name, data).await;
                 tracing::debug!(
@@ -679,6 +788,7 @@ impl ConfigStoreController for GeoSiteService {
     }
 
     async fn notify_deleted(&self, old: Self::Config) {
+        self.tasks.cancel_task(old.id);
         remove_raw_dat("site", old.id);
     }
 }

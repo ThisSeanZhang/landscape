@@ -4,7 +4,7 @@ use axum::response::{IntoResponse, Response};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::geo::{
-    GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSourceConfig,
+    GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSourceConfig, GeoTaskProgress,
     QueryGeoIpAddress, QueryGeoIpConfig, QueryGeoKey, RawDatState,
 };
 use landscape_common::service::controller::ConfigStoreController;
@@ -33,7 +33,36 @@ pub fn get_geo_ip_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(search_geo_ip_cache))
         .routes(routes!(lookup_geo_ip_address))
         .routes(routes!(get_geo_ip_cache_detail))
+        .routes(routes!(get_geo_ip_tasks, cancel_geo_ip_task))
         .merge(upload_router)
+}
+
+#[utoipa::path(
+    get,
+    path = "/ips/tasks",
+    tag = "Geo IPs",
+    responses((status = 200, description = "In-flight geo ip refresh task progress", body = CommonApiResp<Vec<GeoTaskProgress>>))
+)]
+async fn get_geo_ip_tasks(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<GeoTaskProgress>> {
+    LandscapeApiResp::success(state.geo_ip_service.task_progress_snapshot())
+}
+
+#[utoipa::path(
+    post,
+    path = "/ips/{id}/cancel",
+    tag = "Geo IPs",
+    params(("id" = Uuid, Path, description = "Geo IP source config ID")),
+    responses(
+        (status = 200, description = "Cancel requested; false when no in-flight task", body = CommonApiResp<bool>)
+    )
+)]
+async fn cancel_geo_ip_task(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<bool> {
+    LandscapeApiResp::success(state.geo_ip_service.cancel_geo_task(id))
 }
 
 #[utoipa::path(
@@ -136,7 +165,10 @@ async fn refresh_geo_ip_cache(State(state): State<LandscapeApp>) -> LandscapeApi
     path = "/ips/{name}/refresh",
     tag = "Geo IPs",
     params(("name" = String, Path, description = "Geo IP config name")),
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Refresh triggered; poll /ips/tasks for progress"),
+        (status = 409, description = "A refresh task is already running")
+    )
 )]
 async fn refresh_geo_ip_config_by_name(
     State(state): State<LandscapeApp>,
@@ -271,7 +303,10 @@ async fn download_geo_ip_dat(
     operation_id = "update_geo_ip_by_upload",
     params(("name" = String, Path, description = "Geo IP config name")),
     request_body(content = inline(UploadFileForm), content_type = "multipart/form-data"),
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Upload accepted; poll /ips/tasks for progress"),
+        (status = 409, description = "A task is already running for this source")
+    )
 )]
 async fn update_by_upload(
     State(state): State<LandscapeApp>,

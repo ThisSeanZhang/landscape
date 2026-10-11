@@ -12,7 +12,7 @@ use protos::geo::{Domain, GeoIPListOwned, GeoSiteListOwned, mod_Domain::Type};
 
 pub mod adguard;
 mod protos;
-pub use adguard::parse_adguard_rules;
+pub use adguard::{parse_adguard_rules, parse_adguard_rules_with};
 
 pub const DEFAULT_TXT_GEO_KEY: &str = "DEFAULT";
 
@@ -22,7 +22,7 @@ pub struct GeoIpParseResult {
     pub skipped_lines: usize,
 }
 
-pub async fn read_geo_sites_from_bytes(
+pub fn read_geo_sites_from_bytes(
     contents: impl Into<Vec<u8>>,
 ) -> Result<HashMap<String, Vec<GeoSiteFileConfig>>, GeoError> {
     let mut result = HashMap::new();
@@ -66,7 +66,7 @@ pub async fn read_geo_ips_from_bytes(
     result
 }
 
-pub async fn read_geo_ips_from_bytes_dat(
+pub fn read_geo_ips_from_bytes_dat(
     contents: impl Into<Vec<u8>>,
 ) -> Result<HashMap<String, Vec<IpConfig>>, GeoError> {
     let mut result = HashMap::new();
@@ -83,6 +83,7 @@ pub async fn read_geo_ips_from_bytes_dat(
 pub fn read_geo_ips_from_bytes_txt(
     contents: impl AsRef<[u8]>,
     txt_key: Option<&str>,
+    should_stop: &dyn Fn() -> bool,
 ) -> Result<GeoIpParseResult, GeoError> {
     let key = txt_key
         .map(str::trim)
@@ -95,6 +96,9 @@ pub fn read_geo_ips_from_bytes_txt(
     let mut skipped_lines = 0;
 
     for line in text.lines() {
+        if should_stop() {
+            return Err(GeoError::TaskCancelled);
+        }
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -118,18 +122,19 @@ pub fn read_geo_ips_from_bytes_txt(
     Ok(GeoIpParseResult { entries, valid_lines, skipped_lines })
 }
 
-pub async fn read_geo_ips_from_bytes_by_format(
+pub fn read_geo_ips_from_bytes_by_format(
     contents: impl Into<Vec<u8>>,
     format: &GeoIpFileFormat,
     txt_key: Option<&str>,
+    should_stop: &dyn Fn() -> bool,
 ) -> Result<GeoIpParseResult, GeoError> {
     let contents = contents.into();
     match format {
         GeoIpFileFormat::Dat => {
-            let entries = read_geo_ips_from_bytes_dat(contents).await?;
+            let entries = read_geo_ips_from_bytes_dat(contents)?;
             Ok(GeoIpParseResult { entries, valid_lines: 0, skipped_lines: 0 })
         }
-        GeoIpFileFormat::Txt => read_geo_ips_from_bytes_txt(&contents, txt_key),
+        GeoIpFileFormat::Txt => read_geo_ips_from_bytes_txt(&contents, txt_key, should_stop),
     }
 }
 
@@ -175,6 +180,7 @@ mod tests {
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
     };
 
+    use landscape_common::config_service::geo::GeoError;
     use landscape_common::dns::rule::DomainMatchType;
 
     use crate::{
@@ -229,6 +235,7 @@ mod tests {
         let result = read_geo_ips_from_bytes_txt(
             b"\n# comment\n1.1.1.0/24\ninvalid\n2001:db8::/32\n10.0.0.1/33\n",
             Some("custom"),
+            &|| false,
         )
         .unwrap();
 
@@ -257,7 +264,17 @@ mod tests {
 
     #[test]
     fn parse_txt_geo_ips_uses_default_key() {
-        let result = read_geo_ips_from_bytes_txt(b"1.1.1.0/24\n", Some("   ")).unwrap();
+        let result = read_geo_ips_from_bytes_txt(b"1.1.1.0/24\n", Some("   "), &|| false).unwrap();
         assert!(result.entries.contains_key("DEFAULT"));
+    }
+
+    #[test]
+    fn parse_txt_geo_ips_stops_when_requested() {
+        let result = read_geo_ips_from_bytes_txt(
+            b"1.1.1.0/24\n2.2.2.0/24\n3.3.3.0/24\n",
+            Some("custom"),
+            &|| true,
+        );
+        assert!(matches!(result, Err(GeoError::TaskCancelled)));
     }
 }

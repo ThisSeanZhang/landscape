@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { get_geo_site_configs, push_many_geo_site_rule } from "@/api/geo/site";
+import {
+  get_geo_site_configs,
+  get_geo_site_tasks,
+  push_many_geo_site_rule,
+} from "@/api/geo/site";
+import type { GeoTaskProgress } from "@landscape-router/types/api/schemas";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
 } from "@/lib/common";
-import type { GeoSiteSourceConfig } from "@landscape-router/types/api/schemas";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -18,13 +22,68 @@ const show = defineModel<boolean>("show", { required: true });
 const show_create_modal = ref(false);
 
 const configs = ref<any>();
+const tasks = ref<Map<string, GeoTaskProgress>>(new Map());
+
+const has_running_tasks = computed(() => tasks.value.size > 0);
+
 onMounted(async () => {
   await refresh();
 });
 
 async function refresh() {
   configs.value = await get_geo_site_configs();
+  await refresh_tasks();
 }
+
+// TODO: a task that fails quickly leaves no trace in the UI; the error is
+// only visible in the server log.
+async function refresh_tasks() {
+  try {
+    const list = await get_geo_site_tasks();
+    const next = new Map(list.map((task) => [task.source_id, task]));
+    const drained = tasks.value.size > 0 && next.size === 0;
+    tasks.value = next;
+    if (drained) {
+      configs.value = await get_geo_site_configs();
+      emit("refresh:keys");
+    }
+  } catch {
+    // The axios interceptor already surfaces API errors; keep polling silent.
+  }
+}
+
+let poll_timer: ReturnType<typeof setInterval> | null = null;
+
+function start_polling() {
+  if (poll_timer) return;
+  poll_timer = setInterval(refresh_tasks, 5000);
+}
+
+function stop_polling() {
+  if (poll_timer) {
+    clearInterval(poll_timer);
+    poll_timer = null;
+  }
+}
+
+watch(has_running_tasks, (val) => {
+  if (val) {
+    start_polling();
+  } else {
+    stop_polling();
+  }
+});
+
+watch(show, (val) => {
+  if (!val) {
+    stop_polling();
+  } else if (has_running_tasks.value) {
+    start_polling();
+    refresh_tasks();
+  }
+});
+
+onUnmounted(stop_polling);
 
 async function export_config() {
   let configs = await get_geo_site_configs();
@@ -83,9 +142,11 @@ async function import_rules() {
             <GeoSiteItemCard
               @refresh="refresh"
               @refresh:keys="emit('refresh:keys')"
+              @refresh:tasks="refresh_tasks"
               v-for="rule in configs"
               :key="rule.index"
               :geo_site="rule"
+              :task="rule.id ? tasks.get(rule.id) : undefined"
             >
             </GeoSiteItemCard>
           </n-flex>

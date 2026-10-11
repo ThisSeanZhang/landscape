@@ -5,7 +5,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
 use landscape_common::config_service::geo::{
     GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteLookupResult, GeoSiteSourceConfig,
-    QueryGeoDomainConfig, QueryGeoKey, QueryGeoSiteDomain, RawDatState,
+    GeoTaskProgress, QueryGeoDomainConfig, QueryGeoKey, QueryGeoSiteDomain, RawDatState,
 };
 use landscape_common::service::controller::ConfigStoreController;
 use utoipa_axum::router::OpenApiRouter;
@@ -33,7 +33,36 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(search_geo_site_cache))
         .routes(routes!(lookup_geo_site_domain))
         .routes(routes!(get_geo_site_cache_detail))
+        .routes(routes!(get_geo_site_tasks, cancel_geo_site_task))
         .merge(upload_router)
+}
+
+#[utoipa::path(
+    get,
+    path = "/sites/tasks",
+    tag = "Geo Sites",
+    responses((status = 200, description = "In-flight geo site refresh task progress", body = CommonApiResp<Vec<GeoTaskProgress>>))
+)]
+async fn get_geo_site_tasks(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<GeoTaskProgress>> {
+    LandscapeApiResp::success(state.geo_site_service.task_progress_snapshot())
+}
+
+#[utoipa::path(
+    post,
+    path = "/sites/{id}/cancel",
+    tag = "Geo Sites",
+    params(("id" = Uuid, Path, description = "Geo site source config ID")),
+    responses(
+        (status = 200, description = "Cancel requested; false when no in-flight task", body = CommonApiResp<bool>)
+    )
+)]
+async fn cancel_geo_site_task(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> LandscapeApiResult<bool> {
+    LandscapeApiResp::success(state.geo_site_service.cancel_geo_task(id))
 }
 
 #[utoipa::path(
@@ -259,7 +288,10 @@ async fn download_geo_site_dat(
     operation_id = "update_geo_site_by_upload",
     params(("name" = String, Path, description = "Geo site config name")),
     request_body(content = inline(UploadFileForm), content_type = "multipart/form-data"),
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Upload accepted; poll /sites/tasks for progress"),
+        (status = 409, description = "A task is already running for this source")
+    )
 )]
 async fn update_by_upload(
     State(state): State<LandscapeApp>,
@@ -277,7 +309,7 @@ async fn update_by_upload(
         return Err(GeoError::SiteFileReadError)?;
     };
 
-    state.geo_site_service.update_geo_config_by_bytes(name, bytes).await;
+    state.geo_site_service.update_geo_config_by_bytes(name, bytes).await?;
 
     LandscapeApiResp::success(())
 }
@@ -287,12 +319,15 @@ async fn update_by_upload(
     path = "/sites/{name}/refresh",
     tag = "Geo Sites",
     params(("name" = String, Path, description = "Geo site config name")),
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Refresh triggered; poll /sites/tasks for progress"),
+        (status = 409, description = "A refresh task is already running")
+    )
 )]
 async fn refresh_geo_site_config_by_name(
     State(state): State<LandscapeApp>,
     Path(name): Path<String>,
 ) -> LandscapeApiResult<()> {
-    state.geo_site_service.refresh_one(&name).await;
+    state.geo_site_service.refresh_one(&name).await?;
     LandscapeApiResp::success(())
 }

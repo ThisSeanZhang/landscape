@@ -11,6 +11,8 @@ import {
   lookupGeoIpAddress,
   getGeoIpCacheDetail,
   updateGeoIpByUpload as _updateGeoIpByUpload,
+  getGeoIpTasks,
+  cancelGeoIpTask,
 } from "@landscape-router/types/api/geo-ips/geo-ips";
 import type {
   GeoFileCacheKey,
@@ -18,9 +20,10 @@ import type {
   GeoIpConfig,
   GeoIpSourceConfig,
   GeoIpLookupResult,
+  GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoIpLookupResult };
+export type { GeoIpLookupResult, GeoTaskProgress };
 
 export async function lookup_geo_ip_address(
   ip: string,
@@ -91,4 +94,12 @@ export async function update_geo_ip_by_upload(
 ): Promise<void> {
   const file = form_data.get("file") as Blob;
   await _updateGeoIpByUpload(name, { file });
+}
+
+export async function get_geo_ip_tasks(): Promise<GeoTaskProgress[]> {
+  return getGeoIpTasks();
+}
+
+export async function cancel_geo_ip_task(id: string): Promise<boolean> {
+  return cancelGeoIpTask(id);
 }

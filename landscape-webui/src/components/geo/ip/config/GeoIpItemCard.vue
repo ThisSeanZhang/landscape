@@ -1,23 +1,29 @@
 <script setup lang="ts">
 import {
+  cancel_geo_ip_task,
   delete_geo_ip_config,
   refresh_geo_ip_by_name,
   update_geo_ip_by_upload,
 } from "@/api/geo/ip";
-import type { GeoIpSourceConfig } from "@landscape-router/types/api/schemas";
+import type {
+  GeoIpSourceConfig,
+  GeoTaskProgress,
+} from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
+import { formatSize } from "@/lib/util";
 import { usePreferenceStore } from "@/stores/preference";
 import { useI18n } from "vue-i18n";
 const prefStore = usePreferenceStore();
 
 const frontEndStore = useFrontEndStore();
 const { t } = useI18n();
-const emit = defineEmits(["refresh", "refresh:keys"]);
+const emit = defineEmits(["refresh", "refresh:keys", "refresh:tasks"]);
 
 interface Prop {
   geo_ip_source: GeoIpSourceConfig;
+  task?: GeoTaskProgress;
 }
 const props = defineProps<Prop>();
 const show_edit_modal = ref(false);
@@ -38,18 +44,33 @@ const title = computed(() => {
 const show_upload = ref(false);
 const onGeoUpload = async (formData: FormData) => {
   await update_geo_ip_by_upload(props.geo_ip_source.name, formData);
+  emit("refresh:tasks");
 };
 
-const refreshing = ref(false);
-async function force_refresh() {
-  refreshing.value = true;
-  try {
-    await refresh_geo_ip_by_name(props.geo_ip_source.name);
-    emit("refresh");
-    emit("refresh:keys");
-  } finally {
-    refreshing.value = false;
+const phase_label = computed(() => {
+  if (!props.task) return "";
+  return t(`geo.phase_${props.task.phase}`);
+});
+
+const download_label = computed(() => {
+  if (!props.task || props.task.phase !== "downloading") return "";
+  if (!props.task.bytes_done) return "";
+  const done = formatSize(props.task.bytes_done);
+  return props.task.bytes_total
+    ? `${done} / ${formatSize(props.task.bytes_total)}`
+    : done;
+});
+
+async function cancel_task() {
+  if (props.geo_ip_source.id) {
+    await cancel_geo_ip_task(props.geo_ip_source.id);
+    emit("refresh:tasks");
   }
+}
+
+async function force_refresh() {
+  await refresh_geo_ip_by_name(props.geo_ip_source.name);
+  emit("refresh:tasks");
 }
 </script>
 <template>
@@ -113,9 +134,25 @@ async function force_refresh() {
             {{ geo_ip_source.source.data.length }}
           </n-descriptions-item>
         </template>
+        <n-descriptions-item v-if="task" :label="t('geo.task_status')">
+          <n-flex align="center" :size="6">
+            <n-tag size="small" type="info">{{ phase_label }}</n-tag>
+            <span v-if="download_label" style="font-size: 12px">
+              {{ download_label }}
+            </span>
+          </n-flex>
+        </n-descriptions-item>
       </n-descriptions>
       <template #header-extra>
         <n-flex>
+          <n-popconfirm v-if="task" @positive-click="cancel_task">
+            <template #trigger>
+              <n-button size="small" type="warning" secondary>
+                {{ t("geo.cancel_task") }}
+              </n-button>
+            </template>
+            {{ t("geo.confirm_cancel_task") }}
+          </n-popconfirm>
           <n-button
             v-if="geo_ip_source.source.t === 'url'"
             size="small"
@@ -128,7 +165,6 @@ async function force_refresh() {
 
           <n-popconfirm
             v-if="geo_ip_source.source.t === 'url'"
-            :positive-button-props="{ loading: refreshing }"
             @positive-click="force_refresh"
           >
             <template #trigger>

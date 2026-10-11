@@ -196,6 +196,13 @@ impl LandscapeApp {
         })
         .await;
 
+        run_shutdown_phase("geo_service", || async {
+            self.geo_ip_service.shutdown_and_wait(Duration::from_secs(10)).await;
+            self.geo_site_service.shutdown_and_wait(Duration::from_secs(10)).await;
+            tracing::info!("Geo services stopped");
+        })
+        .await;
+
         run_shutdown_phase("stop_service_managers", || async {
             tokio::join!(
                 self.wan_link_service.get_service().stop_all(),
