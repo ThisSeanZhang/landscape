@@ -12,10 +12,10 @@ use landscape::{
     config_service::iface_service::IfaceManagerService,
     config_service::static_nat4_mapping_service::StaticNat4MappingService,
     config_service::static_nat6_mapping_service::StaticNat6MappingService,
+    ddns::DdnsService,
     dns::{
-        ddns_service::DdnsService, provider_profile_service::DnsProviderProfileService,
-        redirect_service::DNSRedirectService, rule_service::DNSRuleService,
-        upstream_service::DnsUpstreamService,
+        provider_profile_service::DnsProviderProfileService, redirect_service::DNSRedirectService,
+        rule_service::DNSRuleService, upstream_service::DnsUpstreamService,
     },
     docker::LandscapeDockerService,
     flow::{dst_ip_rule_service::DstIpRuleService, rule_service::FlowRuleService},

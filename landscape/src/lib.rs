@@ -14,6 +14,7 @@ pub mod boot;
 pub mod arp;
 pub mod cert;
 pub mod config_service;
+pub mod ddns;
 pub mod dns;
 pub mod docker;
 pub mod dump;
