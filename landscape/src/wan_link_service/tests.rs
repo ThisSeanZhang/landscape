@@ -313,23 +313,10 @@ async fn health_check_runner_judges_and_cleans_up() {
     use std::net::Ipv4Addr;
     use std::sync::atomic::AtomicBool;
 
-    use landscape_common::wan_link::{
-        RuntimeWanHealthProbe, RuntimeWanLinkHealthCheckConfig, WanLinkHealthState,
-    };
-    use landscape_core::route::IpRouteService;
+    use landscape_common::wan_link::WanLinkHealthState;
 
     use super::health_check;
     use super::probe::{FakeProbe, WanHealthProbe};
-
-    async fn wait_health(route_service: &IpRouteService, link_id: Uuid, want: WanLinkHealthState) {
-        for _ in 0..900 {
-            if route_service.get_link_health(link_id).await.is_some_and(|info| info.state == want) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        panic!("health state did not reach {want:?} in time");
-    }
 
     let route_service = landscape_core::route::test_used_ip_route();
     let link_id = Uuid::new_v4();
@@ -341,21 +328,10 @@ async fn health_check_runner_judges_and_cleans_up() {
     let up = Arc::new(AtomicBool::new(false));
     let up_for_probe = up.clone();
     let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(move |_target| {
-        up_for_probe.load(Ordering::SeqCst).then(|| Duration::from_millis(5))
+        Ok(up_for_probe.load(Ordering::SeqCst).then(|| Duration::from_millis(5)))
     }));
 
-    let config = RuntimeWanLinkHealthCheckConfig {
-        enable: true,
-        probe: RuntimeWanHealthProbe::Icmp {
-            targets: vec![Ipv4Addr::new(1, 1, 1, 1)],
-            probe_gateway: false,
-        },
-        interval_secs: 1,
-        timeout_ms: 100,
-        failure_threshold: 1,
-        recovery_threshold: 1,
-        reliability: 1,
-    };
+    let config = health_config(vec![Ipv4Addr::new(1, 1, 1, 1)]);
 
     let link_status = ServiceHandle::new();
     link_status.just_change_status(ServiceStatus::Staring);
@@ -383,4 +359,255 @@ async fn health_check_runner_judges_and_cleans_up() {
         .unwrap();
     assert!(route_service.get_link_health(link_id).await.is_none(), "exit clears the entry");
     assert_eq!(link_status.current(), ServiceStatus::Stop);
+}
+
+#[tokio::test]
+async fn health_check_persistently_blind_rounds_fail_the_section() {
+    use std::io::ErrorKind;
+    use std::net::Ipv4Addr;
+
+    use super::health_check;
+    use super::probe::{FakeProbe, ProbeError, WanHealthProbe};
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+    let mut events = route_service.subscribe_health_events();
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(|_target| {
+        Err(ProbeError::Socket(std::io::Error::from(ErrorKind::PermissionDenied)))
+    }));
+    let config = health_config(vec![Ipv4Addr::new(1, 1, 1, 1)]);
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        SessionIface::new(1, "eth0", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+    ));
+
+    wait_status(&link_status, ServiceStatus::Failed).await;
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not exit")
+        .unwrap();
+    assert!(route_service.get_link_health(link_id).await.is_none(), "exit clears the entry");
+    assert!(events.try_recv().is_err(), "a local error must never produce a health verdict");
+    assert_eq!(
+        route_service.get_link_healths().await.len(),
+        0,
+        "no Unknown entry lingers after the clear"
+    );
+}
+
+#[tokio::test]
+async fn health_check_local_error_target_carries_no_link_evidence() {
+    use std::io::ErrorKind;
+    use std::net::Ipv4Addr;
+
+    use landscape_common::wan_link::WanLinkHealthState;
+
+    use super::health_check;
+    use super::probe::{FakeProbe, ProbeError, WanHealthProbe};
+
+    let errored_target = Ipv4Addr::new(1, 1, 1, 1);
+    let failing_target = Ipv4Addr::new(2, 2, 2, 2);
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(move |target| {
+        if target == errored_target {
+            Err(ProbeError::Socket(std::io::Error::from(ErrorKind::PermissionDenied)))
+        } else {
+            Ok(None)
+        }
+    }));
+    let config = health_config(vec![errored_target, failing_target]);
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        SessionIface::new(1, "eth0", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+    ));
+
+    wait_health(&route_service, link_id, WanLinkHealthState::Unhealthy).await;
+    let info = route_service.get_link_health(link_id).await.expect("entry exists");
+    assert_eq!(info.targets.len(), 1, "the errored target is not part of the round");
+    assert_eq!(info.targets[0].target, failing_target);
+    assert_eq!(link_status.current(), ServiceStatus::Running, "mixed rounds keep running");
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not stop")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn health_check_local_error_target_does_not_block_recovery() {
+    use std::io::ErrorKind;
+    use std::net::Ipv4Addr;
+
+    use landscape_common::wan_link::WanLinkHealthState;
+
+    use super::health_check;
+    use super::probe::{FakeProbe, ProbeError, WanHealthProbe};
+
+    let errored_target = Ipv4Addr::new(1, 1, 1, 1);
+    let healthy_target = Ipv4Addr::new(2, 2, 2, 2);
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(move |target| {
+        if target == errored_target {
+            Err(ProbeError::Socket(std::io::Error::from(ErrorKind::PermissionDenied)))
+        } else {
+            Ok(Some(Duration::from_millis(5)))
+        }
+    }));
+    let config = health_config(vec![errored_target, healthy_target]);
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        SessionIface::new(1, "eth0", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+    ));
+
+    wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
+    let info = route_service.get_link_health(link_id).await.expect("entry exists");
+    assert_eq!(info.targets.len(), 1, "the errored target is not part of the round");
+    assert_eq!(info.targets[0].target, healthy_target);
+    assert_eq!(info.consecutive_failures, 0);
+    assert_eq!(link_status.current(), ServiceStatus::Running);
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not stop")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn health_check_local_error_target_does_not_wedge_full_reliability() {
+    use std::io::ErrorKind;
+    use std::net::Ipv4Addr;
+
+    use landscape_common::wan_link::WanLinkHealthState;
+
+    use super::health_check;
+    use super::probe::{FakeProbe, ProbeError, WanHealthProbe};
+
+    let errored_target = Ipv4Addr::new(1, 1, 1, 1);
+    let healthy_target = Ipv4Addr::new(2, 2, 2, 2);
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(FakeProbe(move |target| {
+        if target == errored_target {
+            Err(ProbeError::Socket(std::io::Error::from(ErrorKind::PermissionDenied)))
+        } else {
+            Ok(Some(Duration::from_millis(5)))
+        }
+    }));
+    // reliability equals the configured target count: without the cap a
+    // single locally errored target would make every round fail forever.
+    let mut config = health_config(vec![errored_target, healthy_target]);
+    config.reliability = 2;
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        SessionIface::new(1, "eth0", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+    ));
+
+    wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
+    let info = route_service.get_link_health(link_id).await.expect("entry exists");
+    assert_eq!(info.targets.len(), 1, "the errored target is not part of the round");
+    assert_eq!(info.targets[0].target, healthy_target);
+    assert_eq!(info.consecutive_failures, 0);
+    assert_eq!(link_status.current(), ServiceStatus::Running);
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not stop")
+        .unwrap();
+}
+
+fn health_config(
+    targets: Vec<std::net::Ipv4Addr>,
+) -> landscape_common::wan_link::RuntimeWanLinkHealthCheckConfig {
+    landscape_common::wan_link::RuntimeWanLinkHealthCheckConfig {
+        enable: true,
+        probe: landscape_common::wan_link::RuntimeWanHealthProbe::Icmp {
+            targets,
+            probe_gateway: false,
+        },
+        interval_secs: 1,
+        timeout_ms: 100,
+        failure_threshold: 1,
+        recovery_threshold: 1,
+        reliability: 1,
+    }
+}
+
+async fn wait_health(
+    route_service: &landscape_core::route::IpRouteService,
+    link_id: Uuid,
+    want: landscape_common::wan_link::WanLinkHealthState,
+) {
+    for _ in 0..900 {
+        if route_service.get_link_health(link_id).await.is_some_and(|info| info.state == want) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("health state did not reach {want:?} in time");
+}
+
+async fn wait_status(handle: &ServiceHandle, want: ServiceStatus) {
+    for _ in 0..2000 {
+        if handle.current() == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("section status did not reach {want:?} in time");
 }

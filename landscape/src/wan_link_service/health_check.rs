@@ -20,6 +20,21 @@ use crate::sys_service::route::IpRouteService;
 
 use super::probe::WanHealthProbe;
 
+/// Consecutive all-error ("blind") rounds tolerated before the section
+/// fails itself instead of judging the link.
+const HEALTH_BLIND_ROUNDS: u32 = 3;
+
+/// What one probe round produced for the runner.
+#[derive(Debug)]
+enum RoundOutcome {
+    /// Link evidence from the targets that could be probed; locally
+    /// errored targets are excluded. Always non-empty, guaranteed by the
+    /// caller's empty-targets guard.
+    Evidence(Vec<TargetProbe>),
+    /// Every target failed locally; no link verdict can be drawn.
+    Blind { errored: usize },
+}
+
 pub(super) async fn run(
     link_id: Uuid,
     iface: SessionIface,
@@ -54,6 +69,9 @@ pub(super) async fn run(
     let mut ticker = tokio::time::interval(Duration::from_secs(config.interval_secs.max(1).into()));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    let mut blind_rounds: u32 = 0;
+    let mut failed = false;
+
     loop {
         tokio::select! {
             _ = stop.cancelled() => break,
@@ -63,32 +81,55 @@ pub(super) async fn run(
                 if round_targets.is_empty() {
                     continue;
                 }
-                let results = probe_round(&probe, &iface.iface_name, src, &round_targets, config.timeout_ms)
-                    .await;
-                if let Some(transition) = evaluator.apply_round(&results) {
-                    match transition.to {
-                        WanLinkHealthState::Healthy => tracing::info!(
-                            iface = %iface.iface_name,
-                            link = %link_id,
-                            rtt_ewma_ms = evaluator.info().rtt_ewma_ms,
-                            "health-check: link is healthy"
-                        ),
-                        WanLinkHealthState::Unhealthy => tracing::warn!(
-                            iface = %iface.iface_name,
-                            link = %link_id,
-                            consecutive_failures = evaluator.info().consecutive_failures,
-                            "health-check: link judged unhealthy"
-                        ),
-                        WanLinkHealthState::Unknown => {}
+                match probe_round(&probe, &iface.iface_name, src, &round_targets, config.timeout_ms)
+                    .await
+                {
+                    RoundOutcome::Evidence(results) => {
+                        blind_rounds = 0;
+                        if let Some(transition) = evaluator.apply_round(&results) {
+                            match transition.to {
+                                WanLinkHealthState::Healthy => tracing::info!(
+                                    iface = %iface.iface_name,
+                                    link = %link_id,
+                                    rtt_ewma_ms = evaluator.info().rtt_ewma_ms,
+                                    "health-check: link is healthy"
+                                ),
+                                WanLinkHealthState::Unhealthy => tracing::warn!(
+                                    iface = %iface.iface_name,
+                                    link = %link_id,
+                                    consecutive_failures = evaluator.info().consecutive_failures,
+                                    "health-check: link judged unhealthy"
+                                ),
+                                WanLinkHealthState::Unknown => {}
+                            }
+                        }
+                        route_service.update_link_health(evaluator.info().clone()).await;
+                    }
+                    RoundOutcome::Blind { errored } => {
+                        blind_rounds += 1;
+                        if blind_rounds >= HEALTH_BLIND_ROUNDS {
+                            tracing::error!(
+                                iface = %iface.iface_name,
+                                link = %link_id,
+                                blind_rounds,
+                                errored,
+                                "health-check: probing is broken locally, failing the section"
+                            );
+                            failed = true;
+                            break;
+                        }
                     }
                 }
-                route_service.update_link_health(evaluator.info().clone()).await;
             }
         }
     }
 
     route_service.clear_link_health(link_id).await;
-    service_status.just_change_status(ServiceStatus::Stop);
+    service_status.just_change_status(if failed {
+        ServiceStatus::Failed
+    } else {
+        ServiceStatus::Stop
+    });
 }
 
 /// The round's target list: configured targets plus the link's current
@@ -119,21 +160,34 @@ async fn probe_round(
     src: Ipv4Addr,
     targets: &[Ipv4Addr],
     timeout_ms: u16,
-) -> Vec<TargetProbe> {
+) -> RoundOutcome {
     let timeout = Duration::from_millis(timeout_ms.into());
-    join_all(targets.iter().map(|&target| {
+    let rounds = join_all(targets.iter().map(|&target| {
         let probe = probe.clone();
         let dev = dev.to_string();
         async move {
-            let rtt = match probe.ping_v4(&dev, src, target, timeout).await {
-                Ok(rtt) => rtt,
+            match probe.ping_v4(&dev, src, target, timeout).await {
+                Ok(rtt) => Some(TargetProbe { target, rtt }),
                 Err(err) => {
                     tracing::warn!(iface = %dev, target = %target, error = %err, "health-check probe error");
                     None
                 }
-            };
-            TargetProbe { target, rtt }
+            }
         }
     }))
-    .await
+    .await;
+
+    let mut errored = 0;
+    let mut evidence = Vec::with_capacity(rounds.len());
+    for probe in rounds {
+        match probe {
+            Some(target_probe) => evidence.push(target_probe),
+            None => errored += 1,
+        }
+    }
+    if evidence.is_empty() {
+        RoundOutcome::Blind { errored }
+    } else {
+        RoundOutcome::Evidence(evidence)
+    }
 }

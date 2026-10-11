@@ -244,6 +244,9 @@ pub struct WanLinkMssConfig {
     pub clamp_size: Option<u16>,
 }
 
+/// Maximum configured probe targets of a health check.
+pub const MAX_HEALTH_TARGETS: usize = 4;
+
 /// Health check section of a link: probes the link's connectivity through
 /// its own iface/source and reports a debounced verdict to the route
 /// service. Disabled by default.
@@ -284,7 +287,8 @@ pub enum WanHealthProbeConfig {
     /// ICMP echo bound to the section iface and source address.
     Icmp {
         /// Probe targets; v1 accepts IPv4 only. Empty means only the
-        /// gateway (if `probe_gateway`) is probed.
+        /// gateway (if `probe_gateway`) is probed. At most
+        /// [`MAX_HEALTH_TARGETS`] targets may be configured.
         #[serde(default)]
         #[cfg_attr(feature = "openapi", schema(value_type = Vec<String>))]
         targets: Vec<IpAddr>,
@@ -411,6 +415,13 @@ impl ValidatableConfig for WanLinkConfig {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "health_check enabled but nothing to probe: set targets or probe_gateway"
                     .to_string(),
+            });
+        }
+        if targets.len() > MAX_HEALTH_TARGETS {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "health_check icmp targets exceed the maximum of {MAX_HEALTH_TARGETS}"
+                ),
             });
         }
         if let Some(reliability) = health.reliability {
@@ -565,6 +576,25 @@ mod tests {
         };
         config.health_check.reliability = Some(2);
         assert!(config.validate().is_err(), "reliability above explicit targets is rejected");
+
+        let mut config = minimal();
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: (0..MAX_HEALTH_TARGETS as u8)
+                .map(|i| IpAddr::V4(Ipv4Addr::new(1, 1, 1, i)))
+                .collect(),
+            probe_gateway: true,
+        };
+        config.health_check.reliability = Some(MAX_HEALTH_TARGETS as u8 + 1);
+        assert!(config.validate().is_ok(), "MAX_HEALTH_TARGETS targets plus gateway is valid");
+
+        config.health_check.probe = WanHealthProbeConfig::Icmp {
+            targets: (0..=MAX_HEALTH_TARGETS as u8)
+                .map(|i| IpAddr::V4(Ipv4Addr::new(1, 1, 1, i)))
+                .collect(),
+            probe_gateway: false,
+        };
+        config.health_check.reliability = Some(1);
+        assert!(config.validate().is_err(), "more than MAX_HEALTH_TARGETS targets is rejected");
 
         let mut config = minimal();
         config.health_check.interval_secs = Some(0);

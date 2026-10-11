@@ -22,8 +22,6 @@ pub enum ProbeError {
 /// tests can drive it with a fake.
 #[async_trait::async_trait]
 pub trait WanHealthProbe: Send + Sync {
-    /// One ICMPv4 echo round trip through `dev` with source `src`.
-    /// `Ok(None)` = timed out or no matching reply.
     async fn ping_v4(
         &self,
         dev: &str,
@@ -33,7 +31,6 @@ pub trait WanHealthProbe: Send + Sync {
     ) -> Result<Option<Duration>, ProbeError>;
 }
 
-/// Raw-socket ICMPv4 echo prober.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IcmpV4Probe;
 
@@ -53,8 +50,6 @@ impl WanHealthProbe for IcmpV4Probe {
     }
 }
 
-/// Blocking ICMP echo over a raw socket: bind to the link's device and
-/// source address, match the reply on id/seq. One call per probe.
 fn icmp_ping_blocking(
     dev: &str,
     src: Ipv4Addr,
@@ -156,7 +151,7 @@ pub(crate) struct FakeProbe<F>(pub F);
 #[async_trait::async_trait]
 impl<F> WanHealthProbe for FakeProbe<F>
 where
-    F: Fn(Ipv4Addr) -> Option<Duration> + Send + Sync,
+    F: Fn(Ipv4Addr) -> Result<Option<Duration>, ProbeError> + Send + Sync,
 {
     async fn ping_v4(
         &self,
@@ -165,7 +160,7 @@ where
         target: Ipv4Addr,
         _timeout: Duration,
     ) -> Result<Option<Duration>, ProbeError> {
-        Ok(self.0(target))
+        self.0(target)
     }
 }
 

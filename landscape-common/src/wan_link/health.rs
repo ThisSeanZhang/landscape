@@ -90,9 +90,12 @@ fn update_ewma(current: Option<f64>, sample: f64) -> f64 {
 
 /// Pure per-link health state machine: debounced verdicts on probe rounds
 /// plus EWMA trends. A round succeeds when at least `reliability` of its
-/// targets answered; `Unhealthy` needs `failure_threshold` consecutive
-/// failed rounds and `Healthy` is recovered from `Unhealthy` only after
-/// `recovery_threshold` consecutive successful rounds.
+/// targets answered; the threshold is capped at the round's target count
+/// so targets that error locally (dropped by the caller before the round
+/// reaches the evaluator) can never wedge the verdict. `Unhealthy` needs
+/// `failure_threshold` consecutive failed rounds and `Healthy` is recovered
+/// from `Unhealthy` only after `recovery_threshold` consecutive successful
+/// rounds.
 pub struct HealthEvaluator {
     failure_threshold: u32,
     recovery_threshold: u32,
@@ -165,7 +168,12 @@ impl HealthEvaluator {
 
         let total = results.len();
         let up = results.iter().filter(|probe| probe.rtt.is_some()).count();
-        let round_ok = total > 0 && up as u32 >= self.reliability;
+        // Cap the requirement at what the round could actually probe:
+        // locally errored targets are excluded upstream, and judging
+        // against the configured count alone would wedge the link
+        // Unhealthy whenever one of them stays locally broken.
+        let required = self.reliability.min(total as u32);
+        let round_ok = total > 0 && up as u32 >= required;
         let rtts: Vec<f64> = results
             .iter()
             .filter_map(|probe| probe.rtt)
@@ -328,6 +336,20 @@ mod tests {
         let transition = relaxed.apply_round(&[ok(T1, 20), fail(T2)]).unwrap();
         assert_eq!((transition.from, transition.to), (Unknown, Healthy));
         assert_eq!(relaxed.info().rtt_ewma_ms, Some(20.0));
+    }
+
+    #[test]
+    fn reliability_is_capped_at_probeable_targets() {
+        // reliability 3 but only 2 targets could be probed (the third
+        // errored locally and was dropped by the caller): both answering
+        // keeps the round successful instead of wedging the link.
+        let mut evaluator = evaluator(1, 1, 3);
+        let transition = evaluator.apply_round(&[ok(T1, 20), ok(T2, 30)]).unwrap();
+        assert_eq!((transition.from, transition.to), (Unknown, Healthy));
+
+        // Still strict within what could be probed: one of two down fails.
+        let transition = evaluator.apply_round(&[ok(T1, 20), fail(T2)]).unwrap();
+        assert_eq!((transition.from, transition.to), (Healthy, Unhealthy));
     }
 
     #[test]
