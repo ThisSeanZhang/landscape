@@ -1,5 +1,6 @@
 export default {
   "geo_site.not_found": "找不到 GeoSite 配置 (ID: {0})",
+  "geo_site.config_not_found": "找不到 GeoSite 配置 ({0})",
   "geo_site.cache_not_found": "找不到 GeoSite 缓存 (key: {0})",
   "geo_site.file_not_found": "上传中未找到 GeoSite 文件",
   "geo_site.file_read_error": "GeoSite 文件读取错误",

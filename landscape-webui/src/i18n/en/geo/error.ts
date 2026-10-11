@@ -1,5 +1,6 @@
 export default {
   "geo_site.not_found": "GeoSite config not found (ID: {0})",
+  "geo_site.config_not_found": "GeoSite config not found ({0})",
   "geo_site.cache_not_found": "GeoSite cache not found (key: {0})",
   "geo_site.file_not_found": "GeoSite file not found in upload",
   "geo_site.file_read_error": "GeoSite file read error",

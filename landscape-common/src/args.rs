@@ -12,7 +12,7 @@ pub static LAND_HOSTNAME: Lazy<String> = Lazy::new(|| {
 
 pub static LAND_ARGS: Lazy<WebCommArgs> = Lazy::new(|| {
     dotenvy::dotenv().ok();
-    if std::env::var_os("LANDSCAPE_IGNORE_CLI_ARGS").is_some() {
+    if std::env::var_os("LANDSCAPE_IGNORE_CLI_ARGS").is_some() || running_under_test_harness() {
         // Test/embedded use: ignore the real argv (test harness filters etc.)
         // and parse from nothing, so env vars and defaults still apply.
         WebCommArgs::try_parse_from(std::iter::empty::<String>()).unwrap_or_default()
@@ -20,6 +20,27 @@ pub static LAND_ARGS: Lazy<WebCommArgs> = Lazy::new(|| {
         WebCommArgs::parse()
     }
 });
+
+/// Cargo compiles unit/integration test binaries as `<crate>-<hash>` inside a
+/// `deps/` directory, and their argv belongs to the libtest harness (test
+/// filters like `geo::`, flags like `--nocapture`), not to [`WebCommArgs`];
+/// parsing it would make clap abort the whole test run.
+fn running_under_test_harness() -> bool {
+    std::env::current_exe().map(|exe| looks_like_test_binary(&exe)).unwrap_or(false)
+}
+
+fn looks_like_test_binary(exe: &std::path::Path) -> bool {
+    if exe.parent().and_then(|p| p.file_name()) != Some(std::ffi::OsStr::new("deps")) {
+        return false;
+    }
+    let Some(name) = exe.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    match name.split_once('-') {
+        Some((_, hash)) => hash.len() >= 8 && hash.chars().all(|c| c.is_ascii_hexdigit()),
+        None => false,
+    }
+}
 
 pub static LAND_HOME_PATH: Lazy<PathBuf> = Lazy::new(|| {
     if let Some(path) = &LAND_ARGS.config_dir {
@@ -155,4 +176,32 @@ pub struct LogConfig {
     pub debug: bool,
     pub log_output_in_terminal: bool,
     pub max_log_files: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn detects_cargo_test_binaries() {
+        assert!(looks_like_test_binary(Path::new(
+            "/project/target/debug/deps/landscape-0808d1757e8bfc10"
+        )));
+        assert!(looks_like_test_binary(Path::new(
+            "/project/target/release/deps/landscape_common-abcdef1234567890"
+        )));
+    }
+
+    #[test]
+    fn rejects_non_test_binaries() {
+        assert!(!looks_like_test_binary(Path::new("/project/target/debug/landscape-webserver")));
+        assert!(!looks_like_test_binary(Path::new(
+            "/project/target/debug/examples/demo-0123456789abcdef"
+        )));
+        assert!(!looks_like_test_binary(Path::new(
+            "/project/target/debug/deps/landscape-webserver"
+        )));
+        assert!(!looks_like_test_binary(Path::new("/project/target/debug/deps/landscape")));
+    }
 }

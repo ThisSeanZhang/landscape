@@ -36,7 +36,7 @@ use tracing::Instrument;
 
 use super::raw_file::{
     SealedRawFile, StreamToTmpError, raw_dat_path, remove_raw_dat, stream_to_tmp,
-    write_bytes_to_tmp,
+    sweep_orphan_raw_files, write_bytes_to_tmp,
 };
 use super::{GEO_PROGRESS_PUBLISH_INTERVAL, GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
@@ -247,7 +247,7 @@ impl GeoIpService {
     }
 
     fn try_spawn_download_task(&self, config: GeoIpSourceConfig) -> bool {
-        match self.tasks.insert(config.id, GeoSourceKind::Ip) {
+        match self.tasks.insert(config.id, GeoSourceKind::Ip, GeoTaskPhase::Downloading) {
             Ok(cancel) => {
                 self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
                 true
@@ -257,7 +257,7 @@ impl GeoIpService {
     }
 
     fn spawn_restore_task(&self, config: &GeoIpSourceConfig) {
-        if let Ok(cancel) = self.tasks.insert(config.id, GeoSourceKind::Ip) {
+        if let Ok(cancel) = self.tasks.insert(config.id, GeoSourceKind::Ip, GeoTaskPhase::Parsing) {
             self.spawn_geo_task(config.clone(), GeoTaskMode::RestoreOnly, cancel);
         }
     }
@@ -372,8 +372,9 @@ impl GeoIpService {
             return;
         }
 
-        // TODO: a task whose config was deleted mid-flight can still commit
-        // here and resurrect the raw dat file that `notify_deleted` removed.
+        // A config deleted mid-flight can still commit here and resurrect the
+        // raw dat file that `notify_deleted` removed; the daily refresh sweep
+        // removes such orphans.
         if let Err(e) = sealed.commit() {
             tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
         }
@@ -402,9 +403,8 @@ impl GeoIpService {
         dat_path: &std::path::Path,
         cancel: &CancellationToken,
     ) -> Result<SealedRawFile, GeoError> {
-        self.tasks.advance(source_id, GeoTaskPhase::Downloading);
-        // TODO: every download task builds its own client instead of sharing
-        // one connection pool across tasks.
+        // Downloads run at most once a day per source, so connection reuse
+        // across tasks would not pay for a shared client.
         let client = Client::new();
         let response = client
             .get(url)
@@ -466,7 +466,7 @@ impl GeoIpService {
             return Err(GeoError::RawDatNotReady);
         }
 
-        match self.tasks.insert(id, GeoSourceKind::Ip) {
+        match self.tasks.insert(id, GeoSourceKind::Ip, GeoTaskPhase::Downloading) {
             Ok(cancel) => {
                 self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
                 Ok(RawDatState::Started)
@@ -480,10 +480,12 @@ impl GeoIpService {
         let configs: Vec<GeoIpSourceConfig> = self.store.list().await.unwrap();
 
         let mut config_names = HashSet::new();
+        let mut config_ids = HashSet::new();
         let now = get_f64_timestamp();
 
         for config in configs {
             config_names.insert(config.name.clone());
+            config_ids.insert(config.id);
 
             match &config.source {
                 GeoIpSource::Url { next_update_at, .. } => {
@@ -502,22 +504,30 @@ impl GeoIpService {
             }
         }
 
-        // TODO: the daily non-force refresh should also sweep orphan cache
-        // rows left behind by deleted configs.
-        if force {
-            let need_to_remove = self
-                .cache
-                .list_keys()
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|key| !config_names.contains(&key.name))
-                .collect::<Vec<GeoFileCacheKey>>();
-            for key in need_to_remove {
-                if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
-                    tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
-                }
+        self.sweep_orphans(&config_names, &config_ids).await;
+    }
+
+    /// Remove cache rows and raw dat files whose source config no longer
+    /// exists. Runs on every refresh so the daily tick also sweeps orphans
+    /// left behind by deleted configs.
+    async fn sweep_orphans(&self, config_names: &HashSet<String>, config_ids: &HashSet<Uuid>) {
+        let need_to_remove = self
+            .cache
+            .list_keys()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|key| !config_names.contains(&key.name))
+            .collect::<Vec<GeoFileCacheKey>>();
+        for key in need_to_remove {
+            if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
+                tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
             }
+        }
+
+        let removed = sweep_orphan_raw_files("ip", config_ids);
+        if !removed.is_empty() {
+            tracing::debug!("swept {} orphan geo ip raw file(s)", removed.len());
         }
     }
 
@@ -691,7 +701,7 @@ impl GeoIpService {
             .ok_or_else(|| GeoError::IpConfigNotFound(name.clone()))?;
         let cancel = self
             .tasks
-            .insert(config.id, GeoSourceKind::Ip)
+            .insert(config.id, GeoSourceKind::Ip, GeoTaskPhase::Verifying)
             .map_err(|()| GeoError::TaskAlreadyRunning)?;
         self.spawn_geo_task(config, GeoTaskMode::Upload(file_bytes.into()), cancel);
         Ok(())

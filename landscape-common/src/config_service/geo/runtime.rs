@@ -29,7 +29,8 @@ pub struct GeoTaskProgress {
     pub phase: GeoTaskPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
-    // TODO: `phase_detail` (and `set_detail`) is never populated by any task.
+    // TODO: `phase_detail` is never populated, so a task failure cannot be
+    // reported to the UI; the error is only visible in the server log.
     pub phase_detail: Option<String>,
     #[serde(default)]
     pub bytes_done: u64,
@@ -60,11 +61,6 @@ impl GeoTaskProgress {
         self.phase_detail = None;
         self.bytes_done = 0;
         self.bytes_total = None;
-        self.updated_at = get_f64_timestamp();
-    }
-
-    pub fn set_detail(&mut self, detail: Option<String>) {
-        self.phase_detail = detail;
         self.updated_at = get_f64_timestamp();
     }
 

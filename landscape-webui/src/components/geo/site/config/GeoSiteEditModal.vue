@@ -104,6 +104,21 @@ function removeDirectItem(index: number) {
   rule.value.source.data.splice(index, 1);
 }
 
+const adguard_url = computed({
+  get: () =>
+    rule.value?.source.t === "adguard_home" ? rule.value.source.url : "",
+  set: (v: string) => {
+    if (rule.value?.source.t === "adguard_home") rule.value.source.url = v;
+  },
+});
+const adguard_key = computed({
+  get: () =>
+    rule.value?.source.t === "adguard_home" ? rule.value.source.key : undefined,
+  set: (v: string) => {
+    if (rule.value?.source.t === "adguard_home") rule.value.source.key = v;
+  },
+});
+
 function addDomainToItem(item: GeoSiteDirectItem) {
   item.values.push({ match_type: "domain", value: "", attributes: [] });
 }
@@ -267,14 +282,14 @@ const matchTypeOptions = [
         <template v-if="rule.source.t === 'adguard_home'">
           <n-form-item-gi :label="t('geo.common.source_url')" :span="5">
             <n-input
-              v-model:value="rule.source.url"
+              v-model:value="adguard_url"
               clearable
               placeholder="https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
             />
           </n-form-item-gi>
           <n-form-item-gi :label="t('geo.geo_site.adguard_key')" :span="5">
             <n-input
-              v-model:value="rule.source.key"
+              v-model:value="adguard_key"
               clearable
               placeholder="ADGUARD"
             />
