@@ -97,29 +97,23 @@ export function is_mac(value: string): boolean {
 }
 
 /**
- * IPv4 专门打码：遮蔽头尾，展示中间
- * 192.168.1.123 -> ***.168.1.***
+ * IPv4 专门打码：保留前两组，遮蔽后两组
+ * 192.168.1.123 -> 192.168.*.*
  */
 export function mask_ipv4(value: string): string {
   const parts = value.split(".");
   if (parts.length !== 4) return value;
-  return `***.${parts[1]}.${parts[2]}.***`;
+  return `${parts[0]}.${parts[1]}.*.*`;
 }
 
 /**
- * IPv6 专门打码：遮蔽头尾，展示中间
+ * IPv6 专门打码：保留前两组（运营商段），其余遮蔽
+ * 2408:8226:3300:8d01:: -> 2408:8226:*:*:*:*
  */
 export function mask_ipv6(value: string): string {
   const parts = value.split(":");
   if (parts.length < 3) return value;
-  // 遮蔽前两个和后两个（如果足够长）
-  const maskCount = parts.length > 4 ? 2 : 1;
-  return parts
-    .map((p, i) => {
-      if (i < maskCount || i >= parts.length - maskCount) return "****";
-      return p;
-    })
-    .join(":");
+  return parts.map((p, i) => (i < 2 ? p : "*")).join(":");
 }
 
 /**
@@ -130,7 +124,7 @@ export function mask_mac(value: string): string {
   const separator = value.includes(":") ? ":" : "-";
   const parts = value.split(separator);
   if (parts.length !== 6) return value;
-  return `**${separator}**${separator}${parts[2]}${separator}${parts[3]}${separator}**${separator}**`;
+  return `*${separator}*${separator}${parts[2]}${separator}${parts[3]}${separator}*${separator}*`;
 }
 
 export function mask_string(value: string | undefined | null): string {
