@@ -13,14 +13,16 @@ interface IfaceOption {
   ifindex: number;
 }
 
-/** Real rendered card width (must match FlowNode). */
-const NODE_WIDTH = 235;
+/** Rendered card width of a WAN-zone node; shared with FlowNode. */
+export const WAN_NODE_WIDTH = 275;
+/** Rendered card width of a LAN/other node; shared with FlowNode. */
+export const NODE_WIDTH = 235;
 /** Base card height estimate used before the DOM is measured. */
 const NODE_HEIGHT = 136;
 /** Vertical gap between stacked cards: tight rhythm within a column (0.2 × card height). */
 const NODE_SEP = Math.round(NODE_HEIGHT * 0.2);
-/** Horizontal gap between adjacent columns: golden ratio (0.618) of card width. */
-const COLUMN_GAP = NODE_WIDTH * 0.618;
+/** Manually tuned horizontal gap between adjacent columns. */
+const COLUMN_GAP = 152;
 /** Top margin of the graph. */
 const GRAPH_TOP_MARGIN = 72;
 const MIN_GRAPH_WIDTH = 940;
@@ -176,7 +178,9 @@ export function compute_layout(
 
   for (const each of devs) {
     const height = heights.get(id(each.index)) ?? NODE_HEIGHT;
-    graph.setNode(id(each.index), { width: NODE_WIDTH, height });
+    const width =
+      each.zone_type === IfaceZoneType.wan ? WAN_NODE_WIDTH : NODE_WIDTH;
+    graph.setNode(id(each.index), { width, height });
   }
 
   // dagre 的列内顺序不可用：无入边的根会被其排序阶段按插入序降序翻转，
@@ -272,13 +276,16 @@ export function compute_layout(
   }
 
   const ranks = [...by_rank.keys()].sort((left, right) => left - right);
-  const column_stride = NODE_WIDTH + COLUMN_GAP;
-  ranks.forEach((rank, order) => {
-    const x_center = (order * column_stride + NODE_WIDTH / 2) as number;
-    for (const item of by_rank.get(rank)!) {
+  let column_cursor = 0;
+  for (const rank of ranks) {
+    const column = by_rank.get(rank)!;
+    const column_width = Math.max(...column.map((item) => item.width));
+    const x_center = column_cursor + column_width / 2;
+    column_cursor += column_width + COLUMN_GAP;
+    for (const item of column) {
       item.x = x_center;
     }
-  });
+  }
 
   for (const group of by_rank.values()) {
     if (group.length < 2) {

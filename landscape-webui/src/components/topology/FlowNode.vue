@@ -34,7 +34,11 @@ import { useRouteLanConfigStore } from "@/stores/status_route_lan";
 import { useRouteWanConfigStore } from "@/stores/status_route_wan";
 import { useWifiConfigStore } from "@/stores/status_wifi";
 import { useWanLinkStore } from "@/stores/wan_link";
-import { useIfaceNodeStore } from "@/stores/iface_node";
+import {
+  NODE_WIDTH,
+  useIfaceNodeStore,
+  WAN_NODE_WIDTH,
+} from "@/stores/iface_node";
 import type { IfaceRealtimeStat } from "@landscape-router/types/api/schemas";
 
 const props = withDefaults(
@@ -190,7 +194,9 @@ const role_tags = computed(() => {
 });
 
 const is_wan_node = computed(() => props.node.zone_type === IfaceZoneType.wan);
-const node_width = computed(() => (is_wan_node.value ? 235 : 235));
+const node_width = computed(() =>
+  is_wan_node.value ? WAN_NODE_WIDTH : NODE_WIDTH,
+);
 const title_max_width = computed(
   () => `${Math.max(node_width.value - 126, 140)}px`,
 );
