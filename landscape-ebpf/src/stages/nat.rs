@@ -99,7 +99,7 @@ fn seed_runtime_queues<M1, M2, M3>(
 pub fn attach_tc_nat(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<TcNatHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
@@ -108,7 +108,7 @@ pub fn attach_tc_nat(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -116,7 +116,7 @@ pub fn attach_tc_nat(
 
     let rodata_data =
         open_skel.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
-    rodata_data.current_l3_offset = if has_mac { 14 } else { 0 };
+    rodata_data.current_l3_offset = if has_eth_header { 14 } else { 0 };
     rodata_data.tcp_range_start = config.tcp_range.start;
     rodata_data.tcp_range_end = config.tcp_range.end;
     rodata_data.udp_range_start = config.udp_range.start;
@@ -171,7 +171,7 @@ pub fn attach_tc_nat(
 fn init_nat_xdp_unified(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
     use crate::chain::tc_manager::{StageEntry, StageType};
@@ -184,14 +184,14 @@ fn init_nat_xdp_unified(
 
     // ── 1. Load TC nat first (ingress + egress, for runtime map sharing with XDP) ──
 
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let tc_builder = tc_nat_skel::TcNatSkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
     let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat skeleton")?;
 
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
-    tc_rodata.current_l3_offset = if has_mac { 14 } else { 0 };
+    tc_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
     tc_rodata.tcp_range_start = config.tcp_range.start;
     tc_rodata.tcp_range_end = config.tcp_range.end;
     tc_rodata.udp_range_start = config.udp_range.start;
@@ -349,9 +349,9 @@ fn init_nat_xdp_unified(
 pub fn init_nat(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
     config: &NatConfig,
 ) -> LdEbpfResult<NatHandle> {
-    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, has_mac, config)?;
+    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, has_eth_header, config)?;
     Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
 }

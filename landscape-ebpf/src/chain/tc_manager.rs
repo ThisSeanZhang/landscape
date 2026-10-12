@@ -140,7 +140,7 @@ struct IfState {
     ingress_root: Option<IngressRoot>,
     egress_root: Option<EgressRoot>,
     stages: BTreeMap<StageType, StageEntry>,
-    has_mac: bool,
+    has_eth_header: bool,
 }
 
 struct ManagerInner {
@@ -297,20 +297,20 @@ impl TcChainManager {
         Ok((skel, back))
     }
 
-    pub fn ensure_roots(&self, ifindex: u32, has_mac: bool) -> LdEbpfResult<()> {
+    pub fn ensure_roots(&self, ifindex: u32, has_eth_header: bool) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
-        self.ensure_roots_locked(&mut inner, ifindex, has_mac)
+        self.ensure_roots_locked(&mut inner, ifindex, has_eth_header)
     }
 
     fn ensure_roots_locked(
         &self,
         inner: &mut ManagerInner,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> LdEbpfResult<()> {
         let state = inner.interfaces.entry(ifindex).or_default();
-        state.has_mac = has_mac;
-        let l3_offset: u32 = if has_mac { 14 } else { 0 };
+        state.has_eth_header = has_eth_header;
+        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
         if state.ingress_root.is_none() {
             state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
         }
@@ -451,15 +451,16 @@ impl TcChainManager {
             return Ok(());
         }
 
-        let has_mac = inner.interfaces.get(&ifindex).map(|s| s.has_mac).unwrap_or(false);
+        let has_eth_header =
+            inner.interfaces.get(&ifindex).map(|s| s.has_eth_header).unwrap_or(false);
 
         {
             let state = inner.interfaces.entry(ifindex).or_default();
-            state.has_mac = has_mac;
+            state.has_eth_header = has_eth_header;
             match chain {
                 ChainDir::WanIngress => {
                     if state.ingress_root.is_none() {
-                        let l3_offset: u32 = if has_mac { 14 } else { 0 };
+                        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
                         state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
                     }
                     if state.egress_root.is_none() {

@@ -35,7 +35,7 @@ pub fn attach_tc_mss(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     mtu: u16,
-    has_mac: bool,
+    has_eth_header: bool,
 ) -> LdEbpfResult<TcMssHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
@@ -43,7 +43,7 @@ pub fn attach_tc_mss(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -51,7 +51,7 @@ pub fn attach_tc_mss(
 
     open_skel.maps.rodata_data.as_deref_mut().unwrap().mtu_size = mtu;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset =
-        if has_mac { 14 } else { 0 };
+        if has_eth_header { 14 } else { 0 };
 
     pin_and_reuse_map(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
@@ -176,10 +176,10 @@ pub fn init_mss(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     mtu: u16,
-    has_mac: bool,
+    has_eth_header: bool,
 ) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
-        tc: Some(attach_tc_mss(rt, ifindex, mtu, has_mac)?),
+        tc: Some(attach_tc_mss(rt, ifindex, mtu, has_eth_header)?),
         xdp: Some(init_xdp_mss(rt, ifindex, mtu)?),
     })
 }

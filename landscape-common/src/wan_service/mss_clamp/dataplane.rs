@@ -11,7 +11,7 @@ pub trait MssClampDataplane: Send + Sync {
         &self,
         ifindex: u32,
         mtu: u16,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 }
 
@@ -23,7 +23,7 @@ impl MssClampDataplane for NoopMssClampDataplane {
         &self,
         _ifindex: u32,
         _mtu: u16,
-        _has_mac: bool,
+        _has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }

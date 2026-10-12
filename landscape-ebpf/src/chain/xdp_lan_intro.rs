@@ -42,10 +42,10 @@ impl Drop for XdpLanIntroHandle {
 pub fn init_xdp_lan_intro(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
 ) -> LdEbpfResult<XdpLanIntroHandle> {
     let paths = &rt.paths;
-    let l3_offset: u32 = if has_mac { 14 } else { 0 };
+    let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
 
     // ── XDP lan route ──
 
@@ -145,7 +145,7 @@ pub fn init_xdp_lan_intro(
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
 
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcLanIngressIntroSkelBuilder::default();

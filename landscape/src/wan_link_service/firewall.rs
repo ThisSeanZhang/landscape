@@ -12,7 +12,7 @@ pub(super) async fn run(
     dataplane: Arc<dyn FirewallDataplane>,
     runtime: Arc<ArcSwap<ServiceStatus>>,
 ) {
-    let firewall = match dataplane.attach(iface.ifindex, iface.has_mac()) {
+    let firewall = match dataplane.attach(iface.ifindex, iface.has_eth_header()) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start firewall for {}: {err}", iface.iface_name);

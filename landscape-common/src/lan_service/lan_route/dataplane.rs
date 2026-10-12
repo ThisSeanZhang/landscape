@@ -10,7 +10,7 @@ pub trait LanRouteDataplane: Send + Sync {
     fn install_xdp_intro(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
     /// Attach the TC ingress LAN-route intro program.  Dropping
@@ -18,7 +18,7 @@ pub trait LanRouteDataplane: Send + Sync {
     fn install_tc_route(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
         xdp_handoff_enabled: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
@@ -40,7 +40,7 @@ impl LanRouteDataplane for NoopLanRouteDataplane {
     fn install_xdp_intro(
         &self,
         _ifindex: u32,
-        _has_mac: bool,
+        _has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }
@@ -48,7 +48,7 @@ impl LanRouteDataplane for NoopLanRouteDataplane {
     fn install_tc_route(
         &self,
         _ifindex: u32,
-        _has_mac: bool,
+        _has_eth_header: bool,
         _xdp_handoff_enabled: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))

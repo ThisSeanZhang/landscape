@@ -52,10 +52,10 @@ impl Drop for XdpWanRouteHandle {
 pub fn init_xdp_wan_route(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
 ) -> LdEbpfResult<XdpWanRouteHandle> {
     let paths = &rt.paths;
-    let l3_offset: u32 = if has_mac { 14 } else { 0 };
+    let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
 
     // ── XDP wan route ──
 
@@ -156,7 +156,7 @@ pub fn init_xdp_wan_route(
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
 
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcWanIngressIntroSkelBuilder::default();

@@ -39,6 +39,13 @@ impl LandscapeInterface {
     pub fn is_lo(&self) -> bool {
         self.name == "lo"
     }
+
+    /// Whether packets on this interface carry a 14-byte Ethernet header
+    /// before the L3 payload.  An interface is L2-framed iff it owns a MAC
+    /// address; L3-only devices (PPP, tunnels, ...) expose no MAC.
+    pub fn has_eth_header(&self) -> bool {
+        self.mac.is_some()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

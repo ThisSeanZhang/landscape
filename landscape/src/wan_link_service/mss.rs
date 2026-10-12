@@ -12,7 +12,8 @@ pub(super) async fn run(
     dataplane: Arc<dyn MssClampDataplane>,
     runtime: Arc<ArcSwap<ServiceStatus>>,
 ) {
-    let mss_clamp = match dataplane.attach(iface.ifindex, config.clamp_size, iface.has_mac()) {
+    let mss_clamp = match dataplane.attach(iface.ifindex, config.clamp_size, iface.has_eth_header())
+    {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start mss clamp for {}: {err}", iface.iface_name);

@@ -41,13 +41,13 @@ impl Drop for TcWanRouteHandle {
 pub fn init_tc_wan_route(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
     xdp_handoff_enabled: bool,
 ) -> LdEbpfResult<TcWanRouteHandle> {
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_mac)?;
+    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
-    let l3_offset: u32 = if has_mac { 14 } else { 0 };
+    let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
 
     let (intro_backing, obj) = OwnedOpenObject::new();
     let builder = TcWanIngressIntroSkelBuilder::default();

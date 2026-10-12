@@ -18,7 +18,7 @@ pub(super) async fn run(
         udp_range: config.udp_range,
         icmp_in_range: config.icmp_in_range,
     };
-    let nat = match dataplane.attach(iface.ifindex, iface.has_mac(), &nat_config) {
+    let nat = match dataplane.attach(iface.ifindex, iface.has_eth_header(), &nat_config) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start nat for {}: {err}", iface.iface_name);

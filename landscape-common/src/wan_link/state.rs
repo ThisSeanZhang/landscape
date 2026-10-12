@@ -23,7 +23,11 @@ impl SessionIface {
         Self { ifindex, iface_name: iface_name.into(), mac }
     }
 
-    pub fn has_mac(&self) -> bool {
+    /// Whether packets on this session iface carry a 14-byte Ethernet
+    /// header before the L3 payload.  PPP (pppd) session ifaces are L3-only
+    /// and therefore expose `mac == None`; ethernet / native-PPPoE anchors
+    /// own a MAC and are L2-framed.
+    pub fn has_eth_header(&self) -> bool {
         self.mac.is_some()
     }
 }

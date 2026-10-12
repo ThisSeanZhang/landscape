@@ -171,8 +171,12 @@ impl EbpfFirewallDataplane {
 }
 
 impl FirewallDataplane for EbpfFirewallDataplane {
-    fn attach(&self, ifindex: u32, has_mac: bool) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::firewall::init_firewall(&self.rt, ifindex, has_mac)
+    fn attach(
+        &self,
+        ifindex: u32,
+        has_eth_header: bool,
+    ) -> Result<Box<dyn DataplaneGuard>, String> {
+        crate::stages::firewall::init_firewall(&self.rt, ifindex, has_eth_header)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -204,10 +208,10 @@ impl NatDataplane for EbpfNatDataplane {
     fn attach(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
         config: &NatConfig,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::nat::init_nat(&self.rt, ifindex, has_mac, config)
+        crate::stages::nat::init_nat(&self.rt, ifindex, has_eth_header, config)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -250,9 +254,9 @@ impl MssClampDataplane for EbpfMssClampDataplane {
         &self,
         ifindex: u32,
         mtu: u16,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::mss::init_mss(&self.rt, ifindex, mtu, has_mac)
+        crate::stages::mss::init_mss(&self.rt, ifindex, mtu, has_eth_header)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -276,9 +280,9 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
     fn install_xdp_intro(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::chain::xdp_lan_intro::init_xdp_lan_intro(&self.rt, ifindex, has_mac)
+        crate::chain::xdp_lan_intro::init_xdp_lan_intro(&self.rt, ifindex, has_eth_header)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -286,13 +290,13 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
     fn install_tc_route(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
         xdp_handoff_enabled: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         crate::chain::tc_lan_route::init_tc_lan_route(
             &self.rt,
             ifindex,
-            has_mac,
+            has_eth_header,
             xdp_handoff_enabled,
         )
         .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
@@ -352,9 +356,9 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
     fn install_xdp_route(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::chain::xdp_wan_route::init_xdp_wan_route(&self.rt, ifindex, has_mac)
+        crate::chain::xdp_wan_route::init_xdp_wan_route(&self.rt, ifindex, has_eth_header)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -362,13 +366,13 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
     fn install_tc_route(
         &self,
         ifindex: u32,
-        has_mac: bool,
+        has_eth_header: bool,
         xdp_handoff_enabled: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         crate::chain::tc_wan_route::init_tc_wan_route(
             &self.rt,
             ifindex,
-            has_mac,
+            has_eth_header,
             xdp_handoff_enabled,
         )
         .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)

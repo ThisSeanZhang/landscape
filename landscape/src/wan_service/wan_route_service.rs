@@ -53,7 +53,7 @@ impl ServiceStarterTrait for RouteWanService {
                         create_route_wan_service(
                             iface_name,
                             iface.index,
-                            iface.mac.is_some(),
+                            iface.has_eth_header(),
                             task_status,
                             dataplane,
                         )
@@ -76,7 +76,7 @@ impl ServiceStarterTrait for RouteWanService {
 pub async fn create_route_wan_service(
     iface_name: String,
     ifindex: u32,
-    has_mac: bool,
+    has_eth_header: bool,
     service_status: ServiceHandle,
     dataplane: Arc<dyn WanRouteDataplane>,
 ) {
@@ -85,7 +85,7 @@ pub async fn create_route_wan_service(
 
     let mut xdp_handle: Option<Box<dyn landscape_common::ebpf::DataplaneGuard>> = None;
 
-    let xdp_ok = match dataplane.install_xdp_route(ifindex, has_mac) {
+    let xdp_ok = match dataplane.install_xdp_route(ifindex, has_eth_header) {
         Ok(handle) => {
             dataplane.set_redirect_able(ifindex, true);
             tracing::info!("xdp handoff enabled for {iface_name}");
@@ -101,7 +101,7 @@ pub async fn create_route_wan_service(
         }
     };
 
-    let tc_handle = match dataplane.install_tc_route(ifindex, has_mac, xdp_ok) {
+    let tc_handle = match dataplane.install_tc_route(ifindex, has_eth_header, xdp_ok) {
         Ok(handle) => handle,
         Err(err) => {
             tracing::error!("failed to start tc wan route for {iface_name}: {err}");
