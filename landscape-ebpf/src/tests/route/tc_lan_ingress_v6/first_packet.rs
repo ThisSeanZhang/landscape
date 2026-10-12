@@ -353,7 +353,7 @@ fn lan6_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
 /// 16 address bytes (COPY_ADDR_FROM), so there is no mac[4..6] union leak —
 /// plain ipv6 entries match.
 #[allow(clippy::field_reassign_with_default)]
-fn seed_flow_match_ip(skel: &TcLanIngressIntroSkel<'_>, addr: Ipv6Addr, flow_id: u32) {
+fn seed_flow_match_ip(skel: &TcLanIngressRouteSkel<'_>, addr: Ipv6Addr, flow_id: u32) {
     let mut key = FlowMatchKey::default();
     key.prefixlen = 160; // FLOW_IP_IPV6_MATCH_LEN
     key.l3_protocol = 1; // LANDSCAPE_IPV6_TYPE

@@ -309,7 +309,7 @@ fn lan_ingress_flow_redirect_zero_flag_stays_disabled() {
 // including the harmless mac[4..6] union-tail leak (see notes there).
 
 /// Seed flow `flow_id`'s ip-trie with a single dst rule.
-fn seed_flow_rule_under(skel: &TcLanIngressIntroSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
+fn seed_flow_rule_under(skel: &TcLanIngressRouteSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
         mark: FlowMark::from(mark),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
@@ -553,7 +553,7 @@ fn lan_ingress_flow_slot_with_mac_rewrites_header() {
 #[test]
 fn lan_ingress_flow_slot_on_ingress_iface_sets_cb_and_redirects() {
     // First-packet pick_wan row: a slot target on the ingress device itself
-    // skips the whole rewrite block (guard at tc_lan_ingress_intro.bpf.c:50)
+    // skips the whole rewrite block (guard at tc_lan_ingress_route.bpf.c:50)
     // but the forwarded cb flag and the plain redirect still happen.
     load_skel!("tc-lan-flow-sameif-slot", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);

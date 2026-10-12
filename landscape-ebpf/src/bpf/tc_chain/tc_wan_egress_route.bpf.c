@@ -15,6 +15,14 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+// ── WAN egress route ──
+//
+// Attached to TC egress.  `tc_wan_egress_route` decides the destination
+// (local outbound routing / forwarded handoff) and tail-calls the v4/v6 route
+// worker (tc_route4/6_wan_egress) through the static `ls_wan_e_tails` prog
+// array; the workers tail-call into the per-interface egress chain roots.
+// This is the "route" role for egress: routing happens before the chain.
+
 const volatile u32 current_l3_offset = 14;
 
 #undef BPF_LOG_TOPIC
@@ -282,8 +290,8 @@ struct {
 };
 
 SEC("tc/egress")
-int tc_wan_egress_intro(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_egress_intro <<<"
+int tc_wan_egress_route(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_wan_egress_route <<<"
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
         bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
         return TC_ACT_SHOT;

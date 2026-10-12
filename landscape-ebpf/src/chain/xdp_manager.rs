@@ -16,18 +16,24 @@ use crate::runtime::EbpfRuntime;
 pub(crate) mod xdp_wan_intro_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
 }
-pub(crate) mod xdp_wan_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_chain.skel.rs"));
+pub(crate) mod xdp_wan_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_root.skel.rs"));
 }
-pub(crate) mod xdp_lan_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_chain.skel.rs"));
+pub(crate) mod xdp_lan_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_root.skel.rs"));
+}
+pub(crate) mod xdp_lan_exit_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_exit.skel.rs"));
 }
 
 use crate::bpf_rs_shared::xdp_skb_pppoe_skel;
+use crate::chain::xdp_wan_route::xdp_wan_route_skel;
 
-use xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use xdp_wan_chain_skel::XdpWanChainSkelBuilder;
+use xdp_lan_exit_skel::XdpLanExitSkelBuilder;
+use xdp_lan_root_skel::XdpLanRootSkelBuilder;
 use xdp_wan_intro_skel::XdpWanIntroSkelBuilder;
+use xdp_wan_root_skel::XdpWanRootSkelBuilder;
+use xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChainDir {
@@ -108,12 +114,12 @@ struct StageEntry {
 
 enum ChainRoot {
     Wan {
-        _skel: xdp_wan_chain_skel::XdpWanChainSkel<'static>,
+        _skel: xdp_wan_root_skel::XdpWanRootSkel<'static>,
         _backing: OwnedOpenObject,
         root_next_stage_fd: i32,
     },
     Lan {
-        _skel: xdp_lan_chain_skel::XdpLanChainSkel<'static>,
+        _skel: xdp_lan_root_skel::XdpLanRootSkel<'static>,
         _backing: OwnedOpenObject,
         root_next_stage_fd: i32,
     },
@@ -132,6 +138,10 @@ pub struct XdpChainManager {
     paths: Arc<LandscapeMapPath>,
     _seed: xdp_wan_intro_skel::XdpWanIntroSkel<'static>,
     _backing: OwnedOpenObject,
+    _exit_lan_skel: xdp_lan_exit_skel::XdpLanExitSkel<'static>,
+    _exit_lan_backing: OwnedOpenObject,
+    _exit_wan_skel: xdp_wan_route_skel::XdpWanRouteSkel<'static>,
+    _exit_wan_backing: OwnedOpenObject,
     inner: Mutex<ManagerInner>,
     skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
     skb_pending: Mutex<HashMap<u32, SkbPending>>,
@@ -369,8 +379,9 @@ impl Drop for NativeXdpLink {
 }
 
 impl XdpChainManager {
-    /// Create the XDP pin directory, seed its prog-array maps, load the
-    /// wan-intro seed skeleton and clear stale entries left by previous runs.
+    /// Create the XDP pin directory, seed its prog-array maps, clear stale
+    /// entries left by previous runs, and load the per-direction exit programs
+    /// (LAN redirect + WAN route) once as manager-lifetime singletons.
     pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
         std::fs::create_dir_all(&paths.xdp_base).map_err(|e| LandscapeEbpfError::Context {
             context: format!("can not create xdp base dir {}", paths.xdp_base.display()),
@@ -413,14 +424,87 @@ impl XdpChainManager {
         clear_map_entries(&skel.maps.xdp_pipe_exits_wan);
         clear_map_entries(&skel.maps.wan_intro_dispatch_map);
 
+        // ── Exit programs are loaded once per manager and stay pinned in the
+        // shared exit slots for the manager's whole lifetime. ──
+
+        let (exit_lan_skel, exit_lan_backing) = Self::load_lan_exit()?;
+        skel.maps.xdp_pipe_exits_lan.update(
+            &0u32.to_ne_bytes(),
+            &exit_lan_skel.progs.xdp_lan_exit.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+
+        let (exit_wan_skel, exit_wan_backing) = Self::load_wan_exit(&paths)?;
+        skel.maps.xdp_pipe_exits_wan.update(
+            &0u32.to_ne_bytes(),
+            &exit_wan_skel.progs.xdp_wan_route_ingress.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+
         Ok(Self {
             paths,
             _seed: skel,
             _backing: backing,
+            _exit_lan_skel: exit_lan_skel,
+            _exit_lan_backing: exit_lan_backing,
+            _exit_wan_skel: exit_wan_skel,
+            _exit_wan_backing: exit_wan_backing,
             inner: Mutex::new(ManagerInner::new()),
             skb_bundles: Mutex::new(HashMap::new()),
             skb_pending: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn load_lan_exit() -> LdEbpfResult<(xdp_lan_exit_skel::XdpLanExitSkel<'static>, OwnedOpenObject)>
+    {
+        let builder = XdpLanExitSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_exit skeleton")?;
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_exit skeleton")?;
+        Ok((skel, backing))
+    }
+
+    fn load_wan_exit(
+        paths: &LandscapeMapPath,
+    ) -> LdEbpfResult<(xdp_wan_route_skel::XdpWanRouteSkel<'static>, OwnedOpenObject)> {
+        let builder = XdpWanRouteSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_route skeleton")?;
+
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_root_progs,
+            &paths.xdp_pipe_root_progs_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_lan,
+            &paths.xdp_pipe_exits_lan_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_pipe_exits_wan,
+            &paths.xdp_pipe_exits_wan_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut open_skel.maps.xdp_lan_pipe_root_progs,
+            &paths.xdp_lan_pipe_root_progs_path(),
+        )?;
+        pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &paths.rt6_lan_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt4_slot_map, &paths.rt4_slot_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt6_slot_map, &paths.rt6_slot_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &paths.flow4_dns_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &paths.flow6_dns_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &paths.flow4_ip_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &paths.rt6_cache_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &paths.ip_mac_v4)?;
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &paths.ip_mac_v6)?;
+        pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able)?;
+
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_route skeleton")?;
+        Ok((skel, backing))
     }
 
     pub fn ensure_roots(&self, ifindex: u32) -> LdEbpfResult<()> {
@@ -511,14 +595,8 @@ impl XdpChainManager {
             let _ = self._seed.maps.xdp_lan_pipe_root_progs.delete(&ifindex.to_ne_bytes());
         }
 
-        // The exit prog arrays use a single shared slot (0), so only clear it
-        // once no chain of that direction remains on any interface.
-        if lan_removed && !Self::has_dir_chains(&inner, ChainDir::Lan) {
-            let _ = self._seed.maps.xdp_pipe_exits_lan.delete(&0u32.to_ne_bytes());
-        }
-        if wan_removed && !Self::has_dir_chains(&inner, ChainDir::Wan) {
-            let _ = self._seed.maps.xdp_pipe_exits_wan.delete(&0u32.to_ne_bytes());
-        }
+        // The exit programs are manager-lifetime singletons pinned into the
+        // shared exit slots at construction, so they are never cleared here.
     }
 
     fn remove_chain_locked(inner: &mut ManagerInner, ifindex: u32, chain: ChainDir) -> bool {
@@ -527,25 +605,6 @@ impl XdpChainManager {
             _ => {}
         }
         inner.chains.remove(&(ifindex, chain)).is_some()
-    }
-
-    fn has_dir_chains(inner: &ManagerInner, chain: ChainDir) -> bool {
-        inner.chains.keys().any(|(_, dir)| *dir == chain)
-    }
-
-    pub fn set_exit(&self, ifindex: u32, exit_fd: i32) -> LdEbpfResult<()> {
-        let _ = ifindex;
-        let slot = 0u32.to_ne_bytes();
-        let val = exit_fd.to_ne_bytes();
-        self._seed.maps.xdp_pipe_exits_wan.update(&slot, &val, MapFlags::ANY)?;
-        Ok(())
-    }
-
-    pub fn clear_exit(&self, ifindex: u32) -> LdEbpfResult<()> {
-        let _ = ifindex;
-        let slot = 0u32.to_ne_bytes();
-        self._seed.maps.xdp_pipe_exits_wan.delete(&slot)?;
-        Ok(())
     }
 
     /// The seed skeleton's wan-intro dispatch program, for callers attaching
@@ -598,9 +657,9 @@ impl XdpChainManager {
     }
 
     fn create_wan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {
-        let builder = XdpWanChainSkelBuilder::default();
+        let builder = XdpWanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
-        let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_chain")?;
+        let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_root")?;
 
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_root_progs,
@@ -619,9 +678,9 @@ impl XdpChainManager {
             &self.paths.xdp_lan_pipe_root_progs_path(),
         )?;
 
-        let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_chain")?;
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_root")?;
 
-        let root_prog_fd = skel.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
+        let root_prog_fd = skel.progs.xdp_wan_root.as_fd().as_raw_fd();
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
         let slot_bytes = ifindex.to_ne_bytes();
@@ -646,9 +705,9 @@ impl XdpChainManager {
     }
 
     fn create_lan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {
-        let builder = XdpLanChainSkelBuilder::default();
+        let builder = XdpLanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
-        let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_chain")?;
+        let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_root")?;
 
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_root_progs,
@@ -668,21 +727,16 @@ impl XdpChainManager {
         )?;
         pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &self.paths.xdp_redirect_able)?;
 
-        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_chain")?;
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_root")?;
 
-        let root_prog_fd = skel.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
+        let root_prog_fd = skel.progs.xdp_lan_root.as_fd().as_raw_fd();
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
-        let exit_fd = skel.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
 
         self._seed.maps.xdp_lan_pipe_root_progs.update(
             &ifindex.to_ne_bytes(),
             &root_prog_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
-
-        let slot = 0u32.to_ne_bytes();
-        let val = exit_fd.to_ne_bytes();
-        self._seed.maps.xdp_pipe_exits_lan.update(&slot, &val, MapFlags::ANY)?;
 
         Ok(ChainRoot::Lan {
             _skel: skel,

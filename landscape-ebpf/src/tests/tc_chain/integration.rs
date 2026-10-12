@@ -18,12 +18,12 @@ use crate::tests::net_utils::{
     send_raw_packet, settle, wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
+use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 
-pub(crate) mod tc_lan_ingress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
+pub(crate) mod tc_lan_ingress_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
 }
-use tc_lan_ingress_intro_skel::TcLanIngressIntroSkelBuilder;
+use tc_lan_ingress_route_skel::TcLanIngressRouteSkelBuilder;
 
 pub(crate) mod tc_pppoe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
@@ -87,7 +87,7 @@ fn lan_key_v4(dst: [u8; 4]) -> [u8; 8] {
     k
 }
 
-// ── 1: tc_lan_ingress_intro on a real veth redirects to the out pair ──
+// ── 1: tc_lan_ingress_route on a real veth redirects to the out pair ──
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -95,7 +95,7 @@ fn tc_lan_ingress_redirect() {
     let env = TcEnv::two_pairs("tclin");
     let pin_root = crate::tests::isolated_pin_root("tc-lan-redir");
 
-    let mut b = TcLanIngressIntroSkelBuilder::default();
+    let mut b = TcLanIngressRouteSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -115,7 +115,7 @@ fn tc_lan_ingress_redirect() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _attach = TCAttach::attach_ingress(&skel.progs.tc_lan_ingress_intro, env.h_i as i32);
+        _attach = TCAttach::attach_ingress(&skel.progs.tc_lan_ingress_route, env.h_i as i32);
         _dl = dummy.progs.xdp_test_dummy.attach_xdp(env.out_pair.peer_ifindex() as i32).unwrap();
     }
 
@@ -148,13 +148,13 @@ fn tc_handoff_bridge() {
     let env = TcEnv::two_pairs("tchof");
     let pin_root = crate::tests::isolated_pin_root("tc-handoff");
 
-    // XDP lan_intro pins the shared maps first; the TC program reuses them.
-    let mut xb = XdpLanIntroSkelBuilder::default();
+    // XDP lan_route pins the shared maps first; the TC program reuses them.
+    let mut xb = XdpLanRouteSkelBuilder::default();
     xb.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut xobj = MaybeUninit::uninit();
     let xskel = xb.open(&mut xobj).unwrap().load().unwrap();
 
-    let mut tb = TcLanIngressIntroSkelBuilder::default();
+    let mut tb = TcLanIngressRouteSkelBuilder::default();
     tb.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut tobj = MaybeUninit::uninit();
     let mut topen = tb.open(&mut tobj).unwrap();
@@ -178,8 +178,8 @@ fn tc_handoff_bridge() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _xl = xskel.progs.xdp_lan_intro.attach_xdp(env.h_i as i32).unwrap();
-        _attach = TCAttach::attach_ingress(&tskel.progs.tc_lan_ingress_intro, env.h_i as i32);
+        _xl = xskel.progs.xdp_lan_route.attach_xdp(env.h_i as i32).unwrap();
+        _attach = TCAttach::attach_ingress(&tskel.progs.tc_lan_ingress_route, env.h_i as i32);
         _dl = dummy.progs.xdp_test_dummy.attach_xdp(env.out_pair.peer_ifindex() as i32).unwrap();
     }
 

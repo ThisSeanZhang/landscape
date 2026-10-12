@@ -25,10 +25,10 @@ use crate::tests::{
     },
 };
 
-pub(crate) mod tc_wan_ingress_exit {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_exit.skel.rs"));
+pub(crate) mod tc_wan_ingress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
 }
-use tc_wan_ingress_exit::TcWanIngressExitSkel;
+use tc_wan_ingress_route::TcWanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -64,7 +64,7 @@ fn wan_ctx(mark: u32) -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_ingress_exit::TcWanIngressExitSkelBuilder::default();
+        let mut builder = tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -72,7 +72,7 @@ macro_rules! load_skel {
 }
 
 fn run_wan6_ingress(
-    skel: &TcWanIngressExitSkel<'_>,
+    skel: &TcWanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>) {
@@ -90,7 +90,7 @@ fn run_wan6_ingress(
     (result.return_value as i32, out)
 }
 
-fn seed_wan_self_binding(skel: &TcWanIngressExitSkel<'_>) {
+fn seed_wan_self_binding(skel: &TcWanIngressRouteSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
         WAN_IFINDEX,
@@ -105,7 +105,7 @@ fn reply_pkt() -> Vec<u8> {
     simple_ipv6_tcp_syn(public_src(), lan_client())
 }
 
-fn seed_lan_entry(skel: &TcWanIngressExitSkel<'_>, has_mac: bool) {
+fn seed_lan_entry(skel: &TcWanIngressRouteSkel<'_>, has_mac: bool) {
     insert_route6_lan_entry(
         &skel.maps.rt6_lan_map,
         128,

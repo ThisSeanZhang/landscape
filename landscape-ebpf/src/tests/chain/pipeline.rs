@@ -14,10 +14,11 @@ use libbpf_rs::{
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
-use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
+use crate::tests::xdp_lan_exit_skel::XdpLanExitSkelBuilder;
+use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
+use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
-use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
+use crate::tests::xdp_wan_root_skel::XdpWanRootSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
@@ -44,7 +45,7 @@ fn xdp_firewall_pipeline() {
     let share_pin = crate::tests::isolated_pin_root("xdp-fw-pipe");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     // ── load skeletons ──
-    let mut lr_b = XdpLanIntroSkelBuilder::default();
+    let mut lr_b = XdpLanRouteSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
@@ -62,11 +63,15 @@ fn xdp_firewall_pipeline() {
     let mut d2_obj = std::mem::MaybeUninit::uninit();
     let dc = d2_b.open(&mut d2_obj).unwrap().load().unwrap();
 
-    let chain_b = XdpLanChainSkelBuilder::default();
-    let mut chain_obj = std::mem::MaybeUninit::uninit();
-    let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
+    let lan_root_b = XdpLanRootSkelBuilder::default();
+    let mut lan_root_obj = std::mem::MaybeUninit::uninit();
+    let lan_root = lan_root_b.open(&mut lan_root_obj).unwrap().load().unwrap();
 
-    let wan_root_b = XdpWanChainSkelBuilder::default();
+    let lan_exit_b = XdpLanExitSkelBuilder::default();
+    let mut lan_exit_obj = std::mem::MaybeUninit::uninit();
+    let lan_exit = lan_exit_b.open(&mut lan_exit_obj).unwrap().load().unwrap();
+
+    let wan_root_b = XdpWanRootSkelBuilder::default();
     let mut wan_root_obj = std::mem::MaybeUninit::uninit();
     let wan_root = wan_root_b.open(&mut wan_root_obj).unwrap().load().unwrap();
 
@@ -99,7 +104,7 @@ fn xdp_firewall_pipeline() {
         crate::tests::check_ifindex("lan_h", lan_h_i);
         wan_h_i = wan_pair.host_ifindex();
         crate::tests::check_ifindex("wan_h", wan_h_i);
-        _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
+        _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
         _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     }
     {
@@ -121,16 +126,16 @@ fn xdp_firewall_pipeline() {
         send_raw_packet(wan_p, pkt);
     };
 
-    let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
+    let root_fd = lan_root.progs.xdp_lan_root.as_fd().as_raw_fd();
     let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
     let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let fw_lan_fd = fw.progs.xdp_firewall_lan.as_fd().as_raw_fd();
     let fw_wan_fd = fw.progs.xdp_firewall_wan.as_fd().as_raw_fd();
-    let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
-    let wan_root_fd = wan_root.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
+    let exit_fd = lan_exit.progs.xdp_lan_exit.as_fd().as_raw_fd();
+    let wan_root_fd = wan_root.progs.xdp_wan_root.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
 
-    // Mark redirect targets native-XDP able, otherwise xdp_lan_intro falls back
+    // Mark redirect targets native-XDP able, otherwise xdp_lan_route falls back
     // to the TC handoff path and the XDP chain never runs.
     lr.maps
         .xdp_redirect_able
@@ -157,7 +162,7 @@ fn xdp_firewall_pipeline() {
         .xdp_lan_pipe_root_progs
         .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
-    chain
+    lan_root
         .maps
         .root_next_stage
         .update(&0u32.to_ne_bytes(), &mss_lan_fd.to_ne_bytes(), MapFlags::ANY)
@@ -169,7 +174,7 @@ fn xdp_firewall_pipeline() {
     fw.maps.next_stage.update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
 
     // LAN fallback exits: all point to exit
-    chain
+    lan_root
         .maps
         .xdp_pipe_exits_lan
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
@@ -539,7 +544,8 @@ fn xdp_firewall_pipeline() {
     drop(fw);
     drop(mss);
     drop(wan_root);
-    drop(chain);
+    drop(lan_root);
+    drop(lan_exit);
     drop(dc);
     drop(da);
     drop(wr);

@@ -37,7 +37,7 @@ impl DataplaneGuard for crate::stages::mss::MssHandle {}
 impl DataplaneGuard for crate::pppoe::pppoe_handle::PppoeHandle {}
 impl DataplaneGuard for crate::chain::tc_lan_route::TcLanRouteHandle {}
 impl DataplaneGuard for crate::dao_ns::TcLanDaoHandle {}
-impl DataplaneGuard for crate::chain::xdp_lan_intro::XdpLanIntroHandle {}
+impl DataplaneGuard for crate::chain::xdp_lan_route::XdpLanRouteHandle {}
 impl DataplaneGuard for crate::chain::tc_wan_route::TcWanRouteHandle {}
 impl DataplaneGuard for crate::chain::xdp_wan_route::XdpWanRouteHandle {}
 
@@ -282,7 +282,7 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
         ifindex: u32,
         has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::chain::xdp_lan_intro::init_xdp_lan_intro(&self.rt, ifindex, has_eth_header)
+        crate::chain::xdp_lan_route::init_xdp_lan_route(&self.rt, ifindex, has_eth_header)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }

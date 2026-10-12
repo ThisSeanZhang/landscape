@@ -289,8 +289,8 @@ struct {
 };
 
 SEC("tc/ingress")
-int tc_lan_ingress_intro(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_lan_ingress_intro"
+int tc_lan_ingress_route(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_lan_ingress_route"
     bool is_ipv4;
     int ret;
 

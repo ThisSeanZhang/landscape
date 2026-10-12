@@ -122,16 +122,20 @@ pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
 }
 
-pub(crate) mod xdp_lan_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_intro.skel.rs"));
+pub(crate) mod xdp_lan_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_route.skel.rs"));
 }
 
-pub(crate) mod xdp_lan_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_chain.skel.rs"));
+pub(crate) mod xdp_lan_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_root.skel.rs"));
 }
 
-pub(crate) mod xdp_wan_chain_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_chain.skel.rs"));
+pub(crate) mod xdp_lan_exit_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_exit.skel.rs"));
+}
+
+pub(crate) mod xdp_wan_root_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_root.skel.rs"));
 }
 
 pub(crate) mod wan_intro_skel {

@@ -294,7 +294,7 @@ fn lan_ingress_set_cache_skipped_when_wan_cache_has_entry() {
 // WAN-cache hit (reply-learned reverse fast path)
 // ---------------------------------------------------------------------------
 
-fn seed_wan_cache(skel: &TcLanIngressIntroSkel<'_>) {
+fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
     put_rt4_cache_ifindex(
         &skel.maps.rt4_cache_map,

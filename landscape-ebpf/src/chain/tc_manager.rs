@@ -12,8 +12,8 @@ use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 
-mod tc_wan_ingress_exit_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_exit.skel.rs"));
+mod tc_wan_ingress_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
 }
 mod tc_wan_egress_exit_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_exit.skel.rs"));
@@ -27,8 +27,8 @@ mod tc_wan_ingress_root_skel {
 
 use tc_wan_egress_exit_skel::TcWanEgressExitSkelBuilder;
 use tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder;
-use tc_wan_ingress_exit_skel::TcWanIngressExitSkelBuilder;
 use tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder;
+use tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StageType {
@@ -155,7 +155,7 @@ impl ManagerInner {
 
 pub struct TcChainManager {
     paths: Arc<LandscapeMapPath>,
-    _exit_wi: tc_wan_ingress_exit_skel::TcWanIngressExitSkel<'static>,
+    _route_wi: tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>,
     _exit_we: tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>,
     _back_wi: OwnedOpenObject,
     _back_we: OwnedOpenObject,
@@ -164,7 +164,8 @@ pub struct TcChainManager {
 
 impl TcChainManager {
     /// Create the TC chain pin directory, seed its prog-array maps and load
-    /// the two exit skeletons.
+    /// the shared terminal skeletons: the WAN ingress route unit and the WAN
+    /// egress exit.
     pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
         let tc_chain_base = paths.tc_chain_base();
         std::fs::create_dir_all(&tc_chain_base).map_err(|e| LandscapeEbpfError::Context {
@@ -182,12 +183,12 @@ impl TcChainManager {
 
         // ── 2. Load exit skeletons and inject their program FDs ──
 
-        let (exit_wi, back_wi) = Self::init_exit_wan_ingress(&paths)?;
+        let (route_wi, back_wi) = Self::init_wan_ingress_route(&paths)?;
         let (exit_we, back_we) = Self::init_exit_wan_egress(&paths)?;
 
         Ok(Self {
             paths,
-            _exit_wi: exit_wi,
+            _route_wi: route_wi,
             _exit_we: exit_we,
             _back_wi: back_wi,
             _back_we: back_we,
@@ -195,82 +196,82 @@ impl TcChainManager {
         })
     }
 
-    fn init_exit_wan_ingress(
+    fn init_wan_ingress_route(
         paths: &LandscapeMapPath,
-    ) -> LdEbpfResult<(tc_wan_ingress_exit_skel::TcWanIngressExitSkel<'static>, OwnedOpenObject)>
+    ) -> LdEbpfResult<(tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>, OwnedOpenObject)>
     {
-        let builder = TcWanIngressExitSkelBuilder::default();
+        let builder = TcWanIngressRouteSkelBuilder::default();
         let (back, obj) = OwnedOpenObject::new();
-        let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_ingress_exit skeleton")?;
+        let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_ingress_route skeleton")?;
         crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.tc_pipe_exits_wan_ingress,
             &paths.tc_pipe_exits_wan_ingress_path(),
         );
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
-            "tc_wan_ingress_exit pin flow_match_map"
+            "tc_wan_ingress_route pin flow_match_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
-            "tc_wan_ingress_exit pin wan_ip_binding"
+            "tc_wan_ingress_route pin wan_ip_binding"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
-            "tc_wan_ingress_exit pin rt4_lan_map"
+            "tc_wan_ingress_route pin rt4_lan_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &paths.rt6_lan_map),
-            "tc_wan_ingress_exit pin rt6_lan_map"
+            "tc_wan_ingress_route pin rt6_lan_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt4_slot_map, &paths.rt4_slot_map,),
-            "tc_wan_ingress_exit pin rt4_slot_map"
+            "tc_wan_ingress_route pin rt4_slot_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
-            "tc_wan_ingress_exit pin rt6_slot_map"
+            "tc_wan_ingress_route pin rt6_slot_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),
-            "tc_wan_ingress_exit pin flow4_dns_map"
+            "tc_wan_ingress_route pin flow4_dns_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &paths.flow6_dns_map),
-            "tc_wan_ingress_exit pin flow6_dns_map"
+            "tc_wan_ingress_route pin flow6_dns_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &paths.flow4_ip_map),
-            "tc_wan_ingress_exit pin flow4_ip_map"
+            "tc_wan_ingress_route pin flow4_ip_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map),
-            "tc_wan_ingress_exit pin flow6_ip_map"
+            "tc_wan_ingress_route pin flow6_ip_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),
-            "tc_wan_ingress_exit pin rt4_cache_map"
+            "tc_wan_ingress_route pin rt4_cache_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &paths.rt6_cache_map),
-            "tc_wan_ingress_exit pin rt6_cache_map"
+            "tc_wan_ingress_route pin rt6_cache_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &paths.ip_mac_v4),
-            "tc_wan_ingress_exit pin ip_mac_v4"
+            "tc_wan_ingress_route pin ip_mac_v4"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.ip_mac_v6, &paths.ip_mac_v6),
-            "tc_wan_ingress_exit pin ip_mac_v6"
+            "tc_wan_ingress_route pin ip_mac_v6"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able),
-            "tc_wan_ingress_exit pin xdp_redirect_able"
+            "tc_wan_ingress_route pin xdp_redirect_able"
         )?;
-        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_ingress_exit skeleton")?;
-        let exit_fd = skel.progs.tc_wan_ingress_exit_redirect.as_fd().as_raw_fd();
+        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_ingress_route skeleton")?;
+        let route_fd = skel.progs.tc_wan_ingress_route.as_fd().as_raw_fd();
         skel.maps.tc_pipe_exits_wan_ingress.update(
             &0u32.to_ne_bytes(),
-            &exit_fd.to_ne_bytes(),
+            &route_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
         Ok((skel, back))

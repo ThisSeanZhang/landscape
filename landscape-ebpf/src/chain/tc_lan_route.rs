@@ -7,13 +7,13 @@ use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
 
-mod tc_lan_ingress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
+mod tc_lan_ingress_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
 }
-use tc_lan_ingress_intro_skel::{TcLanIngressIntroSkel, TcLanIngressIntroSkelBuilder};
+use tc_lan_ingress_route_skel::{TcLanIngressRouteSkel, TcLanIngressRouteSkelBuilder};
 
 pub struct TcLanRouteHandle {
-    _intro_skel: TcLanIngressIntroSkel<'static>,
+    _intro_skel: TcLanIngressRouteSkel<'static>,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     _ifindex: u32,
@@ -40,8 +40,8 @@ pub fn init_tc_lan_route(
     let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
 
     let (intro_backing, obj) = OwnedOpenObject::new();
-    let builder = TcLanIngressIntroSkelBuilder::default();
-    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_intro")?;
+    let builder = TcLanIngressRouteSkelBuilder::default();
+    let mut open_skel = bpf_ctx!(builder.open(obj), "open per-if tc_lan_ingress_route")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = xdp_handoff_enabled;
     crate::bpf_ctx!(
@@ -104,9 +104,9 @@ pub fn init_tc_lan_route(
         pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able),
         "tc_lan_route pin xdp_redirect_able"
     )?;
-    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_lan_ingress_intro")?;
+    let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_lan_ingress_route")?;
     let mut ingress_hook = TcHookProxy::new(
-        &intro_skel.progs.tc_lan_ingress_intro,
+        &intro_skel.progs.tc_lan_ingress_route,
         ifindex as i32,
         libbpf_rs::TC_INGRESS,
         crate::TC_LAN_INGRESS_INTRO_PRIORITY,

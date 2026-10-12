@@ -35,11 +35,11 @@ mod tests {
         },
     };
 
-    pub(crate) mod tc_lan_ingress_intro {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
+    pub(crate) mod tc_lan_ingress_route {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
     }
 
-    use tc_lan_ingress_intro::TcLanIngressIntroSkelBuilder;
+    use tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
 
     fn local_addr() -> Ipv6Addr {
         Ipv6Addr::from_str("fd00::10").unwrap()
@@ -54,7 +54,7 @@ mod tests {
     /// redirect — the same behavior as the old route_lan_ingress.
     #[test]
     fn tc_route6_lan_ingress_populates_lan_cache_on_redirect() {
-        let mut builder = TcLanIngressIntroSkelBuilder::default();
+        let mut builder = TcLanIngressRouteSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-ingress-route-v6-cache");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
 
@@ -131,7 +131,7 @@ mod tests {
     /// architecture) populates the LAN cache after a successful WAN redirect.
     #[test]
     fn tc_route4_lan_ingress_populates_lan_cache_on_redirect() {
-        let mut builder = TcLanIngressIntroSkelBuilder::default();
+        let mut builder = TcLanIngressRouteSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-ingress-route-v4-cache");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
 

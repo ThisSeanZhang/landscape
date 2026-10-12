@@ -1,5 +1,5 @@
 //! IPv4 whole-flow baseline for the WAN-ingress route worker
-//! `tc_route4_wan_ingress` (tc_wan_ingress_exit.bpf.c).
+//! `tc_route4_wan_ingress` (tc_wan_ingress_route.bpf.c).
 //!
 //! Each test runs the complete worker pipeline once — scan (l3 offset from
 //! cb[1], normally written by tc_wan_chain_ingress_root) →
@@ -7,7 +7,7 @@
 //! and locks the current behaviour before any route rewrite.
 //!
 //! Baseline quirks locked here (see route4_path.h /
-//! tc_wan_ingress_exit.bpf.c):
+//! tc_wan_ingress_route.bpf.c):
 //!   * packets whose daddr equals the ingress WAN address go to the stack
 //!     (UNSPEC) before the lan lookup and never touch the cache;
 //!   * the reverse-path WAN-cache entry is written ONLY when
@@ -46,10 +46,10 @@ use crate::tests::{
     },
 };
 
-pub(crate) mod tc_wan_ingress_exit {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_exit.skel.rs"));
+pub(crate) mod tc_wan_ingress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
 }
-use tc_wan_ingress_exit::TcWanIngressExitSkel;
+use tc_wan_ingress_route::TcWanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -83,7 +83,7 @@ fn wan_ctx(mark: u32) -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_ingress_exit::TcWanIngressExitSkelBuilder::default();
+        let mut builder = tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -91,7 +91,7 @@ macro_rules! load_skel {
 }
 
 fn run_wan_ingress(
-    skel: &TcWanIngressExitSkel<'_>,
+    skel: &TcWanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>) {
@@ -109,7 +109,7 @@ fn run_wan_ingress(
     (result.return_value as i32, out)
 }
 
-fn seed_wan_self_binding(skel: &TcWanIngressExitSkel<'_>) {
+fn seed_wan_self_binding(skel: &TcWanIngressRouteSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
         WAN_IFINDEX,
@@ -568,7 +568,7 @@ fn wan_ingress_non_matching_wan_binding_continues_to_lan_redirect() {
 
 /// mac-less LAN entry pointing at another iface — the plain redirect setup
 /// shared by several cache-gating tests below.
-fn seed_lan_entry_nomac(skel: &TcWanIngressExitSkel<'_>) {
+fn seed_lan_entry_nomac(skel: &TcWanIngressRouteSkel<'_>) {
     insert_route4_lan_entry(
         &skel.maps.rt4_lan_map,
         32,

@@ -14,10 +14,11 @@ use crate::tests::net_utils::{
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
-use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
-use crate::tests::xdp_lan_intro_skel::XdpLanIntroSkelBuilder;
+use crate::tests::xdp_lan_exit_skel::XdpLanExitSkelBuilder;
+use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
+use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
-use crate::tests::xdp_wan_chain_skel::XdpWanChainSkelBuilder;
+use crate::tests::xdp_wan_root_skel::XdpWanRootSkelBuilder;
 use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn build_ipv4_tcp_pkt(
@@ -135,8 +136,8 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
 // ── Test A: verifier smoke ──
 
 #[test]
-fn xdp_lan_intro_verifier_smoke() {
-    let mut builder = XdpLanIntroSkelBuilder::default();
+fn xdp_lan_route_verifier_smoke() {
+    let mut builder = XdpLanRouteSkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("xdp-lr-v");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -148,7 +149,7 @@ fn xdp_lan_intro_verifier_smoke() {
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
-fn xdp_lan_intro_trace_flow() {
+fn xdp_lan_route_trace_flow() {
     let test_ns = NetNsGuard::create("trx");
     let peer_ns = NetNsGuard::create("trxp");
     let pair;
@@ -158,7 +159,7 @@ fn xdp_lan_intro_trace_flow() {
     }
     let peer = pair.peer();
 
-    let mut builder = XdpLanIntroSkelBuilder::default();
+    let mut builder = XdpLanRouteSkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("xdp-lr-t");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
@@ -168,7 +169,7 @@ fn xdp_lan_intro_trace_flow() {
     {
         let _e = test_ns.enter();
         let ifindex = pair.host_ifindex() as i32;
-        _link = skel.progs.xdp_lan_intro.attach_xdp(ifindex).expect("attach");
+        _link = skel.progs.xdp_lan_route.attach_xdp(ifindex).expect("attach");
     }
 
     let pkt = build_ipv4_tcp_pkt(
@@ -190,7 +191,7 @@ fn xdp_lan_intro_trace_flow() {
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
-fn xdp_lan_intro_map_redirect() {
+fn xdp_lan_route_map_redirect() {
     let share_pin = crate::tests::isolated_pin_root("xdp-lr-share");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
     let test_ns = NetNsGuard::create("lrb");
@@ -219,14 +220,14 @@ fn xdp_lan_intro_map_redirect() {
     lan_val[8..12].copy_from_slice(&p_i.to_ne_bytes());
     maps.rt4_lan_map.update(&lan_key, &lan_val, MapFlags::ANY).unwrap();
 
-    let mut b = XdpLanIntroSkelBuilder::default();
+    let mut b = XdpLanRouteSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
     let _link;
     {
         let _e = test_ns.enter();
-        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
     }
 
     let pkt = build_ipv4_tcp_pkt(
@@ -249,7 +250,7 @@ fn xdp_lan_intro_map_redirect() {
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
-fn xdp_lan_intro_wan_pipeline() {
+fn xdp_lan_route_wan_pipeline() {
     let test_ns = NetNsGuard::create("pdl");
     let peer_ns = NetNsGuard::create("pdlp");
 
@@ -300,7 +301,7 @@ fn xdp_lan_intro_wan_pipeline() {
         maps.rt4_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
-    let mut lr_b = XdpLanIntroSkelBuilder::default();
+    let mut lr_b = XdpLanRouteSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut lr_obj = std::mem::MaybeUninit::uninit();
     let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
@@ -323,11 +324,15 @@ fn xdp_lan_intro_wan_pipeline() {
     let mut d2_obj = std::mem::MaybeUninit::uninit();
     let dc = d2_b.open(&mut d2_obj).unwrap().load().unwrap();
 
-    let chain_b = XdpLanChainSkelBuilder::default();
-    let mut chain_obj = std::mem::MaybeUninit::uninit();
-    let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
+    let lan_root_b = XdpLanRootSkelBuilder::default();
+    let mut lan_root_obj = std::mem::MaybeUninit::uninit();
+    let lan_root = lan_root_b.open(&mut lan_root_obj).unwrap().load().unwrap();
 
-    let wan_root_b = XdpWanChainSkelBuilder::default();
+    let lan_exit_b = XdpLanExitSkelBuilder::default();
+    let mut lan_exit_obj = std::mem::MaybeUninit::uninit();
+    let lan_exit = lan_exit_b.open(&mut lan_exit_obj).unwrap().load().unwrap();
+
+    let wan_root_b = XdpWanRootSkelBuilder::default();
     let mut wan_root_obj = std::mem::MaybeUninit::uninit();
     let wan_root = wan_root_b.open(&mut wan_root_obj).unwrap().load().unwrap();
 
@@ -341,7 +346,7 @@ fn xdp_lan_intro_wan_pipeline() {
     let _l3;
     {
         let _e = test_ns.enter();
-        _l0 = lr.progs.xdp_lan_intro.attach_xdp(lan_h_i as i32).unwrap();
+        _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
         _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
     }
     {
@@ -350,15 +355,15 @@ fn xdp_lan_intro_wan_pipeline() {
         _l3 = dc.progs.xdp_test_dummy.attach_xdp(wan_p_i as i32).unwrap();
     }
 
-    let root_fd = chain.progs.xdp_lan_chain_root.as_fd().as_raw_fd();
+    let root_fd = lan_root.progs.xdp_lan_root.as_fd().as_raw_fd();
     let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
-    let exit_fd = chain.progs.xdp_lan_chain_exit.as_fd().as_raw_fd();
+    let exit_fd = lan_exit.progs.xdp_lan_exit.as_fd().as_raw_fd();
 
-    let wan_root_fd = wan_root.progs.xdp_wan_chain_root.as_fd().as_raw_fd();
+    let wan_root_fd = wan_root.progs.xdp_wan_root.as_fd().as_raw_fd();
     let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
 
-    // Mark redirect targets native-XDP able, otherwise xdp_lan_intro falls back
+    // Mark redirect targets native-XDP able, otherwise xdp_lan_route falls back
     // to the TC handoff path and the XDP chain never runs.
     lr.maps
         .xdp_redirect_able
@@ -374,13 +379,13 @@ fn xdp_lan_intro_wan_pipeline() {
         .xdp_lan_pipe_root_progs
         .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
-    chain
+    lan_root
         .maps
         .root_next_stage
         .update(&0u32.to_ne_bytes(), &mss_lan_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     mss.maps.next_stage.update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
-    chain
+    lan_root
         .maps
         .xdp_pipe_exits_lan
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
@@ -495,7 +500,8 @@ fn xdp_lan_intro_wan_pipeline() {
 
     drop(mss);
     drop(wan_root);
-    drop(chain);
+    drop(lan_root);
+    drop(lan_exit);
     drop(dc);
     drop(da);
     drop(wr);
@@ -508,7 +514,7 @@ fn xdp_lan_intro_wan_pipeline() {
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
-fn xdp_lan_intro_unknown_ip_no_redirect() {
+fn xdp_lan_route_unknown_ip_no_redirect() {
     let test_ns = NetNsGuard::create("lre");
     let peer_ns = NetNsGuard::create("lrep");
     let pair;
@@ -531,7 +537,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect() {
     }
 
     let pin_root = crate::tests::isolated_pin_root("xdp-lr-unk");
-    let mut b = XdpLanIntroSkelBuilder::default();
+    let mut b = XdpLanRouteSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -576,7 +582,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect() {
     let _dl;
     {
         let _e = test_ns.enter();
-        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
         _dl = dummy.progs.xdp_test_dummy.attach_xdp(out_pair.peer_ifindex() as i32).unwrap();
     }
 
@@ -631,7 +637,7 @@ fn xdp_lan_intro_unknown_ip_no_redirect() {
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
-fn xdp_lan_intro_known_lan_fib_fallback() {
+fn xdp_lan_route_known_lan_fib_fallback() {
     let test_ns = NetNsGuard::create("lrf");
     let peer_ns = NetNsGuard::create("lrfp");
     let pair;
@@ -671,7 +677,7 @@ fn xdp_lan_intro_known_lan_fib_fallback() {
     }
 
     let pin_root = crate::tests::isolated_pin_root("xdp-lr-fibf");
-    let mut b = XdpLanIntroSkelBuilder::default();
+    let mut b = XdpLanRouteSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -703,7 +709,7 @@ fn xdp_lan_intro_known_lan_fib_fallback() {
     let _dl;
     {
         let _e = test_ns.enter();
-        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
         _dl = dummy.progs.xdp_test_dummy.attach_xdp(out_pair.peer_ifindex() as i32).unwrap();
     }
 
@@ -766,7 +772,7 @@ fn build_ipv6_tcp_pkt(
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
-fn xdp_lan_intro_fib_fallback_v4() {
+fn xdp_lan_route_fib_fallback_v4() {
     let test_ns = NetNsGuard::create("f4x");
     let peer_ns = NetNsGuard::create("f4xp");
     let pair;
@@ -799,7 +805,7 @@ fn xdp_lan_intro_fib_fallback_v4() {
     }
 
     let pin_root = crate::tests::isolated_pin_root("xdp-lr-fib4v");
-    let mut b = XdpLanIntroSkelBuilder::default();
+    let mut b = XdpLanRouteSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -829,7 +835,7 @@ fn xdp_lan_intro_fib_fallback_v4() {
     let _link;
     {
         let _e = test_ns.enter();
-        _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
     }
 
     let pkt = build_ipv4_tcp_pkt(
@@ -859,7 +865,7 @@ fn xdp_lan_intro_fib_fallback_v4() {
 
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 #[test]
-fn xdp_lan_intro_fib_fallback_v6() {
+fn xdp_lan_route_fib_fallback_v6() {
     let test_ns = NetNsGuard::create("f6x");
     let peer_ns = NetNsGuard::create("f6xp");
     let pair;
@@ -906,7 +912,7 @@ fn xdp_lan_intro_fib_fallback_v6() {
         h_i = pair.host_ifindex();
 
         let pin_root = crate::tests::isolated_pin_root("xdp-lr-fib6v");
-        let mut b = XdpLanIntroSkelBuilder::default();
+        let mut b = XdpLanRouteSkelBuilder::default();
         b.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut obj = std::mem::MaybeUninit::uninit();
         let skel = b.open(&mut obj).unwrap().load().unwrap();
@@ -935,7 +941,7 @@ fn xdp_lan_intro_fib_fallback_v6() {
         mac_key.copy_from_slice(&dst_ip6);
         skel.maps.ip_mac_v6.delete(&mac_key).ok();
 
-        let _link = skel.progs.xdp_lan_intro.attach_xdp(h_i as i32).unwrap();
+        let _link = skel.progs.xdp_lan_route.attach_xdp(h_i as i32).unwrap();
 
         let pkt = build_ipv6_tcp_pkt(
             [0x02, 0, 0, 0, 0, 1],

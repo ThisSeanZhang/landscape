@@ -16,6 +16,13 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+// ── WAN ingress route terminal ──
+//
+// Terminal of the WAN ingress chain.  `tc_wan_ingress_route` classifies v4/v6
+// and tail-calls the matching route worker (tc_route4/6_wan_ingress) through
+// the static `ls_wan_in_tails` prog array.  This is the "route" role, not an
+// "exit": the chain ends by deciding where the packet goes.
+
 static __always_inline u8 get_wan_ingress_l3_offset(struct __sk_buff *skb) {
     return skb->cb[TC_CHAIN_CB_L3_OFFSET];
 }
@@ -119,8 +126,8 @@ struct {
 };
 
 SEC("tc/ingress")
-int tc_wan_ingress_exit_redirect(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_wan_ingress_exit_redirect <<<"
+int tc_wan_ingress_route(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_wan_ingress_route <<<"
 
     bool is_ipv4;
     int ret;

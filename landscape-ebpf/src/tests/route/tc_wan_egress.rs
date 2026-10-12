@@ -1,13 +1,13 @@
 //! IPv4 whole-flow baseline for the WAN-egress route worker
-//! `tc_route4_wan_egress` (tc_wan_egress_intro.bpf.c).
+//! `tc_route4_wan_egress` (tc_wan_egress_route.bpf.c).
 //!
 //! This worker only handles locally-generated traffic (ingress_ifindex == 0;
-//! forwarded frames enter via the egress intro/root tail-call chain instead).
+//! forwarded frames enter via the egress route/root tail-call chain instead).
 //! Each test runs the complete pipeline once — scan →
 //! lan_redirect_check_in_wan_egress → flow_verdict → pick_wan_in_wan_egress —
 //! and locks the current behaviour before any route rewrite.
 //!
-//! Baseline quirks locked here (see tc_wan_egress_intro.bpf.c):
+//! Baseline quirks locked here (see tc_wan_egress_route.bpf.c):
 //!   * no slot target + default flow → TC_ACT_SHOT (same divergence as the
 //!     lan worker; the legacy route4_pick_wan_and_send_by_flow_id twin passes
 //!     default-flow traffic instead);
@@ -59,10 +59,10 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_wan_egress_intro {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
+pub(crate) mod tc_wan_egress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
 }
-use tc_wan_egress_intro::TcWanEgressIntroSkel;
+use tc_wan_egress_route::TcWanEgressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -101,7 +101,7 @@ fn egress_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_egress_intro::TcWanEgressIntroSkelBuilder::default();
+        let mut builder = tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -109,7 +109,7 @@ macro_rules! load_skel {
 }
 
 fn run_wan_egress(
-    skel: &TcWanEgressIntroSkel<'_>,
+    skel: &TcWanEgressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>, u32, u32) {
@@ -133,12 +133,12 @@ fn run_wan_egress(
     (ret, out, mark, forwarded)
 }
 
-fn seed_flow_rule(skel: &TcWanEgressIntroSkel<'_>, dst: Ipv4Addr, mark: u32) {
+fn seed_flow_rule(skel: &TcWanEgressRouteSkel<'_>, dst: Ipv4Addr, mark: u32) {
     seed_flow_rule_under(skel, 0, dst, mark);
 }
 
 /// Seed flow `flow_id`'s ip-trie with a single dst rule.
-fn seed_flow_rule_under(skel: &TcWanEgressIntroSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
+fn seed_flow_rule_under(skel: &TcWanEgressRouteSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
         mark: FlowMark::from(mark),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
@@ -148,7 +148,7 @@ fn seed_flow_rule_under(skel: &TcWanEgressIntroSkel<'_>, flow_id: u32, dst: Ipv4
 }
 
 fn seed_wan_slots(
-    skel: &TcWanEgressIntroSkel<'_>,
+    skel: &TcWanEgressRouteSkel<'_>,
     flow_id: u32,
     ifindex: u32,
     is_docker: bool,
@@ -171,7 +171,7 @@ fn seed_wan_slots(
     replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &targets);
 }
 
-fn assert_no_route_cache(skel: &TcWanEgressIntroSkel<'_>) {
+fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     create_route4_cache_inner_map(
         &skel.maps.rt4_cache_map,
@@ -667,7 +667,7 @@ fn wan_egress_incoming_mark_source_replaced_by_wan() {
 fn wan_egress_slot_with_mac_gateway_miss_falls_to_neigh() {
     // pick_wan has_mac slot whose gate address has no ip_mac_v4 entry: the
     // forwarded cb flag is already stamped when the neigh fallback runs
-    // (tc_wan_egress_intro.bpf.c:89 before :95-102).
+    // (tc_wan_egress_route.bpf.c:89 before :95-102).
     load_skel!("tc-wan-eg-flow-gwmiss", skel);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
     let target_mac = MacAddr::from_str("02:22:33:44:55:66").unwrap();

@@ -13,16 +13,16 @@ mod tc_wan_ingress_intro_skel {
 }
 use tc_wan_ingress_intro_skel::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
-mod tc_wan_egress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
+mod tc_wan_egress_route_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
 }
-use tc_wan_egress_intro_skel::{TcWanEgressIntroSkel, TcWanEgressIntroSkelBuilder};
+use tc_wan_egress_route_skel::{TcWanEgressRouteSkel, TcWanEgressRouteSkelBuilder};
 
 pub struct TcWanRouteHandle {
     _intro_skel: TcWanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
-    _egress_intro_skel: TcWanEgressIntroSkel<'static>,
-    _egress_intro_backing: OwnedOpenObject,
+    _egress_route_skel: TcWanEgressRouteSkel<'static>,
+    _egress_route_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     egress_hook: Option<TcHookProxy>,
     _ifindex: u32,
@@ -67,9 +67,9 @@ pub fn init_tc_wan_route(
         TcHookProxy::new(&intro_skel.progs.tc_wan_intro, ifindex as i32, libbpf_rs::TC_INGRESS, 1);
     ingress_hook.attach();
 
-    let (egress_intro_backing, egress_obj) = OwnedOpenObject::new();
-    let builder = TcWanEgressIntroSkelBuilder::default();
-    let mut open_skel = bpf_ctx!(builder.open(egress_obj), "open per-if tc_wan_egress_intro")?;
+    let (egress_route_backing, egress_obj) = OwnedOpenObject::new();
+    let builder = TcWanEgressRouteSkelBuilder::default();
+    let mut open_skel = bpf_ctx!(builder.open(egress_obj), "open per-if tc_wan_egress_route")?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
     crate::maps::reuse_pinned_map_or_recreate(
         &mut open_skel.maps.tc_wan_egress_roots,
@@ -135,9 +135,9 @@ pub fn init_tc_wan_route(
         pin_and_reuse_map(&mut open_skel.maps.xdp_redirect_able, &paths.xdp_redirect_able),
         "tc_wan_egress pin xdp_redirect_able"
     )?;
-    let egress_intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_intro")?;
+    let egress_route_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_egress_route")?;
     let mut egress_hook = TcHookProxy::new(
-        &egress_intro_skel.progs.tc_wan_egress_intro,
+        &egress_route_skel.progs.tc_wan_egress_route,
         ifindex as i32,
         TC_EGRESS,
         1,
@@ -147,8 +147,8 @@ pub fn init_tc_wan_route(
     Ok(TcWanRouteHandle {
         _intro_skel: intro_skel,
         _intro_backing: intro_backing,
-        _egress_intro_skel: egress_intro_skel,
-        _egress_intro_backing: egress_intro_backing,
+        _egress_route_skel: egress_route_skel,
+        _egress_route_backing: egress_route_backing,
         ingress_hook: Some(ingress_hook),
         egress_hook: Some(egress_hook),
         _ifindex: ifindex,

@@ -1,12 +1,12 @@
 //! IPv4 whole-flow baseline for the LAN-ingress route worker
-//! `tc_route4_lan_ingress` (tc_lan_ingress_intro.bpf.c).
+//! `tc_route4_lan_ingress` (tc_lan_ingress_route.bpf.c).
 //!
 //! Each test runs the complete worker pipeline once — scan → cache search →
 //! neighbour learn → lan_redirect_check → flow_verdict → pick_wan →
 //! set_cache_in_lan — and locks the current behaviour (including the TC-only
 //! divergences noted below) before any route rewrite.
 //!
-//! Baseline quirks locked here (see tc_lan_ingress_intro.bpf.c):
+//! Baseline quirks locked here (see tc_lan_ingress_route.bpf.c):
 //!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT, i.e. the TC
 //!     worker drops even default-flow traffic, unlike the XDP/legacy twin
 //!     which passes it (DROP default flow branch);
@@ -65,10 +65,10 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_lan_ingress_intro {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
+pub(crate) mod tc_lan_ingress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
 }
-use tc_lan_ingress_intro::TcLanIngressIntroSkel;
+use tc_lan_ingress_route::TcLanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -106,7 +106,7 @@ fn lan_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_lan_ingress_intro::TcLanIngressIntroSkelBuilder::default();
+        let mut builder = tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -114,7 +114,7 @@ macro_rules! load_skel {
 }
 
 fn run_lan_ingress(
-    skel: &TcLanIngressIntroSkel<'_>,
+    skel: &TcLanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>, u32, u32) {
@@ -139,7 +139,7 @@ fn run_lan_ingress(
 }
 
 /// Seed flow id 0's ip-trie with a single dst rule.
-fn seed_flow_rule(skel: &TcLanIngressIntroSkel<'_>, dst: Ipv4Addr, mark: u32) {
+fn seed_flow_rule(skel: &TcLanIngressRouteSkel<'_>, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
         mark: FlowMark::from(mark),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
@@ -150,7 +150,7 @@ fn seed_flow_rule(skel: &TcLanIngressIntroSkel<'_>, dst: Ipv4Addr, mark: u32) {
 
 /// Fill every slot of `flow_id` with a single WAN target.
 fn seed_wan_slots(
-    skel: &TcLanIngressIntroSkel<'_>,
+    skel: &TcLanIngressRouteSkel<'_>,
     flow_id: u32,
     ifindex: u32,
     is_docker: bool,
@@ -174,7 +174,7 @@ fn seed_wan_slots(
 }
 
 /// WAN-binding entry for the redirect target (needed by the WAN-cache path).
-fn seed_wan_binding(skel: &TcLanIngressIntroSkel<'_>) {
+fn seed_wan_binding(skel: &TcLanIngressRouteSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
         TARGET_IFINDEX,

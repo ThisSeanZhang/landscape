@@ -276,7 +276,7 @@ fn lan6_ingress_set_cache_skipped_when_wan_cache_has_entry() {
 // WAN-cache hit (reply-learned reverse fast path)
 // ---------------------------------------------------------------------------
 
-fn seed_wan_cache(skel: &TcLanIngressIntroSkel<'_>) {
+fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     put_rt6_cache_value(
         &skel.maps.rt6_cache_map,

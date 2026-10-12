@@ -5,7 +5,7 @@
 //! run inside freshly created network namespaces (see `net_utils`), so each
 //! test gets small ifindexes and a clean route table.
 mod chain_levels;
-mod lan_intro;
+mod lan_route;
 mod mss;
 mod pipeline;
 mod wan_route;

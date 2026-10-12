@@ -9,7 +9,7 @@ use libbpf_rs::{
 use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
-use crate::tests::xdp_lan_chain_skel::XdpLanChainSkelBuilder;
+use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
 use crate::tests::xdp_nat_skel::XdpNatSkelBuilder;
 use std::os::fd::{AsFd, AsRawFd};
 use zerocopy::{FromBytes, IntoBytes};
@@ -1625,7 +1625,7 @@ fn xdp_nat_chain_pipeline() {
 
     let share_pin = crate::tests::isolated_pin_root("xdp-nat-chain_pipe");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
-    let chain_b = XdpLanChainSkelBuilder::default();
+    let chain_b = XdpLanRootSkelBuilder::default();
     let mut chain_obj = std::mem::MaybeUninit::uninit();
     let chain = chain_b.open(&mut chain_obj).unwrap().load().unwrap();
 

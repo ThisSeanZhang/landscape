@@ -42,10 +42,10 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_lan_ingress_intro {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_intro.skel.rs"));
+pub(crate) mod tc_lan_ingress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
 }
-use tc_lan_ingress_intro::TcLanIngressIntroSkel;
+use tc_lan_ingress_route::TcLanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -77,7 +77,7 @@ fn lan_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_lan_ingress_intro::TcLanIngressIntroSkelBuilder::default();
+        let mut builder = tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -85,7 +85,7 @@ macro_rules! load_skel {
 }
 
 fn run_lan6_ingress(
-    skel: &TcLanIngressIntroSkel<'_>,
+    skel: &TcLanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>, u32, u32) {
@@ -108,7 +108,7 @@ fn run_lan6_ingress(
     (ret, out, mark, forwarded)
 }
 
-fn seed_flow_rule_under(skel: &TcLanIngressIntroSkel<'_>, flow_id: u32, dst: Ipv6Addr, mark: u32) {
+fn seed_flow_rule_under(skel: &TcLanIngressRouteSkel<'_>, flow_id: u32, dst: Ipv6Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
         mark: FlowMark::from(mark),
         cidr: IpConfig { ip: IpAddr::V6(dst), prefix: 128 },
@@ -118,7 +118,7 @@ fn seed_flow_rule_under(skel: &TcLanIngressIntroSkel<'_>, flow_id: u32, dst: Ipv
 }
 
 fn seed_wan_slots(
-    skel: &TcLanIngressIntroSkel<'_>,
+    skel: &TcLanIngressRouteSkel<'_>,
     flow_id: u32,
     ifindex: u32,
     is_docker: bool,
@@ -142,7 +142,7 @@ fn seed_wan_slots(
 }
 
 /// WAN-binding entry for the redirect target (needed by the WAN-cache path).
-fn seed_wan_binding(skel: &TcLanIngressIntroSkel<'_>) {
+fn seed_wan_binding(skel: &TcLanIngressRouteSkel<'_>) {
     crate::maps::wan::add_wan_ip(
         &skel.maps.wan_ip_binding,
         TARGET_IFINDEX,

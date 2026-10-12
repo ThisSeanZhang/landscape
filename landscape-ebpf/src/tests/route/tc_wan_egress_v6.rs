@@ -35,10 +35,10 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_wan_egress_intro {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_intro.skel.rs"));
+pub(crate) mod tc_wan_egress_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
 }
-use tc_wan_egress_intro::TcWanEgressIntroSkel;
+use tc_wan_egress_route::TcWanEgressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -63,7 +63,7 @@ fn egress_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_egress_intro::TcWanEgressIntroSkelBuilder::default();
+        let mut builder = tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
@@ -71,7 +71,7 @@ macro_rules! load_skel {
 }
 
 fn run_wan6_egress(
-    skel: &TcWanEgressIntroSkel<'_>,
+    skel: &TcWanEgressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
 ) -> (i32, Vec<u8>, u32, u32) {
@@ -94,7 +94,7 @@ fn run_wan6_egress(
     (ret, out, mark, forwarded)
 }
 
-fn seed_flow_rule(skel: &TcWanEgressIntroSkel<'_>, dst: Ipv6Addr, mark: u32) {
+fn seed_flow_rule(skel: &TcWanEgressRouteSkel<'_>, dst: Ipv6Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
         mark: FlowMark::from(mark),
         cidr: IpConfig { ip: IpAddr::V6(dst), prefix: 128 },
@@ -104,7 +104,7 @@ fn seed_flow_rule(skel: &TcWanEgressIntroSkel<'_>, dst: Ipv6Addr, mark: u32) {
 }
 
 fn seed_wan_slots(
-    skel: &TcWanEgressIntroSkel<'_>,
+    skel: &TcWanEgressRouteSkel<'_>,
     flow_id: u32,
     ifindex: u32,
     is_docker: bool,
@@ -127,7 +127,7 @@ fn seed_wan_slots(
     replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, flow_id, &targets);
 }
 
-fn assert_no_route_cache(skel: &TcWanEgressIntroSkel<'_>) {
+fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     assert!(
