@@ -23,9 +23,20 @@ pub fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
     }
 }
 
+/// Owned counterpart of `normalize_domain_text`: consumes `value` and rewrites
+/// it in place, always reusing its allocation.
+pub fn normalize_domain_string(mut value: String) -> String {
+    let trimmed_len = value.trim_end_matches('.').len();
+    if trimmed_len != value.len() {
+        value.truncate(trimmed_len);
+    }
+    value.make_ascii_lowercase();
+    value
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_domain_name;
+    use super::{normalize_domain_name, normalize_domain_string};
 
     #[test]
     fn normalizes_unicode_case_and_trailing_dot() {
@@ -35,5 +46,15 @@ mod tests {
     #[test]
     fn rejects_empty_domain() {
         assert!(normalize_domain_name(" . ").is_err());
+    }
+
+    #[test]
+    fn normalize_domain_string_reuses_and_rewrites() {
+        assert_eq!(normalize_domain_string("example.com".to_string()), "example.com");
+        assert_eq!(normalize_domain_string("Example.COM.".to_string()), "example.com");
+        assert_eq!(normalize_domain_string("foo..".to_string()), "foo");
+        assert_eq!(normalize_domain_string("FOO..".to_string()), "foo");
+        assert_eq!(normalize_domain_string("Foo..".to_string()), "foo");
+        assert_eq!(normalize_domain_string("EXAMPLE.com".to_string()), "example.com");
     }
 }

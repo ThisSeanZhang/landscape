@@ -1,6 +1,6 @@
 use ahash::AHashSet;
 use aho_corasick::AhoCorasick;
-use landscape_common::dns::domain::normalize_domain_text;
+use landscape_common::dns::domain::normalize_domain_string;
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType};
 use regex::{Regex, RegexSet};
 use std::{collections::BTreeMap, time::Instant};
@@ -30,7 +30,7 @@ impl DomainMatcher {
             match each_config.match_type {
                 DomainMatchType::Plain => {
                     // 将关键字添加到列表
-                    keywords.push(normalize_domain_text(&each_config.value).into_owned());
+                    keywords.push(normalize_domain_string(each_config.value));
                 }
                 DomainMatchType::Regex => {
                     // 先校验语法，非法规则跳过（与原有行为一致），最后统一编译
@@ -40,21 +40,21 @@ impl DomainMatcher {
                 }
                 DomainMatchType::Domain => {
                     // 子域名匹配（反转字节作为 key 构建双数组 trie）
-                    let normalized = normalize_domain_text(&each_config.value);
-                    if normalized.is_ascii() {
+                    let domain_text = normalize_domain_string(each_config.value);
+                    if domain_text.is_ascii() {
                         // BTreeMap 键去重，value 统一为 0（bool 语义）
                         let reversed: Vec<u8> =
-                            normalized.as_bytes().iter().rev().copied().collect();
+                            domain_text.as_bytes().iter().rev().copied().collect();
                         subdomain_map.insert(reversed, 0usize);
                         // 规则自身并入 full_domains：精确命中免走 trie
-                        full_domains.insert(normalized.into_owned());
+                        full_domains.insert(domain_text);
                     } else {
-                        skipped_non_ascii.push(normalized.into_owned());
+                        skipped_non_ascii.push(domain_text);
                     }
                 }
                 DomainMatchType::Full => {
                     // 完全匹配（存储在 HashSet 中）
-                    full_domains.insert(normalize_domain_text(&each_config.value).into_owned());
+                    full_domains.insert(normalize_domain_string(each_config.value));
                 }
             }
         }

@@ -5,7 +5,7 @@ use landscape_common::{
         GeoSiteSource, GeoSourceKind, GeoTaskPhase, GeoTaskProgress, RawDatState,
     },
     database::store::{Change, ConfigStore},
-    dns::domain::{normalize_domain_name, normalize_domain_text},
+    dns::domain::{normalize_domain_name, normalize_domain_string},
     dns::rule::DomainMatchType,
     memtrack::{TaggedFuture, subsystem_from_task_label},
     service::controller::ConfigStoreController,
@@ -94,10 +94,10 @@ fn domain_match_type_tag(match_type: &DomainMatchType) -> u8 {
 /// Domain-matching values are normalized for SQL candidate probing; Regex
 /// values are patterns where case and trailing `.` are significant, stored
 /// verbatim.
-fn normalize_site_rule_value(match_type: &DomainMatchType, value: &str) -> String {
+fn normalize_site_rule_value(match_type: &DomainMatchType, value: String) -> String {
     match match_type {
-        DomainMatchType::Regex => value.to_string(),
-        _ => normalize_domain_text(value).into_owned(),
+        DomainMatchType::Regex => value,
+        _ => normalize_domain_string(value),
     }
 }
 
@@ -225,7 +225,7 @@ impl GeoSiteService {
             let rules: Vec<SiteRuleRow> = values
                 .into_iter()
                 .map(|value| {
-                    let domain = normalize_site_rule_value(&value.match_type, &value.value);
+                    let domain = normalize_site_rule_value(&value.match_type, value.value);
                     SiteRuleRow::new(value.match_type, domain, value.attributes)
                 })
                 .collect();
@@ -856,24 +856,30 @@ mod tests {
     #[test]
     fn storage_normalization_trims_and_lowercases_domain_types() {
         assert_eq!(
-            normalize_site_rule_value(&DomainMatchType::Domain, "Example.COM."),
+            normalize_site_rule_value(&DomainMatchType::Domain, "Example.COM.".to_string()),
             "example.com"
         );
         assert_eq!(
-            normalize_site_rule_value(&DomainMatchType::Full, "WWW.Example.com.."),
+            normalize_site_rule_value(&DomainMatchType::Full, "WWW.Example.com..".to_string()),
             "www.example.com"
         );
-        assert_eq!(normalize_site_rule_value(&DomainMatchType::Plain, "Foo."), "foo");
+        assert_eq!(normalize_site_rule_value(&DomainMatchType::Plain, "Foo.".to_string()), "foo");
         assert_eq!(
-            normalize_site_rule_value(&DomainMatchType::Domain, "example.com"),
+            normalize_site_rule_value(&DomainMatchType::Domain, "example.com".to_string()),
             "example.com"
         );
     }
 
     #[test]
     fn storage_normalization_keeps_regex_verbatim() {
-        assert_eq!(normalize_site_rule_value(&DomainMatchType::Regex, "[A-Z]+\\."), "[A-Z]+\\.");
-        assert_eq!(normalize_site_rule_value(&DomainMatchType::Regex, "^abc."), "^abc.");
+        assert_eq!(
+            normalize_site_rule_value(&DomainMatchType::Regex, "[A-Z]+\\.".to_string()),
+            "[A-Z]+\\."
+        );
+        assert_eq!(
+            normalize_site_rule_value(&DomainMatchType::Regex, "^abc.".to_string()),
+            "^abc."
+        );
     }
 
     #[test]
@@ -931,7 +937,7 @@ mod tests {
         for (index, (match_type, value, _query, _expected)) in cases.iter().enumerate() {
             let row = SiteRuleRow::new(
                 match_type.clone(),
-                normalize_site_rule_value(match_type, value),
+                normalize_site_rule_value(match_type, value.to_string()),
                 HashSet::new(),
             );
             repo.replace_by_name("geosite", &format!("R{index}"), "hash", vec![row]).await.unwrap();
@@ -948,7 +954,7 @@ mod tests {
             if *expected {
                 let hit = hit.expect("checked above");
                 assert_eq!(hit.match_type, *match_type);
-                assert_eq!(hit.domain, normalize_site_rule_value(match_type, value));
+                assert_eq!(hit.domain, normalize_site_rule_value(match_type, value.to_string()));
             }
         }
 
