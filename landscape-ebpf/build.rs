@@ -315,7 +315,6 @@ fn main() {
 
     let mut jobs = Vec::new();
     collect_bpf_in_dir(Path::new("src/bpf/"), &project_root, &mut jobs);
-    collect_bpf_in_dir(Path::new("src/bpf/tc_chain/"), &project_root, &mut jobs);
     if env::var_os("CARGO_FEATURE_BPF_TEST").is_some() {
         collect_test_bpf(Path::new("src/bpf"), &project_root, &mut jobs);
     }

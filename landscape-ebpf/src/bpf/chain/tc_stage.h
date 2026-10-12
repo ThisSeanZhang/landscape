@@ -34,10 +34,10 @@ struct {
  *  LAN ingress traffic is routed to WAN egress via bpf_redirect and
  *  processed by the WAN egress chain.
  *  Each chain is composed of FDs linked via single-slot PROG_ARRAY maps.
- *  The Rust side (tc_chain/manager.rs) wires each service's FD into the
+ *  The Rust side (chain/tc_manager.rs) wires each service's FD into the
  *  predecessor's next-stage slot.
  *
- *  BPF source files (src/bpf/tc_chain/):
+ *  BPF source files (src/bpf/):
  *    tc_wan_ingress_intro.bpf.c — WAN ingress classifier (tc_wan_ingress_intro)
  *    tc_wan_ingress_root.bpf.c  — per-WAN ingress chain root
  *    tc_wan_egress_root.bpf.c   — per-WAN egress chain root
