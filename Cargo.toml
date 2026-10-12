@@ -69,7 +69,6 @@ tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.20", features = ["codec", "net"] }
 tokio-rustls = "0.26.6"
 async-trait = "0.1.92"
-async-std = { version = "1.13.2", features = ["attributes", "tokio1"] }
 futures = "0.3.34"
 futures-util = { version = "0.3.34", default-features = false }
 

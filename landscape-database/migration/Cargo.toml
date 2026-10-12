@@ -14,8 +14,8 @@ name = "migration"
 path = "src/lib.rs"
 
 [dependencies]
-async-std = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 uuid = { workspace = true }
 
 [dependencies.sea-orm-migration]
@@ -31,6 +31,3 @@ features = [
     "with-uuid",
     "with-json",
 ]
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }

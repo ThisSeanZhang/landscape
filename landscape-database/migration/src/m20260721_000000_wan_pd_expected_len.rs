@@ -38,7 +38,7 @@ mod tests {
 
     use super::*;
 
-    #[async_std::test]
+    #[tokio::test]
     async fn existing_rows_receive_default_expected_pd_len() {
         let database = Database::connect("sqlite::memory:").await.unwrap();
         database
