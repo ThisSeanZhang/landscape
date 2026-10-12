@@ -9,8 +9,6 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-#define TC_NEXT_SLOT 0
-
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, 1);

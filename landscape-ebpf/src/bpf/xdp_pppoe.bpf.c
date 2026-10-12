@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
+#include "base/pppoe_def.h"
 #include "chain/xdp_stage.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
@@ -11,20 +12,6 @@
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile u16 session_id = 0;
-
-#define ETH_PPP bpf_htons(0x8864)
-#define ETH_PPP_IP bpf_htons(0x0021)
-#define ETH_PPP_IPV6 bpf_htons(0x0057)
-#define ETH_IPV4 bpf_htons(0x0800)
-#define ETH_IPV6 bpf_htons(0x86DD)
-
-struct pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    u16 session_id;
-    u16 length;
-    u16 protocol;
-} __attribute__((packed));
 
 static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
@@ -36,7 +23,7 @@ static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx) {
     bool is_v6 = (eth->h_proto == ETH_IPV6);
     if (!is_v6 && eth->h_proto != ETH_IPV4) return XDP_PASS;
 
-    u16 ppp_proto = is_v6 ? ETH_PPP_IPV6 : ETH_PPP_IP;
+    u16 ppp_proto = is_v6 ? ETH_P_PPP_IPV6 : ETH_P_PPP_IPV4;
 
     int ret = bpf_xdp_adjust_head(ctx, -8);
     if (ret) return XDP_PASS;
@@ -62,7 +49,7 @@ static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx) {
     __builtin_memcpy(data + sizeof(struct ethhdr), &hdr, sizeof(hdr));
 
     eth = data;
-    eth->h_proto = ETH_PPP;
+    eth->h_proto = ETH_P_PPP_SES;
 
     return XDP_PASS;
 }

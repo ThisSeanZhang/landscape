@@ -10,7 +10,7 @@
 #include <bpf/bpf_endian.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 
 union u_ld_ip {
     __be32 all[4];

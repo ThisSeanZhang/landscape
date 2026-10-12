@@ -6,26 +6,13 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "base/pppoe_def.h"
 
 #undef BPF_LOG_TOPIC
 
 char LICENSE[] SEC("license") = "GPL";
 
 #define ETH_HLEN 14
-
-#define ETH_PPP_DIS bpf_htons(0x8863)
-#define ETH_PPP bpf_htons(0x8864)
-
-#define ETH_PPP_IPV4 bpf_htons(0x0021)
-#define ETH_PPP_IPV6 bpf_htons(0x0057)
-
-struct __attribute__((__packed__)) pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    u16 session_id;
-    u16 length;
-    u16 protocol;
-};
 
 SEC("socket")
 int pppoe_pnet_filter(struct __sk_buff *skb) {
@@ -39,7 +26,7 @@ int pppoe_pnet_filter(struct __sk_buff *skb) {
 
     bpf_skb_load_bytes(skb, 12, &eth_proto, 2);
     // 排除非 PPPOE 协议的数据
-    if (eth_proto != ETH_PPP_DIS && eth_proto != ETH_PPP) return 0;
+    if (eth_proto != ETH_P_PPP_DISC && eth_proto != ETH_P_PPP_SES) return 0;
 
     struct pppoe_header pppoe;
 
@@ -50,7 +37,7 @@ int pppoe_pnet_filter(struct __sk_buff *skb) {
     }
 
     // 如果是 IPV4 或者 IPV6 的传输数据, 也进行过滤
-    if (pppoe.protocol == ETH_PPP_IPV4 || pppoe.protocol == ETH_PPP_IPV6) {
+    if (pppoe.protocol == ETH_P_PPP_IPV4 || pppoe.protocol == ETH_P_PPP_IPV6) {
         return 0;
     }
 

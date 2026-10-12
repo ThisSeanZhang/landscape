@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 #include "chain/tc_stage.h"
 #include "chain/tc_wan_exit_maps.h"
 

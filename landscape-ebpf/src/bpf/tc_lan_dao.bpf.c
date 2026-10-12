@@ -6,7 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 #include "neigh/neigh_ip6.h"
 #include "neigh/neigh_ip6_event.h"
 #include "route/route6_lan.h"

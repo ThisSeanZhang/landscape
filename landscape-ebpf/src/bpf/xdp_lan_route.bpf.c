@@ -23,6 +23,7 @@
 #include "route/route6_cache.h"
 #include "route/route6_lan.h"
 #include "route/route6_slot.h"
+#include "route/xdp_route_read.h"
 
 #include "route/flow_match.h"
 #include "neigh/neigh_ip4.h"
@@ -30,42 +31,6 @@
 #include "route/neigh_learn.h"
 
 char LICENSE[] SEC("license") = "GPL";
-
-// ── Packet reading (shared with xdp_wan_route) ──
-
-static __always_inline int xdp_read_ipv4(struct xdp_md *ctx, struct route4_context *context) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
-    struct ethhdr *eth = data;
-    struct iphdr *iph;
-
-    if ((void *)(eth + 1) > data_end) return XDP_PASS;
-    if (eth->h_proto != ETH_IPV4) return XDP_PASS;
-
-    iph = (struct iphdr *)(eth + 1);
-    if ((void *)(iph + 1) > data_end) return XDP_DROP;
-
-    context->saddr = iph->saddr;
-    context->daddr = iph->daddr;
-    return 0;
-}
-
-static __always_inline int xdp_read_ipv6(struct xdp_md *ctx, struct route6_context *context) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
-    struct ethhdr *eth = data;
-    struct ipv6hdr *ip6h;
-
-    if ((void *)(eth + 1) > data_end) return XDP_PASS;
-    if (eth->h_proto != ETH_IPV6) return XDP_PASS;
-
-    ip6h = (struct ipv6hdr *)(eth + 1);
-    if ((void *)(ip6h + 1) > data_end) return XDP_DROP;
-
-    COPY_ADDR_FROM(context->saddr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(context->daddr.all, ip6h->daddr.in6_u.u6_addr32);
-    return 0;
-}
 
 // ── XDP flow_id matching (MAC at eth->h_source, no current_l3_offset check needed) ──
 

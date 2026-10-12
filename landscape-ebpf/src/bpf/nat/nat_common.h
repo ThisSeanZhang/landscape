@@ -3,16 +3,25 @@
 #include <vmlinux.h>
 #include "base/landscape_log.h"
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 
 #define NAT_MAPPING_CACHE_SIZE 1024 * 64 * 2
 #define NAT_MAPPING_TIMER_SIZE 1024 * 64 * 2
+
+// IPv6 NPTv6 translated prefix bits (upper byte)
+#define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
 
 #define NAT_MAPPING_INGRESS 0
 #define NAT_MAPPING_EGRESS 1
 
 #define NAT_CONN_ACTIVE 1
 #define NAT_CONN_DELETE 2
+
+// connection tracking states (advanced by pkt_type)
+#define CT_INIT 0
+#define CT_SYN 1
+#define CT_FIN 2
+#define CT_LESS_EST 3
 
 // 33333
 volatile const __be16 TEST_PORT = 0x3582;

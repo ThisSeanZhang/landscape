@@ -5,7 +5,7 @@
 #include <bpf/bpf_endian.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 #include "einat/einat_helpers.h"
 #include "scanner/scan_types.h"
 

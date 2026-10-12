@@ -12,7 +12,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 
 #define FRAG_CACHE_SIZE (1024 * 32)
 

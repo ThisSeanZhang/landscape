@@ -4,23 +4,9 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-
-#ifndef ETH_P_PPP_SES
-#define ETH_P_PPP_SES bpf_htons(0x8864)
-#endif
-
-#define ETH_P_PPP_IPV4 bpf_htons(0x0021)
-#define ETH_P_PPP_IPV6 bpf_htons(0x0057)
+#include "base/pppoe_def.h"
 
 const volatile __be16 session_id = 0;
-
-struct __attribute__((packed)) pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    __be16 session_id;
-    __be16 length;
-    __be16 protocol;
-};
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -6,7 +6,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 
 enum xdp_scan_status {
     XDP_SCAN_OK = 0,

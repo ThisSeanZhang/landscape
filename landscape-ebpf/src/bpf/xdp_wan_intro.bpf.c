@@ -6,73 +6,16 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "base/pppoe_def.h"
 
 #include "chain/xdp_meta.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
-
-#ifndef ETH_P_PPP_DISC
-#define ETH_P_PPP_DISC bpf_htons(0x8863)
-#endif
-
-#ifndef ETH_P_PPP_SES
-#define ETH_P_PPP_SES bpf_htons(0x8864)
-#endif
-
-#define ETH_P_PPP_IPV4 bpf_htons(0x0021)
-#define ETH_P_PPP_IPV6 bpf_htons(0x0057)
+#include "chain/wan_intro_dispatch.h"
 
 #define WAN_INTRO_IFINDEX_TYPE 2
 
-struct __attribute__((packed)) pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    __be16 session_id;
-    __be16 length;
-    __be16 protocol;
-};
-
 char LICENSE[] SEC("license") = "GPL";
-
-struct dispatch_v4 {
-    // Reserve 4 bytes so v4/v6 share the same 8-byte address slot
-    u8 _pad[4];
-    __be32 daddr;
-};
-
-struct dispatch_v6 {
-    // IPv6 /64 prefix
-    __be64 prefix64;
-};
-
-struct dispatch_ppp {
-    // PPPoE session id in 32bit slot, sharing key layout with v4/v6
-    u8 _pad[4];
-    __be32 session_id;
-};
-
-struct dispatch_key {
-    // Dispatch type: PPPoE inner IPv4/IPv6, direct IPv4/IPv6, or ingress ifindex fallback
-    u32 dispatch_type;
-    union {
-        struct dispatch_v4 v4;
-        struct dispatch_v6 v6;
-        struct dispatch_ppp ppp;
-        u32 ifindex;
-    };
-};
-
-struct dispatch_value {
-    // Prog array index of the matched chain root
-    u32 next_pipe_root_index;
-};
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct dispatch_key);
-    __type(value, struct dispatch_value);
-    __uint(max_entries, XDP_PIPE_MAX_ENTRIES);
-} wan_intro_dispatch_map SEC(".maps");
 
 static __always_inline int wan_intro_tailcall_root(struct xdp_md *ctx, struct dispatch_key *key) {
     struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);

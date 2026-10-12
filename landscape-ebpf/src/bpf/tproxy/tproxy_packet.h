@@ -2,7 +2,7 @@
 #define __LD_TPROXY_PACKET_H__
 
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 #include "scanner/pkg_scanner.h"
 
 static __always_inline int scan_tproxy_packet(struct __sk_buff *skb, u32 current_l3_offset,

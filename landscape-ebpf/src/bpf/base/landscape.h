@@ -150,21 +150,6 @@ struct inet_pair {
     __be16 dst_port;
 };
 
-/// 作为 fragment 缓存的 key
-struct fragment_cache_key {
-    u8 _pad[2];
-    u8 l3proto;
-    u8 l4proto;
-    u32 id;
-    union u_inet_addr saddr;
-    union u_inet_addr daddr;
-};
-
-struct fragment_cache_value {
-    u16 sport;
-    u16 dport;
-};
-
 static __always_inline bool is_zero_mac(const u8 *mac) {
     return mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0;
 }
@@ -227,6 +212,10 @@ static __always_inline bool is_broadcast_ip6(const u8 *bytes) {
     }
 
     return false;
+}
+
+static __always_inline bool is_broadcast_ip6_pair(const struct inet_pair *ip_pair) {
+    return is_broadcast_ip6(ip_pair->src_addr.bits) || is_broadcast_ip6(ip_pair->dst_addr.bits);
 }
 
 struct inet4_addr {

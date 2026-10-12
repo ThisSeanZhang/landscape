@@ -12,8 +12,6 @@
 #include "fragment/xdp_frag6.h"
 #include "nat/xdp_csum_helpers.h"
 
-#define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
-
 static __always_inline void xdp_nat6_metric_accumulate(void *data, void *data_end, bool ingress,
                                                        struct nat6_timer_value *value) {
     u64 bytes = (u64)(long)data_end - (u64)(long)data;

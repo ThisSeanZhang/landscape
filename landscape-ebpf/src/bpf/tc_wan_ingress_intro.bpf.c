@@ -7,44 +7,9 @@
 
 #include "chain/tc_cb.h"
 #include "chain/tc_handoff.h"
+#include "chain/wan_intro_dispatch.h"
 
 #define TC_INTRO_IFINDEX_TYPE 2
-
-struct __attribute__((packed)) pppoe_header {
-    u8 version_and_type;
-    u8 code;
-    __be16 session_id;
-    __be16 length;
-    __be16 protocol;
-};
-
-struct dispatch_v4 {
-    u8 _pad[4];
-    __be32 daddr;
-};
-
-struct dispatch_v6 {
-    __be64 prefix64;
-};
-
-struct dispatch_ppp {
-    u8 _pad[4];
-    __be32 session_id;
-};
-
-struct dispatch_key {
-    u32 dispatch_type;
-    union {
-        struct dispatch_v4 v4;
-        struct dispatch_v6 v6;
-        struct dispatch_ppp ppp;
-        u32 ifindex;
-    };
-};
-
-struct dispatch_value {
-    u32 next_pipe_root_index;
-};
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -56,13 +21,6 @@ struct {
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(u32));
 } tc_pipe_root_progs SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct dispatch_key);
-    __type(value, struct dispatch_value);
-    __uint(max_entries, 1024);
-} wan_intro_dispatch_map SEC(".maps");
 
 static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct dispatch_key *key) {
     struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);

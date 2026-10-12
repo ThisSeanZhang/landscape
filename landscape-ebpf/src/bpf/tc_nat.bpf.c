@@ -210,8 +210,7 @@ static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifinde
     ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
-    ret = is_broadcast_ip_pair(LANDSCAPE_IPV6_TYPE, &ip_pair);
-    if (ret != TC_ACT_OK) return TC_ACT_OK;
+    if (unlikely(is_broadcast_ip6_pair(&ip_pair))) return TC_ACT_OK;
     ret = frag6_track(&idx, (const struct in6_addr *)&ip_pair.src_addr,
                       (const struct in6_addr *)&ip_pair.dst_addr, &ip_pair.src_port,
                       &ip_pair.dst_port);
@@ -234,8 +233,7 @@ static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifind
     ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
     if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (ret) return TC_ACT_OK;
-    ret = is_broadcast_ip_pair(LANDSCAPE_IPV6_TYPE, &ip_pair);
-    if (ret != TC_ACT_OK) return TC_ACT_OK;
+    if (unlikely(is_broadcast_ip6_pair(&ip_pair))) return TC_ACT_OK;
     ret = frag6_track(&idx, (const struct in6_addr *)&ip_pair.src_addr,
                       (const struct in6_addr *)&ip_pair.dst_addr, &ip_pair.src_port,
                       &ip_pair.dst_port);

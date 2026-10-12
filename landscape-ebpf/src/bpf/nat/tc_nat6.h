@@ -8,8 +8,6 @@
 #include "nat/nat6_ct_timer.h"
 #include "route/wan_ip.h"
 
-#define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
-
 static __always_inline int update_ipv6_cache_value(struct __sk_buff *skb, struct inet_pair *ip_pair,
                                                    struct nat6_timer_value *value) {
     COPY_ADDR_FROM(value->client_prefix, ip_pair->src_addr.bits);

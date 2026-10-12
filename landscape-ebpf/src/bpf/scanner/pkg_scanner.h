@@ -5,8 +5,9 @@
 #include <bpf/bpf_endian.h>
 #include "base/landscape_log.h"
 #include "base/landscape.h"
-#include "base/pkg_def.h"
+#include "base/proto_def.h"
 #include "einat/einat_helpers.h"
+#include "scanner/skb_common.h"
 
 // size limit 5 u32
 // icmp type
@@ -66,29 +67,9 @@ struct packet_info {
     struct inet_pair ip_pair;
 };
 
-struct ip_scanner_ctx {
-    u8 l4_protocol;
-    u8 fragment_type;
-    u16 fragment_off;
-    u16 fragment_id;
-    u16 l4_offset;
-};
-
-enum land_scan_result {
-    LD_SCAN_OK = 0,
-    LD_SCAN_ERR = 2,
-    LD_SCAN_UNSPEC = -1,
-};
-
-enum packet_scan_depth {
-    LD_SCAN_DEPTH_NONE = 0,
-    LD_SCAN_DEPTH_PROTO = 1,
-    LD_SCAN_DEPTH_L3 = 2,
-    LD_SCAN_DEPTH_FULL = 3,
-};
-
-static __always_inline int scan_ipv4(struct __sk_buff *skb, struct ip_scanner_ctx *scanner_ctx) {
-#define BPF_LOG_TOPIC "scan_ipv4"
+static __always_inline int pkt_scan_ipv4(struct __sk_buff *skb,
+                                         struct ip_scanner_ctx *scanner_ctx) {
+#define BPF_LOG_TOPIC "pkt_scan_ipv4"
 
     struct iphdr *iph;
     if (VALIDATE_READ_DATA(skb, &iph, scanner_ctx->l4_offset, sizeof(struct iphdr))) {
@@ -123,8 +104,9 @@ static __always_inline int scan_ipv4(struct __sk_buff *skb, struct ip_scanner_ct
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int scan_ipv6(struct __sk_buff *skb, struct ip_scanner_ctx *scanner_ctx) {
-#define BPF_LOG_TOPIC "scan_ipv6"
+static __always_inline int pkt_scan_ipv6(struct __sk_buff *skb,
+                                         struct ip_scanner_ctx *scanner_ctx) {
+#define BPF_LOG_TOPIC "pkt_scan_ipv6"
 
     struct ipv6hdr *ip6h;
     if (VALIDATE_READ_DATA(skb, &ip6h, scanner_ctx->l4_offset, sizeof(*ip6h))) {
@@ -238,12 +220,12 @@ static __always_inline int scan_packet_outer_l4(struct __sk_buff *skb, u32 curre
     offset_info->l3_offset_when_scan = current_l3_offset;
     ctx.l4_offset = current_l3_offset;
     if (is_ipv4) {
-        if (scan_ipv4(skb, &ctx)) {
+        if (pkt_scan_ipv4(skb, &ctx)) {
             ld_bpf_log("scan ip v4 err");
             return LD_SCAN_ERR;
         }
     } else {
-        if (scan_ipv6(skb, &ctx)) {
+        if (pkt_scan_ipv6(skb, &ctx)) {
             ld_bpf_log("scan ip v6 err");
             return LD_SCAN_ERR;
         }
@@ -284,7 +266,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             offset_info->icmp_error_l3_offset = offset_info->l4_offset + ICMP_HDR_LEN;
             barrier_var(offset_info->icmp_error_l3_offset);
             ctx.l4_offset = offset_info->icmp_error_l3_offset;
-            if (scan_ipv4(skb, &ctx)) {
+            if (pkt_scan_ipv4(skb, &ctx)) {
                 ld_bpf_log("scan icmp inner ipv4 error: %u", ctx.l4_offset);
                 return LD_SCAN_ERR;
             }
@@ -340,7 +322,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
         case ICMP_ERROR_MSG: {
             offset_info->icmp_error_l3_offset = offset_info->l4_offset + ICMP_HDR_LEN;
             ctx.l4_offset = offset_info->icmp_error_l3_offset;
-            if (scan_ipv6(skb, &ctx)) {
+            if (pkt_scan_ipv6(skb, &ctx)) {
                 ld_bpf_log("scan icmpv6 inner ipv6 error: %u", ctx.l4_offset);
                 return LD_SCAN_ERR;
             }
