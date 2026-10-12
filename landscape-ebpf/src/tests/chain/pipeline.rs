@@ -105,7 +105,7 @@ fn xdp_firewall_pipeline() {
         wan_h_i = wan_pair.host_ifindex();
         crate::tests::check_ifindex("wan_h", wan_h_i);
         _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
-        _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
+        _l1 = intro.progs.xdp_wan_intro.attach_xdp(wan_h_i as i32).unwrap();
     }
     {
         let _e = peer_ns.enter();

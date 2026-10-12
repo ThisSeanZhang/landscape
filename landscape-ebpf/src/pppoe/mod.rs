@@ -75,7 +75,6 @@ pub async fn start(
             .unwrap();
     let pppoe_skel =
         crate::bpf_ctx!(pppoe_open.load(), "pppoe_client load skeleton failed").unwrap();
-
     let pppoe_pnet_progs = pppoe_skel.progs;
 
     let pppoe_pnet_filter_fd = pppoe_pnet_progs.pppoe_pnet_filter.as_fd().as_raw_fd();

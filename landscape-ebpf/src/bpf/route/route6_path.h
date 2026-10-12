@@ -5,7 +5,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "../landscape.h"
-#include "../land_wan_ip.h"
+#include "../wan_ip.h"
 
 #include "flow6_maps.h"
 #include "route6_cache.h"

@@ -38,7 +38,7 @@ struct {
  *  predecessor's next-stage slot.
  *
  *  BPF source files (src/bpf/tc_chain/):
- *    tc_wan_ingress_intro.bpf.c — WAN ingress classifier (tc_wan_intro)
+ *    tc_wan_ingress_intro.bpf.c — WAN ingress classifier (tc_wan_ingress_intro)
  *    tc_wan_ingress_root.bpf.c  — per-WAN ingress chain root
  *    tc_wan_egress_root.bpf.c   — per-WAN egress chain root
  *    tc_wan_egress_route.bpf.c  — WAN egress route + classifier
@@ -51,10 +51,10 @@ struct {
  *  WAN INGRESS CHAIN
  *  ─────────────────────────────────────────────────────────────────────────
  *
- *    tc_wan_ingress_intro (tc_wan_intro)
+ *    tc_wan_ingress_intro
  *      └─ dispatch by daddr/prefix64/session_id
  *           └─ tc_pipe_root_progs[dispatch_idx]
- *                └─ tc_wan_chain_ingress_root
+ *                └─ tc_wan_ingress_root
  *                     ├─ skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset  (injected)
  *                     ├─ bpf_tail_call(skb, &wan_ingress_root_next_stage, 0)
  *                     │    └─ PPPoE
@@ -86,7 +86,7 @@ struct {
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
  *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
  *
- *    tc_wan_chain_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
+ *    tc_wan_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
  *      ├─ bpf_tail_call(skb, &wan_egress_root_next_stage, 0)
  *      │    └─ MSS
  *      │         └─ TC_CHAIN_WAN_EGRESS(skb) → NAT
@@ -111,7 +111,7 @@ struct {
  *    ▸ packet arrives at the egress of the target WAN interface
  *
  *    tc_wan_egress_route sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)
- *      └─ tc_wan_chain_egress_root
+ *      └─ tc_wan_egress_root
  *           ├─ MSS → NAT → FW → PPPoE  (WAN egress chain)
  *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect → TC_ACT_OK
  *
@@ -127,7 +127,7 @@ struct {
  *  and `wan_egress_root_next_stage` (in tc_wan_egress_root.bpf.c)
  *  maps (max_entries=1 each, no tc_stage.h dependency).
  *
- *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_chain_egress_root  (WAN egress)
+ *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_egress_root  (WAN egress)
  *  Stage → wan_ingress_next_stage[0]       → next WAN ingress stage
  *  Stage → wan_egress_next_stage[0]        → next WAN egress stage
  *

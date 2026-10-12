@@ -26,7 +26,7 @@ pub(crate) mod xdp_lan_exit_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_exit.skel.rs"));
 }
 
-use crate::bpf_rs_shared::xdp_skb_pppoe_skel;
+use crate::bpf_rs_shared::pppoe_skb_fallback_skel;
 use crate::chain::xdp_wan_route::xdp_wan_route_skel;
 
 use xdp_lan_exit_skel::XdpLanExitSkelBuilder;
@@ -195,7 +195,7 @@ impl NativeXdpLink {
                 // (if any) and attach it as a fallback.
                 if let Some(pending) = rt.xdp.take_skb_pending(ifindex) {
                     let SkbPending { _skel, _backing } = pending;
-                    match SkbXdpLink::attach(&_skel.progs.xdp_skb_pppoe, ifindex) {
+                    match SkbXdpLink::attach(&_skel.progs.pppoe_skb_fallback, ifindex) {
                         Ok(skb_link) => {
                             let bundle = SkbXdpBundle::new(_backing, _skel, skb_link);
                             rt.xdp.set_skb_bundle(ifindex, bundle);
@@ -332,14 +332,14 @@ impl Drop for SkbXdpLink {
 /// The manager decides whether to attach it (as SKB fallback) or keep it
 /// for later, depending on native XDP availability.
 pub(crate) struct SkbPending {
-    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    _skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 impl SkbPending {
     pub(crate) fn new(
         backing: OwnedOpenObject,
-        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+        skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
     ) -> Self {
         Self { _backing: backing, _skel: skel }
     }
@@ -352,14 +352,14 @@ impl SkbPending {
 /// finally the backing memory is freed.
 pub(crate) struct SkbXdpBundle {
     _link: SkbXdpLink,
-    _skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+    _skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 impl SkbXdpBundle {
     pub(crate) fn new(
         backing: OwnedOpenObject,
-        skel: xdp_skb_pppoe_skel::XdpSkbPppoeSkel<'static>,
+        skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
         link: SkbXdpLink,
     ) -> Self {
         Self { _backing: backing, _skel: skel, _link: link }
@@ -610,7 +610,7 @@ impl XdpChainManager {
     /// The seed skeleton's wan-intro dispatch program, for callers attaching
     /// a [`NativeXdpLink`] (which needs the owning [`EbpfRuntime`]).
     pub(crate) fn wan_intro_prog(&self) -> &Program<'_> {
-        &self._seed.progs.wan_intro_dispatch
+        &self._seed.progs.xdp_wan_intro
     }
 
     pub(crate) fn set_skb_bundle(&self, ifindex: u32, bundle: SkbXdpBundle) {
@@ -634,7 +634,7 @@ impl XdpChainManager {
                 // WR is active but running in TC-only mode — no native XDP
                 // on the interface, safe to attach SKB immediately.
                 let SkbPending { _skel, _backing } = pending;
-                match SkbXdpLink::attach(&_skel.progs.xdp_skb_pppoe, ifindex) {
+                match SkbXdpLink::attach(&_skel.progs.pppoe_skb_fallback, ifindex) {
                     Ok(link) => {
                         let bundle = SkbXdpBundle::new(_backing, _skel, link);
                         self.skb_bundles.lock().unwrap().insert(ifindex, bundle);

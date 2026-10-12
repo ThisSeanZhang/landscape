@@ -6,7 +6,7 @@
 #include "nat_common.h"
 #include "nat6_map_ops.h"
 #include "nat6_ct_timer.h"
-#include "../land_wan_ip.h"
+#include "../wan_ip.h"
 
 #define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
 

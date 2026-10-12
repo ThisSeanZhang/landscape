@@ -63,8 +63,12 @@ pub fn init_tc_wan_route(
         &paths.tc_wan_intro_dispatch_path(),
     );
     let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_ingress_intro")?;
-    let mut ingress_hook =
-        TcHookProxy::new(&intro_skel.progs.tc_wan_intro, ifindex as i32, libbpf_rs::TC_INGRESS, 1);
+    let mut ingress_hook = TcHookProxy::new(
+        &intro_skel.progs.tc_wan_ingress_intro,
+        ifindex as i32,
+        libbpf_rs::TC_INGRESS,
+        1,
+    );
     ingress_hook.attach();
 
     let (egress_route_backing, egress_obj) = OwnedOpenObject::new();

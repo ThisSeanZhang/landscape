@@ -8,7 +8,7 @@ use libbpf_rs::{
 use crate::{
     PPPOE_EGRESS_PRIORITY,
     bpf_error::LdEbpfResult,
-    bpf_rs_shared::xdp_skb_pppoe_skel,
+    bpf_rs_shared::pppoe_skb_fallback_skel,
     chain::xdp_manager::SkbPending,
     landscape::{OwnedOpenObject, TcHookProxy},
     runtime::EbpfRuntime,
@@ -86,13 +86,13 @@ fn attach_standalone_pppoe(ifindex: u32, tmpl: PppoeEgressTmpl) -> LdEbpfResult<
 }
 
 fn prepare_pppoe_skb_pending(_ifindex: u32, session_id: u16) -> LdEbpfResult<SkbPending> {
-    let builder = xdp_skb_pppoe_skel::XdpSkbPppoeSkelBuilder::default();
+    let builder = pppoe_skb_fallback_skel::PppoeSkbFallbackSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
-    let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open xdp_skb_pppoe skeleton")?;
+    let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open pppoe_skb_fallback skeleton")?;
     if let Some(rodata) = open_skel.maps.rodata_data.as_deref_mut() {
         rodata.session_id = session_id.to_be();
     }
-    let skel = crate::bpf_ctx!(open_skel.load(), "load xdp_skb_pppoe skeleton")?;
+    let skel = crate::bpf_ctx!(open_skel.load(), "load pppoe_skb_fallback skeleton")?;
 
     Ok(SkbPending::new(backing, skel))
 }

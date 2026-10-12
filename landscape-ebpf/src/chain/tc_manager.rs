@@ -336,7 +336,7 @@ impl TcChainManager {
 
         let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
 
-        let ingress_root_fd = ingress_skel.progs.tc_wan_chain_ingress_root.as_fd().as_raw_fd();
+        let ingress_root_fd = ingress_skel.progs.tc_wan_ingress_root.as_fd().as_raw_fd();
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&self.paths.tc_pipe_root_progs_path())?.update(
@@ -375,7 +375,7 @@ impl TcChainManager {
 
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 
-        let egress_root_fd = egress_skel.progs.tc_wan_chain_egress_root.as_fd().as_raw_fd();
+        let egress_root_fd = egress_skel.progs.tc_wan_egress_root.as_fd().as_raw_fd();
         let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&self.paths.tc_wan_egress_roots_path())?.update(

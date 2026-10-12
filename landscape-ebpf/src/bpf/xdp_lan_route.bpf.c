@@ -6,7 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "landscape.h"
-#include "land_wan_ip.h"
+#include "wan_ip.h"
 
 #include "chain/xdp_meta.h"
 #include "chain/redirect_able.h"

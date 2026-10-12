@@ -6,7 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "landscape.h"
-#include "land_dns_dispatcher.h"
+#include "dns_dispatcher.h"
 #include "flow_match.h"
 
 char LICENSE[] SEC("license") = "GPL";

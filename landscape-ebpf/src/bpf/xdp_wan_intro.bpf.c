@@ -87,8 +87,8 @@ static __always_inline int wan_intro_tailcall_root(struct xdp_md *ctx, struct di
 }
 
 SEC("xdp")
-int wan_intro_dispatch(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "wan_intro_dispatch"
+int xdp_wan_intro(struct xdp_md *ctx) {
+#define BPF_LOG_TOPIC "xdp_wan_intro"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -99,7 +99,7 @@ int wan_intro_dispatch(struct xdp_md *ctx) {
     }
 
     //
-    // wan_intro_dispatch — WAN XDP ingress entry point
+    // xdp_wan_intro — WAN XDP ingress entry point
     //   Attached to WAN interfaces.  Classifies incoming packets and
     //   dispatches them into the WAN→LAN chain via xdp_pipe_root_progs.
     //   The LAN counterpart is xdp_lan_route, attached to LAN interfaces.

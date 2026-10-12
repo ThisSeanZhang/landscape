@@ -347,7 +347,7 @@ fn xdp_lan_route_wan_pipeline() {
     {
         let _e = test_ns.enter();
         _l0 = lr.progs.xdp_lan_route.attach_xdp(lan_h_i as i32).unwrap();
-        _l1 = intro.progs.wan_intro_dispatch.attach_xdp(wan_h_i as i32).unwrap();
+        _l1 = intro.progs.xdp_wan_intro.attach_xdp(wan_h_i as i32).unwrap();
     }
     {
         let _e = peer_ns.enter();

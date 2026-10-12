@@ -8,7 +8,7 @@
 #include "nat_metric.h"
 #include "nat4_map_ops.h"
 #include "nat4_ct_timer.h"
-#include "../land_wan_ip.h"
+#include "../wan_ip.h"
 #include "../einat_nat4.h"
 
 static __always_inline void nat_metric_accumulate(struct __sk_buff *skb, bool ingress,

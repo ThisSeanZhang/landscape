@@ -1,5 +1,5 @@
-#ifndef LD_TP_H
-#define LD_TP_H
+#ifndef __LD_TPROXY_H__
+#define __LD_TPROXY_H__
 #include <bpf/bpf_helpers.h>
 #include <vmlinux.h>
 
@@ -19,4 +19,4 @@ static __always_inline bool is_landscape_tag(u16 vlan_id) {
     return (vlan_id & LAND_REDIRECT_NETNS_VLAN_ID_MASK) == LAND_REDIRECT_NETNS_VLAN_ID;
 }
 
-#endif /* LD_TP_H */
+#endif /* __LD_TPROXY_H__ */

@@ -1,7 +1,7 @@
 //! Startup creation/pinning of the DNS socket map.
 //!
 //! Creation parameters mirror the `dns_flow_socks` `SEC(".maps")` definition
-//! in `src/bpf/land_dns_dispatcher.h`. Passing the pin path explicitly lets
+//! in `src/bpf/dns_dispatcher.h`. Passing the pin path explicitly lets
 //! tests create the map under an isolated (temporary) bpffs directory.
 
 use std::path::Path;
@@ -11,7 +11,7 @@ use libbpf_rs::{MapHandle, MapType};
 use crate::bpf_error::LdEbpfResult;
 use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
-/// Pin 文件名 = C map 符号名（见 `land_dns_dispatcher.h`）。
+/// Pin 文件名 = C map 符号名（见 `dns_dispatcher.h`）。
 pub(crate) const DNS_FLOW_SOCKS_PIN: &str = "dns_flow_socks";
 
 /// `dns_flow_socks`: `BPF_MAP_TYPE_SOCKMAP`, key `u32`, value `u64`,
@@ -34,14 +34,13 @@ pub fn init_dns_flow_socks(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dns_dispatcher::land_dns_dispatcher::LandDnsDispatcherSkelBuilder;
+    use crate::dns_dispatcher::sk_dns_dispatcher::SkDnsDispatcherSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]
     fn dns_flow_socks_params_match_skel() {
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open =
-            LandDnsDispatcherSkelBuilder::default().open(&mut obj).expect("open anchor skel");
+        let open = SkDnsDispatcherSkelBuilder::default().open(&mut obj).expect("open anchor skel");
         crate::maps::assert_skel_map_matches(&open.maps.dns_flow_socks, &DNS_FLOW_SOCKS_SPEC);
     }
 }

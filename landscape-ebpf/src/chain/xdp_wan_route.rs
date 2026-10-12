@@ -86,7 +86,7 @@ pub fn init_xdp_wan_route(
     let intro_skel = bpf_ctx!(intro_open_skel.load(), "load tc_wan_ingress_intro")?;
 
     let mut ingress_hook =
-        TcHookProxy::new(&intro_skel.progs.tc_wan_intro, ifindex as i32, TC_INGRESS, 1);
+        TcHookProxy::new(&intro_skel.progs.tc_wan_ingress_intro, ifindex as i32, TC_INGRESS, 1);
     ingress_hook.attach();
 
     // ── TC egress route (local outbound traffic) ──

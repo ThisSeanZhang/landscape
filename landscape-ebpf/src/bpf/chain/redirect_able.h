@@ -1,5 +1,5 @@
-#ifndef __LD_XDP_REDIRECT_ABLE_H_
-#define __LD_XDP_REDIRECT_ABLE_H_
+#ifndef __LD_REDIRECT_ABLE_H__
+#define __LD_REDIRECT_ABLE_H__
 
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
@@ -27,4 +27,4 @@ static __always_inline int xdp_redirect_or_tc_handoff(struct xdp_md *ctx, u32 ta
     return XDP_PASS;
 }
 
-#endif /* __LD_XDP_REDIRECT_ABLE_H_ */
+#endif /* __LD_REDIRECT_ABLE_H__ */

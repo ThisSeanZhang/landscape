@@ -9,7 +9,7 @@
 #include "nat_common.h"
 #include "nat4_map_ops.h"
 #include "nat4_ct_timer.h"
-#include "../land_wan_ip.h"
+#include "../wan_ip.h"
 #include "../scanner/xdp_scanner4.h"
 #include "../fragment/frag_common.h"
 #include "../fragment/xdp_frag4.h"

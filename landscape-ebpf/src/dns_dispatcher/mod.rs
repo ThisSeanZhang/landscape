@@ -1,21 +1,21 @@
 use std::{mem::MaybeUninit, os::raw::c_void};
 
-pub(crate) mod land_dns_dispatcher {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/land_dns_dispatcher.skel.rs"));
+pub(crate) mod sk_dns_dispatcher {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/sk_dns_dispatcher.skel.rs"));
 }
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::pin_and_reuse_map;
 use crate::maps::LandscapeMapPath;
-use land_dns_dispatcher::*;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libc::SO_ATTACH_REUSEPORT_EBPF;
 use libc::{SOL_SOCKET, setsockopt, socklen_t};
+use sk_dns_dispatcher::*;
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 
 pub fn attach_reuseport_ebpf(paths: &LandscapeMapPath, sock_fd: i32) -> LdEbpfResult<()> {
     let mut open_object = MaybeUninit::zeroed();
-    let builder = LandDnsDispatcherSkelBuilder::default();
+    let builder = SkDnsDispatcherSkelBuilder::default();
     let mut open_skel =
         crate::bpf_ctx!(builder.open(&mut open_object), "dns_dispatcher open skeleton failed")?;
 

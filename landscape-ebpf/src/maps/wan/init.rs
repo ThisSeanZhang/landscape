@@ -1,7 +1,7 @@
 //! Startup creation/pinning of the WAN IP binding map.
 //!
 //! Creation parameters mirror the `wan_ip_binding` `SEC(".maps")` definition
-//! in `src/bpf/land_wan_ip.h`. Passing the pin path explicitly lets tests
+//! in `src/bpf/wan_ip.h`. Passing the pin path explicitly lets tests
 //! create the map under an isolated (temporary) bpffs directory.
 
 use std::mem::size_of;
@@ -14,7 +14,7 @@ use crate::maps::{MapCreateSpec, ensure_pinned_map};
 
 use super::types::{WanIpInfoKey, WanIpInfoValue};
 
-/// Pin 文件名 = C map 符号名（见 `land_wan_ip.h`）。
+/// Pin 文件名 = C map 符号名（见 `wan_ip.h`）。
 pub(crate) const WAN_IP_BINDING_PIN: &str = "wan_ip_binding";
 
 /// `wan_ip_binding`: `BPF_MAP_TYPE_HASH`, key `wan_ip_info_key` (8),

@@ -25,8 +25,8 @@ struct __attribute__((packed)) pppoe_header {
 char LICENSE[] SEC("license") = "GPL";
 
 SEC("xdp")
-int xdp_skb_pppoe(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "xdp_skb_pppoe"
+int pppoe_skb_fallback(struct xdp_md *ctx) {
+#define BPF_LOG_TOPIC "pppoe_skb_fallback"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;

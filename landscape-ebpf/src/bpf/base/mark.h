@@ -1,5 +1,5 @@
-#ifndef LD_MARK_H
-#define LD_MARK_H
+#ifndef __LD_MARK_H__
+#define __LD_MARK_H__
 #include <bpf/bpf_helpers.h>
 #include <vmlinux.h>
 
@@ -80,4 +80,4 @@ static __always_inline u32 replace_cache_mask(u32 original, u8 new_mark) {
 
 static __always_inline u8 get_cache_mask(u32 original) { return (original & INGRESS_CACHE_MASK); }
 
-#endif /* LD_MARK_H */
+#endif /* __LD_MARK_H__ */

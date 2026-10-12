@@ -2,7 +2,7 @@
 //! `tc_route4_wan_ingress` (tc_wan_ingress_route.bpf.c).
 //!
 //! Each test runs the complete worker pipeline once — scan (l3 offset from
-//! cb[1], normally written by tc_wan_chain_ingress_root) →
+//! cb[1], normally written by tc_wan_ingress_root) →
 //! is_current_wan_packet → lan_redirect_check_in_wan → set_cache_in_wan —
 //! and locks the current behaviour before any route rewrite.
 //!
