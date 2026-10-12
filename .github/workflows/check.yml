@@ -44,17 +44,17 @@ jobs:
           restore-keys: ${{ runner.os }}-check-
 
       - name: Check Rust code
-        run: cargo check --workspace --features metric-persistent
+        run: cargo check --locked --workspace --features metric-persistent
 
       - name: Run clippy
-        run: cargo clippy --workspace --features metric-persistent -- -D warnings
+        run: cargo clippy --locked --workspace --features metric-persistent -- -D warnings
 
       - name: Run clippy (feature matrix)
         run: |
-          cargo clippy -p landscape-metric --no-default-features -- -D warnings
-          cargo clippy -p landscape-webserver --no-default-features -- -D warnings
-          cargo clippy -p landscape-common --features mem-track -- -D warnings
-          cargo clippy -p landscape-common --features openapi -- -D warnings
+          cargo clippy --locked -p landscape-metric --no-default-features -- -D warnings
+          cargo clippy --locked -p landscape-webserver --no-default-features -- -D warnings
+          cargo clippy --locked -p landscape-common --features mem-track -- -D warnings
+          cargo clippy --locked -p landscape-common --features openapi -- -D warnings
 
   config-cli-e2e:
     runs-on: ubuntu-latest
@@ -90,10 +90,10 @@ jobs:
             ${{ runner.os }}-check-
 
       - name: Run landscape-common unit tests
-        run: cargo test -p landscape-common --lib
+        run: cargo test --locked -p landscape-common --lib
 
       - name: Build landscape-webserver
-        run: cargo build -p landscape-webserver
+        run: cargo build --locked -p landscape-webserver
 
       - name: Run config CLI end-to-end tests
         run: ./scripts/config_cli_test.sh target/debug/landscape-webserver

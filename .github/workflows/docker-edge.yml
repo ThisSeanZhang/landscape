@@ -71,7 +71,7 @@ jobs:
           if [ "${{ matrix.cross }}" = "true" ]; then
             ./scripts/build_edge_bins.sh "$TARGET_ARCH"
           else
-            cargo build --release \
+            cargo build --locked --release \
               --package landscape-ebpf \
               --bin redirect_demo_server \
               --bin redirect_pkg_handler \

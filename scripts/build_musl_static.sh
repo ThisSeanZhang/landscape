@@ -254,7 +254,7 @@ case "$GATEWAY" in 1|true|TRUE|yes) FEATURES="$FEATURES,gateway" ;; esac
 # Selecting landscape-ebpf also builds all of its binaries
 # (including redirect_pkg_handler).
 echo "Building landscape-webserver ($TARGET, static=$STATIC, gateway=$GATEWAY)..."
-env "${CROSS_ENV[@]}" cargo zigbuild --release --target "$TARGET" --no-default-features \
+env "${CROSS_ENV[@]}" cargo zigbuild --locked --release --target "$TARGET" --no-default-features \
     --features "$FEATURES" \
     -p landscape-webserver -p landscape-ebpf
 

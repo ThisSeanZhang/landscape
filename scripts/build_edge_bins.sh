@@ -195,7 +195,7 @@ CROSS_ENV+=(
 ZIG_TARGET="$TARGET.$GLIBC_VERSION"
 
 echo "Building edge bins ($ZIG_TARGET, gnu dynamic)..."
-env "${CROSS_ENV[@]}" cargo zigbuild --release --target "$ZIG_TARGET" \
+env "${CROSS_ENV[@]}" cargo zigbuild --locked --release --target "$ZIG_TARGET" \
     -p landscape-ebpf --bin redirect_pkg_handler --bin redirect_demo_server
 
 file "target/$TARGET/release/redirect_pkg_handler" "target/$TARGET/release/redirect_demo_server"

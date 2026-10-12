@@ -43,7 +43,7 @@ jobs:
 
       - name: Generate OpenAPI spec
         if: steps.cache-openapi.outputs.cache-hit != 'true'
-        run: cargo test -p landscape-webserver export_openapi_json -- --nocapture
+        run: cargo test --locked -p landscape-webserver export_openapi_json -- --nocapture
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
