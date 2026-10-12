@@ -61,12 +61,17 @@ pub struct StaticRouteConfig {
 }
 
 impl StaticRouteConfig {
-    pub fn to_lan_info(&self, ifindex: u32, iface_name: &str) -> LanRouteInfo {
+    pub fn to_lan_info(
+        &self,
+        ifindex: u32,
+        iface_name: &str,
+        mac: Option<MacAddr>,
+    ) -> LanRouteInfo {
         LanRouteInfo {
             ifindex,
             iface_name: iface_name.to_string(),
             iface_ip: self.subnet,
-            mac: Some(MacAddr::zero()),
+            mac,
             prefix: self.sub_prefix,
             mode: LanRouteMode::NextHop { next_hop_ip: self.next_hop },
         }
@@ -74,3 +79,42 @@ impl StaticRouteConfig {
 }
 
 crate::impl_trivial_validatable!(RouteLanServiceConfig);
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use super::*;
+
+    fn route() -> StaticRouteConfig {
+        StaticRouteConfig {
+            next_hop: IpAddr::V4(Ipv4Addr::new(192, 168, 50, 199)),
+            subnet: IpAddr::V4(Ipv4Addr::new(10, 88, 0, 0)),
+            sub_prefix: 24,
+        }
+    }
+
+    #[test]
+    fn to_lan_info_uses_egress_iface_mac() {
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        let info = route().to_lan_info(7, "lan0", Some(mac));
+
+        assert_eq!(info.ifindex, 7);
+        assert_eq!(info.iface_name, "lan0");
+        assert_eq!(info.iface_ip, IpAddr::V4(Ipv4Addr::new(10, 88, 0, 0)));
+        assert_eq!(info.prefix, 24);
+        assert_eq!(info.mac, Some(mac));
+        assert_eq!(
+            info.mode,
+            LanRouteMode::NextHop {
+                next_hop_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 50, 199))
+            }
+        );
+    }
+
+    #[test]
+    fn to_lan_info_propagates_missing_mac() {
+        let info = route().to_lan_info(7, "lan0", None);
+        assert_eq!(info.mac, None);
+    }
+}
