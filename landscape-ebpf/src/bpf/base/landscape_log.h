@@ -6,6 +6,11 @@
 #define BPF_LOG_TOPIC "default"
 #endif
 
-#define ld_bpf_log(fmt, args...) bpf_printk("[ls] %s : " fmt, BPF_LOG_TOPIC, ##args)
+// Prefix each message with "[ls] <topic> : ". BPF_LOG_TOPIC must be a string
+// literal; it is concatenated into the format at compile time rather than
+// passed as a %s argument, so it does not consume one of bpf_printk()'s
+// argument slots (format-only calls stay on the lightweight
+// bpf_trace_printk path).
+#define ld_bpf_log(fmt, args...) bpf_printk("[ls] " BPF_LOG_TOPIC " : " fmt, ##args)
 
 #endif  // __LANDSCAPE_LOG_H__
