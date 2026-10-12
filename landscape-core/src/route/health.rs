@@ -179,6 +179,7 @@ mod tests {
                     iface_name: "eth0".to_string(),
                     iface_ip: std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)),
                     gateway_ip: std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+                    dev_only_nexthop: false,
                 },
             )
             .await;

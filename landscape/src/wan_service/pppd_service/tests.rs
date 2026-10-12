@@ -196,7 +196,7 @@ impl PppdEnv for FakeEnv {
         self.state.lock().unwrap().addr_ready_calls.push(state.clone());
     }
 
-    async fn cleanup(&self, _iface: &str, _as_router: bool) {
+    async fn cleanup(&self, _iface: &str) {
         self.state.lock().unwrap().cleanup_calls += 1;
     }
 }
@@ -258,8 +258,6 @@ enum SinkCall {
     Bind { ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8 },
     WanRoute { iface: String, info: RouteTargetInfo },
     LanRoute { iface: String, info: LanRouteInfo },
-    AddDefault(String),
-    DelDefault(String),
     RemoveWan(String),
     RemoveLan(String),
 }
@@ -287,14 +285,6 @@ impl PppRouteSink for RecordingRouteSink {
 
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo) {
         self.calls.lock().unwrap().push(SinkCall::LanRoute { iface: iface.to_string(), info });
-    }
-
-    async fn add_default_route(&self, iface: &str) {
-        self.calls.lock().unwrap().push(SinkCall::AddDefault(iface.to_string()));
-    }
-
-    async fn del_default_route(&self, iface: &str) {
-        self.calls.lock().unwrap().push(SinkCall::DelDefault(iface.to_string()));
     }
 
     async fn remove_wan_route(&self, iface: &str) {
@@ -431,6 +421,7 @@ async fn system_env_ready_as_router_applies_bind_and_routes() {
             assert_eq!(info.ifindex, 7);
             assert_eq!(info.weight, 1);
             assert!(info.default_route);
+            assert!(info.dev_only_nexthop);
             assert_eq!(info.iface_ip, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
             assert_eq!(info.gateway_ip, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)));
         }
@@ -446,12 +437,11 @@ async fn system_env_ready_as_router_applies_bind_and_routes() {
         }
         other => panic!("unexpected call {other:?}"),
     }
-    assert_eq!(calls[3], SinkCall::AddDefault(PPP.to_string()));
-    assert_eq!(calls.len(), 4);
+    assert_eq!(calls.len(), 3);
 }
 
 #[tokio::test]
-async fn system_env_ready_non_router_clears_default() {
+async fn system_env_ready_non_router_marks_wan_route_non_default() {
     let sink = Arc::new(RecordingRouteSink::default());
     let dyn_sink: Arc<dyn PppRouteSink> = sink.clone();
     let env = SystemPppdEnv::with_sink(dyn_sink);
@@ -463,7 +453,7 @@ async fn system_env_ready_non_router_clears_default() {
         SinkCall::WanRoute { info, .. } => assert!(!info.default_route),
         other => panic!("unexpected call {other:?}"),
     }
-    assert_eq!(calls[3], SinkCall::DelDefault(PPP.to_string()));
+    assert_eq!(calls.len(), 3);
 }
 
 #[tokio::test]
@@ -479,22 +469,12 @@ async fn system_env_ignores_non_ready() {
 }
 
 #[tokio::test]
-async fn system_env_cleanup_depends_on_router_flag() {
+async fn system_env_cleanup_removes_wan_and_lan() {
     let sink = Arc::new(RecordingRouteSink::default());
     let dyn_sink: Arc<dyn PppRouteSink> = sink.clone();
     let env = SystemPppdEnv::with_sink(dyn_sink);
 
-    env.cleanup(PPP, true).await;
-    assert_eq!(
-        sink.take(),
-        vec![
-            SinkCall::DelDefault(PPP.to_string()),
-            SinkCall::RemoveWan(PPP.to_string()),
-            SinkCall::RemoveLan(PPP.to_string()),
-        ]
-    );
-
-    env.cleanup(PPP, false).await;
+    env.cleanup(PPP).await;
     assert_eq!(
         sink.take(),
         vec![SinkCall::RemoveWan(PPP.to_string()), SinkCall::RemoveLan(PPP.to_string()),]

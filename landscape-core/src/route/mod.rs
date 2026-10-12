@@ -29,7 +29,7 @@ use landscape_common::sys_service::route_service::{
     LanIPv6RouteKey, LanRouteInfo, RouteOwner, RouteTargetInfo,
     dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
 };
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{Notify, RwLock, broadcast};
 
 pub(crate) type ShareRwLock<T> = Arc<RwLock<T>>;
 // Reachable local addresses grouped by interface index.
@@ -52,6 +52,14 @@ pub struct IpRouteService {
 
     pub(crate) ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,
     pub(crate) ipv6_lan_ifaces: ShareRwLock<Ipv6LanRoutesByKey>,
+    // Last nexthop set successfully pushed into the kernel IPv4 default
+    // route; `None` means "kernel state unknown / last sync failed" and
+    // forces the next reconcile to run.
+    pub(crate) kernel_default_ipv4_cache: ShareRwLock<Option<Vec<RouteTargetInfo>>>,
+    // Wakes the kernel-default-route reconcile loop right after a WAN
+    // route change; `notify_one`'s single stored permit coalesces bursts
+    // and survives across select iterations.
+    pub(crate) kernel_default_notify: Arc<Notify>,
     pub(crate) reachable_local_ipv4_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
     pub(crate) reachable_local_ipv4_addrs_by_ifindex: Arc<ArcSwap<LocalAddrsByIfindex>>,
     pub(crate) reachable_local_ipv6_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
@@ -73,6 +81,8 @@ impl IpRouteService {
             health_events: broadcast::channel(64).0,
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
+            kernel_default_ipv4_cache: Arc::new(RwLock::new(None)),
+            kernel_default_notify: Arc::new(Notify::new()),
             reachable_local_ipv4_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),
             reachable_local_ipv4_addrs_by_ifindex: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             reachable_local_ipv6_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),

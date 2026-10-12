@@ -1,7 +1,6 @@
 use std::net::IpAddr;
 
 use landscape_common::ebpf::DataplaneGuard;
-use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
@@ -27,7 +26,6 @@ pub(crate) struct SessionHandle {
     prev_ipv6_linklocal: Option<std::net::Ipv6Addr>,
     iface_name: String,
     ifindex: u32,
-    default_router: bool,
 }
 
 impl SessionHandle {
@@ -78,9 +76,6 @@ impl SessionHandle {
                 .output();
         }
 
-        if self.default_router {
-            LD_ALL_ROUTERS.del_route_by_iface(&self.iface_name).await;
-        }
         route_service.remove_ipv4_link_route(self.link_id).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
         dataplane.unbind_wan_ipv4(self.ifindex);
@@ -165,21 +160,10 @@ pub(crate) async fn create_session(
                 iface_ip: IpAddr::V4(client_ip),
                 default_route: config.default_router,
                 gateway_ip: IpAddr::V4(server_ip),
+                dev_only_nexthop: false,
             },
         )
         .await;
-
-    if config.default_router {
-        LD_ALL_ROUTERS
-            .add_route(RouteInfo {
-                iface_name: iface_name.clone(),
-                weight: 1,
-                route: RouteType::Ipv4(server_ip),
-            })
-            .await;
-    } else {
-        LD_ALL_ROUTERS.del_route_by_iface(iface_name).await;
-    }
 
     let server_mac_str = format!(
         "{}",
@@ -312,7 +296,6 @@ pub(crate) async fn create_session(
         prev_ipv6_linklocal: prev_linklocal_v6,
         iface_name: iface_name.clone(),
         ifindex: index,
-        default_router: config.default_router,
     })
 }
 

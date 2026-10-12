@@ -406,6 +406,7 @@ impl EbpfRouteTableDataplane {
     }
 }
 
+#[async_trait::async_trait]
 impl RouteTableDataplane for EbpfRouteTableDataplane {
     fn add_lan_route(&self, info: landscape_common::sys_service::route_service::LanRouteInfo) {
         maps::route::add_lan_route(&self.rt.paths, info);
@@ -439,9 +440,61 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
         maps::route::del_wan_route_slots_v6(&self.rt.paths, flow_id);
     }
 
+    async fn sync_kernel_default_ipv4(
+        &self,
+        nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
+    ) -> bool {
+        // No WAN IPv4 default target: leave the kernel default route (if
+        // any) untouched.
+        if nexthops.is_empty() {
+            return true;
+        }
+
+        let args = kernel_default_ipv4_args(nexthops);
+        tracing::info!("sync kernel default ipv4 route: {}", args.join(" "));
+        match tokio::process::Command::new("ip").args(&args).output().await {
+            Ok(output) if output.status.success() => true,
+            Ok(output) => {
+                tracing::error!(
+                    "sync kernel default ipv4 route failed: {:?}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                false
+            }
+            Err(e) => {
+                tracing::error!("sync kernel default ipv4 route failed: {e:?}");
+                false
+            }
+        }
+    }
+
     fn invalidate_lan_cache(&self) {
         maps::route::cache::recreate_route_lan_cache_inner_map(&self.rt.paths);
     }
+}
+
+/// Build the `ip` arguments for the kernel IPv4 default route:
+/// `route replace default nexthop via G dev I weight W ...`. Point-to-point
+/// nexthops marked `dev_only_nexthop` omit the `via` gateway. The slice is
+/// non-empty: an empty target set is a no-op handled before this call.
+fn kernel_default_ipv4_args(
+    nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
+) -> Vec<String> {
+    let mut args = vec!["route".to_string(), "replace".to_string(), "default".to_string()];
+    for nexthop in nexthops {
+        args.push("nexthop".to_string());
+        if nexthop.dev_only_nexthop {
+            args.push("dev".to_string());
+        } else {
+            args.push("via".to_string());
+            args.push(nexthop.gateway_ip.to_string());
+            args.push("dev".to_string());
+        }
+        args.push(nexthop.iface_name.clone());
+        args.push("weight".to_string());
+        args.push(nexthop.weight.to_string());
+    }
+    args
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -503,5 +556,78 @@ impl MacBindingDataplane for EbpfMacBindingDataplane {
         if let Err(e) = maps::mac::upsert_ipv6_ip_mac(&self.rt.paths, ifindex, ip, mac, dev_mac) {
             tracing::error!("upsert ipv6 ip_mac binding error: {e:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod kernel_default_tests {
+    use super::*;
+    use landscape_common::sys_service::route_service::RouteTargetInfo;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn target(iface: &str, gateway: &str, weight: u32, dev_only: bool) -> RouteTargetInfo {
+        RouteTargetInfo {
+            weight,
+            ifindex: 1,
+            mac: None,
+            default_route: true,
+            is_docker: false,
+            iface_name: iface.to_string(),
+            iface_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
+            gateway_ip: IpAddr::V4(gateway.parse().unwrap()),
+            dev_only_nexthop: dev_only,
+        }
+    }
+
+    #[test]
+    fn single_via_nexthop() {
+        let args = kernel_default_ipv4_args(&[target("eth0", "192.168.1.1", 1, false)]);
+        assert_eq!(
+            args,
+            strs(&[
+                "route",
+                "replace",
+                "default",
+                "nexthop",
+                "via",
+                "192.168.1.1",
+                "dev",
+                "eth0",
+                "weight",
+                "1"
+            ])
+        );
+    }
+
+    #[test]
+    fn mixed_ecmp_nexthops() {
+        let args = kernel_default_ipv4_args(&[
+            target("eth0", "192.168.1.1", 2, false),
+            target("ppp0", "0.0.0.0", 1, true),
+        ]);
+        assert_eq!(
+            args,
+            strs(&[
+                "route",
+                "replace",
+                "default",
+                "nexthop",
+                "via",
+                "192.168.1.1",
+                "dev",
+                "eth0",
+                "weight",
+                "2",
+                "nexthop",
+                "dev",
+                "ppp0",
+                "weight",
+                "1",
+            ])
+        );
     }
 }

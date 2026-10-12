@@ -1,5 +1,4 @@
 use landscape_common::SYSCTL_IPV4_RP_FILTER_PATTERN;
-use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::net_proto::dhcp::{
     DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
 };
@@ -106,20 +105,10 @@ pub(crate) async fn apply_lease(
                     iface_name: config.iface_name.clone(),
                     iface_ip: IpAddr::V4(params.yiaddr),
                     gateway_ip: IpAddr::V4(router_ip),
+                    dev_only_nexthop: false,
                 },
             )
             .await;
-        if config.default_router {
-            LD_ALL_ROUTERS
-                .add_route(RouteInfo {
-                    iface_name: config.iface_name.clone(),
-                    weight: 1,
-                    route: RouteType::Ipv4(router_ip),
-                })
-                .await;
-        } else {
-            LD_ALL_ROUTERS.del_route_by_iface(&config.iface_name).await;
-        }
     }
 }
 
@@ -136,9 +125,6 @@ pub(crate) async fn release(
         session.session_down();
     }
 
-    if config.default_router {
-        LD_ALL_ROUTERS.del_route_by_iface(&config.iface_name).await;
-    }
     services.route_service.remove_ipv4_link_route(config.link_id).await;
     services.route_service.remove_ipv4_lan_route(&config.iface_name).await;
     services.addr_binding.unbind_ipv4(config.ifindex);

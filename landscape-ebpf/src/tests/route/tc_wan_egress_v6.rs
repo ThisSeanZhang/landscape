@@ -120,6 +120,7 @@ fn seed_wan_slots(
             iface_name: "test-wan".to_string(),
             iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             gateway_ip: IpAddr::V6(gateway_addr()),
+            dev_only_nexthop: false,
         },
         1,
     )];

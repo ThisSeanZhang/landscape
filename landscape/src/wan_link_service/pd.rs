@@ -36,6 +36,7 @@ pub(super) async fn run(
         iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
         default_route: true,
         gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+        dev_only_nexthop: false,
     };
 
     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(

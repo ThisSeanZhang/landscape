@@ -85,6 +85,7 @@ mod tests {
                 iface_name: "test-wan".to_string(),
                 iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                dev_only_nexthop: false,
             },
             1,
         )];
@@ -157,6 +158,7 @@ mod tests {
                 iface_name: "test-wan".to_string(),
                 iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 gateway_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                dev_only_nexthop: false,
             },
             1,
         )];

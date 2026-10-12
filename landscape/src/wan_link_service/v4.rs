@@ -5,7 +5,6 @@ use arc_swap::ArcSwap;
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::args::LAND_HOSTNAME;
 use landscape_common::dev::LandscapeInterface;
-use landscape_common::global_const::default_router::{LD_ALL_ROUTERS, RouteInfo, RouteType};
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
 use landscape_common::wan_link::{
@@ -215,15 +214,6 @@ async fn run_static_v4(
     {
         if default_router {
             tracing::info!("setting default route: {:?}", default_router_ip);
-            LD_ALL_ROUTERS
-                .add_route(RouteInfo {
-                    iface_name: iface_name.clone(),
-                    weight: 1,
-                    route: RouteType::Ipv4(default_router_ip),
-                })
-                .await;
-        } else {
-            LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
         }
 
         let info = RouteTargetInfo {
@@ -235,6 +225,7 @@ async fn run_static_v4(
             iface_ip: IpAddr::V4(ipv4),
             default_route: default_router,
             gateway_ip: IpAddr::V4(default_router_ip),
+            dev_only_nexthop: false,
         };
         route_service.insert_ipv4_link_route(link_id, info).await;
     }
@@ -258,9 +249,6 @@ async fn run_static_v4(
         .args(["addr", "del", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
         .output();
 
-    if default_router {
-        LD_ALL_ROUTERS.del_route_by_iface(&iface_name).await;
-    }
     route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
     addr_binding.unbind_ipv4(iface.index);

@@ -31,6 +31,11 @@ pub struct RouteTargetInfo {
     pub iface_ip: IpAddr,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub gateway_ip: IpAddr,
+
+    /// Kernel default-route nexthop is interface-only (no `via` gateway),
+    /// e.g. point-to-point links whose peer may be unnumbered.
+    #[serde(default)]
+    pub dev_only_nexthop: bool,
 }
 
 impl RouteTargetInfo {
@@ -45,6 +50,7 @@ impl RouteTargetInfo {
                 iface_name: iface_name.to_string(),
                 iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 gateway_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                dev_only_nexthop: false,
             },
             RouteTargetInfo {
                 weight: 0,
@@ -55,6 +61,7 @@ impl RouteTargetInfo {
                 iface_name: iface_name.to_string(),
                 iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                dev_only_nexthop: false,
             },
         )
     }

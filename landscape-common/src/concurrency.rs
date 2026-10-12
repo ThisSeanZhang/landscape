@@ -94,6 +94,9 @@ pub mod task_label {
         pub const ROUTE_LAN_STOP: &str = "route.lan.stop";
         /// LAN route observer task reacting to interface events.
         pub const ROUTE_LAN_OBSERVER: &str = "route.lan.observer";
+        /// Kernel IPv4 default-route reconcile loop: WAN-route-change
+        /// wakeups plus a periodic safety-net tick.
+        pub const ROUTE_KERNEL_DEFAULT_SYNC: &str = "route.kernel_default.sync";
         /// eBPF connect metric event source task that feeds userspace connect metric channels.
         pub const METRIC_EBPF_CONNECT_EVENT_SOURCE: &str = "metric.ebpf.connect.event.source";
         /// Background task that refreshes cached connect global stats.

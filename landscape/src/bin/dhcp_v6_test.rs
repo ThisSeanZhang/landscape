@@ -60,6 +60,7 @@ async fn main() {
             iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             default_route: true,
             gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            dev_only_nexthop: false,
         };
         dhcp_v6_pd_client(
             uuid::Uuid::new_v4(),

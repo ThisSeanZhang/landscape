@@ -1,6 +1,8 @@
 //! WAN route state: one active [`RouteTargetInfo`] per owner (link or
 //! container), default-router resolution, and change broadcasting.
 
+use std::net::{IpAddr, Ipv4Addr};
+
 use landscape_common::{
     ddns::IpFamily,
     sys_service::route_service::{RouteOwner, RouteTargetInfo, dataplane::RouteTableDataplane},
@@ -69,6 +71,46 @@ fn sync_default_ipv6_wan_route(
         dataplane.del_wan_slots_v6(0);
     }
     dataplane.invalidate_lan_cache();
+}
+
+/// Collect the kernel IPv4 default-route nexthops from the WAN route
+/// state: default targets with a usable IPv4 gateway (or a dev-only
+/// point-to-point nexthop), deduplicated and sorted so consecutive
+/// refreshes compare equal. Unspecified gateways and zero weights are
+/// skipped/clamped, and fields that never reach the `ip` arguments are
+/// normalized.
+pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
+    let mut candidates: Vec<RouteTargetInfo> = routes
+        .values()
+        .filter(|route| route.default_route)
+        .filter(|route| {
+            route.dev_only_nexthop
+                || matches!(route.gateway_ip, IpAddr::V4(gateway) if gateway != Ipv4Addr::UNSPECIFIED)
+        })
+        .map(|route| {
+            let mut nexthop = route.clone();
+            nexthop.weight = nexthop.weight.max(1);
+            nexthop.ifindex = 0;
+            nexthop.mac = None;
+            nexthop.iface_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+            nexthop
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| {
+        a.iface_name
+            .cmp(&b.iface_name)
+            .then(a.gateway_ip.cmp(&b.gateway_ip))
+            .then(a.weight.cmp(&b.weight))
+    });
+    candidates.dedup_by(|a, b| {
+        a.iface_name == b.iface_name
+            && a.gateway_ip == b.gateway_ip
+            && a.weight == b.weight
+            && a.dev_only_nexthop == b.dev_only_nexthop
+    });
+
+    candidates
 }
 
 impl IpRouteService {
@@ -210,6 +252,54 @@ impl IpRouteService {
         let ipv6_default =
             self.ipv6_wan_ifaces.read().await.values().find(|route| route.default_route).cloned();
         sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
+
+        // The kernel IPv4 default route is owned by the single-writer
+        // reconcile loop: ring its doorbell instead of writing here.
+        self.kernel_default_notify.notify_one();
+    }
+
+    /// Reconcile the kernel IPv4 default route with the current WAN route
+    /// state. Snapshots the state right before writing, so a stale view
+    /// can never be committed; a failed sync leaves the cache `None` so
+    /// the next pass retries.
+    pub(crate) async fn reconcile_kernel_default_ipv4(&self) {
+        let defaults = kernel_default_nexthops(&*self.ipv4_wan_ifaces.read().await);
+        let mut cache = self.kernel_default_ipv4_cache.write().await;
+        if *cache == Some(defaults.clone()) {
+            return;
+        }
+        if self.dataplane.sync_kernel_default_ipv4(&defaults).await {
+            *cache = Some(defaults);
+        } else {
+            *cache = None;
+        }
+    }
+
+    /// Spawn the kernel-default-route reconcile loop: it wakes up right
+    /// after every WAN route change (`notify_one` permit) and on a
+    /// periodic safety-net tick. The ticker's first tick fires
+    /// immediately, forcing a startup reconcile that pushes the current
+    /// WAN default set; when there is none, the kernel default route is
+    /// left untouched.
+    pub fn spawn_kernel_default_sync_loop(&self) {
+        const KERNEL_DEFAULT_SYNC_INTERVAL_SECS: u64 = 30;
+        let service = self.clone();
+        landscape_common::concurrency::spawn_task(
+            landscape_common::concurrency::task_label::task::ROUTE_KERNEL_DEFAULT_SYNC,
+            async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
+                    KERNEL_DEFAULT_SYNC_INTERVAL_SECS,
+                ));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tokio::select! {
+                        _ = service.kernel_default_notify.notified() => {}
+                        _ = ticker.tick() => {}
+                    }
+                    service.reconcile_kernel_default_ipv4().await;
+                }
+            },
+        );
     }
 
     /// Drop every docker-owned WAN route, refresh the default router, and

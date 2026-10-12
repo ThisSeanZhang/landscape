@@ -246,6 +246,7 @@ async fn run_system(
 
     let route_service =
         startup_phase!("route_service.new", IpRouteService::new(ebpf_rt.clone().route_table()));
+    route_service.spawn_kernel_default_sync_loop();
 
     let flow_rule_service = startup_phase!(
         "flow_rule_service.new",

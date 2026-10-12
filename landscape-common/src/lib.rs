@@ -19,8 +19,6 @@ pub mod error;
 pub mod event;
 pub mod flow;
 
-pub mod global_const;
-
 pub mod memtrack;
 pub mod metric;
 pub mod network;

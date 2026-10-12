@@ -6,9 +6,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use landscape_common::global_const::default_router::LD_ALL_ROUTERS;
-use landscape_common::global_const::default_router::RouteInfo;
-use landscape_common::global_const::default_router::RouteType;
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
@@ -91,21 +88,21 @@ pub(crate) trait PppdEnv: Send + Sync {
     async fn spawn(&self, iface: &str) -> io::Result<Box<dyn PppdChild>>;
     async fn poll_addr(&self, iface: &str) -> PppIpv4State;
     async fn on_addr_ready(&self, state: &PppIpv4State, as_router: bool, iface: &str);
-    async fn cleanup(&self, iface: &str, as_router: bool);
+    async fn cleanup(&self, iface: &str);
 }
 
-/// Side-effect boundary for IPv4 binding and route/default-route management.
+/// Side-effect boundary for IPv4 binding and route management.
 ///
 /// Abstracted so [`SystemPppdEnv`]'s decision logic can be tested without
-/// touching the real `IpRouteService`, `WanAddrBinding`, or the process-global
-/// `LD_ALL_ROUTERS` (which shells out to `ip route`).
+/// touching the real `IpRouteService` or `WanAddrBinding`. The kernel
+/// default route is derived from the WAN route state (`default_route` +
+/// `dev_only_nexthop` on the inserted [`RouteTargetInfo`]), so the sink
+/// needs no separate default-route methods.
 #[async_trait::async_trait]
 pub(crate) trait PppRouteSink: Send + Sync {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8);
     async fn insert_wan_route(&self, iface: &str, info: RouteTargetInfo);
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo);
-    async fn add_default_route(&self, iface: &str);
-    async fn del_default_route(&self, iface: &str);
     async fn remove_wan_route(&self, iface: &str);
     async fn remove_lan_route(&self, iface: &str);
 }
@@ -138,20 +135,6 @@ impl PppRouteSink for SystemRouteSink {
 
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo) {
         self.route_service.insert_ipv4_lan_route(iface, info).await;
-    }
-
-    async fn add_default_route(&self, iface: &str) {
-        LD_ALL_ROUTERS
-            .add_route(RouteInfo {
-                iface_name: iface.to_string(),
-                weight: 1,
-                route: RouteType::PPP,
-            })
-            .await;
-    }
-
-    async fn del_default_route(&self, iface: &str) {
-        LD_ALL_ROUTERS.del_route_by_iface(iface).await;
     }
 
     async fn remove_wan_route(&self, _iface: &str) {
@@ -255,6 +238,7 @@ impl PppdEnv for SystemPppdEnv {
                     iface_ip: IpAddr::V4(*local),
                     default_route: as_router,
                     gateway_ip: IpAddr::V4(*peer),
+                    dev_only_nexthop: true,
                 },
             )
             .await;
@@ -272,18 +256,9 @@ impl PppdEnv for SystemPppdEnv {
                 },
             )
             .await;
-
-        if as_router {
-            self.sink.add_default_route(iface).await;
-        } else {
-            self.sink.del_default_route(iface).await;
-        }
     }
 
-    async fn cleanup(&self, iface: &str, as_router: bool) {
-        if as_router {
-            self.sink.del_default_route(iface).await;
-        }
+    async fn cleanup(&self, iface: &str) {
         self.sink.remove_wan_route(iface).await;
         self.sink.remove_lan_route(iface).await;
     }

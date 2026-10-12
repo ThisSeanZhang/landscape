@@ -166,6 +166,7 @@ fn seed_wan_slots(
             iface_name: "test-wan".to_string(),
             iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             gateway_ip: IpAddr::V4(wan_gateway()),
+            dev_only_nexthop: false,
         },
         1,
     )];

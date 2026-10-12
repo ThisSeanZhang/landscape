@@ -213,7 +213,7 @@ pub(crate) async fn run_pppd_supervisor(
         false
     });
 
-    env.cleanup(&ppp_iface_name, as_router).await;
+    env.cleanup(&ppp_iface_name).await;
     if let Some(session) = session {
         session.session_down();
     }
