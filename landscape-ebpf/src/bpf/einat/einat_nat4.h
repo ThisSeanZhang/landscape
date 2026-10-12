@@ -8,7 +8,7 @@
 
 #include <vmlinux.h>
 
-#include "landscape_log.h"
+#include "base/landscape_log.h"
 #include "nat/nat_common.h"
 
 static __always_inline int icmpx_err_l3_offset(int l4_off) {

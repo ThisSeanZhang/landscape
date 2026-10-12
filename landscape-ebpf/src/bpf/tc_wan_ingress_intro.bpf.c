@@ -3,10 +3,10 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 
 #include "chain/tc_cb.h"
-#include "tc_chain/tc_handoff.h"
+#include "chain/tc_handoff.h"
 
 #define TC_INTRO_IFINDEX_TYPE 2
 

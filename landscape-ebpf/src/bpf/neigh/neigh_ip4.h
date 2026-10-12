@@ -1,7 +1,7 @@
 #ifndef __LD_IP_NEIGH4_H__
 #define __LD_IP_NEIGH4_H__
 #include <bpf/bpf_helpers.h>
-#include "landscape.h"
+#include "base/landscape.h"
 
 struct mac_key_v4 {
     __be32 addr;

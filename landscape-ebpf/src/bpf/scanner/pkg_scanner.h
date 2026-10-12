@@ -3,10 +3,10 @@
 
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
-#include "landscape_log.h"
-#include "landscape.h"
-#include "pkg_def.h"
-#include "einat_helpers.h"
+#include "base/landscape_log.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
+#include "einat/einat_helpers.h"
 
 // size limit 5 u32
 // icmp type

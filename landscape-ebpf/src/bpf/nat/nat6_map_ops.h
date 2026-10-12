@@ -1,8 +1,8 @@
 #ifndef __LD_NAT6_MAP_OPS_H__
 #define __LD_NAT6_MAP_OPS_H__
 
-#include "nat_common.h"
-#include "nat6_static.h"
+#include "nat/nat_common.h"
+#include "nat/nat6_static.h"
 
 static __always_inline int nat6_l4_checksum(u32 l4_offset, u8 l4_protocol,
                                             u32 *l4_checksum_offset) {

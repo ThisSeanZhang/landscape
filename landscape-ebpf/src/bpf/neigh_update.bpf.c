@@ -4,9 +4,9 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#include "landscape.h"
-#include "neigh_ip4.h"
-#include "neigh_ip6.h"
+#include "base/landscape.h"
+#include "neigh/neigh_ip4.h"
+#include "neigh/neigh_ip6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -1,9 +1,9 @@
 #ifndef __LD_XDP_SCANNER6_H__
 #define __LD_XDP_SCANNER6_H__
 
-#include "scan_types.h"
-#include "xdp_common.h"
-#include "../einat_helpers.h"
+#include "scanner/scan_types.h"
+#include "scanner/xdp_common.h"
+#include "einat/einat_helpers.h"
 
 static __always_inline enum xdp_scan_status xdp_scan_ipv6(struct xdp_md *ctx, u16 l3_offset,
                                                           struct scan_ipv6_idx *idx) {

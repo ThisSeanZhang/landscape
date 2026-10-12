@@ -1,7 +1,7 @@
 #ifndef __LD_NAT6_STATIC_H__
 #define __LD_NAT6_STATIC_H__
 
-#include "nat_common.h"
+#include "nat/nat_common.h"
 
 #define STATIC_NAT_MAPPING_CACHE_SIZE 1024 * 64
 

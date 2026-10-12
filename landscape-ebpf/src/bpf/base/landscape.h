@@ -2,8 +2,8 @@
 #define __LD_LANDSCAPE_H__
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
-#include "landscape_log.h"
-#include "einat_types.h"
+#include "base/landscape_log.h"
+#include "einat/einat_types.h"
 #include "base/mark.h"
 #include "base/tproxy.h"
 

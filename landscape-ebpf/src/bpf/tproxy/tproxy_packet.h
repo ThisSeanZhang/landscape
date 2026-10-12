@@ -1,9 +1,9 @@
 #ifndef __LD_TPROXY_PACKET_H__
 #define __LD_TPROXY_PACKET_H__
 
-#include "../landscape.h"
-#include "../pkg_def.h"
-#include "../pkg_scanner.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
+#include "scanner/pkg_scanner.h"
 
 static __always_inline int scan_tproxy_packet(struct __sk_buff *skb, u32 current_l3_offset,
                                               struct packet_offset_info *offset_info) {

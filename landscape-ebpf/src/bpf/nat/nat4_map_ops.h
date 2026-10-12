@@ -1,9 +1,9 @@
 #ifndef __LD_NAT4_MAP_OPS_H__
 #define __LD_NAT4_MAP_OPS_H__
 
-#include "nat_common.h"
-#include "nat4_static.h"
-#include "nat4_dyn_map.h"
+#include "nat/nat_common.h"
+#include "nat/nat4_static.h"
+#include "nat/nat4_dyn_map.h"
 
 #define NAT4_STATE_SHIFT 56
 #define NAT4_REF_MASK ((1ULL << NAT4_STATE_SHIFT) - 1)

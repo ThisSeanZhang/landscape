@@ -3,7 +3,7 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
+#include "base/landscape.h"
 
 struct route6_cache_key {
     union u_inet6_addr local_addr;

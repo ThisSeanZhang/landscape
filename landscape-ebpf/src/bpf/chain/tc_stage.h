@@ -4,7 +4,7 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#include "tc_cb.h"
+#include "chain/tc_cb.h"
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);

@@ -1,7 +1,7 @@
 #ifndef __LD_IP_NEIGH6_H__
 #define __LD_IP_NEIGH6_H__
 #include <bpf/bpf_helpers.h>
-#include "landscape.h"
+#include "base/landscape.h"
 
 struct mac_key_v6 {
     union u_inet6_addr addr;

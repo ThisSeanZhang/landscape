@@ -3,8 +3,8 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
-#include "route_common.h"
+#include "base/landscape.h"
+#include "route/route_common.h"
 
 struct route6_lan_key {
     __u32 prefixlen;

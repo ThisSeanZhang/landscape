@@ -5,9 +5,9 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#include "landscape.h"
-#include "dns_dispatcher.h"
-#include "flow_match.h"
+#include "base/landscape.h"
+#include "dns/dns_dispatcher.h"
+#include "route/flow_match.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

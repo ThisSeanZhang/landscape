@@ -5,9 +5,9 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-#include "landscape.h"
-#include "neigh_ip4.h"
-#include "neigh_ip6.h"
+#include "base/landscape.h"
+#include "neigh/neigh_ip4.h"
+#include "neigh/neigh_ip6.h"
 #include "route/route4_context.h"
 #include "route/route6_context.h"
 

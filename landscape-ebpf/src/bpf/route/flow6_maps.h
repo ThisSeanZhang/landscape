@@ -3,7 +3,7 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
+#include "base/landscape.h"
 
 // reusable
 struct flow_dns_match_value_v6 {

@@ -1,7 +1,7 @@
 #ifndef __LD_SKB_SCANNER4_H__
 #define __LD_SKB_SCANNER4_H__
 
-#include "skb_common.h"
+#include "scanner/skb_common.h"
 
 static __always_inline enum land_scan_result scan_ipv4(struct __sk_buff *skb,
                                                        struct ip_scanner_ctx *scanner_ctx) {

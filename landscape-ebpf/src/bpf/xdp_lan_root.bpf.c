@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 #include "chain/xdp_meta.h"
 #include "chain/redirect_able.h"
 #include "chain/xdp_wan_maps.h"

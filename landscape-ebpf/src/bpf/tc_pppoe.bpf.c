@@ -3,7 +3,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

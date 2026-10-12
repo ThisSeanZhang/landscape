@@ -6,8 +6,8 @@
 #ifndef __LD_FRAG6_H__
 #define __LD_FRAG6_H__
 
-#include "frag_common.h"
-#include "../scanner/scan_types.h"
+#include "fragment/frag_common.h"
+#include "scanner/scan_types.h"
 
 static __always_inline int frag6_track(const struct scan_ipv6_idx *idx,
                                        const struct in6_addr *saddr, const struct in6_addr *daddr,

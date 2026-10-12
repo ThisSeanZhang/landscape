@@ -3,7 +3,7 @@
 
 #include <bpf/bpf_helpers.h>
 #include <vmlinux.h>
-#include "nat_common.h"
+#include "nat/nat_common.h"
 
 struct nat_conn_metric_event {
     union u_inet_addr src_addr;

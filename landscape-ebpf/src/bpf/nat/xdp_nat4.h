@@ -5,15 +5,15 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
-#include "nat_common.h"
-#include "nat4_map_ops.h"
-#include "nat4_ct_timer.h"
-#include "../wan_ip.h"
-#include "../scanner/xdp_scanner4.h"
-#include "../fragment/frag_common.h"
-#include "../fragment/xdp_frag4.h"
-#include "xdp_csum_helpers.h"
+#include "base/landscape.h"
+#include "nat/nat_common.h"
+#include "nat/nat4_map_ops.h"
+#include "nat/nat4_ct_timer.h"
+#include "route/wan_ip.h"
+#include "scanner/xdp_scanner4.h"
+#include "fragment/frag_common.h"
+#include "fragment/xdp_frag4.h"
+#include "nat/xdp_csum_helpers.h"
 
 static __always_inline int xdp_read_nat_info4(void *data, void *data_end,
                                               const struct scan_ipv4_idx *idx,

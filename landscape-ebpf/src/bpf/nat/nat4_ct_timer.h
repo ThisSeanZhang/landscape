@@ -1,10 +1,10 @@
 #ifndef __LD_NAT4_CT_TIMER_H__
 #define __LD_NAT4_CT_TIMER_H__
 
-#include "nat_common.h"
-#include "nat_metric.h"
-#include "nat4_dyn_map.h"
-#include "nat4_map_ops.h"
+#include "nat/nat_common.h"
+#include "nat/nat_metric.h"
+#include "nat/nat4_dyn_map.h"
+#include "nat/nat4_map_ops.h"
 
 #ifndef ENOENT
 #define ENOENT 2

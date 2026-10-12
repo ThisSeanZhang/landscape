@@ -5,12 +5,12 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "nat_common.h"
-#include "nat6_map_ops.h"
-#include "nat6_ct_timer.h"
-#include "../wan_ip.h"
-#include "../fragment/xdp_frag6.h"
-#include "xdp_csum_helpers.h"
+#include "nat/nat_common.h"
+#include "nat/nat6_map_ops.h"
+#include "nat/nat6_ct_timer.h"
+#include "route/wan_ip.h"
+#include "fragment/xdp_frag6.h"
+#include "nat/xdp_csum_helpers.h"
 
 #define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
 

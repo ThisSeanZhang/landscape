@@ -4,8 +4,8 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
-#include "../landscape.h"
-#include "../pkg_scanner.h"
+#include "base/landscape.h"
+#include "scanner/pkg_scanner.h"
 
 #define WAN_CACHE 0
 #define LAN_CACHE 1

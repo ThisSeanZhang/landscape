@@ -4,9 +4,9 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
-#include "../landscape.h"
-#include "../pkg_scanner.h"
-#include "route_common.h"
+#include "base/landscape.h"
+#include "scanner/pkg_scanner.h"
+#include "route/route_common.h"
 
 struct route4_context {
     __be32 saddr;

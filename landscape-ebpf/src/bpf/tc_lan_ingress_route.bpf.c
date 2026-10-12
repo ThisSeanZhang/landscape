@@ -5,15 +5,15 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 #include "route/route4_path.h"
 #include "route/route6_path.h"
 #include "route/route4_context.h"
 #include "route/route6_context.h"
-#include "neigh_learn.h"
+#include "route/neigh_learn.h"
 
 #include "chain/tc_cb.h"
-#include "tc_chain/tc_handoff.h"
+#include "chain/tc_handoff.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

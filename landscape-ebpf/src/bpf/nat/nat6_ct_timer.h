@@ -1,10 +1,10 @@
 #ifndef __LD_NAT6_CT_TIMER_H__
 #define __LD_NAT6_CT_TIMER_H__
 
-#include "nat_common.h"
-#include "nat_metric.h"
-#include "nat6_dyn_map.h"
-#include "nat6_map_ops.h"
+#include "nat/nat_common.h"
+#include "nat/nat_metric.h"
+#include "nat/nat6_dyn_map.h"
+#include "nat/nat6_map_ops.h"
 
 static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_key,
                                                   struct nat6_timer_value *timer_value, u8 status) {

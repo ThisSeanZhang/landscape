@@ -9,8 +9,8 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
-#include "landscape.h"
-#include "pkg_def.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
 
 union u_ld_ip {
     __be32 all[4];

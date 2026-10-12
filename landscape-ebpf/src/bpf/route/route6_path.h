@@ -4,19 +4,19 @@
 
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
-#include "../wan_ip.h"
+#include "base/landscape.h"
+#include "route/wan_ip.h"
 
-#include "flow6_maps.h"
-#include "route6_cache.h"
-#include "route6_context.h"
-#include "route6_lan.h"
-#include "route6_slot.h"
-#include "route_common.h"
+#include "route/flow6_maps.h"
+#include "route/route6_cache.h"
+#include "route/route6_context.h"
+#include "route/route6_lan.h"
+#include "route/route6_slot.h"
+#include "route/route_common.h"
 
-#include "../chain/redirect_able.h"
-#include "../flow_match.h"
-#include "../neigh_ip6.h"
+#include "chain/redirect_able.h"
+#include "route/flow_match.h"
+#include "neigh/neigh_ip6.h"
 
 // TODO: split two function
 static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff *skb,

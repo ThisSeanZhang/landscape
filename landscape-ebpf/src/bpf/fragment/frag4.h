@@ -6,8 +6,8 @@
 #ifndef __LD_FRAG4_H__
 #define __LD_FRAG4_H__
 
-#include "frag_common.h"
-#include "../scanner/scan_types.h"
+#include "fragment/frag_common.h"
+#include "scanner/scan_types.h"
 
 static __always_inline int frag4_track(const struct scan_ipv4_idx *idx, __be32 saddr, __be32 daddr,
                                        __be16 *sport, __be16 *dport) {

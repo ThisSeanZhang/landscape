@@ -11,8 +11,8 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
-#include "../pkg_def.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
 
 #define FRAG_CACHE_SIZE (1024 * 32)
 

@@ -3,8 +3,8 @@
 
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
-#include "landscape_log.h"
-#include "landscape.h"
+#include "base/landscape_log.h"
+#include "base/landscape.h"
 
 #define LD_IP_MF 0x2000      // IPv4 more-fragments flag
 #define LD_IP_OFFSET 0x1FFF  // IPv4 fragment offset mask

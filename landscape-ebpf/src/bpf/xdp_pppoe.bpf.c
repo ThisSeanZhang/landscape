@@ -3,7 +3,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 #include "chain/xdp_stage.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"

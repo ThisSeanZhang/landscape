@@ -1,9 +1,9 @@
 #ifndef LD_NAT_COMMON_H
 #define LD_NAT_COMMON_H
 #include <vmlinux.h>
-#include "../landscape_log.h"
-#include "../landscape.h"
-#include "../pkg_def.h"
+#include "base/landscape_log.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
 
 #define NAT_MAPPING_CACHE_SIZE 1024 * 64 * 2
 #define NAT_MAPPING_TIMER_SIZE 1024 * 64 * 2

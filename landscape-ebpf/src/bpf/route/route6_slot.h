@@ -3,7 +3,7 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
-#include "../landscape.h"
+#include "base/landscape.h"
 
 struct route6_slot_key {
     __u32 flow_id;

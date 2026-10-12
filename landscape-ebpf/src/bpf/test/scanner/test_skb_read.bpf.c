@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 #include "scanner/skb_common.h"
 #include "scanner/skb_scanner4.h"
 #include "scanner/skb_scanner6.h"

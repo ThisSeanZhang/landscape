@@ -1,7 +1,7 @@
 #ifndef __LD_FIREWALL_SHARE_H__
 #define __LD_FIREWALL_SHARE_H__
 #include <bpf/bpf_helpers.h>
-#include "../landscape.h"
+#include "base/landscape.h"
 
 struct firewall_action {
     __u32 mark;

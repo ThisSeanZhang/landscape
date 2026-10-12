@@ -3,13 +3,13 @@
 
 #include <vmlinux.h>
 
-#include "../landscape_log.h"
-#include "nat_common.h"
-#include "nat_metric.h"
-#include "nat4_map_ops.h"
-#include "nat4_ct_timer.h"
-#include "../wan_ip.h"
-#include "../einat_nat4.h"
+#include "base/landscape_log.h"
+#include "nat/nat_common.h"
+#include "nat/nat_metric.h"
+#include "nat/nat4_map_ops.h"
+#include "nat/nat4_ct_timer.h"
+#include "route/wan_ip.h"
+#include "einat/einat_nat4.h"
 
 static __always_inline void nat_metric_accumulate(struct __sk_buff *skb, bool ingress,
                                                   struct nat4_timer_value_v3 *value) {

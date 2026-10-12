@@ -5,10 +5,10 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#include "landscape.h"
-#include "pkg_def.h"
-#include "neigh_ip6.h"
-#include "neigh_ip6_event.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
+#include "neigh/neigh_ip6.h"
+#include "neigh/neigh_ip6_event.h"
 #include "route/route6_lan.h"
 
 char LICENSE[] SEC("license") = "GPL";

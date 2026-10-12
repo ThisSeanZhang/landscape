@@ -4,10 +4,10 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
-#include "../landscape.h"
-#include "../pkg_def.h"
-#include "../einat_helpers.h"
-#include "scan_types.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
+#include "einat/einat_helpers.h"
+#include "scanner/scan_types.h"
 
 enum land_scan_result {
     LD_SCAN_OK = 0,

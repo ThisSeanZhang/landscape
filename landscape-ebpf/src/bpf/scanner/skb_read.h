@@ -4,9 +4,9 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
-#include "../landscape.h"
-#include "../pkg_def.h"
-#include "scan_types.h"
+#include "base/landscape.h"
+#include "base/pkg_def.h"
+#include "scanner/scan_types.h"
 
 static __always_inline int skb_read_ipv4_l3(struct __sk_buff *skb, u32 l3_offset, __be32 *saddr,
                                             __be32 *daddr) {

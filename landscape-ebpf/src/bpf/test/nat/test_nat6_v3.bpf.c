@@ -6,7 +6,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "nat/tc_nat6.h"
-#include "landscape.h"
+#include "base/landscape.h"
 #include "scanner/skb_scanner6.h"
 #include "scanner/skb_read.h"
 

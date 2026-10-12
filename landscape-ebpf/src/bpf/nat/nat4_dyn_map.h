@@ -1,7 +1,7 @@
 #ifndef __LD_NAT4_DYN_MAP_H__
 #define __LD_NAT4_DYN_MAP_H__
 
-#include "nat_common.h"
+#include "nat/nat_common.h"
 
 #define NAT4_TIMER_SIZE NAT_MAPPING_TIMER_SIZE
 #define NAT4_PORT_QUEUE_SIZE 65536

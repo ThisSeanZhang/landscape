@@ -1,12 +1,12 @@
 #ifndef LD_NAT6_V3_H
 #define LD_NAT6_V3_H
 #include <vmlinux.h>
-#include "../landscape_log.h"
-#include "../scanner/scan_types.h"
-#include "nat_common.h"
-#include "nat6_map_ops.h"
-#include "nat6_ct_timer.h"
-#include "../wan_ip.h"
+#include "base/landscape_log.h"
+#include "scanner/scan_types.h"
+#include "nat/nat_common.h"
+#include "nat/nat6_map_ops.h"
+#include "nat/nat6_ct_timer.h"
+#include "route/wan_ip.h"
 
 #define LAND_IPV6_NET_PREFIX_TRANS_MASK (0x0FULL << 56)
 

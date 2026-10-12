@@ -3,7 +3,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-#include "landscape.h"
+#include "base/landscape.h"
 
 #ifndef ETH_P_PPP_SES
 #define ETH_P_PPP_SES bpf_htons(0x8864)

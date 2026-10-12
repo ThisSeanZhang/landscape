@@ -1,7 +1,7 @@
 #ifndef __LD_NAT6_DYN_MAP_H__
 #define __LD_NAT6_DYN_MAP_H__
 
-#include "nat_common.h"
+#include "nat/nat_common.h"
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);

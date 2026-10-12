@@ -5,8 +5,8 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#include "landscape.h"
-#include "wan_ip.h"
+#include "base/landscape.h"
+#include "route/wan_ip.h"
 
 #include "chain/xdp_meta.h"
 #include "chain/redirect_able.h"
@@ -24,10 +24,10 @@
 #include "route/route6_lan.h"
 #include "route/route6_slot.h"
 
-#include "flow_match.h"
-#include "neigh_ip4.h"
-#include "neigh_ip6.h"
-#include "neigh_learn.h"
+#include "route/flow_match.h"
+#include "neigh/neigh_ip4.h"
+#include "neigh/neigh_ip6.h"
+#include "route/neigh_learn.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
