@@ -86,11 +86,19 @@ int tc_wan_intro(struct __sk_buff *skb) {
         struct iphdr *iph;
         if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
 
+        if (unlikely(is_broadcast_ip4(iph->daddr))) {
+            return TC_ACT_OK;
+        }
+
         key.dispatch_type = LANDSCAPE_IPV4_TYPE;
         key.v4.daddr = iph->daddr;
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
+
+        if (unlikely(is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8))) {
+            return TC_ACT_OK;
+        }
 
         key.dispatch_type = LANDSCAPE_IPV6_TYPE;
         __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
