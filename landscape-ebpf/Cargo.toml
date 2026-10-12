@@ -48,7 +48,7 @@ vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc
 [features]
 default = []
 # eBPF integration tests: loads BPF skeletons, requires root. Also makes the
-# build script compile the test-only BPF objects under src/bpf/test/.
+ # build script compile the test-only BPF objects under src/bpf/tests/.
 bpf-test = []
 # # autoconf automake libtool pkg-config m4 make cmake clang llvm autopoint gawk
 # apt-get install musl-tools musl-dev libargp-dev

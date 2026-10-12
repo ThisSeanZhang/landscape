@@ -70,7 +70,7 @@ fn collect_bpf_in_dir(dir: &Path, project_root: &Path, jobs: &mut Vec<BpfJob>) {
 }
 
 fn collect_test_bpf(base_dir: &Path, project_root: &Path, jobs: &mut Vec<BpfJob>) {
-    let test_dir = base_dir.join("test");
+    let test_dir = base_dir.join("tests");
     if !test_dir.is_dir() {
         return;
     }
