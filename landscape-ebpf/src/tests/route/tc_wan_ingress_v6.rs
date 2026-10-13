@@ -550,14 +550,17 @@ fn wan6_ingress_raw_l3_no_mac_entry_redirects_bare() {
 
 #[test]
 fn wan6_ingress_truncated_ip6_header_passes_to_stack() {
-    // read_context truncation row (v6): ethertype claims IPv6 but the ip6
-    // header is cut short → SHOT from read_context, mapped to "pass".
+    // read_context truncation row (v6): cb[1] overruns the L3 header read →
+    // SHOT, mapped to "pass" (PROG_TEST_RUN rejects short frames, see the
+    // NOTE in tc_wan_ingress.rs).
     load_skel!("tc-wan6-runt", skel);
-    let mut pkt = vec![0xff_u8; 14 + 20]; // eth + partial ip6 header
+    let mut pkt = vec![0xff_u8; 14 + 40]; // eth + full-size "ip6" payload
     pkt[12] = 0x86;
     pkt[13] = 0xdd;
+    let mut ctx = wan_ctx(0);
+    ctx.cb[1] = 15; // 15 + 40 > 54 → header read overruns
 
-    let (ret, out) = run_wan6_ingress(&skel, &pkt, &mut wan_ctx(0));
+    let (ret, out) = run_wan6_ingress(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_OK, "truncated ip6 header must pass, not drop");
     assert_eq!(out, pkt);

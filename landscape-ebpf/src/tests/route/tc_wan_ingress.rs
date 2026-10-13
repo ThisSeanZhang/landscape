@@ -545,7 +545,11 @@ fn wan_ingress_arp_frame_passes_through() {
 
 // NOTE: LD_SCAN_ERR (eth-header read failure) is not reachable under
 // PROG_TEST_RUN: the kernel rejects data_size_in < ETH_HLEN before the
-// program runs (test_run.c `if (size < ETH_HLEN) return -EINVAL`).
+// program runs (test_run.c `if (size < ETH_HLEN) return -EINVAL`), and
+// rejects ethertype-IP inputs whose L3 header would be truncated
+// (< ETH_HLEN + sizeof(struct iphdr) for IPv4, + sizeof(struct ipv6hdr)
+// for IPv6). The truncation tests below therefore overrun the header read
+// via an l3 offset of 15 instead of a short frame.
 
 #[test]
 fn wan_ingress_non_matching_wan_binding_continues_to_lan_redirect() {
@@ -721,14 +725,16 @@ fn wan_ingress_ipv6_frame_hands_to_stack() {
 
 #[test]
 fn wan_ingress_truncated_ip_header_passes_to_stack() {
-    // read_context truncation row: ethertype claims IPv4 but the IP header
-    // is cut short → SHOT from read_context, mapped to "pass to the stack".
+    // read_context truncation row: cb[1] overruns the L3 header read → SHOT,
+    // mapped to "pass" (PROG_TEST_RUN rejects short frames, see NOTE above).
     load_skel!("tc-wan-in-flow-runt", skel);
-    let mut pkt = vec![0xff_u8; 16]; // eth header + 2 bytes of "IP"
+    let mut pkt = vec![0xff_u8; 14 + 20]; // eth + full-size "IP" payload
     pkt[12] = 0x08;
     pkt[13] = 0x00;
+    let mut ctx = wan_ctx(0);
+    ctx.cb[1] = 15; // 15 + 20 > 34 → header read overruns
 
-    let (ret, out) = run_wan_ingress(&skel, &pkt, &mut wan_ctx(0));
+    let (ret, out) = run_wan_ingress(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_OK, "truncated IP header must pass, not drop");
     assert_eq!(out, pkt);

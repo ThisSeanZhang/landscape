@@ -86,10 +86,11 @@ fn lan6_ingress_fe_non_link_local_dst_routes_normally() {
 
 #[test]
 fn lan6_ingress_runt_ipv6_frame_passes_to_stack() {
-    // read_context truncation row (v6): the ip6 header read requires 40 bytes
-    // at l3_offset 14, so the runt threshold is 54 bytes total (vs 34 for v4).
-    load_skel!("tc-lan6-runt", skel);
-    let mut pkt = vec![0xff_u8; 14 + 20]; // eth + partial ip6 header
+    // read_context truncation row (v6): the rodata l3 offset overruns the L3
+    // header read → SHOT, mapped to "pass" (PROG_TEST_RUN rejects short
+    // frames).
+    load_skel!("tc-lan6-runt", skel, 15);
+    let mut pkt = vec![0xff_u8; 14 + 40]; // eth + full-size "ip6" payload
     pkt[12] = 0x86;
     pkt[13] = 0xdd;
 

@@ -27,7 +27,11 @@ fn lan_ingress_arp_frame_passes_untouched() {
 
 // NOTE: LD_SCAN_ERR (eth-header read failure) is not reachable under
 // PROG_TEST_RUN: the kernel rejects data_size_in < ETH_HLEN before the
-// program runs (test_run.c `if (size < ETH_HLEN) return -EINVAL`).
+// program runs (test_run.c `if (size < ETH_HLEN) return -EINVAL`), and
+// rejects ethertype-IP inputs whose L3 header would be truncated
+// (< ETH_HLEN + sizeof(struct iphdr) for IPv4, + sizeof(struct ipv6hdr)
+// for IPv6). The truncation test below therefore overruns the header read
+// via an l3 offset of 15 instead of a short frame.
 
 #[test]
 fn lan_ingress_ipv6_frame_hands_to_stack() {
@@ -611,11 +615,11 @@ fn lan_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
 
 #[test]
 fn lan_ingress_runt_ipv4_frame_passes_to_stack() {
-    // read_context truncation row: ethertype claims IPv4 but the IP header is
-    // cut short → TC_ACT_SHOT from read_context, which every worker maps to
-    // "pass to the stack".
-    load_skel!("tc-lan-flow-runt", skel);
-    let mut pkt = vec![0xff_u8; 16]; // eth header + 2 bytes of "IP"
+    // read_context truncation row: the rodata l3 offset overruns the L3
+    // header read → SHOT, mapped to "pass" (PROG_TEST_RUN rejects short
+    // frames, see NOTE above).
+    load_skel!("tc-lan-flow-runt", skel, 15);
+    let mut pkt = vec![0xff_u8; 14 + 20]; // eth + full-size "IP" payload
     pkt[12] = 0x08;
     pkt[13] = 0x00;
 

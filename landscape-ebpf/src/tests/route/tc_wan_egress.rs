@@ -106,6 +106,15 @@ macro_rules! load_skel {
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
     };
+    ($pin:expr, $skel:ident, $l3_offset:expr) => {
+        let pin_root = isolated_pin_root($pin);
+        let mut builder = tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = std::mem::MaybeUninit::uninit();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = $l3_offset;
+        let $skel = open_skel.load().unwrap();
+    };
 }
 
 fn run_wan_egress(
@@ -715,10 +724,11 @@ fn wan_egress_ipv6_frame_hands_to_stack() {
 
 #[test]
 fn wan_egress_truncated_ip_header_passes_to_stack() {
-    // read_context truncation row: ethertype claims IPv4 but the IP header
-    // is cut short → SHOT from read_context, mapped to "pass to the stack".
-    load_skel!("tc-wan-eg-runt", skel);
-    let mut pkt = vec![0xff_u8; 16]; // eth header + 2 bytes of "IP"
+    // read_context truncation row: the rodata l3 offset overruns the L3
+    // header read → SHOT, mapped to "pass" (PROG_TEST_RUN rejects short
+    // frames).
+    load_skel!("tc-wan-eg-runt", skel, 15);
+    let mut pkt = vec![0xff_u8; 14 + 20]; // eth + full-size "IP" payload
     pkt[12] = 0x08;
     pkt[13] = 0x00;
 
