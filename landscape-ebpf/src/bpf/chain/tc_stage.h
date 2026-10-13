@@ -20,8 +20,8 @@ struct {
     __uint(value_size, sizeof(u32));
 } wan_egress_next_stage SEC(".maps");
 
-#define TC_CHAIN_WAN_INGRESS(skb) bpf_tail_call((skb), &wan_ingress_next_stage, TC_NEXT_SLOT)
-#define TC_CHAIN_WAN_EGRESS(skb) bpf_tail_call((skb), &wan_egress_next_stage, TC_NEXT_SLOT)
+#define TC_CHAIN_WAN_INGRESS(skb) bpf_tail_call_static((skb), &wan_ingress_next_stage, TC_NEXT_SLOT)
+#define TC_CHAIN_WAN_EGRESS(skb) bpf_tail_call_static((skb), &wan_egress_next_stage, TC_NEXT_SLOT)
 
 /*
  *  ============================================================================

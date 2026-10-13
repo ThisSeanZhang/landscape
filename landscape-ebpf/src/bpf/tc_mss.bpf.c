@@ -158,7 +158,7 @@ int tc_mss_wan_ingress(struct __sk_buff *skb) {
     clamp_tcp_if_present(skb, current_l3_offset, mtu_size);
 
     TC_CHAIN_WAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_INGRESS(skb);
     return TC_ACT_OK;
 }
 
@@ -167,6 +167,6 @@ int tc_mss_wan_egress(struct __sk_buff *skb) {
     clamp_tcp_if_present(skb, current_l3_offset, mtu_size);
 
     TC_CHAIN_WAN_EGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_EGRESS(skb);
     return TC_ACT_UNSPEC;
 }

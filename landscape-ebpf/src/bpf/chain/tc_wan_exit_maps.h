@@ -21,4 +21,11 @@ struct {
     __uint(value_size, sizeof(u32));
 } tc_pipe_exits_wan_egress SEC(".maps");
 
+/* Static tail calls into the TC chain exits (slot 0, constant).
+ * See chain/xdp_stage.h for the static tail call contract. */
+#define TC_CHAIN_EXIT_WAN_INGRESS(skb)                                                             \
+    bpf_tail_call_static((skb), &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT)
+#define TC_CHAIN_EXIT_WAN_EGRESS(skb)                                                              \
+    bpf_tail_call_static((skb), &tc_pipe_exits_wan_egress, TC_NEXT_SLOT)
+
 #endif /* __LD_TC_WAN_EXIT_MAPS_H_ */

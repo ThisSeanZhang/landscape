@@ -19,4 +19,8 @@ struct {
     __uint(value_size, sizeof(u32));
 } xdp_pipe_exits_wan SEC(".maps");
 
+/* Static tail call into the from-WAN chain exit (slot 0, constant).
+ * See chain/xdp_stage.h for the static tail call contract. */
+#define XDP_FROM_WAN_CHAIN_EXIT(ctx) bpf_tail_call_static((ctx), &xdp_pipe_exits_wan, 0)
+
 #endif /* __LD_XDP_WAN_MAPS_H_ */

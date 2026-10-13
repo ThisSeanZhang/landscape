@@ -10,9 +10,10 @@
  * own `next_stage` map instance.
  *
  * max_entries = 2 so services exposing _lan / _wan entry points can
- * use separate slots for each direction:
- *   XDP_STAGE_NEXT_LAN (0) → LAN chain exit
- *   XDP_STAGE_NEXT_WAN (1) → WAN chain exit
+ * use separate slots per chain (chain identity = the side the packet
+ * was received FROM, not where it is going):
+ *   XDP_FROM_LAN_SLOT (0) → next hop of the from-LAN chain
+ *   XDP_FROM_WAN_SLOT (1) → next hop of the from-WAN chain
  *
  * Chain roots are independent programs that declare their own
  * `root_next_stage` (max_entries=1, no stage.h dependency).
@@ -24,8 +25,11 @@ struct {
     __uint(value_size, sizeof(u32));
 } next_stage SEC(".maps");
 
-#define XDP_STAGE_NEXT_LAN 0
-#define XDP_STAGE_NEXT_WAN 1
+#define XDP_FROM_LAN_SLOT 0
+#define XDP_FROM_WAN_SLOT 1
+
+#define XDP_FROM_LAN_CHAIN_NEXT(ctx) bpf_tail_call_static((ctx), &next_stage, XDP_FROM_LAN_SLOT)
+#define XDP_FROM_WAN_CHAIN_NEXT(ctx) bpf_tail_call_static((ctx), &next_stage, XDP_FROM_WAN_SLOT)
 
 /*
  * Chain node pattern
@@ -41,19 +45,21 @@ struct {
  *   predecessor's map is updated to point to the successor,
  *   then the stopped service's skel is dropped.
  *
- *   LAN chain :  root → root_next_stage[0]=mss_lan_fd
- *                mss → next_stage[LAN]=lan_chain_exit_fd
+ *   from-LAN chain (pkts received on a LAN if):
+ *     root → root_next_stage[0]=mss_lan_fd
+ *     mss → next_stage[FROM_LAN]=lan_chain_exit_fd
  *     (fallback: xdp_pipe_exits_lan)
- *   WAN chain :  root → root_next_stage[0]=mss_wan_fd
- *                mss → next_stage[WAN]=wan_route_fd
+ *   from-WAN chain (pkts received on the WAN if):
+ *     root → root_next_stage[0]=mss_wan_fd
+ *     mss → next_stage[FROM_WAN]=wan_route_fd
  *     (fallback: xdp_pipe_exits_wan)
  *   Stop mss:  root.root_next_stage[0] ← exit_fd
  *
  * Tailcall pattern (BPF side):
  *   // root:                           // intermediate:
- *   bpf_tail_call(ctx, &root_next_stage, 0);
- *   bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);  // or WAN
- *   bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+ *   bpf_tail_call_static(ctx, &root_next_stage, 0);
+ *   XDP_FROM_LAN_CHAIN_NEXT(ctx);   // or XDP_FROM_WAN_CHAIN_NEXT
+ *   XDP_FROM_LAN_CHAIN_EXIT(ctx);   // or XDP_FROM_WAN_CHAIN_EXIT
  *   return XDP_PASS;
  *
  * Each chain direction has its own fallback PROG_ARRAY:

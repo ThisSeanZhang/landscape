@@ -34,8 +34,8 @@ int xdp_test_chain_stage(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
 
     u32 k = 0;
     u64 *cnt = bpf_map_lookup_elem(&stage_fallback_map, &k);

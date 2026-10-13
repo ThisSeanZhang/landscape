@@ -18,8 +18,8 @@ struct {
 SEC("tc/egress")
 int tc_wan_egress_root(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_root <<<"
-    bpf_tail_call(skb, &wan_egress_root_next_stage, TC_NEXT_SLOT);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
+    bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_EGRESS(skb);
     return TC_ACT_UNSPEC;
 #undef BPF_LOG_TOPIC
 }

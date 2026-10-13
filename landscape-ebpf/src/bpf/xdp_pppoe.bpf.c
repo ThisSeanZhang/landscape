@@ -59,8 +59,8 @@ int xdp_pppoe_encap_lan(struct xdp_md *ctx) {
     int ret = xdp_pppoe_encap(ctx);
     if (ret != XDP_PASS) return ret;
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
 
     return XDP_PASS;
 }

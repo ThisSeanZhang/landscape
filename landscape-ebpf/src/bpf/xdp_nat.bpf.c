@@ -314,16 +314,6 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline void xdp_nat_tailcall(struct xdp_md *ctx, bool is_egress) {
-    if (is_egress) {
-        bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
-        bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
-    } else {
-        bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
-        bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
-    }
-}
-
 SEC("xdp")
 int egress_nat(struct xdp_md *ctx) {
 #define BPF_LOG_TOPIC "egress_nat"
@@ -339,7 +329,9 @@ int egress_nat(struct xdp_md *ctx) {
         ret = nat_v6_egress(ctx);
     }
     if (ret != XDP_PASS) return ret;
-    xdp_nat_tailcall(ctx, true);
+    /* Egress NAT (LAN→WAN translation) runs in the LAN-side chain. */
+    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
     return XDP_PASS;
 #undef BPF_LOG_TOPIC
 }
@@ -359,7 +351,9 @@ int ingress_nat(struct xdp_md *ctx) {
         ret = nat_v6_ingress(ctx);
     }
     if (ret != XDP_PASS) return ret;
-    xdp_nat_tailcall(ctx, false);
+    /* Ingress NAT (WAN→LAN translation) runs in the WAN-side chain. */
+    XDP_FROM_WAN_CHAIN_NEXT(ctx);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
     return XDP_PASS;
 #undef BPF_LOG_TOPIC
 }

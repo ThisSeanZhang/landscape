@@ -175,7 +175,7 @@ int tc_firewall_wan_egress(struct __sk_buff *skb) {
     if (unlikely(fw_do_egress(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_CHAIN_WAN_EGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_egress, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_EGRESS(skb);
     return TC_ACT_UNSPEC;
 #undef BPF_LOG_TOPIC
 }
@@ -187,7 +187,7 @@ int tc_firewall_wan_ingress(struct __sk_buff *skb) {
     if (unlikely(fw_do_ingress(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_CHAIN_WAN_INGRESS(skb);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_INGRESS(skb);
     return TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }

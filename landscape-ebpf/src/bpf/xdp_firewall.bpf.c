@@ -49,8 +49,8 @@ int xdp_firewall_lan(struct xdp_md *ctx) {
     int verdict = firewall_check(ctx, false);
     if (verdict != XDP_PASS) return verdict;
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
     bpf_printk("[fw_lan] all tailcalls failed");
     return XDP_PASS;
 }
@@ -60,8 +60,8 @@ int xdp_firewall_wan(struct xdp_md *ctx) {
     int verdict = firewall_check(ctx, true);
     if (verdict != XDP_PASS) return verdict;
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
+    XDP_FROM_WAN_CHAIN_NEXT(ctx);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
     bpf_printk("[fw_wan] all tailcalls failed");
     return XDP_PASS;
 }

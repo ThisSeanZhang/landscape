@@ -20,7 +20,7 @@ struct {
 
 SEC("xdp")
 int xdp_wan_root(struct xdp_md *ctx) {
-    bpf_tail_call(ctx, &root_next_stage, 0);
-    bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
+    bpf_tail_call_static(ctx, &root_next_stage, 0);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
     return XDP_PASS;
 }

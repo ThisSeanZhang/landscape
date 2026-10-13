@@ -33,8 +33,8 @@ int xdp_lan_root(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    bpf_tail_call(ctx, &root_next_stage, 0);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    bpf_tail_call_static(ctx, &root_next_stage, 0);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
 
     bpf_printk("[lan_root] all tailcalls failed");
     return XDP_PASS;

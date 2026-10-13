@@ -21,7 +21,7 @@ const volatile u32 current_l3_offset = 0;
 SEC("tc/ingress")
 int tc_wan_ingress_root(struct __sk_buff *skb) {
     skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
-    bpf_tail_call(skb, &wan_ingress_root_next_stage, TC_NEXT_SLOT);
-    bpf_tail_call(skb, &tc_pipe_exits_wan_ingress, TC_NEXT_SLOT);
+    bpf_tail_call_static(skb, &wan_ingress_root_next_stage, TC_NEXT_SLOT);
+    TC_CHAIN_EXIT_WAN_INGRESS(skb);
     return TC_ACT_OK;
 }

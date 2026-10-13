@@ -99,8 +99,8 @@ SEC("xdp")
 int xdp_mss_lan(struct xdp_md *ctx) {
     mss_clamp_packet(ctx);
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_LAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_lan, 0);
+    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
     bpf_printk("[mss_lan] all tailcalls failed");
     return XDP_PASS;
 }
@@ -109,8 +109,8 @@ SEC("xdp")
 int xdp_mss_wan(struct xdp_md *ctx) {
     mss_clamp_packet(ctx);
 
-    bpf_tail_call(ctx, &next_stage, XDP_STAGE_NEXT_WAN);
-    bpf_tail_call(ctx, &xdp_pipe_exits_wan, 0);
+    XDP_FROM_WAN_CHAIN_NEXT(ctx);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
     bpf_printk("[mss_wan] all tailcalls failed");
     return XDP_PASS;
 }
