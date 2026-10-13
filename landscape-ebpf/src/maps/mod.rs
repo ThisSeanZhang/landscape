@@ -119,6 +119,8 @@ pub mod nat;
 pub mod redirect_able;
 pub mod route;
 pub mod wan;
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod wan_trie;
 
 /// Only referenced by the aggregated layout tests in this module.
 #[cfg_attr(not(test), allow(unused_imports))]

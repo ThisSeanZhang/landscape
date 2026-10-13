@@ -18,6 +18,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::chain::tc_manager::TcChainManager;
 use crate::chain::xdp_manager::XdpChainManager;
 use crate::maps;
+use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::metric::EbpfMetricSourceFactory;
 use crate::{dns_result_sink::EbpfDnsResultSink, flow_socket_registrar::EbpfFlowSocketRegistrar};
 
@@ -56,6 +57,9 @@ pub struct EbpfRuntime {
     pub(crate) paths: Arc<LandscapeMapPath>,
     pub(crate) tc: Arc<TcChainManager>,
     pub(crate) xdp: Arc<XdpChainManager>,
+    /// The one global WAN dispatch-trie controller: owns the authoritative
+    /// entry set and publishes to every registered program arena.
+    pub(crate) wan_trie: Arc<WanTrieDispatcher>,
     pub(crate) try_native_xdp: Option<Vec<i32>>,
 }
 
@@ -69,10 +73,22 @@ impl EbpfRuntime {
     ///
     /// The returned runtime exclusively owns `space`.
     pub fn init(space: &str, try_native_xdp: Option<Vec<i32>>) -> LdEbpfResult<Self> {
+        // The WAN dispatch tries live in BPF arenas: the interpreter cannot
+        // run arena programs, so a disabled JIT makes every intro load fail
+        // with EOPNOTSUPP. Warn loudly instead of failing mysteriously.
+        if let Ok(v) = std::fs::read_to_string("/proc/sys/net/core/bpf_jit_enable")
+            && v.trim() == "0"
+        {
+            tracing::error!(
+                "net.core.bpf_jit_enable is 0: BPF arena programs (WAN dispatch trie) \
+                 cannot load on this kernel; enable the JIT sysctl"
+            );
+        }
         let paths = init_map_paths(space)?;
-        let tc = Arc::new(TcChainManager::new(paths.clone())?);
-        let xdp = Arc::new(XdpChainManager::new(paths.clone())?);
-        Ok(Self { paths, tc, xdp, try_native_xdp })
+        let wan_trie = Arc::new(WanTrieDispatcher::new());
+        let tc = Arc::new(TcChainManager::new(paths.clone(), wan_trie.clone())?);
+        let xdp = Arc::new(XdpChainManager::new(paths.clone(), wan_trie.clone())?);
+        Ok(Self { paths, tc, xdp, wan_trie, try_native_xdp })
     }
 
     /// Shared map pin paths.

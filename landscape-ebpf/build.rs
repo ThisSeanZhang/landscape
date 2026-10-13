@@ -69,13 +69,16 @@ fn collect_bpf_in_dir(dir: &Path, project_root: &Path, jobs: &mut Vec<BpfJob>) {
     }
 }
 
-fn collect_test_bpf(base_dir: &Path, project_root: &Path, jobs: &mut Vec<BpfJob>) {
-    let test_dir = base_dir.join("tests");
-    if !test_dir.is_dir() {
+/// Collect the `bpf-test`-only BPF trees: correctness-test programs under
+/// `src/bpf/tests/` and benchmarks under `src/bpf/bench/`. `.bpf.c` files may
+/// sit at either level of those trees.
+fn collect_aux_bpf(dir: &Path, project_root: &Path, jobs: &mut Vec<BpfJob>) {
+    if !dir.is_dir() {
         return;
     }
-    for entry in fs::read_dir(&test_dir).unwrap_or_else(|e| {
-        panic!("Failed to read test directory: {}: {}", test_dir.display(), e);
+    collect_bpf_in_dir(dir, project_root, jobs);
+    for entry in fs::read_dir(dir).unwrap_or_else(|e| {
+        panic!("Failed to read BPF directory: {}: {}", dir.display(), e);
     }) {
         let path = match entry {
             Ok(entry) => entry.path(),
@@ -228,7 +231,7 @@ fn build_one(job: &BpfJob, key: u64, clang_args: &[&OsStr]) -> Result<bool, Stri
         .source(&job.source)
         .clang_args(clang_args)
         .build_and_generate(&job.skel)
-        .map_err(|e| format!("{}: {e}", job.source.display()))?;
+        .map_err(|e| format!("{}: {:?}", job.source.display(), e))?;
     fs::write(&job.hash, &key_str).map_err(|e| format!("{}: {e}", job.hash.display()))?;
     Ok(true)
 }
@@ -316,7 +319,8 @@ fn main() {
     let mut jobs = Vec::new();
     collect_bpf_in_dir(Path::new("src/bpf/"), &project_root, &mut jobs);
     if env::var_os("CARGO_FEATURE_BPF_TEST").is_some() {
-        collect_test_bpf(Path::new("src/bpf"), &project_root, &mut jobs);
+        collect_aux_bpf(Path::new("src/bpf/tests"), &project_root, &mut jobs);
+        collect_aux_bpf(Path::new("src/bpf/bench"), &project_root, &mut jobs);
     }
 
     let env_key = environment_key(&target_arch, &clang_args, &vmlinux_path);

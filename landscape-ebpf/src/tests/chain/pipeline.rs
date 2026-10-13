@@ -1,5 +1,7 @@
+use std::net::Ipv6Addr;
 use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
+use std::str::FromStr;
 use std::time::Duration;
 
 use crate::tests::net_utils::{
@@ -11,6 +13,8 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
+use crate::maps::wan_trie::builder::{v4_entry, v6_entry, wan_trie_publish};
+use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
 use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
@@ -87,7 +91,7 @@ fn xdp_firewall_pipeline() {
     let mut intro_b = XdpWanIntroSkelBuilder::default();
     intro_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut intro_obj = std::mem::MaybeUninit::uninit();
-    let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
+    let mut intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
 
     // ── attach XDP programs (each side from inside its own netns) ──
     let lan_h_i;
@@ -215,30 +219,18 @@ fn xdp_firewall_pipeline() {
         .update(&0u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    // ── WAN intro dispatch: route 10.0.0.1 → wan_h (the same interface, for chain processing) ──
+    // ── WAN dispatch trie: route 10.0.0.1 and fd00::/64 → wan_h (the same
+    // interface, for chain processing) ──
     {
-        let daddr_be = u32::from_be_bytes([10, 0, 0, 1]);
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[12..16].copy_from_slice(&daddr_be.to_be_bytes());
-        let dispatch_val = wan_h_i.to_ne_bytes();
-        intro
-            .maps
-            .wan_intro_dispatch_map
-            .update(&dispatch_key, &dispatch_val, MapFlags::ANY)
-            .unwrap();
-    }
-    // v6 dispatch: route fd00::1 → wan_h
-    {
-        let v6_lan: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&1u32.to_le_bytes());
-        dispatch_key[8..16].copy_from_slice(&v6_lan[0..8]);
-        let dispatch_val = wan_h_i.to_ne_bytes();
-        intro
-            .maps
-            .wan_intro_dispatch_map
-            .update(&dispatch_key, &dispatch_val, MapFlags::ANY)
-            .unwrap();
+        let data = intro.maps.wan_trie_arena_data.as_mut().unwrap();
+        wan_trie_publish(
+            cast_arena_tbl(&mut data.wan_trie_tbl),
+            &[
+                v4_entry(std::net::Ipv4Addr::new(10, 0, 0, 1), 32, wan_h_i).unwrap(),
+                v6_entry(Ipv6Addr::from_str("fd00::").unwrap(), 64, wan_h_i).unwrap(),
+            ],
+        )
+        .unwrap();
     }
     intro
         .maps

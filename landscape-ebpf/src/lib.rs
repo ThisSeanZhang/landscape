@@ -20,6 +20,9 @@ mod test_support;
 #[cfg(all(test, feature = "bpf-test"))]
 mod tests;
 
+#[cfg(all(test, feature = "bpf-test"))]
+mod bench;
+
 pub mod chain;
 pub mod dns_dispatcher;
 
@@ -139,10 +142,6 @@ impl LandscapeMapPath {
         self.tc_chain_base().join("tc_pipe_root_progs")
     }
 
-    pub fn tc_wan_intro_dispatch_path(&self) -> PathBuf {
-        self.tc_chain_base().join("wan_intro_dispatch")
-    }
-
     pub fn tc_pipe_exits_wan_ingress_path(&self) -> PathBuf {
         self.tc_chain_base().join("tc_pipe_exits_wan_ingress")
     }
@@ -169,10 +168,6 @@ impl LandscapeMapPath {
 
     pub fn xdp_lan_pipe_root_progs_path(&self) -> PathBuf {
         self.xdp_base.join("lan_pipe_root_progs")
-    }
-
-    pub fn xdp_wan_intro_dispatch_path(&self) -> PathBuf {
-        self.xdp_base.join("wan_intro_dispatch")
     }
 }
 

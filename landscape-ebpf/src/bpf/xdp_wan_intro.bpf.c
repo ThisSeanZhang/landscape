@@ -11,21 +11,38 @@
 #include "chain/xdp_meta.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
-#include "chain/wan_intro_dispatch.h"
-
-#define WAN_INTRO_IFINDEX_TYPE 2
+#include "map/wan_trie.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
-static __always_inline int wan_intro_tailcall_root(struct xdp_md *ctx, struct dispatch_key *key) {
-    struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);
-    if (!value) {
-        return XDP_PASS;
+/* WAN dispatch trie in this program's own arena. libbpf re-copies the
+ * ELF-initial (zero) arena data on every load, so the table is never
+ * shared: the runtime registers the arena with the global WanTrieDispatcher
+ * right after skeleton load — which publishes the current entry set — and
+ * only then attaches the program.
+ *
+ * Dispatch roots are prog-array slots, indexed by the owning WAN ifindex.
+ */
+WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
+
+static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root_index) {
+    bpf_tail_call(ctx, &xdp_pipe_root_progs, root_index);
+    ld_bpf_log("wan_intro tail call failed, root_index=%u", root_index);
+}
+
+/* Primary key hit -> its chain root; otherwise the ingress-ifindex
+ * fallback; still nothing -> XDP_PASS.
+ */
+static __always_inline int wan_intro_dispatch(struct xdp_md *ctx, u64 key) {
+    u32 root = wan_trie_resolve(&wan_trie_tbl, key);
+    if (root) {
+        wan_intro_tailcall_root(ctx, root);
     }
 
-    bpf_tail_call(ctx, &xdp_pipe_root_progs, value->next_pipe_root_index);
-    ld_bpf_log("wan_intro tail call failed, dispatch_type=%u root_index=%u", key->dispatch_type,
-               value->next_pipe_root_index);
+    root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ifx(ctx->ingress_ifindex));
+    if (root) {
+        wan_intro_tailcall_root(ctx, root);
+    }
     return XDP_PASS;
 }
 
@@ -35,7 +52,6 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
-    struct dispatch_key key = {};
 
     if ((void *)(eth + 1) > data_end) {
         return XDP_PASS;
@@ -50,10 +66,10 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     //   │
     //   ├─ classifies IPv4 / IPv6 / PPPoE
     //   ├─ PPPoE → strips session header, rewrites ethhdr
-    //   ├─ looks up wan_intro_dispatch_map
-    //   │     ├─ miss  → XDP_PASS
-    //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs,
-    //   │                        value->next_pipe_root_index)
+    //   ├─ resolves the WAN dispatch trie (one arena trie, namespaced keys:
+    //   │     IPv6 prefix64 / IPv4 daddr / PPPoE session / ifindex)
+    //   │     ├─ miss  → ifindex fallback → miss → XDP_PASS
+    //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs, root)
     //   │                    │
     //   │                    ▼  chain root (linked-list head)
     //   │                         │→ &next_stage[0] → ... → wan_route
@@ -72,14 +88,7 @@ int xdp_wan_intro(struct xdp_md *ctx) {
             return XDP_PASS;
         }
 
-        key.dispatch_type = LANDSCAPE_IPV4_TYPE;
-        key.v4.daddr = iph->daddr;
-        wan_intro_tailcall_root(ctx, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-        key.ifindex = ctx->ingress_ifindex;
-        return wan_intro_tailcall_root(ctx, &key);
+        return wan_intro_dispatch(ctx, wan_trie_key_v4(iph->daddr));
     }
 
     if (eth->h_proto == ETH_IPV6) {
@@ -92,14 +101,9 @@ int xdp_wan_intro(struct xdp_md *ctx) {
             return XDP_PASS;
         }
 
-        key.dispatch_type = LANDSCAPE_IPV6_TYPE;
-        __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
-        wan_intro_tailcall_root(ctx, &key);
-
-        key.v6.prefix64 = 0;
-        key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-        key.ifindex = ctx->ingress_ifindex;
-        return wan_intro_tailcall_root(ctx, &key);
+        u64 prefix64 = 0;
+        __builtin_memcpy(&prefix64, &ip6h->daddr, sizeof(prefix64));
+        return wan_intro_dispatch(ctx, prefix64);
     }
 
     if (eth->h_proto != ETH_P_PPP_SES) {
@@ -118,35 +122,64 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     bool is_v6 = pppoe->protocol == ETH_P_PPP_IPV6;
     u16 l2_proto = is_v6 ? ETH_IPV6 : ETH_IPV4;
 
-    key.dispatch_type = is_v6 ? LANDSCAPE_IPV6_TYPE : LANDSCAPE_IPV4_TYPE;
-    key.ppp.session_id = bpf_htonl((__u32)bpf_ntohs(pppoe->session_id));
-
-    if (is_v6) {
-        struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
-        if ((void *)(ip6h + 1) > data_end) {
-            return XDP_PASS;
-        }
-
-        if (unlikely(is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8))) {
-            return XDP_PASS;
-        }
-
-        __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
-    } else {
-        struct iphdr *iph = (struct iphdr *)(pppoe + 1);
-        if ((void *)(iph + 1) > data_end) {
-            return XDP_PASS;
-        }
-
-        if (unlikely(is_broadcast_ip4(iph->daddr))) {
-            return XDP_PASS;
-        }
-
-        key.v4.daddr = iph->daddr;
-    }
+    /* The session identifies the PPP link: a hit is one of our (native)
+     * sessions and resolves the chain root directly. A miss is not one of
+     * our sessions — today it still falls through to the inner-IP key and
+     * the ingress-ifindex fallback (the transitional path all PPPoE
+     * traffic takes while no sessions are registered); once native PPPoE
+     * publishes its sessions, misses should be passed untouched instead. */
+    u32 root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ppp(pppoe->session_id));
 
     u8 mac_pair[12];
     __builtin_memcpy(mac_pair, eth->h_dest, sizeof(mac_pair));
+
+    bool is_bcast = false;
+    if (!root) {
+        if (is_v6) {
+            struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
+            if ((void *)(ip6h + 1) > data_end) {
+                return XDP_PASS;
+            }
+
+            if (unlikely(is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8))) {
+                return XDP_PASS;
+            }
+
+            u64 prefix64 = 0;
+            __builtin_memcpy(&prefix64, &ip6h->daddr, sizeof(prefix64));
+            root = wan_trie_resolve(&wan_trie_tbl, prefix64);
+        } else {
+            struct iphdr *iph = (struct iphdr *)(pppoe + 1);
+            if ((void *)(iph + 1) > data_end) {
+                return XDP_PASS;
+            }
+
+            if (unlikely(is_broadcast_ip4(iph->daddr))) {
+                return XDP_PASS;
+            }
+
+            root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_v4(iph->daddr));
+        }
+    } else {
+        /* Our session: the inner IP is parsed only to keep broadcast and
+         * multicast traffic out of the chain; those are passed up (headers
+         * already stripped) for the stack to handle. */
+        if (is_v6) {
+            struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
+            if ((void *)(ip6h + 1) > data_end) {
+                return XDP_PASS;
+            }
+
+            is_bcast = is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8);
+        } else {
+            struct iphdr *iph = (struct iphdr *)(pppoe + 1);
+            if ((void *)(iph + 1) > data_end) {
+                return XDP_PASS;
+            }
+
+            is_bcast = is_broadcast_ip4(iph->daddr);
+        }
+    }
 
     int result = bpf_xdp_adjust_head(ctx, 8);
     if (result != 0) {
@@ -164,12 +197,21 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_dest, mac_pair, sizeof(mac_pair));
     eth->h_proto = l2_proto;
 
-    wan_intro_tailcall_root(ctx, &key);
+    /* Broadcast/multicast inner traffic of our own session: hand the
+     * stripped (plain eth/IP) frame to the stack instead of the chain. */
+    if (is_bcast) {
+        return XDP_PASS;
+    }
 
-    key.v6.prefix64 = 0;
-    key.dispatch_type = WAN_INTRO_IFINDEX_TYPE;
-    key.ifindex = ctx->ingress_ifindex;
-    return wan_intro_tailcall_root(ctx, &key);
+    if (root) {
+        wan_intro_tailcall_root(ctx, root);
+    }
+
+    root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ifx(ctx->ingress_ifindex));
+    if (root) {
+        wan_intro_tailcall_root(ctx, root);
+    }
+    return XDP_PASS;
 
 #undef BPF_LOG_TOPIC
 }

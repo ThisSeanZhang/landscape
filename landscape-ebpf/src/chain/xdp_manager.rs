@@ -11,6 +11,7 @@ use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
+use crate::maps::wan_trie::dispatcher::{WanTrieDispatcher, cast_arena_tbl};
 use crate::runtime::EbpfRuntime;
 
 pub(crate) mod xdp_wan_intro_skel {
@@ -136,7 +137,11 @@ impl ChainRoot {
 
 pub struct XdpChainManager {
     paths: Arc<LandscapeMapPath>,
-    _seed: xdp_wan_intro_skel::XdpWanIntroSkel<'static>,
+    wan_trie: Arc<WanTrieDispatcher>,
+    // TrieTarget: the guard field drops before the skeleton field, so the
+    // trie target is detached while the arena mmap is still alive.
+    _seed:
+        crate::maps::wan_trie::dispatcher::TrieTarget<xdp_wan_intro_skel::XdpWanIntroSkel<'static>>,
     _backing: OwnedOpenObject,
     _exit_lan_skel: xdp_lan_exit_skel::XdpLanExitSkel<'static>,
     _exit_lan_backing: OwnedOpenObject,
@@ -382,11 +387,18 @@ impl XdpChainManager {
     /// Create the XDP pin directory, seed its prog-array maps, clear stale
     /// entries left by previous runs, and load the per-direction exit programs
     /// (LAN redirect + WAN route) once as manager-lifetime singletons.
-    pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
+    pub fn new(
+        paths: Arc<LandscapeMapPath>,
+        wan_trie: Arc<WanTrieDispatcher>,
+    ) -> LdEbpfResult<Self> {
         std::fs::create_dir_all(&paths.xdp_base).map_err(|e| LandscapeEbpfError::Context {
             context: format!("can not create xdp base dir {}", paths.xdp_base.display()),
             source: e.into(),
         })?;
+
+        // Legacy pin of the pre-trie dispatch hash map: nothing reads it
+        // anymore, so reclaim the bpffs entry if a previous run left one.
+        let _ = std::fs::remove_file(paths.xdp_base.join("wan_intro_dispatch"));
 
         let builder = XdpWanIntroSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
@@ -408,12 +420,16 @@ impl XdpChainManager {
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &paths.xdp_lan_pipe_root_progs_path(),
         );
-        crate::maps::reuse_pinned_map_or_recreate(
-            &mut open_skel.maps.wan_intro_dispatch_map,
-            &paths.xdp_wan_intro_dispatch_path(),
-        );
+        let mut skel = bpf_ctx!(open_skel.load(), "load xdp seed skeleton")?;
 
-        let skel = bpf_ctx!(open_skel.load(), "load xdp seed skeleton")?;
+        // Register the seed's dispatch-trie arena with the global
+        // dispatcher: publishes the current (empty) entry set, so the
+        // program is never attached over a stale or zeroed table. A
+        // failure aborts manager creation for the same reason.
+        let wan_trie_guard = {
+            let data = skel.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
+            wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))?
+        };
 
         // No chains exist in this process yet, so any entry left in these
         // maps belongs to a previous run (crash or kill). Dropping them lets
@@ -422,7 +438,6 @@ impl XdpChainManager {
         clear_map_entries(&skel.maps.xdp_lan_pipe_root_progs);
         clear_map_entries(&skel.maps.xdp_pipe_exits_lan);
         clear_map_entries(&skel.maps.xdp_pipe_exits_wan);
-        clear_map_entries(&skel.maps.wan_intro_dispatch_map);
 
         // ── Exit programs are loaded once per manager and stay pinned in the
         // shared exit slots for the manager's whole lifetime. ──
@@ -443,7 +458,8 @@ impl XdpChainManager {
 
         Ok(Self {
             paths,
-            _seed: skel,
+            wan_trie,
+            _seed: crate::maps::wan_trie::dispatcher::TrieTarget::from_parts(wan_trie_guard, skel),
             _backing: backing,
             _exit_lan_skel: exit_lan_skel,
             _exit_lan_backing: exit_lan_backing,
@@ -585,14 +601,11 @@ impl XdpChainManager {
         let wan_removed = Self::remove_chain_locked(&mut inner, ifindex, ChainDir::Wan);
 
         if wan_removed {
-            let _ = self._seed.maps.xdp_pipe_root_progs.delete(&ifindex.to_ne_bytes());
-            let mut dispatch_key = [0u8; 16];
-            dispatch_key[0..4].copy_from_slice(&2u32.to_le_bytes());
-            dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
-            let _ = self._seed.maps.wan_intro_dispatch_map.delete(&dispatch_key);
+            let _ = self._seed.skel.maps.xdp_pipe_root_progs.delete(&ifindex.to_ne_bytes());
+            self.wan_trie.del_ifindex_root(ifindex);
         }
         if lan_removed {
-            let _ = self._seed.maps.xdp_lan_pipe_root_progs.delete(&ifindex.to_ne_bytes());
+            let _ = self._seed.skel.maps.xdp_lan_pipe_root_progs.delete(&ifindex.to_ne_bytes());
         }
 
         // The exit programs are manager-lifetime singletons pinned into the
@@ -610,7 +623,7 @@ impl XdpChainManager {
     /// The seed skeleton's wan-intro dispatch program, for callers attaching
     /// a [`NativeXdpLink`] (which needs the owning [`EbpfRuntime`]).
     pub(crate) fn wan_intro_prog(&self) -> &Program<'_> {
-        &self._seed.progs.xdp_wan_intro
+        &self._seed.skel.progs.xdp_wan_intro
     }
 
     pub(crate) fn set_skb_bundle(&self, ifindex: u32, bundle: SkbXdpBundle) {
@@ -685,17 +698,9 @@ impl XdpChainManager {
 
         let slot_bytes = ifindex.to_ne_bytes();
         let root_bytes = root_prog_fd.to_ne_bytes();
-        self._seed.maps.xdp_pipe_root_progs.update(&slot_bytes, &root_bytes, MapFlags::ANY)?;
+        self._seed.skel.maps.xdp_pipe_root_progs.update(&slot_bytes, &root_bytes, MapFlags::ANY)?;
 
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&2u32.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
-        let dispatch_val = ifindex.to_ne_bytes();
-        self._seed.maps.wan_intro_dispatch_map.update(
-            &dispatch_key,
-            &dispatch_val,
-            MapFlags::ANY,
-        )?;
+        self.wan_trie.set_ifindex_root(ifindex, ifindex);
 
         Ok(ChainRoot::Wan {
             _skel: skel,
@@ -732,7 +737,7 @@ impl XdpChainManager {
         let root_prog_fd = skel.progs.xdp_lan_root.as_fd().as_raw_fd();
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
-        self._seed.maps.xdp_lan_pipe_root_progs.update(
+        self._seed.skel.maps.xdp_lan_pipe_root_progs.update(
             &ifindex.to_ne_bytes(),
             &root_prog_fd.to_ne_bytes(),
             MapFlags::ANY,

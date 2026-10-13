@@ -7,6 +7,10 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
+use std::net::Ipv4Addr;
+
+use crate::maps::wan_trie::builder::{v4_entry, wan_trie_publish};
+use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::maps::{Route4CacheKey, Route4CacheValue};
 use crate::tests::net_utils::{
     NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle,
@@ -309,7 +313,7 @@ fn xdp_lan_route_wan_pipeline() {
     let mut intro_b = XdpWanIntroSkelBuilder::default();
     intro_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
     let mut intro_obj = std::mem::MaybeUninit::uninit();
-    let intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
+    let mut intro = intro_b.open(&mut intro_obj).unwrap().load().unwrap();
 
     let mut wr_b = XdpWanRouteSkelBuilder::default();
     wr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
@@ -397,20 +401,13 @@ fn xdp_lan_route_wan_pipeline() {
 
     // ── WAN chain (C→A): wan_intro → wan_root → mss → wan_route_ingress ──
     {
-        // dispatch_key layout (16 bytes, 8-byte aligned due to __be64 in union):
-        //   [0..4)  dispatch_type (u32 LE) = 0 (direct IPv4)
-        //   [4..8)  padding
-        //   [8..12) v4._pad = 0
-        //   [12..16) v4.daddr (u32 BE) = 10.0.0.1
-        let daddr_be = u32::from_be(0x0A000001_u32);
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[12..16].copy_from_slice(&daddr_be.to_ne_bytes());
-        let dispatch_val = wan_h_i.to_ne_bytes();
-        intro
-            .maps
-            .wan_intro_dispatch_map
-            .update(&dispatch_key, &dispatch_val, MapFlags::ANY)
-            .unwrap();
+        // Dispatch trie: route 10.0.0.1 → wan_h.
+        let data = intro.maps.wan_trie_arena_data.as_mut().unwrap();
+        wan_trie_publish(
+            cast_arena_tbl(&mut data.wan_trie_tbl),
+            &[v4_entry(Ipv4Addr::new(10, 0, 0, 1), 32, wan_h_i).unwrap()],
+        )
+        .unwrap();
     }
     intro
         .maps

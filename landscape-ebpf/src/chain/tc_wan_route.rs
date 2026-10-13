@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
+use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::runtime::EbpfRuntime;
 
 mod tc_wan_ingress_intro_skel {
@@ -19,7 +20,9 @@ mod tc_wan_egress_route_skel {
 use tc_wan_egress_route_skel::{TcWanEgressRouteSkel, TcWanEgressRouteSkelBuilder};
 
 pub struct TcWanRouteHandle {
-    _intro_skel: TcWanIngressIntroSkel<'static>,
+    // TrieTarget: the guard field drops before the skeleton field, so the
+    // trie target is detached while the arena mmap is still alive.
+    _intro_trie: crate::maps::wan_trie::dispatcher::TrieTarget<TcWanIngressIntroSkel<'static>>,
     _intro_backing: OwnedOpenObject,
     _egress_route_skel: TcWanEgressRouteSkel<'static>,
     _egress_route_backing: OwnedOpenObject,
@@ -58,13 +61,18 @@ pub fn init_tc_wan_route(
         &mut open_skel.maps.tc_pipe_root_progs,
         &paths.tc_pipe_root_progs_path(),
     );
-    crate::maps::reuse_pinned_map_or_recreate(
-        &mut open_skel.maps.wan_intro_dispatch_map,
-        &paths.tc_wan_intro_dispatch_path(),
-    );
     let intro_skel = bpf_ctx!(open_skel.load(), "load per-if tc_wan_ingress_intro")?;
+
+    // Register the intro's dispatch-trie arena before attaching: the
+    // dispatcher publishes the current entry set over the ELF-zeroed table.
+    // A failure aborts the bring-up instead of attaching over a zeroed
+    // table that would silently miss every dispatch.
+    let intro_trie = crate::maps::wan_trie::dispatcher::TrieTarget::new(intro_skel, |s| {
+        let data = s.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
+        rt.wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))
+    })?;
     let mut ingress_hook = TcHookProxy::new(
-        &intro_skel.progs.tc_wan_ingress_intro,
+        &intro_trie.skel.progs.tc_wan_ingress_intro,
         ifindex as i32,
         libbpf_rs::TC_INGRESS,
         1,
@@ -149,7 +157,7 @@ pub fn init_tc_wan_route(
     egress_hook.attach();
 
     Ok(TcWanRouteHandle {
-        _intro_skel: intro_skel,
+        _intro_trie: intro_trie,
         _intro_backing: intro_backing,
         _egress_route_skel: egress_route_skel,
         _egress_route_backing: egress_route_backing,

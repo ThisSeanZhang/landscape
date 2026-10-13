@@ -86,11 +86,12 @@ mod mss;
 mod nat;
 mod net_utils;
 
-mod route;
+pub(crate) mod route; // pub(crate): benchmark packet builders are reused by src/bench
 mod scanner;
 mod tc_chain;
 mod time;
 mod tproxy;
+mod wan_trie_probe;
 mod wire;
 mod xdp_csum_verify;
 
@@ -168,6 +169,10 @@ pub(crate) mod test_xdp_nat4_modify_skel {
 
 pub(crate) mod test_csum_verify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_csum_verify.skel.rs"));
+}
+
+pub(crate) mod test_wan_trie_probe_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_wan_trie_probe.skel.rs"));
 }
 
 #[repr(C, packed)]

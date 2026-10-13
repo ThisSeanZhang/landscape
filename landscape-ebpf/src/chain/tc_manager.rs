@@ -11,6 +11,7 @@ use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
+use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 
 mod tc_wan_ingress_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
@@ -43,8 +44,6 @@ pub enum ChainDir {
     WanIngress,
     WanEgress,
 }
-
-const TC_INTRO_IFINDEX_TYPE: u32 = 2;
 
 fn update_prog_array_fd(map_fd: i32, key: u32, val: i32) -> LdEbpfResult<()> {
     let k = key.to_ne_bytes();
@@ -155,6 +154,7 @@ impl ManagerInner {
 
 pub struct TcChainManager {
     paths: Arc<LandscapeMapPath>,
+    wan_trie: Arc<WanTrieDispatcher>,
     _route_wi: tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>,
     _exit_we: tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>,
     _back_wi: OwnedOpenObject,
@@ -166,17 +166,23 @@ impl TcChainManager {
     /// Create the TC chain pin directory, seed its prog-array maps and load
     /// the shared terminal skeletons: the WAN ingress route unit and the WAN
     /// egress exit.
-    pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
+    pub fn new(
+        paths: Arc<LandscapeMapPath>,
+        wan_trie: Arc<WanTrieDispatcher>,
+    ) -> LdEbpfResult<Self> {
         let tc_chain_base = paths.tc_chain_base();
         std::fs::create_dir_all(&tc_chain_base).map_err(|e| LandscapeEbpfError::Context {
             context: format!("can not create tc chain dir {}", tc_chain_base.display()),
             source: e.into(),
         })?;
 
+        // Legacy pin of the pre-trie dispatch hash map: nothing reads it
+        // anymore, so reclaim the bpffs entry if a previous run left one.
+        let _ = std::fs::remove_file(tc_chain_base.join("wan_intro_dispatch"));
+
         // ── 1. Create and pin all seed PROG_ARRAY / HASH maps directly in Rust ──
 
         create_pinned_prog_array(&paths.tc_pipe_root_progs_path(), 1024)?;
-        create_pinned_map(&paths.tc_wan_intro_dispatch_path(), MapType::Hash, 16, 4, 1024)?;
         create_pinned_prog_array(&paths.tc_pipe_exits_wan_ingress_path(), 1)?;
         create_pinned_prog_array(&paths.tc_pipe_exits_wan_egress_path(), 1)?;
         create_pinned_prog_array(&paths.tc_wan_egress_roots_path(), 1024)?;
@@ -188,6 +194,7 @@ impl TcChainManager {
 
         Ok(Self {
             paths,
+            wan_trie,
             _route_wi: route_wi,
             _exit_we: exit_we,
             _back_wi: back_wi,
@@ -345,15 +352,7 @@ impl TcChainManager {
             MapFlags::ANY,
         )?;
 
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
-        let dispatch_val = ifindex.to_ne_bytes();
-        pinned_map(&self.paths.tc_wan_intro_dispatch_path())?.update(
-            &dispatch_key,
-            &dispatch_val,
-            MapFlags::ANY,
-        )?;
+        self.wan_trie.set_ifindex_root(ifindex, ifindex);
 
         Ok(IngressRoot {
             _skel: ingress_skel,
@@ -415,12 +414,7 @@ impl TcChainManager {
             let _ = map.delete(&ifindex.to_ne_bytes());
         }
 
-        let mut dispatch_key = [0u8; 16];
-        dispatch_key[0..4].copy_from_slice(&TC_INTRO_IFINDEX_TYPE.to_le_bytes());
-        dispatch_key[8..12].copy_from_slice(&ifindex.to_le_bytes());
-        if let Ok(map) = pinned_map(&self.paths.tc_wan_intro_dispatch_path()) {
-            let _ = map.delete(&dispatch_key);
-        }
+        self.wan_trie.del_ifindex_root(ifindex);
     }
 
     pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {

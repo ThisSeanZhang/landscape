@@ -7,9 +7,7 @@
 
 #include "chain/tc_cb.h"
 #include "chain/tc_handoff.h"
-#include "chain/wan_intro_dispatch.h"
-
-#define TC_INTRO_IFINDEX_TYPE 2
+#include "map/wan_trie.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -22,10 +20,19 @@ struct {
     __uint(value_size, sizeof(u32));
 } tc_pipe_root_progs SEC(".maps");
 
-static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, struct dispatch_key *key) {
-    struct dispatch_value *value = bpf_map_lookup_elem(&wan_intro_dispatch_map, key);
-    if (!value) return;
-    bpf_tail_call(skb, &tc_pipe_root_progs, value->next_pipe_root_index);
+/* WAN dispatch trie in this program's own arena (libbpf re-copies the
+ * ELF-initial zero arena data on every load, so tables are never shared;
+ * the runtime registers the arena with the global WanTrieDispatcher after
+ * skeleton load and before attach). Dispatch roots are tc_pipe_root_progs
+ * slots, indexed by the owning WAN ifindex.
+ */
+WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
+
+static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, u64 key) {
+    u32 root = wan_trie_resolve(&wan_trie_tbl, key);
+    if (root) {
+        bpf_tail_call(skb, &tc_pipe_root_progs, root);
+    }
 }
 
 SEC("tc/ingress")
@@ -33,7 +40,7 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
     int handoff_ret = xdp_handoff_check(skb, false);
     if (handoff_ret != TC_ACT_OK) return handoff_ret;
 
-    struct dispatch_key key = {};
+    u64 key64 = 0;
     bool is_ipv4;
     int ret;
 
@@ -48,8 +55,7 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
             return TC_ACT_OK;
         }
 
-        key.dispatch_type = LANDSCAPE_IPV4_TYPE;
-        key.v4.daddr = iph->daddr;
+        key64 = wan_trie_key_v4(iph->daddr);
     } else {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
@@ -58,16 +64,11 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
             return TC_ACT_OK;
         }
 
-        key.dispatch_type = LANDSCAPE_IPV6_TYPE;
-        __builtin_memcpy(&key.v6.prefix64, &ip6h->daddr, sizeof(key.v6.prefix64));
+        __builtin_memcpy(&key64, &ip6h->daddr, sizeof(key64));
     }
 
-    tc_intro_dispatch(skb, &key);
-
-    key.v6.prefix64 = 0;
-    key.dispatch_type = TC_INTRO_IFINDEX_TYPE;
-    key.ifindex = skb->ingress_ifindex;
-    tc_intro_dispatch(skb, &key);
+    tc_intro_dispatch(skb, key64);
+    tc_intro_dispatch(skb, wan_trie_key_ifx(skb->ingress_ifindex));
 
     return TC_ACT_SHOT;
 }
