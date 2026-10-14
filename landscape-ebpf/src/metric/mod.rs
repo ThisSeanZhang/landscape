@@ -4,7 +4,6 @@ use std::sync::Arc;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::ConnectMetric;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
@@ -38,7 +37,7 @@ pub trait MetricSourceHandle: Send + Sync {
 pub trait MetricSourceFactory: Send + Sync {
     fn spawn(
         &self,
-        connect_msg_tx: mpsc::Sender<ConnectMessage>,
+        connect_msg_tx: mpsc::Sender<ConnectMetric>,
     ) -> Result<Box<dyn MetricSourceHandle>, String>;
 }
 
@@ -55,7 +54,7 @@ impl EbpfMetricSourceFactory {
 impl MetricSourceFactory for EbpfMetricSourceFactory {
     fn spawn(
         &self,
-        connect_msg_tx: mpsc::Sender<ConnectMessage>,
+        connect_msg_tx: mpsc::Sender<ConnectMetric>,
     ) -> Result<Box<dyn MetricSourceHandle>, String> {
         Ok(Box::new(ConnectMetricEventSource::spawn(self.paths.clone(), connect_msg_tx)?))
     }
@@ -63,7 +62,7 @@ impl MetricSourceFactory for EbpfMetricSourceFactory {
 
 pub(crate) fn build_connect_ringbuf(
     map: &dyn libbpf_rs::MapCore,
-    tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMessage>>>,
+    tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMetric>>>,
 ) -> Result<libbpf_rs::RingBuffer<'static>, String> {
     let nat_metric_callback = move |data: &[u8]| -> i32 {
         let event = match ConnectMetric::try_from(data) {
@@ -79,7 +78,7 @@ pub(crate) fn build_connect_ringbuf(
             }
         };
         if let Some(tx) = tx_slot.load().as_ref() {
-            let _ = tx.try_send(ConnectMessage::Metric(event));
+            let _ = tx.try_send(event);
         }
         0
     };
@@ -105,13 +104,13 @@ pub(crate) fn dup_epoll_async_fd(epoll_fd: i32) -> Result<AsyncFd<OwnedFd>, Stri
 pub struct ConnectMetricEventSource {
     cancel: CancellationToken,
     handle: JoinHandle<()>,
-    tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMessage>>>,
+    tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMetric>>>,
 }
 
 impl ConnectMetricEventSource {
     pub fn spawn(
         paths: Arc<LandscapeMapPath>,
-        connect_msg_tx: mpsc::Sender<ConnectMessage>,
+        connect_msg_tx: mpsc::Sender<ConnectMetric>,
     ) -> Result<Self, String> {
         let tx_slot = Arc::new(ArcSwapOption::new(Some(Arc::new(connect_msg_tx))));
         let nat_metric_events = libbpf_rs::MapHandle::from_pinned_path(&paths.nat_metric_events)
@@ -128,7 +127,7 @@ impl ConnectMetricEventSource {
 
     /// 替换事件流向的 channel(后续事件走新 channel)。备用演进路径:
     /// 将来引擎切换只换 tx 而不重启事件源时使用。
-    pub fn attach_channel(&self, connect_msg_tx: mpsc::Sender<ConnectMessage>) {
+    pub fn attach_channel(&self, connect_msg_tx: mpsc::Sender<ConnectMetric>) {
         self.tx_slot.store(Some(Arc::new(connect_msg_tx)));
     }
 
@@ -136,7 +135,7 @@ impl ConnectMetricEventSource {
     pub(crate) fn test_new(
         cancel: CancellationToken,
         handle: JoinHandle<()>,
-        tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMessage>>>,
+        tx_slot: Arc<ArcSwapOption<mpsc::Sender<ConnectMetric>>>,
     ) -> Self {
         ConnectMetricEventSource { cancel, handle, tx_slot }
     }

@@ -4,7 +4,6 @@ use std::mem::{offset_of, size_of};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
-use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
     ProgramInput, RingBufferBuilder,
@@ -274,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_source_stop_cleans_up_running_task() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
         let cancel = CancellationToken::new();
         let cancel_waiter = cancel.clone();
         let handle = tokio::spawn(async move {
@@ -292,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_source_stop_aborts_stuck_task() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
         let cancel = CancellationToken::new();
         let handle = tokio::spawn(std::future::pending::<()>());
         let source = ConnectMetricEventSource::test_new(
@@ -307,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_source_stop_marks_panicked_task() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
         let cancel = CancellationToken::new();
         let handle = tokio::spawn(async {
             panic!("intentional test panic");
@@ -329,8 +328,8 @@ mod tests {
         let open_skel = builder.open(&mut open_object).expect("open skeleton");
         let skel = open_skel.load().expect("load skeleton");
 
-        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
-        let (tx2, mut rx2) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx1, mut rx1) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
+        let (tx2, mut rx2) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
         let tx_slot = Arc::new(ArcSwapOption::new(Some(Arc::new(tx1))));
 
         let mut rb_builder = RingBufferBuilder::new();
@@ -362,7 +361,7 @@ mod tests {
                         0,
                         ConnectStatusType::Active,
                     );
-                    let _ = tx.try_send(ConnectMessage::Metric(metric));
+                    let _ = tx.try_send(metric);
                     0
                 }
             })
@@ -380,7 +379,7 @@ mod tests {
             .await
             .expect("timed out waiting for first event")
             .expect("first channel closed");
-        let ConnectMessage::Metric(metric) = first;
+        let metric = first;
         assert_eq!(metric.create_time_ms(), 7);
 
         source.attach_channel(tx2);
@@ -389,12 +388,12 @@ mod tests {
             .await
             .expect("timed out waiting for redirected event")
             .expect("second channel closed");
-        let ConnectMessage::Metric(metric) = second;
+        let metric = second;
         assert_eq!(metric.create_time_ms(), 8);
 
         match timeout(Duration::from_millis(200), rx1.recv()).await {
             Ok(None) => {}
-            Ok(Some(ConnectMessage::Metric(m))) => {
+            Ok(Some(m)) => {
                 panic!("old channel received seq={} after attach", m.create_time_ms())
             }
             Err(_) => panic!("old channel stayed open after attach"),
@@ -406,7 +405,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_source_request_stop_exits_task() {
-        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMessage>(16);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<ConnectMetric>(16);
         let cancel = CancellationToken::new();
         let cancel_waiter = cancel.clone();
         let handle = tokio::spawn(async move {

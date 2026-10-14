@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
-use landscape_common::event::ConnectMessage;
+use landscape_common::metric::connect::ConnectMetric;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
     ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
@@ -88,7 +88,7 @@ async fn build_sink(
 pub struct MetricEngine {
     config: MetricRuntimeConfig,
     sink: Arc<dyn MetricSink>,
-    connect_tx: Option<mpsc::Sender<ConnectMessage>>,
+    connect_tx: Option<mpsc::Sender<ConnectMetric>>,
     dns_tx: Option<mpsc::Sender<DnsMetricEvent>>,
     shutdown: CancellationToken,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -121,7 +121,7 @@ impl MetricEngine {
 
         let dns_window = if is_persistent { Some(DnsRecentWindow::new()) } else { None };
 
-        let (connect_tx, connect_rx) = mpsc::channel::<ConnectMessage>(agg::CHANNEL_CAPACITY);
+        let (connect_tx, connect_rx) = mpsc::channel::<ConnectMetric>(agg::CHANNEL_CAPACITY);
         let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricEvent>(agg::CHANNEL_CAPACITY);
 
         if !matches!(mode, MetricMode::Off) {
@@ -235,7 +235,7 @@ impl MetricEngine {
         resolved_metric_mode(self.config.mode.clone())
     }
 
-    pub fn get_connect_msg_channel(&self) -> Option<mpsc::Sender<ConnectMessage>> {
+    pub fn get_connect_msg_channel(&self) -> Option<mpsc::Sender<ConnectMetric>> {
         self.connect_tx.clone()
     }
 
@@ -475,12 +475,8 @@ mod tests {
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = now_ms();
 
-        tx.send(ConnectMessage::Metric(connect_metric(1, now_ms - 3_000, now_ms - 2_000, 100)))
-            .await
-            .unwrap();
-        tx.send(ConnectMessage::Metric(connect_metric(2, now_ms - 2_000, now_ms - 1_000, 200)))
-            .await
-            .unwrap();
+        tx.send(connect_metric(1, now_ms - 3_000, now_ms - 2_000, 100)).await.unwrap();
+        tx.send(connect_metric(2, now_ms - 2_000, now_ms - 1_000, 200)).await.unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -529,12 +525,8 @@ mod tests {
         let now_ms = now_ms();
         let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
 
-        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 4_000, 100)))
-            .await
-            .unwrap();
-        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 3_000, 200)))
-            .await
-            .unwrap();
+        tx.send(connect_metric(1, 1_000, now_ms - 4_000, 100)).await.unwrap();
+        tx.send(connect_metric(1, 1_000, now_ms - 3_000, 200)).await.unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -567,9 +559,7 @@ mod tests {
             MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = now_ms();
-        tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 1_000, 100)))
-            .await
-            .unwrap();
+        tx.send(connect_metric(1, 1_000, now_ms - 1_000, 100)).await.unwrap();
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -628,10 +618,10 @@ mod tests {
 
             let mut active = connect_metric(1, 1_000, minute_start - 2_000, 100);
             active.status = ConnectStatusType::Active.into();
-            tx.send(ConnectMessage::Metric(active)).await.unwrap();
+            tx.send(active).await.unwrap();
             let mut closed = connect_metric(1, 1_000, minute_start - 1_000, 200);
             closed.status = ConnectStatusType::Disabled.into();
-            tx.send(ConnectMessage::Metric(closed)).await.unwrap();
+            tx.send(closed).await.unwrap();
 
             let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -728,7 +718,7 @@ mod tests {
             let tx = engine.get_connect_msg_channel().unwrap();
             let mut closed = connect_metric(1, 1_000, now_ms - 1_000, 200);
             closed.status = ConnectStatusType::Disabled.into();
-            tx.send(ConnectMessage::Metric(closed)).await.unwrap();
+            tx.send(closed).await.unwrap();
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
             loop {
@@ -827,7 +817,7 @@ mod tests {
             let tx = engine.get_connect_msg_channel().unwrap();
             let mut active = connect_metric(1, 1_000, now_ms - 1_000, 200);
             active.status = ConnectStatusType::Active.into();
-            tx.send(ConnectMessage::Metric(active)).await.unwrap();
+            tx.send(active).await.unwrap();
 
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
             loop {
@@ -933,9 +923,7 @@ mod tests {
                     .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let now_ms = now_ms();
-            tx.send(ConnectMessage::Metric(connect_metric(1, 1_000, now_ms - 1_000, 100)))
-                .await
-                .unwrap();
+            tx.send(connect_metric(1, 1_000, now_ms - 1_000, 100)).await.unwrap();
 
             // 回归:shutdown 不得等待外部仍持活的 Sender 释放。修复前 drain 循环
             // 会因通道永不完全关闭而永久阻塞(store 自身字段亦持有 sender clone)。
