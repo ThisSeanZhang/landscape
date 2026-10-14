@@ -186,6 +186,7 @@ impl EbpfWanChainDataplane {
 struct PppTrieGuard {
     _inner: Box<dyn DataplaneGuard>,
     wan_trie: Arc<WanTrieDispatcher>,
+    ifindex: u32,
     session: u16,
 }
 
@@ -193,7 +194,7 @@ impl DataplaneGuard for PppTrieGuard {}
 
 impl Drop for PppTrieGuard {
     fn drop(&mut self) {
-        self.wan_trie.del_ppp_session(self.session);
+        self.wan_trie.del_ppp_session(self.ifindex, self.session);
     }
 }
 
@@ -267,7 +268,9 @@ impl WanChainDataplane for EbpfWanChainDataplane {
         )
         .map(|handle| {
             if chain != 0 {
-                self.rt.wan_trie.set_ppp_session(tmpl.session_id, chain as u32);
+                // PPP session ids are per-NIC scoped; the trie key carries
+                // the ingress ifindex to keep two NICs' ids from colliding.
+                self.rt.wan_trie.set_ppp_session(ifindex, tmpl.session_id, chain as u32);
             } else {
                 tracing::warn!(
                     ifindex,
@@ -277,6 +280,7 @@ impl WanChainDataplane for EbpfWanChainDataplane {
             Box::new(PppTrieGuard {
                 _inner: Box::new(handle),
                 wan_trie: self.rt.wan_trie.clone(),
+                ifindex,
                 session: tmpl.session_id,
             }) as Box<dyn DataplaneGuard>
         })

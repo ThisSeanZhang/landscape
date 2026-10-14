@@ -2,17 +2,21 @@
 // the Rust test publishes the entry set into this program's arena through
 // the mmap, then replays its case matrix via BPF_PROG_TEST_RUN and compares
 // the returned root against the userspace `reference_lpm` — proving the C
-// `wan_trie_resolve` walk and the `wan_trie_key_v4/ppp/ifx` layouts agree
+// `wan_trie_resolve` walk and the `wan_trie_key_v4/ppp` layouts agree
 // with the Rust builder, on a real kernel.
 //
 // Packet layout — every multi-byte payload field is in NETWORK byte order,
 // exactly as it sits on the wire (payload byte j is trie key byte j):
-//   [0]     mode: 0 raw 8-byte key, 1 ipv4 daddr, 2 pppoe session, 3 ifindex
+//   [0]     mode: 0 raw 8-byte key, 1 ipv4 daddr, 2 pppoe (ifindex, session)
 //   [1..8]  padding
 //   [8..16] payload
 //
 // Returns the resolved dispatch root (0 = miss), or 0xFFFFFFFF when the
 // request itself is malformed (short packet / unknown mode).
+//
+// Also hosts the sink pair used by the xdp_wan_intro dispatch tests:
+// terminal absorber programs that flip one packet byte and pass, leaving
+// observable evidence which chain-root slot a tail call landed in.
 
 #include <vmlinux.h>
 
@@ -47,9 +51,11 @@ int test_wan_trie_probe(struct xdp_md *ctx) {
         break;
     }
     case 2: {
+        __be32 ifindex_be;
         __be16 session;
-        __builtin_memcpy(&session, data + 8, 2);
-        key = wan_trie_key_ppp(session);
+        __builtin_memcpy(&ifindex_be, data + 8, 4);
+        __builtin_memcpy(&session, data + 12, 2);
+        key = wan_trie_key_ppp(bpf_ntohl(ifindex_be), session);
         break;
     }
     default:
@@ -57,6 +63,30 @@ int test_wan_trie_probe(struct xdp_md *ctx) {
     }
 
     return wan_trie_resolve(&wan_trie_tbl, key);
+}
+
+/* Sink A for chain-root slot assertions: flips packet byte 0. */
+SEC("xdp")
+int test_xdp_sink_a(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    if ((void *)(data + 1) > data_end) {
+        return XDP_DROP;
+    }
+    *(u8 *)data ^= 0xff;
+    return XDP_PASS;
+}
+
+/* Sink B (distinct flip byte): lets one test tell two roots apart. */
+SEC("xdp")
+int test_xdp_sink_b(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    if ((void *)(data + 2) > data_end) {
+        return XDP_DROP;
+    }
+    *(u8 *)(data + 1) ^= 0xff;
+    return XDP_PASS;
 }
 
 char LICENSE[] SEC("license") = "GPL";

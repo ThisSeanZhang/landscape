@@ -62,10 +62,13 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     //
     //   │
     //   ├─ classifies IPv4 / IPv6 / PPPoE
-    //   ├─ PPPoE → strips session header, rewrites ethhdr
+    //   ├─ PPPoE → session trie keyed by (ingress ifindex, session id):
+    //   │     own session → strips the session header, rewrites ethhdr;
+    //   │                   inner bcast/multicast → stripped XDP_PASS
+    //   │     miss (pppd-owned / foreign / pre-publish) → untouched PASS
     //   ├─ resolves the WAN dispatch trie (one arena trie, namespaced keys:
-    //   │     IPv6 prefix64 / IPv4 daddr / PPPoE session; values are chain
-    //   │     ids published by the WAN link hub)
+    //   │     IPv6 prefix64 / IPv4 daddr / PPPoE (ifindex, session); values
+    //   │     are chain ids published by the WAN link hub)
     //   │     ├─ miss  → XDP_PASS
     //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs, chain)
     //   │                    │
@@ -120,64 +123,42 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     bool is_v6 = pppoe->protocol == ETH_P_PPP_IPV6;
     u16 l2_proto = is_v6 ? ETH_IPV6 : ETH_IPV4;
 
-    /* The session identifies the PPP link: a hit is one of our (native)
-     * sessions and resolves the chain root directly. A miss is not one of
-     * our sessions — today it still falls through to the inner-IP key and
-     * the ingress-ifindex fallback (the transitional path all PPPoE
-     * traffic takes while no sessions are registered); once native PPPoE
-     * publishes its sessions, misses should be passed untouched instead. */
-    u32 root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ppp(pppoe->session_id));
+    /* The session identifies the PPP link, and session ids are assigned
+     * per-NIC by the BRAS, so the key is (ingress ifindex, session).  A
+     * hit is one of OUR (native) sessions on THIS link and resolves the
+     * chain root directly.  A miss is not ours — a pppd-owned session
+     * (the kernel terminates that PPPoE itself and needs the original
+     * frame), another operator's session, or the PADS→publish window —
+     * and is passed untouched; frames we do not own are never decapped
+     * and their inner IP is never consulted. */
+    u32 root =
+        wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ppp(ctx->ingress_ifindex, pppoe->session_id));
+    if (!root) {
+        return XDP_PASS;
+    }
+
+    /* Our session: the inner IP is parsed only to keep broadcast and
+     * multicast traffic out of the chain; those are passed up (headers
+     * already stripped) for the stack to handle. */
+    bool is_bcast;
+    if (is_v6) {
+        struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
+        if ((void *)(ip6h + 1) > data_end) {
+            return XDP_PASS;
+        }
+
+        is_bcast = is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8);
+    } else {
+        struct iphdr *iph = (struct iphdr *)(pppoe + 1);
+        if ((void *)(iph + 1) > data_end) {
+            return XDP_PASS;
+        }
+
+        is_bcast = is_broadcast_ip4(iph->daddr);
+    }
 
     u8 mac_pair[12];
     __builtin_memcpy(mac_pair, eth->h_dest, sizeof(mac_pair));
-
-    bool is_bcast = false;
-    if (!root) {
-        if (is_v6) {
-            struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
-            if ((void *)(ip6h + 1) > data_end) {
-                return XDP_PASS;
-            }
-
-            if (unlikely(is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8))) {
-                return XDP_PASS;
-            }
-
-            u64 prefix64 = 0;
-            __builtin_memcpy(&prefix64, &ip6h->daddr, sizeof(prefix64));
-            root = wan_trie_resolve(&wan_trie_tbl, prefix64);
-        } else {
-            struct iphdr *iph = (struct iphdr *)(pppoe + 1);
-            if ((void *)(iph + 1) > data_end) {
-                return XDP_PASS;
-            }
-
-            if (unlikely(is_broadcast_ip4(iph->daddr))) {
-                return XDP_PASS;
-            }
-
-            root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_v4(iph->daddr));
-        }
-    } else {
-        /* Our session: the inner IP is parsed only to keep broadcast and
-         * multicast traffic out of the chain; those are passed up (headers
-         * already stripped) for the stack to handle. */
-        if (is_v6) {
-            struct ipv6hdr *ip6h = (struct ipv6hdr *)(pppoe + 1);
-            if ((void *)(ip6h + 1) > data_end) {
-                return XDP_PASS;
-            }
-
-            is_bcast = is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8);
-        } else {
-            struct iphdr *iph = (struct iphdr *)(pppoe + 1);
-            if ((void *)(iph + 1) > data_end) {
-                return XDP_PASS;
-            }
-
-            is_bcast = is_broadcast_ip4(iph->daddr);
-        }
-    }
 
     int result = bpf_xdp_adjust_head(ctx, 8);
     if (result != 0) {
@@ -201,9 +182,7 @@ int xdp_wan_intro(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    if (root) {
-        wan_intro_tailcall_root(ctx, root);
-    }
+    wan_intro_tailcall_root(ctx, root);
     return XDP_PASS;
 
 #undef BPF_LOG_TOPIC

@@ -169,13 +169,17 @@ impl WanTrieDispatcher {
         self.apply(&[Op::Del { prefix: e.prefix, plen: 8 + plen }]);
     }
 
-    /// PPPoE session binding.
-    pub(crate) fn set_ppp_session(&self, session: u16, root: u32) {
-        self.apply(&[Op::Set(ppp_entry(session, root))]);
+    /// PPPoE session binding: `(ifindex, session)` — session ids are
+    /// assigned per-NIC by the BRAS, the ingress ifindex namespaces them.
+    pub(crate) fn set_ppp_session(&self, ifindex: u32, session: u16, root: u32) {
+        self.apply(&[Op::Set(ppp_entry(ifindex, session, root))]);
     }
 
-    pub(crate) fn del_ppp_session(&self, session: u16) {
-        self.apply(&[Op::Del { prefix: ppp_entry(session, 0).prefix, plen: 24 }]);
+    pub(crate) fn del_ppp_session(&self, ifindex: u32, session: u16) {
+        self.apply(&[Op::Del {
+            prefix: ppp_entry(ifindex, session, 0).prefix,
+            plen: 56,
+        }]);
     }
 
     /// Userspace mirror lookup over the authoritative set (tests/debug).
@@ -312,12 +316,13 @@ mod tests {
 
         disp.set_ipv6_prefix(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 71).unwrap();
         disp.set_ipv4_prefix(Ipv4Addr::new(203, 0, 113, 0), 24, 72).unwrap();
-        disp.set_ppp_session(0x1234, 73);
+        disp.set_ppp_session(9, 0x1234, 73);
 
         assert_eq!(wan_trie_resolve(&t1, &d("fd22:2222:33ab::1")), 71);
         let v4_key = v4_entry(Ipv4Addr::new(203, 0, 113, 9), 32, 0).unwrap().prefix;
         assert_eq!(wan_trie_resolve(&t1, &v4_key), 72);
-        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(0x1234, 0).prefix), 73);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(9, 0x1234, 0).prefix), 73);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(8, 0x1234, 0).prefix), 0);
         assert_eq!(wan_trie_resolve(&t1, &d("fd99::1")), 0);
 
         assert_eq!(disp.resolve(&d("fd22:2222:33ab::1")), 71);
@@ -332,10 +337,10 @@ mod tests {
         let mut t1 = tbl();
         let _g = disp.register(&mut t1).unwrap();
 
-        disp.set_ppp_session(0x4321, 9);
-        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(0x4321, 0).prefix), 9);
-        disp.del_ppp_session(0x4321);
-        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(0x4321, 0).prefix), 0);
+        disp.set_ppp_session(3, 0x4321, 9);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0x4321, 0).prefix), 9);
+        disp.del_ppp_session(3, 0x4321);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0x4321, 0).prefix), 0);
 
         disp.set_ipv6_prefix(Ipv6Addr::from_str("fd00:aa::").unwrap(), 48, 11).unwrap();
         assert_eq!(wan_trie_resolve(&t1, &d("fd00:aa::1")), 11);
@@ -361,20 +366,20 @@ mod tests {
     fn register_initial_publish_and_guard_detach() {
         let disp = dispatcher();
 
-        disp.set_ppp_session(3, 30);
+        disp.set_ppp_session(3, 0x1234, 30);
 
         let mut t1 = tbl();
         let g1 = disp.register(&mut t1).unwrap();
-        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0).prefix), 30, "initial publish");
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0x1234, 0).prefix), 30, "initial publish");
 
         drop(g1);
-        disp.set_ppp_session(4, 40);
+        disp.set_ppp_session(4, 0x4321, 40);
         assert_eq!(
-            wan_trie_resolve(&t1, &ppp_entry(4, 0).prefix),
+            wan_trie_resolve(&t1, &ppp_entry(4, 0x4321, 0).prefix),
             0,
             "detached target must not update"
         );
-        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0).prefix), 30);
-        assert_eq!(disp.resolve(&ppp_entry(4, 0).prefix), 40);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0x1234, 0).prefix), 30);
+        assert_eq!(disp.resolve(&ppp_entry(4, 0x4321, 0).prefix), 40);
     }
 }

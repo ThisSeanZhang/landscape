@@ -128,7 +128,7 @@ fn bpf_reader_matches_reference() {
     let entries = [
         v6_entry(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 60).unwrap(),
         v4_entry(Ipv4Addr::new(203, 0, 113, 0), 24, 61).unwrap(), // 203.0.113.0/24
-        ppp_entry(0x1234, 62),
+        ppp_entry(1, 0x1234, 62),
     ];
     publish(&mut skel, &entries);
 
@@ -140,9 +140,16 @@ fn bpf_reader_matches_reference() {
     assert_eq!(resolve(&mut skel, &packet(MODE_V4, &[203, 0, 113, 7])), 61);
     assert_eq!(resolve(&mut skel, &packet(MODE_V4, &[203, 0, 114, 7])), 0);
 
-    // ppp session: payload 0x1234 big-endian
-    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0x12, 0x34])), 62);
-    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0x12, 0x35])), 0);
+    // ppp (ifindex, session): payload = ifindex then session, big-endian
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 1, 0x12, 0x34])), 62);
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 1, 0x12, 0x35])), 0);
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 2, 0x12, 0x34])), 0);
+
+    // the same session id under two ifindexes resolves independently
+    publish(&mut skel, &[ppp_entry(1, 0x1234, 62), ppp_entry(2, 0x1234, 63)]);
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 1, 0x12, 0x34])), 62);
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 2, 0x12, 0x34])), 63);
+    assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0, 0, 0, 3, 0x12, 0x34])), 0);
 
     // ── 4. republish flip drops stale entries (double buffering) ──
     publish(&mut skel, &[p("fd00::/16", 3)]);

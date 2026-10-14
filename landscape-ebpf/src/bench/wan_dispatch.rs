@@ -493,7 +493,9 @@ fn wan_dispatch_lookup_cost() {
 
         let packet4 =
             simple_pppoe_ipv4(0x1234, Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(203, 0, 113, 7));
-        let ppp_entries = vec![ppp_entry(0x1234, HIT_ROOT)];
+        // test_run without ctx uses the loopback rxq, so the prog reads
+        // ingress_ifindex == 1; seed the (ifindex, session) key accordingly.
+        let ppp_entries = vec![ppp_entry(1, 0x1234, HIT_ROOT)];
         {
             let data = skel.maps.bench_arena_data.as_mut().expect("arena mmap data");
             publish_entries(data, &ppp_entries);
@@ -505,7 +507,7 @@ fn wan_dispatch_lookup_cost() {
             "trie ppp tag did not hit"
         );
 
-        println!("--- tagged namespaces (v4 /24 = 4 hops, ppp session = 3 hops) ---");
+        println!("--- tagged namespaces (v4 /24 = 4 hops, ppp (ifindex,session) = 7 hops) ---");
         report("ttrie v4(2)", v4_row, base2);
         report("ttrie ppp(1)", ppp_row, base2);
     }

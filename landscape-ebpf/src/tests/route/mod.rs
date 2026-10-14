@@ -30,3 +30,5 @@ mod test_route_search;
 mod test_route_slot;
 #[cfg(test)]
 mod test_route_wan_cache;
+#[cfg(test)]
+mod xdp_wan_intro;

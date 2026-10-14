@@ -243,7 +243,8 @@ int bench_arena_trie(struct xdp_md *ctx) {
 }
 
 /* Tagged-namespace lookups through the same trie: IPv4 (5 hops for a /24)
- * and PPPoE session (3 hops), both keyed behind the first tag byte.
+ * and PPPoE (ifindex, session) (7 hops), both keyed behind the first tag
+ * byte.
  */
 static __always_inline int bench_extract_v4_daddr(struct xdp_md *ctx, __be32 *daddr) {
     void *data = (void *)(long)ctx->data;
@@ -291,7 +292,7 @@ int bench_trie_ppp(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    u64 key = wan_trie_key_ppp(pppoe->session_id);
+    u64 key = wan_trie_key_ppp(ctx->ingress_ifindex, pppoe->session_id);
     u64 acc = 0;
     for (u32 iter = 0; iter < BENCH_ITERS; iter++) {
         acc += wan_trie_resolve(&bench_trie_tbl, key);

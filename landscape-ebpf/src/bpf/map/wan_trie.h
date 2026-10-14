@@ -105,17 +105,17 @@ static __always_inline u32 wan_trie_resolve(struct wan_trie_tbl __arena *tbl, u6
  * IETF-reserved IPv6 space (0000::/8, 0300::/8), so they can never
  * collide with a real IPv6 prefix; the Rust builder additionally
  * rejects v6 entries whose masked byte0 is below 0x04.  (The 0x02 tag
- * once keyed an ifindex namespace used as an ingress fallback; it is
- * retired — dispatch is chain-keyed and trie-published only.)
+ * once keyed a standalone ifindex namespace used as an ingress
+ * fallback; it is retired — the PPP key itself now carries ifindex.)
  */
 #define WAN_TRIE_TAG_V4 0x00
 #define WAN_TRIE_TAG_PPP 0x03
 
 /* Key layout, in walk order (resolve reads key byte j from bits 8j..8j+7,
  * i.e. packet byte j sits in the LOW end of the u64 register on LE):
- *   IPv6  [ a0 a1 a2 a3 a4 a5 a6 a7 ]    plen 0..64,  up to 8 hops
- *   IPv4  [ 00 | a  b  c  d | 0  0  0 ]  plen 8+n,    up to 5 hops
- *   ppp   [ 03 | sh sl | 0  0  0  0  0 ]  plen 24,    3 hops
+ *   IPv6  [ a0 a1 a2 a3 a4 a5 a6 a7 ]       plen 0..64,  up to 8 hops
+ *   IPv4  [ 00 | a  b  c  d | 0  0  0 ]     plen 8+n,    up to 5 hops
+ *   ppp   [ 03 | i0 i1 i2 i3 | s0 s1 | 0 ]  plen 56,     7 hops
  *
  * A big-endian header field loaded into a register already packs its
  * packet bytes ascending (byte j at bits 8j), so it just shifts up by one
@@ -125,8 +125,14 @@ static __always_inline u64 wan_trie_key_v4(__be32 daddr) {
     return WAN_TRIE_TAG_V4 | ((u64)daddr << 8);
 }
 
-static __always_inline u64 wan_trie_key_ppp(__be16 session) {
-    return WAN_TRIE_TAG_PPP | ((u64)session << 8);
+/* PPPoE session ids are assigned per-link by the BRAS, so the key is
+ * (ingress ifindex, session): all sessions of one NIC cluster under a
+ * shared trie prefix, and the same session id on two NICs never collides.
+ * ifindex goes in as a host-order u32 (bpf_htonl makes its key bytes
+ * big-endian like every other payload); session stays big-endian from
+ * the packet. */
+static __always_inline u64 wan_trie_key_ppp(u32 ifindex, __be16 session) {
+    return WAN_TRIE_TAG_PPP | ((u64)bpf_htonl(ifindex) << 8) | ((u64)session << 40);
 }
 
 /* Pages needed for the trie table (all sizes in bytes, rounded up). */

@@ -21,8 +21,8 @@ use super::types::{WAN_TRIE_POOL_NODES, WanTrieHalf, WanTrieNode, WanTrieTbl};
 /// root. A `root` of 0 means "miss"; such entries are skipped.
 ///
 /// Prefer the namespace constructors ([`v4_entry`], [`ppp_entry`],
-/// [`ifx_entry`], [`v6_entry`]): a raw `PrefixEntry` can accidentally
-/// collide with the tag namespaces (first key byte < 0x04).
+/// [`v6_entry`]): a raw `PrefixEntry` can accidentally collide with the
+/// tag namespaces (first key byte < 0x04).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PrefixEntry {
     pub prefix: [u8; 8],
@@ -33,8 +33,8 @@ pub(crate) struct PrefixEntry {
 /// Namespace tag constants, mirroring `WAN_TRIE_TAG_*` in the header: the
 /// first key byte of every non-IPv6 key. All live in IETF-reserved IPv6
 /// space, so they never collide with a real v6 prefix.  (The 0x02 tag
-/// once keyed an ifindex namespace used as an ingress fallback; it is
-/// retired — dispatch is chain-keyed and trie-published only.)
+/// once keyed a standalone ifindex namespace used as an ingress fallback;
+/// it is retired — the PPP key itself now carries ifindex.)
 pub(crate) const TAG_V4: u8 = 0x00;
 pub(crate) const TAG_PPP: u8 = 0x03;
 
@@ -57,12 +57,24 @@ pub(crate) fn v4_entry(
     })
 }
 
-/// PPPoE session entry: 16-bit session at trie bytes 1..2 behind the tag,
-/// exact match at plen 24 (3 hops).
-pub(crate) fn ppp_entry(session: u16, root: u32) -> PrefixEntry {
+/// PPPoE session entry: `(ifindex, session)` at trie bytes 1..6 behind the
+/// tag, both big-endian. Session ids are assigned per-NIC by the BRAS, so
+/// the ingress ifindex namespaces them (the same session id on two NICs
+/// never collides, and one NIC's sessions cluster under a shared prefix).
+/// Exact match at plen 56 (7 hops).
+pub(crate) fn ppp_entry(ifindex: u32, session: u16, root: u32) -> PrefixEntry {
     PrefixEntry {
-        prefix: [TAG_PPP, (session >> 8) as u8, session as u8, 0, 0, 0, 0, 0],
-        plen: 24,
+        prefix: [
+            TAG_PPP,
+            (ifindex >> 24) as u8,
+            (ifindex >> 16) as u8,
+            (ifindex >> 8) as u8,
+            ifindex as u8,
+            (session >> 8) as u8,
+            session as u8,
+            0,
+        ],
+        plen: 56,
         root,
     }
 }
@@ -506,10 +518,10 @@ pub(crate) mod tests {
         assert_eq!(v4_entry(Ipv4Addr::new(10, 1, 2, 0), 22, 2).unwrap().plen, 30);
 
         assert_eq!(
-            ppp_entry(0x1234, 3),
+            ppp_entry(9, 0x1234, 3),
             PrefixEntry {
-                prefix: [0x03, 0x12, 0x34, 0, 0, 0, 0, 0],
-                plen: 24,
+                prefix: [0x03, 0, 0, 0, 9, 0x12, 0x34, 0],
+                plen: 56,
                 root: 3
             }
         );
@@ -532,7 +544,7 @@ pub(crate) mod tests {
         let entries = [
             v6_entry(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 60).unwrap(),
             v4_entry(Ipv4Addr::new(203, 0, 113, 0), 24, 61).unwrap(), // 203.0.113.0/24
-            ppp_entry(0x1234, 62),
+            ppp_entry(7, 0x1234, 62),
         ];
         let tbl = published(&entries);
 
@@ -547,7 +559,9 @@ pub(crate) mod tests {
             b
         };
         let kv4 = (TAG_V4 as u64) | (u32::from_le_bytes([203, 0, 113, 7]) as u64) << 8;
-        let kppp = (TAG_PPP as u64) | (u16::from_le_bytes([0x12, 0x34]) as u64) << 8;
+        // wan_trie_key_ppp(7, 0x1234): tag | htonl(7) << 8 | session << 40
+        let kppp =
+            (TAG_PPP as u64) | (7u64 << 32) | (u16::from_le_bytes([0x12, 0x34]) as u64) << 40;
         // The retired 0x02 tag namespace must not resolve anything.
         let kifx = 0x02u64 | (7u32.swap_bytes() as u64) << 8;
 
