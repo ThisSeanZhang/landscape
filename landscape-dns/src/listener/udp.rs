@@ -7,11 +7,12 @@ use tokio_util::task::TaskTracker;
 
 use landscape_common::concurrency::task_label;
 
+use crate::listener::wire::RESPONSE_PAYLOAD_SIZE;
 use crate::listener::{is_unrecoverable_socket_error, spawn_tracked, wire};
 use crate::server::handler::DnsRequestHandler;
 
 const MAX_IN_FLIGHT: usize = 256;
-const READ_BUFFER_SIZE: usize = 4096;
+const READ_BUFFER_SIZE: usize = RESPONSE_PAYLOAD_SIZE as usize;
 
 pub(crate) fn spawn_udp_listener(
     flow_id: u32,

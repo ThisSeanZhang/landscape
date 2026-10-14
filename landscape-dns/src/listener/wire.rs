@@ -10,6 +10,7 @@ use crate::domain::ParsedDomain;
 
 pub(crate) const MAX_EDNS_PAYLOAD: u16 = 65535;
 const DEFAULT_PAYLOAD: u16 = 512;
+pub(crate) const RESPONSE_PAYLOAD_SIZE: u16 = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -131,10 +132,7 @@ pub(crate) fn build_response(
     response.add_query(Query::query(req.name.clone(), req.query_type));
     response.answers = records;
     if let Some(req_edns) = &req.edns {
-        let mut edns = Edns::new();
-        edns.set_max_payload(req.edns_max_size);
-        edns.set_dnssec_ok(req_edns.flags().dnssec_ok);
-        response.set_edns(edns);
+        echo_request_edns(&mut response, req_edns);
     }
     response
 }
@@ -147,7 +145,17 @@ fn error_response(message: &Message, code: ResponseCode) -> Message {
     response.metadata.authoritative = true;
     response.metadata.response_code = code;
     response.queries = message.queries.clone();
+    if let Some(req_edns) = &message.edns {
+        echo_request_edns(&mut response, req_edns);
+    }
     response
+}
+
+fn echo_request_edns(response: &mut Message, req_edns: &Edns) {
+    let mut edns = Edns::new();
+    edns.set_max_payload(RESPONSE_PAYLOAD_SIZE);
+    edns.set_dnssec_ok(req_edns.flags().dnssec_ok);
+    response.set_edns(edns);
 }
 
 fn malformed_outcome(buffer: &[u8]) -> DecodeOutcome {
@@ -360,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn build_response_echoes_edns_with_client_payload_and_do_bit() {
+    fn build_response_echoes_edns_with_own_payload_and_do_bit() {
         let mut message = query_message();
         let mut edns = Edns::new();
         edns.set_max_payload(1232);
@@ -375,9 +383,50 @@ mod tests {
         let response = build_response(&req, ResponseCode::NoError, vec![]);
 
         let resp_edns = response.edns.expect("response should echo EDNS");
-        assert_eq!(resp_edns.max_payload(), 1232);
+        assert_eq!(resp_edns.max_payload(), RESPONSE_PAYLOAD_SIZE);
         assert!(resp_edns.flags().dnssec_ok);
         assert!(resp_edns.options().as_ref().is_empty());
+    }
+
+    #[test]
+    fn build_response_caps_edns_payload_at_own_buffer() {
+        let mut message = query_message();
+        let mut edns = Edns::new();
+        edns.set_max_payload(MAX_EDNS_PAYLOAD);
+        message.set_edns(edns);
+        let buffer = encoded(&message);
+
+        let DecodeOutcome::Request(req) = decode(&buffer, test_src(), Protocol::Udp) else {
+            panic!("expected request");
+        };
+
+        let response = build_response(&req, ResponseCode::NoError, vec![]);
+
+        assert_eq!(
+            response.edns.expect("response should echo EDNS").max_payload(),
+            RESPONSE_PAYLOAD_SIZE
+        );
+    }
+
+    #[test]
+    fn error_reply_echoes_edns() {
+        let mut message = query_message();
+        let mut edns = Edns::new();
+        edns.set_max_payload(1232);
+        edns.set_dnssec_ok(true);
+        message.set_edns(edns);
+        message.metadata.op_code = OpCode::Status;
+        let buffer = encoded(&message);
+
+        let DecodeOutcome::Reply { message, .. } = decode(&buffer, test_src(), Protocol::Udp)
+        else {
+            panic!("expected reply");
+        };
+
+        assert_eq!(message.response_code, ResponseCode::NotImp);
+        let resp_edns = message.edns.expect("error reply should echo EDNS");
+        assert_eq!(resp_edns.max_payload(), RESPONSE_PAYLOAD_SIZE);
+        assert!(resp_edns.flags().dnssec_ok);
     }
 
     #[test]
