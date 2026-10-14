@@ -64,6 +64,7 @@ async fn main() {
         };
         dhcp_v6_pd_client(
             uuid::Uuid::new_v4(),
+            1,
             args.iface_name,
             iface.index,
             iface.mac,
@@ -73,7 +74,7 @@ async fn main() {
             status,
             route_info,
             ip_route,
-            rt.wan_addr_binding(),
+            rt.wan_chain(),
             prefix_map,
             std::sync::Arc::new(2),
             prefix_sender,

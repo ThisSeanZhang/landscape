@@ -27,8 +27,8 @@ use landscape_common::{
     service::{ServiceHandle, ServiceStatus},
     utils::time::get_f64_timestamp,
     wan_link::runtime_status::{PdLease, PdRuntime, swap_if_changed},
-    wan_service::addr_binding::WanAddrBinding,
     wan_service::ipv6_pd::LDIAPrefix,
+    wan_service::wan_chain::dataplane::WanChainDataplane,
 };
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -264,6 +264,7 @@ fn gen_release(client_id: &[u8], service_id: Vec<u8>, iapd: v6::IAPD) -> Option<
 #[allow(clippy::too_many_arguments)]
 pub async fn dhcp_v6_pd_client(
     link_id: Uuid,
+    chain_id: u16,
     iface_name: String,
     ifindex: u32,
     // for ebpf map setting
@@ -275,7 +276,7 @@ pub async fn dhcp_v6_pd_client(
     service_status: ServiceHandle,
     wan_route_info: RouteTargetInfo,
     route_service: IpRouteService,
-    addr_binding: Arc<dyn WanAddrBinding>,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
@@ -398,10 +399,10 @@ pub async fn dhcp_v6_pd_client(
                 if send_outcome.prefix_expired {
                     clear_active_pd_prefix(
                         link_id,
+                        chain_id,
                         &iface_name,
-                        ifindex,
                         &route_service,
-                        addr_binding.as_ref(),
+                        chain_dataplane.as_ref(),
                         &prefix_map,
                         &prefix_sender,
                         &mut current_wan_addr,
@@ -422,6 +423,7 @@ pub async fn dhcp_v6_pd_client(
                     Some(data) => {
                         let need_reset_time = handle_packet(
                             link_id,
+                            chain_id,
                             &iface_name,
                             ifindex,
                             &client_id,
@@ -429,7 +431,7 @@ pub async fn dhcp_v6_pd_client(
                             data,
                             &wan_route_info,
                             &route_service,
-                            addr_binding.as_ref(),
+                            chain_dataplane.as_ref(),
                             &prefix_map,
                             &mac_addr,
                             shared_wan_iid.as_ref(),
@@ -457,10 +459,10 @@ pub async fn dhcp_v6_pd_client(
                 // RFC 8415 §18.2.7: 客户端 MUST 在发起 Release 交换前停止使用所有被释放的租约
                 clear_active_pd_prefix(
                     link_id,
+                    chain_id,
                     &iface_name,
-                    ifindex,
                     &route_service,
-                    addr_binding.as_ref(),
+                    chain_dataplane.as_ref(),
                     &prefix_map,
                     &prefix_sender,
                     &mut current_wan_addr,
@@ -483,10 +485,10 @@ pub async fn dhcp_v6_pd_client(
     if !cleaned_up {
         clear_active_pd_prefix(
             link_id,
+            chain_id,
             &iface_name,
-            ifindex,
             &route_service,
-            addr_binding.as_ref(),
+            chain_dataplane.as_ref(),
             &prefix_map,
             &prefix_sender,
             &mut current_wan_addr,
@@ -508,10 +510,10 @@ pub async fn dhcp_v6_pd_client(
 #[allow(clippy::too_many_arguments)]
 async fn clear_active_pd_prefix(
     link_id: Uuid,
+    chain_id: u16,
     iface_name: &str,
-    ifindex: u32,
     route_service: &IpRouteService,
-    addr_binding: &dyn WanAddrBinding,
+    chain_dataplane: &dyn WanChainDataplane,
     prefix_map: &IAPrefixMap,
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
@@ -522,7 +524,7 @@ async fn clear_active_pd_prefix(
     }
 
     route_service.remove_ipv6_link_route(link_id).await;
-    addr_binding.unbind_ipv6(ifindex);
+    chain_dataplane.unbind_wan_ipv6(chain_id);
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
@@ -817,6 +819,7 @@ fn status_timeout_duration(current_status: &IpV6PdState, prev_timeout_times: u64
 #[allow(clippy::too_many_arguments)]
 async fn handle_packet(
     link_id: Uuid,
+    chain_id: u16,
     iface_name: &str,
     ifindex: u32,
     my_client_id: &[u8],
@@ -824,7 +827,7 @@ async fn handle_packet(
     (msg, msg_addr): (Vec<u8>, SocketAddr),
     wan_route_info: &RouteTargetInfo,
     route_service: &IpRouteService,
-    addr_binding: &dyn WanAddrBinding,
+    chain_dataplane: &dyn WanChainDataplane,
     prefix_map: &IAPrefixMap,
     mac_addr: &Option<MacAddr>,
     shared_wan_iid: &u64,
@@ -987,11 +990,12 @@ async fn handle_packet(
                             route_service.insert_ipv6_link_route(link_id, info).await;
                             replace_ip_route(
                                 &ia_prefix,
+                                chain_id,
                                 ipv6addr,
                                 iface_name,
                                 ifindex,
                                 mac_addr,
-                                addr_binding,
+                                chain_dataplane,
                             );
                             prefix_map.store(link_id, ia_prefix, expected_pd_len);
                             let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
@@ -1016,11 +1020,12 @@ async fn handle_packet(
 
 fn replace_ip_route(
     iapd: &landscape_common::wan_service::ipv6_pd::LDIAPrefix,
+    chain_id: u16,
     route_ip: Ipv6Addr,
     iface_name: &str,
     ifindex: u32,
     mac: &Option<MacAddr>,
-    addr_binding: &dyn WanAddrBinding,
+    chain_dataplane: &dyn WanChainDataplane,
 ) {
     let result = std::process::Command::new("ip")
         .args([
@@ -1039,7 +1044,14 @@ fn replace_ip_route(
         ])
         .output();
 
-    addr_binding.bind_ipv6(ifindex, iapd.prefix_ip, Some(route_ip), iapd.prefix_len, *mac);
+    chain_dataplane.bind_wan_ipv6(
+        chain_id,
+        ifindex,
+        iapd.prefix_ip,
+        Some(route_ip),
+        iapd.prefix_len,
+        *mac,
+    );
     if let Err(e) = result {
         tracing::error!("{e:?}");
     }

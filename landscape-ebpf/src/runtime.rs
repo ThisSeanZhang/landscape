@@ -138,39 +138,26 @@ impl EbpfRuntime {
     // lifetime (guards detach chain state on drop).
     // ─────────────────────────────────────────────────────────────────
 
-    /// PPPoE session capability (attach/teardown + WAN IPv4 binding).
-    pub fn pppoe_dataplane(
+    /// WAN chain capability: wan-link owned stages and address bindings,
+    /// keyed by the link's immutable chain id.
+    pub fn wan_chain(
         self: Arc<Self>,
-    ) -> Arc<dyn landscape_common::wan_service::pppoe::PppoeDataplane> {
-        Arc::new(crate::runtime_impls::EbpfPppoeDataplane::new(self))
+    ) -> Arc<dyn landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane> {
+        Arc::new(crate::chain::hub::EbpfWanChainDataplane::new(self))
     }
 
-    /// WAN address binding capability (`wan_ip_binding` map).
-    pub fn wan_addr_binding(
-        self: Arc<Self>,
-    ) -> Arc<dyn landscape_common::wan_service::addr_binding::WanAddrBinding> {
-        Arc::new(crate::runtime_impls::EbpfWanAddrBinding::new(self))
-    }
-
-    /// Firewall capability (stage attach + blacklist sync).
+    /// Firewall capability (blacklist sync).
     pub fn firewall(
         self: Arc<Self>,
     ) -> Arc<dyn landscape_common::wan_service::firewall::dataplane::FirewallDataplane> {
         Arc::new(crate::runtime_impls::EbpfFirewallDataplane::new(self))
     }
 
-    /// NAT capability (stage attach + static mapping sync).
+    /// NAT capability (static mapping sync).
     pub fn nat(
         self: Arc<Self>,
     ) -> Arc<dyn landscape_common::wan_service::nat::dataplane::NatDataplane> {
         Arc::new(crate::runtime_impls::EbpfNatDataplane::new(self))
-    }
-
-    /// MSS clamp capability (stage attach).
-    pub fn mss_clamp(
-        self: Arc<Self>,
-    ) -> Arc<dyn landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane> {
-        Arc::new(crate::runtime_impls::EbpfMssClampDataplane::new(self))
     }
 
     /// LAN route chain capability.

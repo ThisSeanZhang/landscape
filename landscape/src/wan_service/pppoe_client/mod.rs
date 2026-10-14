@@ -28,6 +28,8 @@ pub const ETH_P_PPOES: u16 = 0x8864;
 #[derive(Clone, Debug)]
 pub struct PPPoEClientConfig {
     pub link_id: Uuid,
+    /// eBPF chain slot of the owning wan link.
+    pub chain_id: u16,
     pub index: u32,
     pub iface_name: String,
     pub iface_mac: MacAddr,
@@ -62,6 +64,7 @@ impl PPPoEClientConfig {
     ) -> Self {
         Self {
             link_id,
+            chain_id: 0,
             index,
             iface_name,
             iface_mac,

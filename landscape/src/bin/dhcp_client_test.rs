@@ -33,6 +33,7 @@ async fn main() {
         {
             let config = landscape::wan_service::dhcpv4_client::DhcpV4ClientServiceRuntimeConfig {
                 link_id: uuid::Uuid::new_v4(),
+                chain_id: 1,
                 ifindex: iface.index,
                 iface_name: iface.name,
                 mac_addr: mac,
@@ -42,7 +43,7 @@ async fn main() {
             };
             let services = landscape::wan_service::dhcpv4_client::DhcpV4ClientServices {
                 route_service: IpRouteService::new(rt.clone().route_table()),
-                addr_binding: rt.wan_addr_binding(),
+                chain_dataplane: rt.wan_chain(),
                 session: None,
                 runtime: Arc::new(arc_swap::ArcSwap::from_pointee(
                     landscape_common::wan_link::V4Runtime::Idle,

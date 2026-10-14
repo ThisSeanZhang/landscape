@@ -83,7 +83,8 @@ pub(crate) async fn apply_lease(
         Some(DhcpOption::Router(router_ips)) => router_ips.first().copied(),
         _ => None,
     };
-    services.addr_binding.bind_ipv4(
+    services.chain_dataplane.bind_wan_ipv4(
+        config.chain_id,
         config.ifindex,
         params.yiaddr,
         gateway_ip,
@@ -127,7 +128,7 @@ pub(crate) async fn release(
 
     services.route_service.remove_ipv4_link_route(config.link_id).await;
     services.route_service.remove_ipv4_lan_route(&config.iface_name).await;
-    services.addr_binding.unbind_ipv4(config.ifindex);
+    services.chain_dataplane.unbind_wan_ipv4(config.chain_id);
 }
 
 fn build_del_args(ip: Ipv4Addr, prefix: u8, iface_name: &str) -> Vec<String> {

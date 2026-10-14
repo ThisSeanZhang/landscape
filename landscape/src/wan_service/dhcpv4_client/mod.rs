@@ -13,7 +13,7 @@ use arc_swap::ArcSwap;
 use landscape_common::net::MacAddr;
 use landscape_common::service::ServiceHandle;
 use landscape_common::wan_link::{LinkStateHandle, V4Runtime};
-use landscape_common::wan_service::addr_binding::WanAddrBinding;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ use crate::sys_service::route::IpRouteService;
 #[derive(Clone)]
 pub struct DhcpV4ClientServiceRuntimeConfig {
     pub link_id: Uuid,
+    pub chain_id: u16,
     pub ifindex: u32,
     pub iface_name: String,
     pub mac_addr: MacAddr,
@@ -32,7 +33,7 @@ pub struct DhcpV4ClientServiceRuntimeConfig {
 
 pub struct DhcpV4ClientServices {
     pub route_service: IpRouteService,
-    pub addr_binding: Arc<dyn WanAddrBinding>,
+    pub chain_dataplane: Arc<dyn WanChainDataplane>,
     pub session: Option<LinkStateHandle>,
     pub runtime: Arc<ArcSwap<V4Runtime>>,
 }

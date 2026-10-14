@@ -77,6 +77,7 @@ pub(super) fn start_client(
     let scenario = scenario.to_string();
     let cfg = PPPoEClientConfig {
         link_id: uuid::Uuid::new_v4(),
+        chain_id: 1,
         index: info.index,
         iface_name: info.name.clone(),
         iface_mac: info.mac,
@@ -106,7 +107,7 @@ pub(super) fn start_client(
                 cfg,
                 status_for_task,
                 route_service,
-                ebpf_rt.pppoe_dataplane(),
+                ebpf_rt.wan_chain(),
                 None,
                 std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
                     landscape_common::wan_link::V4Runtime::Idle,

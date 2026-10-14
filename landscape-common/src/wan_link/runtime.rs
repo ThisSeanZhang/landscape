@@ -42,6 +42,9 @@ pub struct RuntimeWanLinkConfig {
     pub id: Uuid,
     pub name: String,
     pub attach_iface_name: String,
+    /// Immutable eBPF chain slot of the link (1..=1023): the identity
+    /// the dataplane-facing services key their eBPF control on.
+    pub link_chain_id: u16,
     pub kind: RuntimeWanLinkKind,
     pub v4: RuntimeWanLinkV4Config,
     pub pd: RuntimeWanLinkPdConfig,
@@ -89,6 +92,7 @@ impl RuntimeWanLinkConfig {
             id: config.id,
             name: config.name.clone(),
             attach_iface_name: config.attach_iface_name.clone(),
+            link_chain_id: config.link_chain_id,
             kind,
             v4: RuntimeWanLinkV4Config {
                 enable: config.v4.enable,
@@ -258,6 +262,7 @@ mod tests {
         serde_json::from_value(json!({
             "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
             "attach_iface_name": "eth0",
+            "link_chain_id": 7,
         }))
         .unwrap()
     }
@@ -266,6 +271,7 @@ mod tests {
     fn from_config_fills_all_section_defaults() {
         let runtime = RuntimeWanLinkConfig::from_config(&minimal_config());
 
+        assert_eq!(runtime.link_chain_id, 7);
         assert_eq!(runtime.pd.expected_pd_len, DEFAULT_EXPECTED_PD_LEN);
         assert_eq!(runtime.mss.clamp_size, DEFAULT_CLAMP_SIZE);
         assert_eq!(runtime.nat.tcp_range.start, DEFAULT_NAT_PORT_RANGE_START);

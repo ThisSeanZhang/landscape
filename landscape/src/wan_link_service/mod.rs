@@ -33,13 +33,9 @@ use landscape_common::wan_link::{
     WanLinkSectionsSnapshot, WanLinkSectionsStatus, WanLinkStatus, WanLinkStatusHandle,
     WanLinkStatusStore,
 };
-use landscape_common::wan_service::addr_binding::WanAddrBinding;
-use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
 use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, LDIAPrefix};
-use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
-use landscape_common::wan_service::nat::dataplane::NatDataplane;
-use landscape_common::wan_service::pppoe::PppoeDataplane;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::wan_link::repository::WanLinkRepository;
@@ -83,11 +79,7 @@ type SectionRunner =
 #[derive(Clone)]
 pub struct WanLinkService {
     route_service: IpRouteService,
-    addr_binding: Arc<dyn WanAddrBinding>,
-    pppoe_dataplane: Arc<dyn PppoeDataplane>,
-    nat_dataplane: Arc<dyn NatDataplane>,
-    mss_dataplane: Arc<dyn MssClampDataplane>,
-    firewall_dataplane: Arc<dyn FirewallDataplane>,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     health_probe: Arc<dyn WanHealthProbe>,
     prefix_map: IAPrefixMap,
     prefix_sender: IAPrefixEventSender,
@@ -102,11 +94,7 @@ impl WanLinkService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         route_service: IpRouteService,
-        addr_binding: Arc<dyn WanAddrBinding>,
-        pppoe_dataplane: Arc<dyn PppoeDataplane>,
-        nat_dataplane: Arc<dyn NatDataplane>,
-        mss_dataplane: Arc<dyn MssClampDataplane>,
-        firewall_dataplane: Arc<dyn FirewallDataplane>,
+        chain_dataplane: Arc<dyn WanChainDataplane>,
         health_probe: Arc<dyn WanHealthProbe>,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
@@ -118,11 +106,7 @@ impl WanLinkService {
     ) -> Self {
         Self {
             route_service,
-            addr_binding,
-            pppoe_dataplane,
-            nat_dataplane,
-            mss_dataplane,
-            firewall_dataplane,
+            chain_dataplane,
             health_probe,
             prefix_map,
             prefix_sender,
@@ -215,8 +199,7 @@ impl ServiceStarterTrait for WanLinkService {
             let cfg_rx = cfg_rx.clone();
             let reconfig_rx = reconfig_tx.subscribe();
             let route_service = self.route_service.clone();
-            let addr_binding = self.addr_binding.clone();
-            let pppoe_dataplane = self.pppoe_dataplane.clone();
+            let chain_dataplane = self.chain_dataplane.clone();
             let attach = config.attach_iface_name.clone();
             let board = board.clone();
             let v4_runtime = v4_runtime.clone();
@@ -232,8 +215,7 @@ impl ServiceStarterTrait for WanLinkService {
                         cfg_rx,
                         reconfig_rx,
                         route_service,
-                        addr_binding,
-                        pppoe_dataplane,
+                        chain_dataplane,
                         v4_runtime,
                         DEFAULT_RESTART_BACKOFF,
                     )
@@ -254,15 +236,17 @@ impl ServiceStarterTrait for WanLinkService {
             |cfg| cfg.nat.enable,
             |state| state.has_v4_lease(),
             {
-                let dataplane = self.nat_dataplane.clone();
+                let dataplane = self.chain_dataplane.clone();
                 let nat_runtime = sections.nat_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let nat_runtime = nat_runtime.clone();
                     Box::pin(async move {
+                        let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                         nat::run(
+                            runtime.link_chain_id,
                             iface,
-                            RuntimeWanLinkConfig::from_config(&cfg).nat,
+                            runtime.nat,
                             status,
                             dataplane,
                             nat_runtime,
@@ -285,15 +269,17 @@ impl ServiceStarterTrait for WanLinkService {
             |cfg| cfg.mss.enable,
             |state| state.is_up(),
             {
-                let dataplane = self.mss_dataplane.clone();
+                let dataplane = self.chain_dataplane.clone();
                 let mss_runtime = sections.mss_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let mss_runtime = mss_runtime.clone();
                     Box::pin(async move {
+                        let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                         mss::run(
+                            runtime.link_chain_id,
                             iface,
-                            RuntimeWanLinkConfig::from_config(&cfg).mss,
+                            runtime.mss,
                             status,
                             dataplane,
                             mss_runtime,
@@ -316,15 +302,17 @@ impl ServiceStarterTrait for WanLinkService {
             |cfg| cfg.firewall.enable,
             |state| state.is_up(),
             {
-                let dataplane = self.firewall_dataplane.clone();
+                let dataplane = self.chain_dataplane.clone();
                 let firewall_runtime = sections.firewall_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let firewall_runtime = firewall_runtime.clone();
                     Box::pin(async move {
+                        let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                         firewall::run(
+                            runtime.link_chain_id,
                             iface,
-                            RuntimeWanLinkConfig::from_config(&cfg).firewall,
+                            runtime.firewall,
                             status,
                             dataplane,
                             firewall_runtime,
@@ -348,7 +336,7 @@ impl ServiceStarterTrait for WanLinkService {
             |state| state.is_up(),
             {
                 let route_service = self.route_service.clone();
-                let addr_binding = self.addr_binding.clone();
+                let chain_dataplane = self.chain_dataplane.clone();
                 let prefix_map = self.prefix_map.clone();
                 let prefix_sender = self.prefix_sender.clone();
                 let shared_wan_iid = self.shared_wan_iid.clone();
@@ -356,7 +344,7 @@ impl ServiceStarterTrait for WanLinkService {
                 Arc::new(move |iface, cfg, status| {
                     let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                     let route_service = route_service.clone();
-                    let addr_binding = addr_binding.clone();
+                    let chain_dataplane = chain_dataplane.clone();
                     let prefix_map = prefix_map.clone();
                     let prefix_sender = prefix_sender.clone();
                     let shared_wan_iid = shared_wan_iid.clone();
@@ -364,11 +352,12 @@ impl ServiceStarterTrait for WanLinkService {
                     Box::pin(async move {
                         pd::run(
                             runtime.id,
+                            runtime.link_chain_id,
                             iface,
                             runtime.pd,
                             status,
                             route_service,
-                            addr_binding,
+                            chain_dataplane,
                             prefix_map,
                             shared_wan_iid,
                             prefix_sender,
@@ -655,8 +644,7 @@ async fn run_v4_supervisor(
     mut cfg_rx: watch::Receiver<WanLinkConfig>,
     mut reconfig_rx: broadcast::Receiver<SectionTag>,
     route_service: IpRouteService,
-    addr_binding: Arc<dyn WanAddrBinding>,
-    pppoe_dataplane: Arc<dyn PppoeDataplane>,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
     backoff: Duration,
 ) {
@@ -692,15 +680,14 @@ async fn run_v4_supervisor(
         let run_child = run.clone();
         let session = Some(link_state.clone());
         let rs = route_service.clone();
-        let ab = addr_binding.clone();
-        let dp = pppoe_dataplane.clone();
+        let cd = chain_dataplane.clone();
         let vr = v4_runtime.clone();
         let resource = iface.name.clone();
         let join = run.spawn_task_with_resource(
             task_label::task::WAN_LINK_V4_SUPERVISOR,
             resource,
             async move {
-                v4::run(iface, runtime, run_child, rs, ab, dp, session, vr).await;
+                v4::run(iface, runtime, run_child, rs, cd, session, vr).await;
             },
         );
         tokio::pin!(join);
@@ -935,11 +922,7 @@ impl WanLinkServiceManagerService {
         store_service: LandscapeDBServiceProvider,
         mut dev_observer: IfaceEventReader,
         route_service: IpRouteService,
-        addr_binding: Arc<dyn WanAddrBinding>,
-        pppoe_dataplane: Arc<dyn PppoeDataplane>,
-        nat_dataplane: Arc<dyn NatDataplane>,
-        mss_dataplane: Arc<dyn MssClampDataplane>,
-        firewall_dataplane: Arc<dyn FirewallDataplane>,
+        chain_dataplane: Arc<dyn WanChainDataplane>,
         health_probe: Arc<dyn WanHealthProbe>,
         prefix_map: IAPrefixMap,
         prefix_sender: IAPrefixEventSender,
@@ -955,11 +938,7 @@ impl WanLinkServiceManagerService {
 
         let starter = WanLinkService::new(
             route_service,
-            addr_binding,
-            pppoe_dataplane,
-            nat_dataplane,
-            mss_dataplane,
-            firewall_dataplane,
+            chain_dataplane,
             health_probe,
             prefix_map.clone(),
             prefix_sender,

@@ -9,7 +9,7 @@ use landscape_common::event::hub::IAPrefixEventSender;
 use landscape_common::service::ServiceHandle;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_link::{PdRuntime, RuntimeWanLinkPdConfig, SessionIface};
-use landscape_common::wan_service::addr_binding::WanAddrBinding;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 use landscape_core::pd_prefix::IAPrefixMap;
 
 use crate::sys_service::route::IpRouteService;
@@ -17,11 +17,12 @@ use crate::sys_service::route::IpRouteService;
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     link_id: Uuid,
+    chain_id: u16,
     iface: SessionIface,
     config: RuntimeWanLinkPdConfig,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    addr_binding: Arc<dyn WanAddrBinding>,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
@@ -41,6 +42,7 @@ pub(super) async fn run(
 
     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
         link_id,
+        chain_id,
         iface.iface_name,
         iface.ifindex,
         iface.mac,
@@ -50,7 +52,7 @@ pub(super) async fn run(
         service_status,
         wan_route_info,
         route_service,
-        addr_binding,
+        chain_dataplane,
         prefix_map,
         shared_wan_iid,
         prefix_sender,

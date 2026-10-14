@@ -9,7 +9,7 @@ use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{
     LinkStateHandle, PppoeRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
 };
-use landscape_common::wan_service::pppoe::PppoeDataplane;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 
 use super::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
@@ -21,7 +21,7 @@ use super::{ETH_P_PPOES, LCP_ECHO_INTERVAL, PppoeResult, send_pppoe_session_fram
 async fn shutdown_session(
     session_handle: &mut Option<SessionHandle>,
     route_service: &IpRouteService,
-    dataplane: &dyn PppoeDataplane,
+    dataplane: &dyn WanChainDataplane,
     session: Option<&LinkStateHandle>,
 ) {
     if let Some(handle) = session_handle.take() {
@@ -36,7 +36,7 @@ pub async fn run(
     config: PPPoEClientConfig,
     status_rx: ServiceHandle,
     route_service: IpRouteService,
-    dataplane: Arc<dyn PppoeDataplane>,
+    dataplane: Arc<dyn WanChainDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {

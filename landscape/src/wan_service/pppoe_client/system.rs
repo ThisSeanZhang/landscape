@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use landscape_common::ebpf::DataplaneGuard;
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
-use landscape_common::wan_service::pppoe::{PppoeDataplane, PppoeEgressTmpl};
+use landscape_common::wan_service::wan_chain::dataplane::{PppoeEgressTmpl, WanChainDataplane};
 
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ use super::negotiation::NegotiationResult;
 pub(crate) struct SessionHandle {
     _session_guard: Box<dyn DataplaneGuard>,
     link_id: Uuid,
+    chain_id: u16,
     client_ip: std::net::Ipv4Addr,
     server_ip: std::net::Ipv4Addr,
     server_mac: Vec<u8>,
@@ -25,14 +26,13 @@ pub(crate) struct SessionHandle {
     ipv6cp_client_linklocal: Option<std::net::Ipv6Addr>,
     prev_ipv6_linklocal: Option<std::net::Ipv6Addr>,
     iface_name: String,
-    ifindex: u32,
 }
 
 impl SessionHandle {
     pub(crate) async fn shutdown(
         self,
         route_service: &IpRouteService,
-        dataplane: &dyn PppoeDataplane,
+        dataplane: &dyn WanChainDataplane,
     ) {
         let _ = std::process::Command::new("ip")
             .args([
@@ -78,7 +78,7 @@ impl SessionHandle {
 
         route_service.remove_ipv4_link_route(self.link_id).await;
         route_service.remove_ipv4_lan_route(&self.iface_name).await;
-        dataplane.unbind_wan_ipv4(self.ifindex);
+        dataplane.unbind_wan_ipv4(self.chain_id);
 
         let _ = std::process::Command::new("ip")
             .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
@@ -97,7 +97,7 @@ pub(crate) async fn create_session(
     lcp: &LcpPhaseResult,
     nego: &NegotiationResult,
     route_service: &IpRouteService,
-    dataplane: &dyn PppoeDataplane,
+    dataplane: &dyn WanChainDataplane,
 ) -> Result<SessionHandle, PppoeError> {
     let mru = lcp.mru.min(config.requested_mru);
     let client_ip = nego.client_ip;
@@ -115,7 +115,14 @@ pub(crate) async fn create_session(
         lcp.session_id
     );
 
-    dataplane.bind_wan_ipv4(index, client_ip, Some(server_ip), 32, Some(iface_mac));
+    dataplane.bind_wan_ipv4(
+        config.chain_id,
+        index,
+        client_ip,
+        Some(server_ip),
+        32,
+        Some(iface_mac),
+    );
 
     if let Err(e) = std::process::Command::new("ip")
         .args(["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])
@@ -276,8 +283,9 @@ pub(crate) async fn create_session(
         session_id: lcp.session_id.to_be(),
         ..Default::default()
     };
-    let session_guard =
-        dataplane.attach_session(index, tmpl, mru).map_err(PppoeError::EbpfInitFailed)?;
+    let session_guard = dataplane
+        .attach_pppoe_session(config.chain_id, index, tmpl, mru)
+        .map_err(PppoeError::EbpfInitFailed)?;
 
     tracing::info!(
         "native PPPoE eBPF TC enabled for iface={} session_id={}",
@@ -288,6 +296,7 @@ pub(crate) async fn create_session(
     Ok(SessionHandle {
         _session_guard: session_guard,
         link_id: config.link_id,
+        chain_id: config.chain_id,
         client_ip,
         server_ip,
         server_mac: lcp.server_mac.clone(),
@@ -295,7 +304,6 @@ pub(crate) async fn create_session(
         ipv6cp_client_linklocal: client_linklocal_v6,
         prev_ipv6_linklocal: prev_linklocal_v6,
         iface_name: iface_name.clone(),
-        ifindex: index,
     })
 }
 

@@ -110,6 +110,7 @@ fn spawn_driver() -> Harness {
 fn test_config() -> DhcpV4ClientServiceRuntimeConfig {
     DhcpV4ClientServiceRuntimeConfig {
         link_id: Uuid::new_v4(),
+        chain_id: 1,
         ifindex: 42,
         iface_name: "test0".to_string(),
         mac_addr: TEST_MAC,

@@ -18,13 +18,8 @@ use landscape_common::lan_service::lan_route::dataplane::LanRouteDataplane;
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
 use landscape_common::sys_service::route_service::dataplane::RouteTableDataplane;
-use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
-use landscape_common::wan_service::mss_clamp::dataplane::MssClampDataplane;
-use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
-use landscape_common::wan_service::pppoe::PppoeDataplane;
-use landscape_common::wan_service::pppoe::PppoeEgressTmpl;
 use landscape_common::wan_service::wan_route::dataplane::WanRouteDataplane;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -42,121 +37,6 @@ impl DataplaneGuard for crate::chain::tc_wan_route::TcWanRouteHandle {}
 impl DataplaneGuard for crate::chain::xdp_wan_route::XdpWanRouteHandle {}
 
 // ─────────────────────────────────────────────────────────────────────────
-// PPPoE
-// ─────────────────────────────────────────────────────────────────────────
-
-/// The skeleton-side template type generated from the BPF C header.
-type BpfPppoeTmpl = crate::pppoe::pppoe_handle::PppoeEgressTmpl;
-
-/// The common and BPF-side templates must stay layout-identical; the
-/// field-by-field conversion below relies on it.
-const _: () = {
-    assert!(std::mem::size_of::<PppoeEgressTmpl>() == std::mem::size_of::<BpfPppoeTmpl>(),);
-};
-
-fn to_bpf_tmpl(tmpl: &PppoeEgressTmpl) -> BpfPppoeTmpl {
-    BpfPppoeTmpl {
-        dmac: tmpl.dmac,
-        smac: tmpl.smac,
-        eth_proto: tmpl.eth_proto,
-        ver_type: tmpl.ver_type,
-        code: tmpl.code,
-        session_id: tmpl.session_id,
-        length: tmpl.length,
-        protocol: tmpl.protocol,
-    }
-}
-
-pub struct EbpfPppoeDataplane {
-    rt: Arc<EbpfRuntime>,
-}
-
-impl EbpfPppoeDataplane {
-    pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
-        Self { rt }
-    }
-}
-
-impl PppoeDataplane for EbpfPppoeDataplane {
-    fn attach_session(
-        &self,
-        ifindex: u32,
-        tmpl: PppoeEgressTmpl,
-        mtu: u16,
-    ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::pppoe::pppoe_handle::create_pppoe_handle(
-            self.rt.clone(),
-            ifindex,
-            to_bpf_tmpl(&tmpl),
-            mtu,
-        )
-        .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
-        .map_err(|e| e.to_string())
-    }
-
-    fn bind_wan_ipv4(
-        &self,
-        ifindex: u32,
-        addr: std::net::Ipv4Addr,
-        gateway: Option<std::net::Ipv4Addr>,
-        mask: u8,
-        mac: Option<MacAddr>,
-    ) {
-        maps::wan::add_ipv4_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
-    }
-
-    fn unbind_wan_ipv4(&self, ifindex: u32) {
-        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// WAN address binding
-// ─────────────────────────────────────────────────────────────────────────
-
-pub struct EbpfWanAddrBinding {
-    rt: Arc<EbpfRuntime>,
-}
-
-impl EbpfWanAddrBinding {
-    pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
-        Self { rt }
-    }
-}
-
-impl WanAddrBinding for EbpfWanAddrBinding {
-    fn bind_ipv4(
-        &self,
-        ifindex: u32,
-        addr: std::net::Ipv4Addr,
-        gateway: Option<std::net::Ipv4Addr>,
-        mask: u8,
-        mac: Option<MacAddr>,
-    ) {
-        maps::wan::add_ipv4_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
-    }
-
-    fn unbind_ipv4(&self, ifindex: u32) {
-        maps::wan::del_ipv4_wan_ip(&self.rt.paths, ifindex);
-    }
-
-    fn bind_ipv6(
-        &self,
-        ifindex: u32,
-        addr: std::net::Ipv6Addr,
-        gateway: Option<std::net::Ipv6Addr>,
-        mask: u8,
-        mac: Option<MacAddr>,
-    ) {
-        maps::wan::add_ipv6_wan_ip(&self.rt.paths, ifindex, addr, gateway, mask, mac);
-    }
-
-    fn unbind_ipv6(&self, ifindex: u32) {
-        maps::wan::del_ipv6_wan_ip(&self.rt.paths, ifindex);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
 // Firewall
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -171,16 +51,6 @@ impl EbpfFirewallDataplane {
 }
 
 impl FirewallDataplane for EbpfFirewallDataplane {
-    fn attach(
-        &self,
-        ifindex: u32,
-        has_eth_header: bool,
-    ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::firewall::init_firewall(&self.rt, ifindex, has_eth_header)
-            .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
-            .map_err(|e| e.to_string())
-    }
-
     fn sync_blacklist(
         &self,
         new_ips: Vec<landscape_common::flow::ip_mark::IpConfig>,
@@ -205,17 +75,6 @@ impl EbpfNatDataplane {
 }
 
 impl NatDataplane for EbpfNatDataplane {
-    fn attach(
-        &self,
-        ifindex: u32,
-        has_eth_header: bool,
-        config: &NatConfig,
-    ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::nat::init_nat(&self.rt, ifindex, has_eth_header, config)
-            .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
-            .map_err(|e| e.to_string())
-    }
-
     fn sync_static_nat4(
         &self,
         configs: &[landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config],
@@ -232,33 +91,6 @@ impl NatDataplane for EbpfNatDataplane {
         if let Err(e) = maps::nat::reconcile_static_nat6_map(&self.rt.paths, configs) {
             tracing::error!("reconcile static nat6 map error: {e:?}");
         }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// MSS clamp
-// ─────────────────────────────────────────────────────────────────────────
-
-pub struct EbpfMssClampDataplane {
-    rt: Arc<EbpfRuntime>,
-}
-
-impl EbpfMssClampDataplane {
-    pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
-        Self { rt }
-    }
-}
-
-impl MssClampDataplane for EbpfMssClampDataplane {
-    fn attach(
-        &self,
-        ifindex: u32,
-        mtu: u16,
-        has_eth_header: bool,
-    ) -> Result<Box<dyn DataplaneGuard>, String> {
-        crate::stages::mss::init_mss(&self.rt, ifindex, mtu, has_eth_header)
-            .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
-            .map_err(|e| e.to_string())
     }
 }
 

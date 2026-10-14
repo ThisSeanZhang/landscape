@@ -9,8 +9,8 @@ use arc_swap::ArcSwap;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
 use landscape_common::wan_link::{LinkStateHandle, V4Runtime, swap_if_changed};
-use landscape_common::wan_service::addr_binding::WanAddrBinding;
 use landscape_common::wan_service::pppd::PPPDConfig;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
@@ -98,12 +98,14 @@ pub(crate) async fn run_pppd_for_link(
     pppd_config: PPPDConfig,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    addr_binding: Arc<dyn WanAddrBinding>,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     link_id: uuid::Uuid,
+    chain_id: u16,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
-    let env: Arc<dyn PppdEnv> = Arc::new(SystemPppdEnv::new(route_service, addr_binding, link_id));
+    let env: Arc<dyn PppdEnv> =
+        Arc::new(SystemPppdEnv::new(route_service, chain_dataplane, link_id, chain_id));
     let config_store: Arc<dyn PppdConfigStore> = Arc::new(SystemPppdConfigStore);
     create_pppd_thread(
         attach_iface_name,

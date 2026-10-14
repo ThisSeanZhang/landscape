@@ -4,13 +4,14 @@ use arc_swap::ArcSwap;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{RuntimeWanLinkNatConfig, SessionIface, swap_if_changed};
 use landscape_common::wan_service::nat::config::NatConfig;
-use landscape_common::wan_service::nat::dataplane::NatDataplane;
+use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 
 pub(super) async fn run(
+    chain_id: u16,
     iface: SessionIface,
     config: RuntimeWanLinkNatConfig,
     service_status: ServiceHandle,
-    dataplane: Arc<dyn NatDataplane>,
+    dataplane: Arc<dyn WanChainDataplane>,
     runtime: Arc<ArcSwap<ServiceStatus>>,
 ) {
     let nat_config = NatConfig {
@@ -18,15 +19,16 @@ pub(super) async fn run(
         udp_range: config.udp_range,
         icmp_in_range: config.icmp_in_range,
     };
-    let nat = match dataplane.attach(iface.ifindex, iface.has_eth_header(), &nat_config) {
-        Ok(handle) => handle,
-        Err(err) => {
-            tracing::error!("failed to start nat for {}: {err}", iface.iface_name);
-            service_status.just_change_status(ServiceStatus::Failed);
-            swap_if_changed(&runtime, ServiceStatus::Failed);
-            return;
-        }
-    };
+    let nat =
+        match dataplane.attach_nat(chain_id, iface.ifindex, iface.has_eth_header(), &nat_config) {
+            Ok(handle) => handle,
+            Err(err) => {
+                tracing::error!("failed to start nat for {}: {err}", iface.iface_name);
+                service_status.just_change_status(ServiceStatus::Failed);
+                swap_if_changed(&runtime, ServiceStatus::Failed);
+                return;
+            }
+        };
 
     service_status.just_change_status(ServiceStatus::Running);
     swap_if_changed(&runtime, ServiceStatus::Running);
