@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv6Addr};
 
 use landscape_common::cert::order::DnsProviderConfig;
@@ -10,6 +10,7 @@ use landscape_common::ddns::{
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::sys_service::route_service::RouteOwner;
+use landscape_core::lan_device::AddressSourceV6;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -336,6 +337,7 @@ impl DdnsService {
     ) -> Result<Vec<IpAddr>, ResolveRecordIpError> {
         let ts = landscape_common::utils::time::get_f64_timestamp();
         let mut last_error = None;
+        let mut accumulator: HashSet<IpAddr> = HashSet::new();
         for source in sources {
             match source {
                 DdnsSource::LocalWan { iface_name, link_id, family, .. }
@@ -349,8 +351,7 @@ impl DdnsService {
                     if let Some(route) = route {
                         if wanted_family == IpFamily::Ipv6
                             && let IpAddr::V6(addr) = route.iface_ip
-                            && !((addr.segments()[0] & 0xe000) == 0x2000)
-                            && !addr.is_unique_local()
+                            && !is_usable_ddns_ipv6(&addr)
                         {
                             last_error = Some(ResolveRecordIpError {
                                 status: DdnsJobStatus::Idle,
@@ -363,7 +364,8 @@ impl DdnsService {
                             });
                             continue;
                         }
-                        return Ok(vec![route.iface_ip]);
+                        accumulator.insert(route.iface_ip);
+                        continue;
                     }
                     last_error = Some(ResolveRecordIpError {
                         status: DdnsJobStatus::Idle,
@@ -378,17 +380,30 @@ impl DdnsService {
                 {
                     match wanted_family {
                         IpFamily::Ipv6 => {
-                            let raw_ips: Vec<Ipv6Addr> = match self
-                                .directory
-                                .entry_by_device_id(device_id)
-                            {
-                                Some(entry) => entry.ipv6_addrs.keys().copied().collect(),
+                            let entry = match self.directory.entry_by_device_id(device_id) {
+                                Some(entry) => entry,
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
                                         status: DdnsJobStatus::Idle,
                                         reason: DdnsRuntimeReason::WaitingLanDeviceIp,
                                         detail: format!(
                                             "waiting for device {device_id} IPv6 address assignment"
+                                        ),
+                                        retryable: true,
+                                        next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
+                                    });
+                                    continue;
+                                }
+                            };
+
+                            let raw_ip = match select_enrolled_device_raw_ipv6(&entry.ipv6_addrs) {
+                                Some(ip) => ip,
+                                None => {
+                                    last_error = Some(ResolveRecordIpError {
+                                        status: DdnsJobStatus::Idle,
+                                        reason: DdnsRuntimeReason::WaitingLanDeviceIp,
+                                        detail: format!(
+                                            "device {device_id} has no usable (non-link-local) IPv6 address"
                                         ),
                                         retryable: true,
                                         next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
@@ -413,39 +428,10 @@ impl DdnsService {
                                 }
                             };
 
-                            let mut seen_suffixes = HashSet::new();
-                            let mut result = Vec::new();
-                            for raw_ip in &raw_ips {
-                                if !((raw_ip.segments()[0] & 0xe000) == 0x2000)
-                                    && !raw_ip.is_unique_local()
-                                {
-                                    continue;
-                                }
-                                let suffix = extract_ipv6_suffix(*raw_ip, pd.prefix_len);
-                                if seen_suffixes.insert(suffix) {
-                                    let ip = combine_ipv6_prefix_suffix(
-                                        pd.prefix_ip,
-                                        pd.prefix_len,
-                                        suffix,
-                                    );
-                                    result.push(IpAddr::V6(ip));
-                                }
-                            }
-
-                            if result.is_empty() {
-                                last_error = Some(ResolveRecordIpError {
-                                    status: DdnsJobStatus::Idle,
-                                    reason: DdnsRuntimeReason::WaitingLanDeviceIp,
-                                    detail: format!(
-                                        "device {device_id} has no usable (non-link-local) IPv6 address"
-                                    ),
-                                    retryable: true,
-                                    next_retry_at: Some(ts + DDNS_RETRY_INTERVAL_SECS as f64),
-                                });
-                                continue;
-                            }
-
-                            return Ok(result);
+                            let suffix = extract_ipv6_suffix(raw_ip, pd.prefix_len);
+                            let ip =
+                                combine_ipv6_prefix_suffix(pd.prefix_ip, pd.prefix_len, suffix);
+                            accumulator.insert(IpAddr::V6(ip));
                         }
                         IpFamily::Ipv4 => {
                             let ipv4 = self
@@ -464,12 +450,18 @@ impl DdnsService {
                                 });
                                 continue;
                             };
-                            return Ok(vec![IpAddr::V4(ipv4)]);
+                            accumulator.insert(IpAddr::V4(ipv4));
                         }
                     }
                 }
                 _ => {}
             }
+        }
+
+        if !accumulator.is_empty() {
+            let mut ips: Vec<IpAddr> = accumulator.into_iter().collect();
+            ips.sort();
+            return Ok(ips);
         }
 
         Err(last_error.unwrap_or_else(|| ResolveRecordIpError {
@@ -572,4 +564,40 @@ impl DdnsService {
             }
         }
     }
+}
+
+/// Determine whether an IPv6 address is usable for DDNS publication (GUA 2000::/3 or ULA fallback).
+fn is_usable_ddns_ipv6(addr: &Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xe000) == 0x2000 || addr.is_unique_local()
+}
+
+/// Select the most suitable raw IPv6 address from an enrolled device's address set for DDNS publication:
+/// 1. Filter out unusable addresses (link-local), keeping only GUA and ULA;
+/// 2. Prefer GUA if any usable GUA exists, ranking candidates by source priority (Static > Dhcpv6 > Slaac, lowest rank wins), tiebreaking by lowest IP;
+/// 3. Fall back to ULA if no usable GUA exists (using the same rank-first, lowest-IP tiebreak rule);
+/// 4. Return None when no usable address exists (e.g., only fe80:: link-local addresses).
+/// The implementation uses owned `(Ipv6Addr, AddressSourceV6)` tuples to avoid borrow lifetime issues.
+pub(super) fn select_enrolled_device_raw_ipv6(
+    addrs: &HashMap<Ipv6Addr, AddressSourceV6>,
+) -> Option<Ipv6Addr> {
+    let usable: Vec<(Ipv6Addr, AddressSourceV6)> = addrs
+        .iter()
+        .filter(|(ip, _)| is_usable_ddns_ipv6(ip))
+        .map(|(ip, source)| (*ip, *source))
+        .collect();
+
+    if usable.is_empty() {
+        return None;
+    }
+
+    let guas: Vec<(Ipv6Addr, AddressSourceV6)> =
+        usable.iter().copied().filter(|(ip, _)| (ip.segments()[0] & 0xe000) == 0x2000).collect();
+
+    let candidates = if !guas.is_empty() {
+        guas
+    } else {
+        usable.into_iter().filter(|(ip, _)| ip.is_unique_local()).collect()
+    };
+
+    candidates.into_iter().min_by_key(|(ip, source)| (source.rank(), *ip)).map(|(ip, _)| ip)
 }
