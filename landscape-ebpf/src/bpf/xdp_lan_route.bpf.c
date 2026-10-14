@@ -258,6 +258,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
                 entry->gate_addr = info->gate_addr;
                 __builtin_memcpy(entry->mac, info->mac, 6);
+                entry->link_chain_id = info->link_chain_id;
             } else {
                 struct route4_cache_value new_entry = {};
                 new_entry.mark_value = flow_id;
@@ -267,6 +268,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
                 new_entry.gate_addr = info->gate_addr;
                 __builtin_memcpy(new_entry.mac, info->mac, 6);
+                new_entry.link_chain_id = info->link_chain_id;
                 bpf_map_update_elem(lan_cache, &cache_key, &new_entry, BPF_ANY);
             }
         }
@@ -351,6 +353,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
                 __builtin_memcpy(entry->gate_addr.bytes, info->gate_addr.bytes, 16);
                 __builtin_memcpy(entry->mac, info->mac, 6);
+                entry->link_chain_id = info->link_chain_id;
             } else {
                 struct route6_cache_value new_entry = {};
                 new_entry.mark_value = flow_id;
@@ -360,6 +363,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
                 __builtin_memcpy(new_entry.gate_addr.bytes, info->gate_addr.bytes, 16);
                 __builtin_memcpy(new_entry.mac, info->mac, 6);
+                new_entry.link_chain_id = info->link_chain_id;
                 bpf_map_update_elem(lan_cache, &cache_key, &new_entry, BPF_ANY);
             }
         }

@@ -289,7 +289,7 @@ fn xdp_lan_route_wan_pipeline() {
     {
         let s = route_slot(0xCB007101);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());

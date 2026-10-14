@@ -18,6 +18,7 @@ struct route4_cache_value {
     __be32 gate_addr;
     u8 mac[6];
     u8 l2_data[8];
+    __u16 link_chain_id;
 } _route4_cache_value;
 
 // 缓存

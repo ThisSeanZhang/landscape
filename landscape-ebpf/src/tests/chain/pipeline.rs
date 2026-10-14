@@ -273,7 +273,7 @@ fn xdp_firewall_pipeline() {
     {
         let s = route_slot(wan_ip);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
@@ -295,7 +295,7 @@ fn xdp_firewall_pipeline() {
         let wan_ip2: u32 = u32::from_be_bytes([203, 0, 113, 2]);
         let s2 = route_slot(wan_ip2);
         let mut k = [0u8; 8];
-        let mut v = [0u8; 16];
+        let mut v = [0u8; 20];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s2.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
@@ -321,7 +321,7 @@ fn xdp_firewall_pipeline() {
         let mut k = [0u8; 8];
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&slot.to_ne_bytes());
-        let mut v = [0u8; 28];
+        let mut v = [0u8; 32];
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
         maps.rt6_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }

@@ -14,6 +14,7 @@ struct route4_target_info {
     u8 has_mac;
     u8 is_docker;
     u8 mac[6];
+    __u16 link_chain_id;
 };
 
 struct {

@@ -710,6 +710,7 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
                 __builtin_memcpy(new_target_cache.gate_addr.bytes, slot_target->gate_addr.bytes,
                                  16);
                 __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
+                new_target_cache.link_chain_id = slot_target->link_chain_id;
             }
             new_target_cache.xdp_redirect_able =
                 xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;

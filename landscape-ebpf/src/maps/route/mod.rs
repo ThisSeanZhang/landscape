@@ -29,7 +29,7 @@ mod tests {
         sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
     };
     use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
-    use zerocopy::IntoBytes;
+    use zerocopy::{FromBytes, IntoBytes};
 
     use super::types::{Route6SlotKey, Route6TargetInfo};
     use super::*;
@@ -103,6 +103,29 @@ mod tests {
         // Slots should be cleared
         assert!(!lookup_v6_slot(&map, 5, 0));
         assert!(!lookup_v6_slot(&map, 5, 1));
+    }
+
+    #[test]
+    fn replace_slots_store_chain_in_values() {
+        let map = create_test_slot_map_v6();
+
+        let target = (WanRouteTarget { info: dummy_v6_route_target(11), chain: 7 }, 3);
+        replace_wan_route_slots_v6_with_map(&map, 5, &[target]);
+
+        // Every slot of flow 5 carries the target's chain for the WAN
+        // egress chain dispatch.
+        for slot in 0..16u32 {
+            let mut key = Route6SlotKey::default();
+            key.flow_id = 5;
+            key.slot = slot;
+            let bytes = map
+                .lookup(key.as_bytes(), MapFlags::ANY)
+                .expect("lookup slot")
+                .expect("slot filled");
+            let value = Route6TargetInfo::read_from_bytes(&bytes).expect("decode slot value");
+            assert_eq!(value.ifindex, 11);
+            assert_eq!(value.link_chain_id, 7);
+        }
     }
 
     #[test]

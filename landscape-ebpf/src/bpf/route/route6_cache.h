@@ -19,6 +19,7 @@ struct route6_cache_value {
     __u32 ifindex;
     union u_inet6_addr gate_addr;
     u8 mac[6];
+    __u16 link_chain_id;
 } _route6_cache_value;
 
 // 缓存
