@@ -88,6 +88,24 @@ fn build_lcp_config_nak(id: u8, mru: u16, magic: u32) -> Vec<u8> {
     PointToPoint::nak_mru(id, mru, magic)
 }
 
+/// LCP Config-Request with a caller-supplied Authentication-Protocol
+/// option (MRU and Magic-Number are always included).
+fn build_lcp_config_request_auth(id: u8, mru: u16, magic: u32, auth_option: &[u8]) -> Vec<u8> {
+    let mut payload = vec![1, 4];
+    payload.extend(mru.to_be_bytes());
+    payload.extend(auth_option);
+    payload.extend([5, 6]);
+    payload.extend(magic.to_be_bytes());
+    PointToPoint {
+        protocol: 0xc021,
+        code: 1,
+        id,
+        length: payload.len() as u16 + 4,
+        payload,
+    }
+    .convert_to_payload()
+}
+
 fn extract_host_uniq(packet: &[u8]) -> Option<u32> {
     if packet.len() < 20 {
         return None;
@@ -157,10 +175,25 @@ mod unit {
     fn parse_lcp_request_options_full() {
         ensure_test_env();
         let payload = [1, 4, 0x05, 0xd4, 3, 4, 0xc0, 0x23, 5, 6, 0x12, 0x34, 0x56, 0x78];
-        let (mru, magic, auth, count) = super::super::lcp::parse_lcp_request_options(&payload);
+        let (mru, magic, auth, algorithm, count) =
+            super::super::lcp::parse_lcp_request_options(&payload);
         assert_eq!(mru, Some(1492));
         assert_eq!(magic, Some(0x1234_5678));
         assert_eq!(auth, Some(0xc023));
+        assert_eq!(algorithm, None, "PAP carries no algorithm byte");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn parse_lcp_request_options_chap_algorithm() {
+        ensure_test_env();
+        let payload = [1, 4, 0x05, 0xd4, 3, 5, 0xc2, 0x23, 0x05, 5, 6, 0x12, 0x34, 0x56, 0x78];
+        let (mru, magic, auth, algorithm, count) =
+            super::super::lcp::parse_lcp_request_options(&payload);
+        assert_eq!(mru, Some(1492));
+        assert_eq!(magic, Some(0x1234_5678));
+        assert_eq!(auth, Some(0xc223));
+        assert_eq!(algorithm, Some(0x05), "CHAP algorithm byte must be recorded");
         assert_eq!(count, 3);
     }
 
@@ -168,11 +201,33 @@ mod unit {
     fn parse_lcp_request_options_missing_auth() {
         ensure_test_env();
         let payload = [1, 4, 0x05, 0xd4, 5, 6, 0x12, 0x34, 0x56, 0x78];
-        let (mru, magic, auth, count) = super::super::lcp::parse_lcp_request_options(&payload);
+        let (mru, magic, auth, algorithm, count) =
+            super::super::lcp::parse_lcp_request_options(&payload);
         assert_eq!(mru, Some(1492));
         assert_eq!(magic, Some(0x1234_5678));
         assert_eq!(auth, None);
+        assert_eq!(algorithm, None);
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn discovery_tag_error_formats_reason() {
+        ensure_test_env();
+        assert_eq!(
+            super::super::lcp::discovery_tag_error(&PPPoETag::ServiceNameError(
+                b"no such service".to_vec()
+            ))
+            .as_deref(),
+            Some("Service-Name-Error: no such service")
+        );
+        // An empty message degrades to the bare tag name
+        assert_eq!(
+            super::super::lcp::discovery_tag_error(&PPPoETag::ACSystemError(vec![])).as_deref(),
+            Some("AC-System-Error")
+        );
+        // Non-error tags are not errors
+        assert_eq!(super::super::lcp::discovery_tag_error(&PPPoETag::AcName(vec![])), None);
+        assert_eq!(super::super::lcp::discovery_tag_error(&PPPoETag::HostUniq(1)), None);
     }
 
     #[test]
@@ -243,7 +298,368 @@ mod integration {
         // We stop here to avoid needing LCP packet response.
         // Drop and let task die.
         drop(to_client);
-        let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        drop(handle);
+    }
+
+    /// pppd semantics (lcp.c:1618-1663): a CHAP request with an algorithm
+    /// this client cannot run (only MD5 is implemented) is answered with a
+    /// Configure-Nak suggesting CHAP/MD5 in its 5-byte form; the peer's
+    /// retry with MD5 is then Acked and the negotiation continues.
+    #[tokio::test]
+    async fn test_unsupported_chap_algorithm_naked_then_md5_acked() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        // CHAP with SHA-256 (algorithm 0x81): must be Naked
+        let req = build_lcp_config_request_auth(1, 1492, 0xDEAD_BEEF, &[3, 5, 0xc2, 0x23, 0x81]);
+        to_client.send(build_pppoe_session(session_id, req)).await.unwrap();
+
+        let nak = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .unwrap()
+            .expect("expected Nak for unsupported algorithm");
+        let nak_ppp = extract_lcp_packet(&nak, session_id).unwrap();
+        assert!(nak_ppp.is_nak(), "code {}", nak_ppp.code);
+        assert_eq!(nak_ppp.id, 1, "nak must mirror the request id");
+        assert_eq!(
+            nak_ppp.payload,
+            vec![3, 5, 0xc2, 0x23, 0x05],
+            "nak must suggest CHAP/MD5 in its 5-byte form"
+        );
+
+        // Retry with MD5: must be Acked (and our own Config-Request follows)
+        let req = build_lcp_config_request_auth(2, 1492, 0xDEAD_BEEF, &[3, 5, 0xc2, 0x23, 0x05]);
+        to_client.send(build_pppoe_session(session_id, req)).await.unwrap();
+
+        let ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .unwrap()
+            .expect("expected Ack for CHAP/MD5");
+        let ack_ppp = extract_lcp_packet(&ack, session_id).unwrap();
+        assert!(ack_ppp.is_ack(), "code {}", ack_ppp.code);
+        assert_eq!(ack_ppp.id, 2);
+
+        drop(to_client);
+        drop(handle);
+    }
+
+    /// A CHAP option without the algorithm byte is unusable (RFC 1994
+    /// §4.1) and an unknown authentication protocol (e.g. EAP) cannot run
+    /// either: both are Naked suggesting CHAP/MD5.
+    #[tokio::test]
+    async fn test_chap_without_algorithm_and_eap_are_naked() {
+        ensure_test_env();
+
+        // CHAP without the algorithm byte (RFC 1994 §4.1 violation), and
+        // EAP (0xc227) — an authentication this client cannot run.
+        for auth_option in [vec![3, 4, 0xc2, 0x23], vec![3, 4, 0xc2, 0x27]] {
+            let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+            let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+            let config = test_config();
+            let status = ServiceHandle::new();
+            status.just_change_status(ServiceStatus::Staring);
+            status.just_change_status(ServiceStatus::Running);
+
+            let handle =
+                tokio::spawn(
+                    async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+                );
+
+            let padi = from_client.recv().await.unwrap();
+            let host_uniq = extract_host_uniq(&padi).unwrap();
+            to_client.send(build_pado(host_uniq)).await.unwrap();
+            let _padr = from_client.recv().await.unwrap();
+            let session_id = 0x0042u16;
+            to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+            let req = build_lcp_config_request_auth(7, 1492, 0xDEAD_BEEF, &auth_option);
+            to_client.send(build_pppoe_session(session_id, req)).await.unwrap();
+
+            let nak = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+                .await
+                .unwrap()
+                .expect("expected Nak");
+            let nak_ppp = extract_lcp_packet(&nak, session_id).unwrap();
+            assert!(nak_ppp.is_nak(), "auth {auth_option:?} must be naked");
+            assert_eq!(nak_ppp.payload, vec![3, 5, 0xc2, 0x23, 0x05]);
+
+            drop(to_client);
+            drop(handle);
+        }
+    }
+
+    /// pppd nakloops bound: a peer that keeps requesting an unsupported
+    /// authentication gets at most MAX_NAK_LOOPS Naks before the phase
+    /// fails instead of ping-ponging forever.
+    #[tokio::test]
+    async fn test_unsupported_auth_nak_cap_fails_lcp() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        let rounds = super::super::MAX_NAK_LOOPS;
+        for i in 1..=rounds {
+            let req =
+                build_lcp_config_request_auth(i, 1492, 0xDEAD_BEEF, &[3, 5, 0xc2, 0x23, 0x81]);
+            to_client.send(build_pppoe_session(session_id, req)).await.unwrap();
+
+            let nak = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+                .await
+                .unwrap()
+                .expect("expected Nak");
+            assert!(extract_lcp_packet(&nak, session_id).unwrap().is_nak());
+        }
+
+        // Past the cap the phase fails fatally instead of naking again.
+        let req = build_lcp_config_request_auth(9, 1492, 0xDEAD_BEEF, &[3, 5, 0xc2, 0x23, 0x81]);
+        to_client.send(build_pppoe_session(session_id, req)).await.unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
+        assert!(matches!(result, Err(super::super::error::PppoeError::LcpConfigRejected)));
+    }
+
+    /// RFC 2516 §5.4: a PADO carrying Service-Name-Error fails the
+    /// discovery immediately (pppd parsePADOTags) instead of waiting for
+    /// the discovery timeouts.
+    #[tokio::test]
+    async fn test_pado_service_name_error_rejected() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+
+        let mut frame = PPPoEFrame::get_offer_with_host_uniq(host_uniq);
+        frame
+            .payload
+            .extend(PPPoETag::ServiceNameError(b"no such service".to_vec()).decode_options());
+        frame.length = frame.payload.len() as u16;
+        to_client
+            .send(wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload()))
+            .await
+            .unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
+        assert!(
+            matches!(
+                &result,
+                Err(super::super::error::PppoeError::DiscoveryRejected(reason))
+                    if reason.contains("Service-Name-Error")
+            ),
+            "expected DiscoveryRejected, got {:?}",
+            result.err()
+        );
+    }
+
+    /// RFC 2516 §5.4: a PADS carrying an error tag means the AC denied the
+    /// session — fail fast instead of grinding through the LCP timeouts.
+    #[tokio::test]
+    async fn test_pads_generic_error_rejected() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+
+        let mut frame = PPPoEFrame {
+            ver: 1,
+            t: 1,
+            code: 0x65,
+            sid: 0,
+            length: 0,
+            payload: vec![],
+        };
+        frame.payload.extend(PPPoETag::HostUniq(host_uniq).decode_options());
+        frame.payload.extend(PPPoETag::GenericError(b"no resources".to_vec()).decode_options());
+        frame.length = frame.payload.len() as u16;
+        to_client
+            .send(wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload()))
+            .await
+            .unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
+        assert!(
+            matches!(
+                &result,
+                Err(super::super::error::PppoeError::DiscoveryRejected(reason))
+                    if reason.contains("Generic-Error")
+            ),
+            "expected DiscoveryRejected, got {:?}",
+            result.err()
+        );
+    }
+
+    /// RFC 2516 §5.4 + shared medium: another AC's error-tagged PADO with a
+    /// mismatched Host-Uniq is not addressed to us and must not fail the
+    /// discovery — a later PADO from the target AC still establishes the
+    /// flow (answered with a PADR).
+    #[tokio::test]
+    async fn test_pado_error_tag_with_wrong_host_uniq_ignored() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+
+        let mut frame = PPPoEFrame::get_offer_with_host_uniq(host_uniq.wrapping_add(1));
+        frame
+            .payload
+            .extend(PPPoETag::ServiceNameError(b"no such service".to_vec()).decode_options());
+        frame.length = frame.payload.len() as u16;
+        to_client
+            .send(wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload()))
+            .await
+            .unwrap();
+
+        // The error-tagged PADO is not for us: the client keeps discovering
+        // and a matching PADO is still answered with a PADR.
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .expect("discovery should survive a foreign error-tagged PADO")
+            .expect("channel should stay open");
+
+        drop(to_client);
+        drop(handle);
+    }
+
+    /// RFC 2516 §5.4: an error-tagged PADS with a mismatched Host-Uniq is
+    /// not addressed to us and is ignored — a later correct PADS still
+    /// enters the LCP phase.
+    #[tokio::test]
+    async fn test_pads_error_tag_with_wrong_host_uniq_ignored() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+
+        let mut frame = PPPoEFrame {
+            ver: 1,
+            t: 1,
+            code: 0x65,
+            sid: 0,
+            length: 0,
+            payload: vec![],
+        };
+        frame.payload.extend(PPPoETag::HostUniq(host_uniq.wrapping_add(1)).decode_options());
+        frame.payload.extend(PPPoETag::GenericError(b"no resources".to_vec()).decode_options());
+        frame.length = frame.payload.len() as u16;
+        to_client
+            .send(wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOED, frame.convert_to_payload()))
+            .await
+            .unwrap();
+
+        // The error-tagged PADS is not for us: a correct PADS still enters
+        // the LCP phase, proven by answering a peer Config-Request with an
+        // Ack.
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        let lcp_req = build_lcp_config_request(1, 1492, 0xDEAD_BEEF, 0xc023);
+        to_client.send(build_pppoe_session(session_id, lcp_req)).await.unwrap();
+
+        let ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .expect("LCP phase should start after a foreign error-tagged PADS")
+            .expect("channel should stay open");
+        let ppp = extract_lcp_packet(&ack, session_id).unwrap();
+        assert!(ppp.is_lcp_config() && ppp.is_ack());
+
+        drop(to_client);
+        drop(handle);
     }
 
     #[tokio::test]
@@ -539,7 +955,7 @@ mod integration {
         let adj_ppp = extract_lcp_packet(&our_adj_req, session_id).unwrap();
         assert!(adj_ppp.is_request());
 
-        let (mru, _, _, _) = super::super::lcp::parse_lcp_request_options(&adj_ppp.payload);
+        let (mru, _, _, _, _) = super::super::lcp::parse_lcp_request_options(&adj_ppp.payload);
         assert_eq!(mru, Some(1400), "MRU should be min(1492, 1400) = 1400");
 
         // Send Ack to adjusted request
@@ -644,6 +1060,99 @@ mod integration {
         let result = handle.await.expect("task should not panic");
 
         assert!(matches!(result, Err(super::super::error::PppoeError::LcpTimeout)));
+    }
+
+    /// A PADT (RFC 2516 §5.6) after PADS must terminate the LCP negotiation
+    /// phase immediately with `PadtReceived` instead of grinding through the
+    /// LCP retransmission timeouts.
+    #[tokio::test]
+    async fn test_padt_during_lcp_negotiation() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        // Discovery up to the LCP negotiation state
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        // Server tears the not-yet-negotiated session down via PADT
+        let padt = wrap_eth(
+            &SERVER_MAC,
+            &SERVER_MAC,
+            ETH_P_PPOED,
+            PPPoEFrame::get_padt(session_id).convert_to_payload(),
+        );
+        to_client.send(padt).await.unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("task should complete")
+            .expect("task should not panic");
+
+        assert!(matches!(result, Err(super::super::error::PppoeError::PadtReceived)));
+    }
+
+    /// A PADT for a different session id must not disturb our negotiation.
+    #[tokio::test]
+    async fn test_padt_wrong_sid_ignored_during_lcp_negotiation() {
+        ensure_test_env();
+
+        let (mut client_tx, mut from_client) = mpsc::channel::<Vec<u8>>(16);
+        let (to_client, mut client_rx) = mpsc::channel::<Vec<u8>>(16);
+        let config = test_config();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle =
+            tokio::spawn(
+                async move { run(&config, &mut client_tx, &mut client_rx, &status).await },
+            );
+
+        // Discovery up to the LCP negotiation state
+        let padi = from_client.recv().await.unwrap();
+        let host_uniq = extract_host_uniq(&padi).unwrap();
+        to_client.send(build_pado(host_uniq)).await.unwrap();
+        let _padr = from_client.recv().await.unwrap();
+        let session_id = 0x0042u16;
+        to_client.send(build_pads(host_uniq, session_id)).await.unwrap();
+
+        // PADT for another session: ignored
+        let padt = wrap_eth(
+            &SERVER_MAC,
+            &SERVER_MAC,
+            ETH_P_PPOED,
+            PPPoEFrame::get_padt(session_id + 1).convert_to_payload(),
+        );
+        to_client.send(padt).await.unwrap();
+
+        // The LCP negotiation still works: peer Config-Request gets an Ack
+        let lcp_req = build_lcp_config_request(1, 1492, 0xDEAD_BEEF, 0xc023);
+        to_client.send(build_pppoe_session(session_id, lcp_req)).await.unwrap();
+
+        let ack = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+            .await
+            .unwrap()
+            .expect("expected LCP Ack after unrelated PADT");
+        let ppp = extract_lcp_packet(&ack, session_id).unwrap();
+        assert!(ppp.is_lcp_config() && ppp.is_ack());
+
+        drop(to_client);
+        drop(handle);
     }
 
     #[tokio::test]

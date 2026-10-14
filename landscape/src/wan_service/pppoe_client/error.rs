@@ -12,9 +12,13 @@ pub enum PppoeError {
 
     // === Retryable: can retry dialing ===
     DiscoveryTimeout,
+    /// The AC answered PADO/PADS with an RFC 2516 §5.4 error tag
+    /// (Service-Name-Error / AC-System-Error / Generic-Error).
+    DiscoveryRejected(String),
     LcpTimeout,
     EchoFailed(u8),
     PeerTerminated,
+    PadtReceived,
     Ipv6cpRejected,
     ChannelClosed,
     SendError(String),
@@ -33,11 +37,13 @@ impl fmt::Display for PppoeError {
             Self::IpRequiredButRejected => write!(f, "peer rejected IPCP, no IPv4 assigned"),
             Self::UnsupportedAuthType(t) => write!(f, "unsupported authentication type: 0x{t:04x}"),
             Self::DiscoveryTimeout => write!(f, "PPPoE discovery timeout"),
+            Self::DiscoveryRejected(reason) => write!(f, "discovery rejected by peer: {reason}"),
             Self::LcpTimeout => write!(f, "LCP negotiation timeout"),
             Self::EchoFailed(n) => {
                 write!(f, "LCP echo keepalive failed ({n} consecutive failures)")
             }
             Self::PeerTerminated => write!(f, "peer terminated the session"),
+            Self::PadtReceived => write!(f, "peer sent PPPoE PADT, session terminated"),
             Self::Ipv6cpRejected => write!(f, "peer rejected IPv6CP"),
             Self::ChannelClosed => write!(f, "eBPF channel closed unexpectedly"),
             Self::SendError(reason) => write!(f, "packet send error: {reason}"),

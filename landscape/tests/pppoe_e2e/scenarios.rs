@@ -156,7 +156,7 @@ async fn link_loss_triggers_redial_and_reconnect() {
 
     // Server #2 comes back; the client redials (1 s backoff) and must
     // re-establish the session.  Re-establishment is observed server-side.
-    let server2 = start_scripted_server(
+    let mut server2 = start_scripted_server(
         env.server_ns().to_string(),
         env.server_iface().to_string(),
         env.server_mac(),
@@ -164,11 +164,83 @@ async fn link_loss_triggers_redial_and_reconnect() {
     );
     env.set_server_link(true).expect("bring server link back up");
     server2.established(Duration::from_secs(40)).expect("client should redial and reconnect");
+    // `established` fires before the client-side setup finishes: wait for
+    // proof that the new keepalive is running before stopping the client.
+    server2
+        .wait_keepalive_echo(Duration::from_secs(10))
+        .expect("reconnected session keepalive should run");
 
     assert!(client.status.is_running(), "status should stay Running across the reconnect");
 
     client.stop_and_join(Duration::from_secs(15)).expect("client should stop cleanly");
     server2.wait().expect("server #2 should observe the client termination");
+    drop(env);
+}
+
+/// BR-style forced teardown: after establishment the server sends a PPPoE
+/// PADT.  The client must notice the PADT immediately (not after echo
+/// timeouts) and redial without the backoff, while the service status stays
+/// `Running`.  The 15 s backoff base makes the old behaviour (ignore PADT +
+/// echo detection + backoff ≈ 20+ s) fail the 10 s budget below.
+#[tokio::test]
+#[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
+async fn padt_triggers_fast_redial() {
+    require_root();
+    let _map_space_cleanup = MapSpaceCleanup::new("padt-redial");
+
+    let env_cfg = EnvConfig::default();
+    let env = PPPoETestEnv::up(&env_cfg).expect("test environment should start");
+    let mut server = start_scripted_server(
+        env.server_ns().to_string(),
+        env.server_iface().to_string(),
+        env.server_mac(),
+        ScriptedServerMode::SuccessThenPadt,
+    );
+
+    // 1 s echo interval so that a *failure* to handle PADT would still be
+    // caught by echo loss eventually; combined with the 15 s backoff base
+    // the old behaviour cannot reconnect within the budget below.
+    let spec = ClientSpec {
+        echo_interval_secs: Some(1),
+        redial_backoff_base_secs: Some(15),
+        ..spec_from(&env_cfg)
+    };
+    let client = start_client(env.client_ns(), "padt-redial", env.client_info(), &spec);
+    wait_for_running(&client.status, Duration::from_secs(30))
+        .await
+        .expect("first session should reach Running");
+
+    // First establishment observed server-side; the server then sends PADT.
+    server.established(Duration::from_secs(10)).expect("first session should be established");
+
+    // The client must detect the PADT immediately and redial without the
+    // backoff.  The PADT is sent on the client's first echo, so the whole
+    // loop (echo → PADT → redial → second session) needs ~2 s; the budget
+    // below leaves generous headroom for parallel-test load while still
+    // failing for the old behaviour (ignore PADT + 6 s echo loss + 15 s
+    // backoff ≥ 21 s).
+    let started = Instant::now();
+    server
+        .established(Duration::from_secs(12))
+        .expect("client should redial immediately after PADT");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "redial after PADT must skip the backoff, took {:?}",
+        started.elapsed()
+    );
+
+    // Do not stop the client while it is still applying session #2's
+    // system/eBPF state (the server-side notification happens before the
+    // client-side setup finishes): wait for proof that the new keepalive is
+    // running.
+    server
+        .wait_keepalive_echo(Duration::from_secs(10))
+        .expect("second session keepalive should run");
+
+    assert!(client.status.is_running(), "status should stay Running across the reconnect");
+
+    client.stop_and_join(Duration::from_secs(15)).expect("client should stop cleanly");
+    server.wait().expect("server should observe the client termination");
     drop(env);
 }
 

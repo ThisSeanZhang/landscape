@@ -77,6 +77,19 @@ impl PPPoEFrame {
         result
     }
 
+    /// PPPoE Active Discovery Terminate (RFC 2516 §5.6, code 0xa7). Sent on
+    /// the discovery ethertype (0x8863) to close a session immediately.
+    pub fn get_padt(sid: u16) -> PPPoEFrame {
+        PPPoEFrame {
+            ver: 1,
+            t: 1,
+            code: 0xa7,
+            sid,
+            length: 0,
+            payload: vec![],
+        }
+    }
+
     pub fn get_ppp_mru_config_request(
         sid: u16,
         request_id: u8,

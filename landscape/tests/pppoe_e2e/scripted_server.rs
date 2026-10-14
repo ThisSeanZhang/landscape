@@ -18,12 +18,26 @@ pub(super) enum ScriptedServerMode {
     /// establishment (simulates server-side loss: nothing answers the
     /// client's keepalive afterwards).
     SuccessThenVanish,
+    /// Establishes a session, then sends a PPPoE PADT (the way a BR forces
+    /// a session down).  Frames for the terminated session are ignored
+    /// afterwards; the server keeps serving so the client must redial and
+    /// establish a second session (notified again via `established`).
+    SuccessThenPadt,
     /// Rejects PAP via LCP Protocol-Reject (a fatal error for the client).
     ProtocolRejectPap,
 }
 
 pub(super) struct ScriptedServerHandle {
     established_rx: Receiver<()>,
+    /// Signalled once the server sees an echo request for a session that
+    /// has completed negotiation server-side (`established`).  That echo
+    /// necessarily comes from the client's keepalive loop — the
+    /// negotiation-entry echo predates the establishment — so the test
+    /// may stop the client without racing the session setup.  For
+    /// SuccessThenPadt this is only armed after the second session has
+    /// re-established (the first session's post-establishment echo
+    /// triggers the PADT instead).
+    keepalive2_rx: Option<Receiver<()>>,
     done_rx: Receiver<Result<(), String>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -37,11 +51,23 @@ impl ScriptedServerHandle {
             .map_err(|e| format!("session never established: {e}"))
     }
 
+    /// Wait until the client's keepalive for the (re-)established session
+    /// is provably running (the server received an echo request after
+    /// negotiation completed server-side).
+    pub(super) fn wait_keepalive_echo(&mut self, timeout: Duration) -> Result<(), String> {
+        match self.keepalive2_rx.take() {
+            Some(rx) => rx
+                .recv_timeout(timeout)
+                .map_err(|e| format!("second-session keepalive echo never seen: {e}")),
+            None => Ok(()),
+        }
+    }
+
     /// Wait for the server script to finish its expected interaction.
     pub(super) fn wait(mut self) -> Result<(), String> {
         let result = self
             .done_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(15))
             .map_err(|e| format!("scripted server did not finish: {e}"))?;
         if let Some(thread) = self.thread.take() {
             thread.join().map_err(|_| "scripted server thread panicked".to_string())?;
@@ -65,14 +91,26 @@ pub(super) fn start_scripted_server(
     mode: ScriptedServerMode,
 ) -> ScriptedServerHandle {
     let (established_tx, established_rx) = std::sync::mpsc::channel();
+    let (keepalive2_tx, keepalive2_rx) = std::sync::mpsc::channel();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let thread = std::thread::spawn(move || {
-        let result =
-            run_scripted_server(&server_ns, &server_iface, server_mac, mode, established_tx);
+        let result = run_scripted_server(
+            &server_ns,
+            &server_iface,
+            server_mac,
+            mode,
+            established_tx,
+            keepalive2_tx,
+        );
         let _ = done_tx.send(result);
     });
 
-    ScriptedServerHandle { established_rx, done_rx, thread: Some(thread) }
+    ScriptedServerHandle {
+        established_rx,
+        keepalive2_rx: Some(keepalive2_rx),
+        done_rx,
+        thread: Some(thread),
+    }
 }
 
 fn run_scripted_server(
@@ -81,6 +119,7 @@ fn run_scripted_server(
     server_mac: MacAddr,
     mode: ScriptedServerMode,
     established_tx: Sender<()>,
+    keepalive2_tx: Sender<()>,
 ) -> Result<(), String> {
     enter_netns(server_ns)?;
 
@@ -130,7 +169,7 @@ fn run_scripted_server(
         return Err(format!("bind AF_PACKET: {err}"));
     }
 
-    let result = scripted_server_loop(fd, server_mac, mode, established_tx);
+    let result = scripted_server_loop(fd, server_mac, mode, established_tx, keepalive2_tx);
     unsafe { libc::close(fd) };
     result
 }
@@ -140,6 +179,7 @@ fn scripted_server_loop(
     server_mac: MacAddr,
     mode: ScriptedServerMode,
     established_tx: Sender<()>,
+    keepalive2_tx: Sender<()>,
 ) -> Result<(), String> {
     let mut buf = [0_u8; 2048];
     let mut client_mac: Option<MacAddr> = None;
@@ -147,7 +187,10 @@ fn scripted_server_loop(
     let mut sent_ipcp_peer_request = false;
     let mut sent_ipv6cp_peer_request = false;
     let mut notified_established = false;
-    let session_id = 0x1234;
+    let mut sent_padt = false;
+    // Current session id; bumped when a SuccessThenPadt session is torn
+    // down so stale frames of the terminated session are ignored.
+    let mut session_id = 0x1234_u16;
     let deadline = Instant::now() + Duration::from_secs(60);
 
     while Instant::now() < deadline {
@@ -197,6 +240,11 @@ fn scripted_server_loop(
             }
             // Session data
             0x00 => {
+                if frame.sid != session_id {
+                    // Stale frame of a terminated session: ignore it so the
+                    // client's keepalive goes unanswered.
+                    continue;
+                }
                 let Some(ppp) = PointToPoint::new(&frame.payload) else {
                     continue;
                 };
@@ -215,6 +263,50 @@ fn scripted_server_loop(
                         return Ok(());
                     }
                     if ppp.is_echo_request() {
+                        // Tear down the first SuccessThenPadt session once
+                        // the client's keepalive is provably running: the
+                        // negotiation phase also sends an initial echo, so
+                        // gate on having seen the final IPv6CP ack — the
+                        // next echo after that necessarily comes from the
+                        // keepalive loop.
+                        if matches!(mode, ScriptedServerMode::SuccessThenPadt)
+                            && notified_established
+                            && !sent_padt
+                        {
+                            sent_padt = true;
+                            send_pppoe(
+                                fd,
+                                source_mac,
+                                server_mac,
+                                0x8863,
+                                0xa7,
+                                session_id,
+                                vec![],
+                            )?;
+                            // Accept a fresh session afterwards; frames for
+                            // the terminated one are ignored via the sid
+                            // check below.
+                            session_id = session_id.wrapping_add(1);
+                            sent_ipcp_nak = false;
+                            sent_ipcp_peer_request = false;
+                            sent_ipv6cp_peer_request = false;
+                            notified_established = false;
+                            // Do not answer this echo: the session is gone.
+                            continue;
+                        }
+                        // An echo for a session that completed negotiation
+                        // can only come from the client's keepalive loop
+                        // (the negotiation-entry echo predates it) — tell
+                        // the test it may stop the client without racing
+                        // the session setup.  For SuccessThenPadt this is
+                        // only armed after the second session has
+                        // re-established: the first session's echo above
+                        // triggers the PADT instead.
+                        let keepalive_probe = matches!(mode, ScriptedServerMode::Success)
+                            || (matches!(mode, ScriptedServerMode::SuccessThenPadt) && sent_padt);
+                        if keepalive_probe && notified_established {
+                            let _ = keepalive2_tx.send(());
+                        }
                         send_session(
                             fd,
                             source_mac,

@@ -176,6 +176,18 @@ impl PointToPoint {
         result
     }
 
+    /// Configure-Nak mirroring this packet's protocol and identifier,
+    /// carrying the given options (RFC 1661 §6.4).
+    pub fn gen_nak(&self, nak_option: Vec<u8>) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(self.protocol.to_be_bytes());
+        result.push(3);
+        result.push(self.id);
+        result.extend((nak_option.len() as u16 + 4_u16).to_be_bytes());
+        result.extend(nak_option);
+        result
+    }
+
     pub fn gen_ack(&self) -> Vec<u8> {
         let mut result = vec![];
         result.extend(self.protocol.to_be_bytes());
@@ -416,5 +428,23 @@ mod tests {
         let pkt = PointToPoint::nak_mru(5, 1400, 0xCAFE);
         assert_eq!(pkt[2], 3, "code Nak");
         assert_eq!(pkt[3], 5, "id");
+    }
+
+    #[test]
+    fn gen_nak_mirrors_protocol_and_id() {
+        let req = PointToPoint {
+            protocol: 0xc021,
+            code: 1,
+            id: 0x42,
+            length: 4,
+            payload: vec![],
+        };
+        // Suggest CHAP with MD5 (5-byte Authentication-Protocol option)
+        let pkt = req.gen_nak(vec![3, 5, 0xc2, 0x23, 0x05]);
+        assert_eq!(ppp_u16_at(&pkt, 0), 0xc021, "protocol mirrored");
+        assert_eq!(pkt[2], 3, "code Nak");
+        assert_eq!(pkt[3], 0x42, "request id mirrored");
+        assert_eq!(ppp_u16_at(&pkt, 4), 9, "length = 4 + 5 option bytes");
+        assert_eq!(&pkt[6..], &[3, 5, 0xc2, 0x23, 0x05]);
     }
 }

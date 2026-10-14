@@ -43,6 +43,7 @@ fn mock_lcp(auth_type: u16) -> LcpPhaseResult {
         mru: 1492,
         magic_number: 0xDEAD_BEEF,
         auth_type,
+        auth_algorithm: (auth_type == 0xc223).then_some(0x05),
         peer_mru: 1492,
         peer_magic: 0xFEED_FACE,
     }
@@ -67,6 +68,13 @@ fn send_session(to_client: &mpsc::Sender<Vec<u8>>, sid: u16, ppp_payload: Vec<u8
     };
     let raw = wrap_eth(&SERVER_MAC, &SERVER_MAC, ETH_P_PPOES, frame.convert_to_payload());
     to_client.try_send(raw).expect("send session packet");
+}
+
+/// PPPoE PADT arrives on the discovery ethertype (RFC 2516 §5.6).
+fn send_padt(to_client: &mpsc::Sender<Vec<u8>>, sid: u16) {
+    let frame = PPPoEFrame::get_padt(sid);
+    let raw = wrap_eth(&SERVER_MAC, &SERVER_MAC, 0x8863, frame.convert_to_payload());
+    to_client.try_send(raw).expect("send PADT");
 }
 
 fn extract_ppp(raw: &[u8], session_id: u16) -> Option<PointToPoint> {
@@ -601,6 +609,55 @@ mod ipv6cp_tests {
 mod integration {
     use super::*;
 
+    /// RFC 1661: every new Echo-Request must use a fresh Identifier. The
+    /// negotiation phase must advance the id on each timer-driven
+    /// (re)transmission, not only after a reply.
+    #[tokio::test]
+    async fn test_echo_request_ids_advance_on_retransmit() {
+        ensure_test_env();
+        tokio::time::pause();
+
+        let (client_tx, mut from_client) = mpsc::channel(16);
+        let (to_client, client_rx) = mpsc::channel(16);
+        let mut config = test_config();
+        config.lcp_echo_interval = Some(1);
+        let lcp = mock_lcp(0xc023);
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle = spawn_nego(config.clone(), lcp.clone(), client_tx, client_rx, &status);
+        let sid = lcp.session_id;
+
+        // Drain the PAP request and the initial Echo-Request
+        let _pap = from_client.recv().await.unwrap();
+        let first_raw = from_client.recv().await.unwrap();
+        let first = extract_ppp(&first_raw, sid).unwrap();
+        assert!(first.is_echo_request(), "expected initial Echo-Request");
+
+        // No replies: collect the timer-driven retransmissions, skipping
+        // the PAP retransmissions the timeout branch also produces.
+        let mut last_id = first.id;
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_secs(2)).await;
+            let echo = loop {
+                let raw = tokio::time::timeout(Duration::from_secs(2), from_client.recv())
+                    .await
+                    .unwrap()
+                    .expect("expected more packets");
+                let ppp = extract_ppp(&raw, sid).unwrap();
+                if ppp.is_echo_request() {
+                    break ppp;
+                }
+            };
+            assert_ne!(echo.id, last_id, "retransmitted Echo-Request must use a fresh id");
+            last_id = echo.id;
+        }
+
+        drop(to_client);
+        drop(handle);
+    }
+
     #[tokio::test]
     async fn test_full_pap_ipcp_ipv6cp() {
         ensure_test_env();
@@ -692,6 +749,37 @@ mod integration {
         // Task should return PeerTerminated
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
         assert!(matches!(result, Err(PppoeError::PeerTerminated)));
+    }
+
+    #[tokio::test]
+    async fn test_padt_during_auth_returns_padt_received() {
+        ensure_test_env();
+
+        let (client_tx, mut from_client) = mpsc::channel(16);
+        let (to_client, client_rx) = mpsc::channel(16);
+        let config = test_config();
+        let lcp = mock_lcp(0xc023);
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        status.just_change_status(ServiceStatus::Running);
+
+        let handle = spawn_nego(config.clone(), lcp.clone(), client_tx, client_rx, &status);
+        let sid = lcp.session_id;
+
+        // Read PAP Request (client sends it at entry)
+        let _pap = from_client.recv().await.unwrap();
+
+        // Drain immediate Echo-Request sent at entry
+        let _echo = from_client.recv().await.unwrap();
+
+        // Server tears the session down via PPPoE PADT (ethertype 0x8863)
+        send_padt(&to_client, sid);
+
+        let result = tokio::time::timeout(Duration::from_secs(2), handle).await.unwrap().unwrap();
+        assert!(
+            matches!(result, Err(PppoeError::PadtReceived)),
+            "expected PadtReceived, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -1072,8 +1160,7 @@ mod integration {
         // Advance past MAX_ECHO_FAILURES × LCP_ECHO_INTERVAL
         // (first echo already sent, echo_failures=1, need 5 more timer fires)
         // Keep IPCP alive with Nak responses to prevent NCP timeout.
-        let total =
-            super::super::negotiation::MAX_ECHO_FAILURES as u64 * super::LCP_ECHO_INTERVAL + 1;
+        let total = super::super::MAX_ECHO_FAILURES as u64 * super::super::LCP_ECHO_INTERVAL + 1;
         let mut elapsed = 0u64;
 
         while elapsed < total {

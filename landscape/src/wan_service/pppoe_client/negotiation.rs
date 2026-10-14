@@ -5,7 +5,6 @@ use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net::MacAddr;
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
-use landscape_common::net_proto::pppoe::PPPoEFrame;
 use landscape_common::service::ServiceHandle;
 
 use super::PPPoEClientConfig;
@@ -13,7 +12,10 @@ use super::auth::{Authenticator, ChapAuthenticator, PapAuthenticator};
 
 use super::error::PppoeError;
 use super::lcp::LcpPhaseResult;
-use super::{DEFAULT_TIMEOUT, ETH_P_PPOES, LCP_ECHO_INTERVAL, PppoeResult};
+use super::{
+    DEFAULT_TIMEOUT, LCP_ECHO_INTERVAL, MAX_ECHO_FAILURES, PppoeResult, SessionPacket,
+    echo_reply_is_valid_liveness,
+};
 
 #[derive(Debug)]
 pub(crate) struct NegotiationResult {
@@ -26,7 +28,6 @@ pub(crate) struct NegotiationResult {
 
 pub(crate) const MAX_AUTH_RETRIES: u8 = 3;
 pub(crate) const MAX_NCP_RETRIES: u8 = 5;
-pub(crate) const MAX_ECHO_FAILURES: u8 = 5;
 
 struct IpcpState {
     req_id: u8,
@@ -139,7 +140,17 @@ pub(crate) async fn run(
                     return Err(PppoeError::ChannelClosed);
                 };
 
-                let Some(ppp) = parse_ppp_packet(&raw, lcp) else { continue; };
+                let ppp = match super::parse_session_packet(&raw, lcp.session_id, &lcp.server_mac) {
+                    Some(SessionPacket::Ppp(ppp)) => ppp,
+                    Some(SessionPacket::Padt) => {
+                        tracing::warn!(
+                            iface = %config.iface_name,
+                            "received PADT during negotiation, session terminated by peer"
+                        );
+                        return Err(PppoeError::PadtReceived);
+                    }
+                    None => { continue; }
+                };
 
                 if ppp.is_pap_auth() || ppp.is_chap() {
                     if let Some(mut authenticator) = auth.take() {
@@ -180,11 +191,13 @@ pub(crate) async fn run(
                     timeout_sleep.as_mut().reset(Instant::now() + Duration::from_secs(DEFAULT_TIMEOUT));
                 } else if ppp.is_lcp_config() {
                     if ppp.is_echo_request() {
-                        echo_failures = 0;
+                        // One-way liveness evidence only: does not reset the
+                        // echo failure count (pppd semantics).
                         send_echo_reply(config, lcp, &ppp, tx).await?;
                     } else if ppp.is_echo_reply() {
-                        echo_failures = 0;
-                        echo_req_id = echo_req_id.wrapping_add(1);
+                        if echo_reply_is_valid_liveness(&ppp, lcp.magic_number) {
+                            echo_failures = 0;
+                        }
                     } else if ppp.is_termination() {
                         let ack = ppp.get_termination_ack();
                         super::send_pppoe_session_frame(
@@ -256,27 +269,12 @@ pub(crate) async fn run(
                 if echo_failures > MAX_ECHO_FAILURES {
                     return Err(PppoeError::EchoFailed(echo_failures));
                 }
+                // RFC 1661: every new Echo-Request must use a fresh id.
+                echo_req_id = echo_req_id.wrapping_add(1);
                 echo_sleep.as_mut().reset(Instant::now() + Duration::from_secs(echo_interval));
             }
         }
     }
-}
-
-fn parse_ppp_packet(raw: &[u8], lcp: &LcpPhaseResult) -> Option<PointToPoint> {
-    if raw.len() < 16 {
-        return None;
-    }
-    if u16::from_be_bytes([raw[12], raw[13]]) != ETH_P_PPOES {
-        return None;
-    }
-    let frame = PPPoEFrame::new(&raw[14..])?;
-    if frame.sid != lcp.session_id {
-        return None;
-    }
-    if frame.is_terminate() {
-        return None;
-    }
-    PointToPoint::new(&frame.payload)
 }
 
 fn build_result(ipcp: &IpcpState, ipv6cp: &Ipv6cpState, echo_req_id: u8) -> NegotiationResult {
