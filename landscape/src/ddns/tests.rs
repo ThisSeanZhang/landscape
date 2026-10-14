@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv6Addr};
 
 use landscape_common::cert::order::DnsProviderConfig;
@@ -8,7 +8,9 @@ use landscape_common::ddns::{
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::sys_service::route_service::RouteOwner;
+use landscape_core::lan_device::AddressSourceV6;
 
+use super::job_sync::select_enrolled_device_raw_ipv6;
 use super::runtime_state::{
     DdnsRecordCleanupTarget, apply_job_runtime_summary, cleanup_targets_from_runtime,
     effective_ddns_ttl, runtime_message_for_reason,
@@ -454,4 +456,106 @@ fn enrolled_device_fe80_is_filtered_out() {
     }
 
     assert!(result.is_empty());
+}
+
+#[test]
+fn select_enrolled_device_raw_ipv6_prefers_gua_over_ula() {
+    let mut addrs = HashMap::new();
+    let gua = Ipv6Addr::new(0x240e, 0x1234, 0x5678, 0x9000, 0, 0, 0, 1);
+    let ula = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+
+    addrs.insert(ula, AddressSourceV6::Static);
+    addrs.insert(gua, AddressSourceV6::Slaac);
+
+    let selected = select_enrolled_device_raw_ipv6(&addrs);
+    assert_eq!(
+        selected,
+        Some(gua),
+        "must prefer GUA when available even if ULA has higher priority rank"
+    );
+}
+
+#[test]
+fn select_enrolled_device_raw_ipv6_prefers_static_and_lowest_ip() {
+    let mut addrs = HashMap::new();
+    let gua_slaac = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 1);
+    let gua_static = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 2);
+
+    addrs.insert(gua_slaac, AddressSourceV6::Slaac);
+    addrs.insert(gua_static, AddressSourceV6::Static);
+
+    let selected = select_enrolled_device_raw_ipv6(&addrs);
+    assert_eq!(
+        selected,
+        Some(gua_static),
+        "Static should have higher priority than Slaac within GUA"
+    );
+
+    let mut addrs_same_rank = HashMap::new();
+    let ip_small = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 10);
+    let ip_large = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 20);
+    addrs_same_rank.insert(ip_large, AddressSourceV6::Dhcpv6);
+    addrs_same_rank.insert(ip_small, AddressSourceV6::Dhcpv6);
+
+    let selected_same_rank = select_enrolled_device_raw_ipv6(&addrs_same_rank);
+    assert_eq!(
+        selected_same_rank,
+        Some(ip_small),
+        "should select lexicographically lowest IP among same source rank within GUA"
+    );
+}
+
+#[test]
+fn select_enrolled_device_raw_ipv6_fallback_ula_and_link_local_none() {
+    let mut addrs_ula = HashMap::new();
+    let ula = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+    let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+
+    addrs_ula.insert(ula, AddressSourceV6::Slaac);
+    addrs_ula.insert(link_local, AddressSourceV6::Static);
+
+    let selected_ula = select_enrolled_device_raw_ipv6(&addrs_ula);
+    assert_eq!(
+        selected_ula,
+        Some(ula),
+        "should fall back to usable ULA when no usable GUA is available"
+    );
+
+    let mut addrs_ll = HashMap::new();
+    addrs_ll.insert(link_local, AddressSourceV6::Static);
+
+    let selected_ll = select_enrolled_device_raw_ipv6(&addrs_ll);
+    assert_eq!(selected_ll, None, "should return None when only link-local addresses exist");
+}
+
+#[test]
+fn enrolled_device_multi_pd_and_accumulator_dedup() {
+    let raw_ip = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 0x50);
+    let pd1_prefix = Ipv6Addr::new(0x240e, 0x1, 0x4a01, 0, 0, 0, 0, 0);
+    let pd2_prefix = Ipv6Addr::new(0x240e, 0x2, 0x4a11, 0, 0, 0, 0, 0);
+    let prefix_len = 56;
+
+    let suffix = extract_ipv6_suffix(raw_ip, prefix_len);
+    let ip1 = combine_ipv6_prefix_suffix(pd1_prefix, prefix_len, suffix);
+    let ip2 = combine_ipv6_prefix_suffix(pd2_prefix, prefix_len, suffix);
+
+    let mut accumulator = HashSet::new();
+    accumulator.insert(IpAddr::V6(ip1));
+    accumulator.insert(IpAddr::V6(ip2));
+
+    assert_eq!(
+        accumulator.len(),
+        2,
+        "the same raw IPv6 combined with two distinct PD prefixes should produce 2 distinct AAAA records"
+    );
+
+    // Accumulate same PD and same IID; should dedup to 1
+    let mut dedup_acc = HashSet::new();
+    dedup_acc.insert(IpAddr::V6(ip1));
+    dedup_acc.insert(IpAddr::V6(ip1));
+    assert_eq!(
+        dedup_acc.len(),
+        1,
+        "accumulator should dedup identical PD and identical IID into 1 record"
+    );
 }
