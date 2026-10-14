@@ -12,7 +12,7 @@ use landscape_common::wan_link::{
     WanLinkStatusHandle, WanV4Lease,
 };
 
-use super::{SectionRunner, SectionTag, config_change_tags, run_dependent_section};
+use super::{SectionRunner, SectionScope, SectionTag, config_change_tags, run_dependent_section};
 
 fn link_config(nat_enable: bool) -> WanLinkConfig {
     serde_json::from_value(serde_json::json!({
@@ -193,7 +193,7 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
 }
 
 #[tokio::test]
-async fn dependent_waits_for_session_and_reattaches_on_epoch_change() {
+async fn session_scope_reattaches_on_reanchor_not_lease_change() {
     let link_status = ServiceHandle::new();
     link_status.just_change_status(ServiceStatus::Staring);
 
@@ -213,6 +213,7 @@ async fn dependent_waits_for_session_and_reattaches_on_epoch_change() {
         "wan.link.test.nat",
         |cfg| cfg.nat.enable,
         |state| state.is_up(),
+        SectionScope::Session,
         counting_runner(starts.clone()),
         Duration::from_millis(10),
     ));
@@ -224,8 +225,13 @@ async fn dependent_waits_for_session_and_reattaches_on_epoch_change() {
     link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
     wait_until(|| starts.load(Ordering::SeqCst) == 1).await;
 
-    // Session rebuilt (epoch bump): detach + re-attach.
+    // Lease change on the same anchor: a Session-scoped section keeps running.
     link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 3])));
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+    // Re-anchor to a different iface (epoch bump): detach + re-attach.
+    link_state.session_up(SessionIface::new(2, "eth1", None), Some(lease([10, 0, 0, 3])));
     wait_until(|| starts.load(Ordering::SeqCst) == 2).await;
 
     link_state.session_down();
@@ -261,6 +267,7 @@ async fn nat_requires_a_v4_lease() {
         |cfg| cfg.nat.enable,
         // NAT readiness: a v4 lease is required.
         |state| state.has_v4_lease(),
+        SectionScope::SessionAndLease,
         counting_runner(starts.clone()),
         Duration::from_millis(10),
     ));
@@ -272,6 +279,10 @@ async fn nat_requires_a_v4_lease() {
 
     link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
     wait_until(|| starts.load(Ordering::SeqCst) == 1).await;
+
+    // The lease address is baked into the nat4 objects: a change re-attaches.
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 5])));
+    wait_until(|| starts.load(Ordering::SeqCst) == 2).await;
 
     link_status.just_change_status(ServiceStatus::Stopping);
     tokio::time::timeout(Duration::from_secs(2), handle)
@@ -302,6 +313,7 @@ async fn nat6_requires_a_v6_prefix() {
         |cfg| cfg.nat.enable,
         // nat6 readiness: a WAN v6 prefix bound by the pd section is required.
         |state| state.has_v6_prefix(),
+        SectionScope::Session,
         counting_runner(starts.clone()),
         Duration::from_millis(10),
     ));
@@ -348,6 +360,7 @@ async fn dead_section_run_is_retried_after_backoff() {
         "wan.link.test.nat",
         |cfg| cfg.nat.enable,
         |state| state.is_up(),
+        SectionScope::Session,
         failing_runner(attempts.clone()),
         Duration::from_millis(10),
     ));

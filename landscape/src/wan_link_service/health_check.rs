@@ -50,8 +50,9 @@ pub(super) async fn run(
 ) {
     let stop = service_status.stop_token();
 
-    // The framework restarts the section on every epoch bump, so the lease
-    // address is stable for this whole run.
+    // This section runs with SectionScope::SessionAndLease: the framework
+    // restarts it when the lease address changes, so the probe source ip is
+    // stable for this whole run.
     let Some(IpAddr::V4(src)) = link_state.snapshot().session.v4_ip() else {
         service_status.just_change_status(ServiceStatus::Failed);
         swap_if_changed(&runtime, HealthCheckRuntime::Stopped);

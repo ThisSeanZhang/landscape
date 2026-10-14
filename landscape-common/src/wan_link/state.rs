@@ -83,7 +83,9 @@ pub struct SessionState {
     /// pd section itself would restart on every renewal. `session_up` /
     /// `session_down` clear it so a stale prefix never survives a re-anchor.
     pub v6_prefix: Option<WanV6Prefix>,
-    /// Bumped on (re)acquisition; a change tells dependents to re-attach.
+    /// Bumped only on anchor re-index (`Up(A)` → `Up(B)`); a change tells
+    /// anchor-keyed dependents (mss / firewall / pd / nat6) to re-attach.
+    /// Lease changes deliberately leave it alone — see `session_up`.
     pub epoch: u64,
 }
 
@@ -154,17 +156,32 @@ impl LinkStateHandle {
         });
     }
 
+    /// Publishes a session anchor. `epoch` is the anchor-identity
+    /// generation: it bumps only on a re-anchor — `Up(iface A)` becoming
+    /// `Up(iface B)` without passing `Down` (e.g. a ppp device swap) —
+    /// which is the only session change that survives no `Down` state.
+    /// Transitions through `Down` propagate via `!is_up()` instead, and a
+    /// lease-only change on the same anchor keeps both the generation and
+    /// the bound v6 prefix stable: lease-sensitive sections (nat4 / health
+    /// check) restart through their `SessionAndLease` scope, everything
+    /// else keeps running.
     pub fn session_up(&self, iface: SessionIface, lease: Option<WanV4Lease>) {
         self.tx.send_if_modified(|state| {
+            let reanchor = match &state.session.phase {
+                SessionPhase::Up { iface: old_iface, .. } => old_iface != &iface,
+                SessionPhase::Down => false,
+            };
             let new_phase = SessionPhase::Up { iface, lease };
             if state.session.phase == new_phase {
                 return false;
             }
             state.session.phase = new_phase;
-            state.session.epoch = state.session.epoch.wrapping_add(1);
-            // A new anchor invalidates any v6 prefix the pd section bound on
-            // the previous one; pd re-binds and re-publishes it.
-            state.session.v6_prefix = None;
+            if reanchor {
+                state.session.epoch = state.session.epoch.wrapping_add(1);
+                // A new anchor invalidates any v6 prefix the pd section
+                // bound on the previous one; pd restarts and re-binds.
+                state.session.v6_prefix = None;
+            }
             true
         });
     }
@@ -217,27 +234,34 @@ mod tests {
     }
 
     #[test]
-    fn session_up_bumps_epoch_only_on_change() {
+    fn epoch_tracks_anchor_identity_not_lease() {
         let (handle, rx) = LinkStateHandle::new(None);
         assert_eq!(rx.borrow().session.epoch, 0);
         assert!(!rx.borrow().session.is_up());
 
+        // Down -> Up: no bump; the transition propagates via `!is_up()`.
         handle.session_up(iface(), Some(lease([10, 0, 0, 2])));
-        assert_eq!(rx.borrow().session.epoch, 1);
+        assert_eq!(rx.borrow().session.epoch, 0);
         assert!(rx.borrow().session.has_v4_lease());
 
+        // Same-value dedup is a no-op.
         handle.session_up(iface(), Some(lease([10, 0, 0, 2])));
+        assert_eq!(rx.borrow().session.epoch, 0);
+
+        // Lease change on the same anchor: no bump.
+        handle.session_up(iface(), Some(lease([10, 0, 0, 3])));
+        assert_eq!(rx.borrow().session.epoch, 0);
+        assert!(rx.borrow().session.has_v4_lease());
+
+        // Down -> Up again: still no bump.
+        handle.session_down();
+        handle.session_up(iface(), Some(lease([10, 0, 0, 3])));
+        assert_eq!(rx.borrow().session.epoch, 0);
+
+        // Re-anchor (Up -> Up with a different iface): bump.
+        let other = SessionIface::new(7, "eth1", None);
+        handle.session_up(other, Some(WanV4Lease::new(7, Ipv4Addr::new(10, 0, 0, 4))));
         assert_eq!(rx.borrow().session.epoch, 1);
-
-        handle.session_up(iface(), Some(lease([10, 0, 0, 3])));
-        assert_eq!(rx.borrow().session.epoch, 2);
-
-        handle.session_down();
-        handle.session_down();
-        assert!(!rx.borrow().session.is_up());
-        assert_eq!(rx.borrow().session.epoch, 2);
-        handle.session_up(iface(), Some(lease([10, 0, 0, 3])));
-        assert_eq!(rx.borrow().session.epoch, 3);
     }
 
     #[test]
@@ -288,8 +312,14 @@ mod tests {
         handle.session_up(iface(), None);
         handle.set_v6_prefix(v6_prefix(1));
 
-        // Re-anchor (epoch bump) drops the stale prefix.
+        // Lease-only change on the same anchor keeps the prefix: the pd
+        // section bound it on this anchor and keeps running.
         handle.session_up(iface(), Some(lease([10, 0, 0, 2])));
+        assert_eq!(rx.borrow().session.v6_prefix, Some(v6_prefix(1)));
+
+        // Re-anchor (epoch bump) drops the stale prefix.
+        let other = SessionIface::new(7, "eth1", None);
+        handle.session_up(other, None);
         assert!(!rx.borrow().session.has_v6_prefix());
 
         handle.set_v6_prefix(v6_prefix(2));

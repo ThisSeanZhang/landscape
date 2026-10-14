@@ -8,6 +8,7 @@ pub mod probe;
 mod v4;
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -78,6 +79,27 @@ enum Step {
 /// Attach a section for a given session iface/config, then hold until stopped.
 type SectionRunner =
     Arc<dyn Fn(SessionIface, WanLinkConfig, ServiceHandle) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// What a running section pins beyond its attach inputs, deciding when the
+/// framework restarts it:
+///
+/// * `Session` — restart on anchor re-index (`epoch`) or session down; a
+///   lease change on the same anchor is not its business.
+/// * `SessionAndLease` — additionally restart when the v4 lease address
+///   changes (nat4 bakes it into rodata, the health check probes from it).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SectionScope {
+    Session,
+    SessionAndLease,
+}
+
+/// The session facts a section's run started with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SectionAnchor {
+    epoch: u64,
+    /// `v4_ip()` at start; compared only for `SessionAndLease` scopes.
+    lease: Option<IpAddr>,
+}
 
 /// One WAN link. The v4 section produces the link's `SessionState`; nat / mss /
 /// firewall / pd wait on it and re-attach when the session is rebuilt or their
@@ -243,6 +265,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::NAT_RUN,
             |cfg| cfg.nat.enable,
             |state| state.has_v4_lease(),
+            SectionScope::SessionAndLease,
             {
                 let dataplane = self.chain_dataplane.clone();
                 let nat_runtime = sections.nat4_slot();
@@ -292,6 +315,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::NAT_RUN,
             |cfg| cfg.nat.enable,
             |state| state.has_v6_prefix(),
+            SectionScope::Session,
             {
                 let dataplane = self.chain_dataplane.clone();
                 let nat_runtime = sections.nat6_slot();
@@ -319,6 +343,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::MSS_CLAMP_RUN,
             |cfg| cfg.mss.enable,
             |state| state.is_up(),
+            SectionScope::Session,
             {
                 let dataplane = self.chain_dataplane.clone();
                 let mss_runtime = sections.mss_slot();
@@ -352,6 +377,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::FIREWALL_RUN,
             |cfg| cfg.firewall.enable,
             |state| state.is_up(),
+            SectionScope::Session,
             {
                 let dataplane = self.chain_dataplane.clone();
                 let firewall_runtime = sections.firewall_slot();
@@ -385,6 +411,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::WAN_IPV6PD_OBSERVER,
             |cfg| cfg.pd.enable,
             |state| state.is_up(),
+            SectionScope::Session,
             {
                 let route_service = self.route_service.clone();
                 let chain_dataplane = self.chain_dataplane.clone();
@@ -434,6 +461,7 @@ impl ServiceStarterTrait for WanLinkService {
             task_label::task::WAN_LINK_HEALTH_CHECK,
             health_check_enabled,
             |state| state.has_v4_lease(),
+            SectionScope::SessionAndLease,
             {
                 let probe = self.health_probe.clone();
                 let route_service = self.route_service.clone();
@@ -487,6 +515,7 @@ impl WanLinkService {
         label: &'static str,
         enabled: fn(&WanLinkConfig) -> bool,
         ready: fn(&SessionState) -> bool,
+        scope: SectionScope,
         runner: SectionRunner,
     ) {
         let status = link_status.clone();
@@ -504,6 +533,7 @@ impl WanLinkService {
                 label,
                 enabled,
                 ready,
+                scope,
                 runner,
                 DEFAULT_RESTART_BACKOFF,
             )
@@ -675,11 +705,18 @@ async fn wait_session_ready(
     }
 }
 
-async fn wait_session_invalidated(state_rx: &mut watch::Receiver<LinkState>, epoch: u64) {
+async fn wait_section_invalidated(
+    state_rx: &mut watch::Receiver<LinkState>,
+    scope: SectionScope,
+    anchor: &SectionAnchor,
+) {
     loop {
         {
             let snapshot = state_rx.borrow_and_update();
-            if !snapshot.session.is_up() || snapshot.session.epoch != epoch {
+            let session = &snapshot.session;
+            let lease_changed =
+                scope == SectionScope::SessionAndLease && session.v4_ip() != anchor.lease;
+            if !session.is_up() || session.epoch != anchor.epoch || lease_changed {
                 return;
             }
         }
@@ -809,6 +846,7 @@ async fn run_dependent_section(
     label: &'static str,
     enabled: fn(&WanLinkConfig) -> bool,
     ready: fn(&SessionState) -> bool,
+    scope: SectionScope,
     runner: SectionRunner,
     backoff: Duration,
 ) {
@@ -837,10 +875,19 @@ async fn run_dependent_section(
             board.set_section(kind, ServiceStatus::Stop).await;
             return;
         }
-        let (iface, epoch) = {
+        let (iface, anchor) = {
             let snapshot = state_rx.borrow_and_update();
             match &snapshot.session.phase {
-                SessionPhase::Up { iface, .. } => (iface.clone(), snapshot.session.epoch),
+                SessionPhase::Up { iface, .. } => {
+                    let anchor = SectionAnchor {
+                        epoch: snapshot.session.epoch,
+                        lease: match scope {
+                            SectionScope::Session => None,
+                            SectionScope::SessionAndLease => snapshot.session.v4_ip(),
+                        },
+                    };
+                    (iface.clone(), anchor)
+                }
                 SessionPhase::Down => continue,
             }
         };
@@ -865,7 +912,9 @@ async fn run_dependent_section(
             let mut step: Option<Step> = None;
             tokio::select! {
                 _ = stop.cancelled() => step = Some(Step::Stop),
-                _ = wait_session_invalidated(&mut state_rx, epoch) => step = Some(Step::Restart),
+                _ = wait_section_invalidated(&mut state_rx, scope, &anchor) => {
+                    step = Some(Step::Restart)
+                }
                 event = reconfig_rx.recv() => match event {
                     Ok(tag) if tag == my_tag => step = Some(Step::Restart),
                     Ok(_) => {}
