@@ -12,21 +12,21 @@ use landscape_common::dns::{
 use landscape_core::geo_cache::SiteMatcherRegistry;
 use uuid::Uuid;
 
-use crate::connection::pool::ResolvePool;
-use crate::server::{
+use crate::resolve::{
+    engine::ResolveEngine,
     matcher::RuntimeRuleMatcher,
-    redirect_engine::RedirectEngine,
-    resolve_engine::ResolveEngine,
+    redirect::RedirectEngine,
     rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
 };
+use crate::upstream::pool::ResolvePool;
 
 #[derive(Clone)]
-pub struct MatcherBuilder {
+pub struct EngineBuilder {
     registry: Arc<SiteMatcherRegistry>,
     resolvers: Arc<ResolvePool>,
 }
 
-impl MatcherBuilder {
+impl EngineBuilder {
     pub fn new(registry: Arc<SiteMatcherRegistry>) -> Self {
         Self {
             registry,
@@ -196,9 +196,9 @@ mod tests {
     };
     use std::net::IpAddr;
 
-    use super::MatcherBuilder;
+    use super::EngineBuilder;
     use crate::domain::ParsedDomain;
-    use crate::server::resolve_engine::ResolveEngine;
+    use crate::resolve::engine::ResolveEngine;
     use hickory_proto::rr::RecordType;
 
     fn pd(name: &str) -> ParsedDomain {
@@ -246,7 +246,7 @@ mod tests {
 
     /// Builder whose registry holds one material key `TEST` (`all.example`
     /// untagged, `tagged.example` tagged "tagged").
-    async fn builder() -> (MatcherBuilder, SiteCacheRepository) {
+    async fn builder() -> (EngineBuilder, SiteCacheRepository) {
         let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
         write_geo_entry(
             &repo,
@@ -255,12 +255,12 @@ mod tests {
             vec![domain("all.example", &[]), domain("tagged.example", &["tagged"])],
         )
         .await;
-        (MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo.clone()))), repo)
+        (EngineBuilder::new(Arc::new(SiteMatcherRegistry::new(repo.clone()))), repo)
     }
 
-    async fn empty_builder() -> MatcherBuilder {
+    async fn empty_builder() -> EngineBuilder {
         let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
-        MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)))
+        EngineBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)))
     }
 
     fn manual(value: &str) -> RuleSource {
@@ -355,7 +355,7 @@ mod tests {
     async fn empty_geo_key_disables_rule_and_redirect() {
         let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
         write_geo_entry(&repo, "TEST", "hash-1", vec![]).await;
-        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
+        let builder = EngineBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(10, vec![RuleSource::GeoKey(geo_key(None))], upstream.id);
 
@@ -398,7 +398,7 @@ mod tests {
     async fn empty_inverse_geo_key_is_skipped_not_match_all() {
         let repo = SiteCacheRepository::new(GeoCacheDatabase::site_mem().await);
         write_geo_entry(&repo, "EMPTY", "hash-1", vec![]).await;
-        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
+        let builder = EngineBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let inverse = missing_key("EMPTY", true);
         let inverse_rule = dns_rule(10, vec![RuleSource::GeoKey(inverse.clone())], upstream.id);
@@ -475,7 +475,7 @@ mod tests {
         let pool = GeoCacheDatabase::site_mem().await;
         let repo = SiteCacheRepository::new(pool.clone());
         write_geo_entry(&repo, "TEST", "hash-1", vec![domain("all.example", &[])]).await;
-        let builder = MatcherBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
+        let builder = EngineBuilder::new(Arc::new(SiteMatcherRegistry::new(repo)));
         let upstream = DnsUpstreamConfig::default();
         let rule = dns_rule(
             10,
@@ -511,7 +511,7 @@ mod tests {
         }
     }
 
-    fn first_resolver(engine: &ResolveEngine) -> Arc<crate::connection::LandscapeResolver> {
+    fn first_resolver(engine: &ResolveEngine) -> Arc<crate::upstream::LandscapeResolver> {
         engine.iter().next().expect("expected a resolve rule").1.shared_resolver().clone()
     }
 

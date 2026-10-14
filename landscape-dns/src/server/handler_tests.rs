@@ -1,5 +1,5 @@
 use super::*;
-use crate::server::LocalDnsAnswerProvider;
+use crate::resolve::LocalDnsAnswerProvider;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::redirect::{DNSRedirectRuntimeRule, DnsRedirectAnswerMode};
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType, FilterResult};
@@ -39,11 +39,11 @@ impl DnsRequestHandler {
     fn test_engines_from_legacy(init: ChainDnsServerInitInfo) -> (RedirectEngine, ResolveEngine) {
         use std::collections::BTreeMap;
 
-        use crate::connection::pool::ResolvePool;
-        use crate::server::{
+        use crate::resolve::{
             matcher::RuntimeRuleMatcher,
             rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
         };
+        use crate::upstream::pool::ResolvePool;
         let pool = Arc::new(ResolvePool::default());
 
         let redirects = init
@@ -99,7 +99,7 @@ impl DnsRequestHandler {
         let runtime = self.snapshot.load_full();
         runtime
             .cache
-            .insert(crate::server::cache::CacheEntry {
+            .insert(crate::resolve::cache::CacheEntry {
                 domain_key: Arc::<str>::from(domain),
                 query_type,
                 rdatas: rdata_ttl_vec,

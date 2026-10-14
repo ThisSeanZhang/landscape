@@ -20,11 +20,11 @@ use landscape_common::{
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{
-    CheckChainDnsResult, CheckDnsReq, prepare_system_dns,
-    server::{
-        DohTimeouts, EffectiveDohListenerConfig, FlowRuntimeRefreshKind, LandscapeDnsServer,
-        LocalDnsAnswerProvider, MatcherBuilder,
-    },
+    CheckChainDnsResult, CheckDnsReq,
+    listener::{DohTimeouts, EffectiveDohListenerConfig},
+    prepare_system_dns,
+    resolve::LocalDnsAnswerProvider,
+    server::{EngineBuilder, FlowRuntimeRefreshKind, LandscapeDnsServer},
 };
 use rustls::server::ResolvesServerCert;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
@@ -80,7 +80,7 @@ pub struct LandscapeDnsService {
     dns_rule_service: DNSRuleService,
     dns_redirect_rule_service: DNSRedirectService,
     dns_upstream_service: DnsUpstreamService,
-    matcher_builder: MatcherBuilder,
+    engine_builder: EngineBuilder,
     flow_dependencies: Arc<tokio::sync::RwLock<HashMap<u32, FlowDnsDependencies>>>,
 }
 
@@ -136,14 +136,14 @@ impl LandscapeDnsService {
 
         // dns_service.restart(53).await;
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;
-        let matcher_builder = MatcherBuilder::new(geo_site_service.matcher_registry());
+        let engine_builder = EngineBuilder::new(geo_site_service.matcher_registry());
 
         let dns_service = Self {
             dns_service,
             dns_rule_service,
             dns_redirect_rule_service,
             dns_upstream_service,
-            matcher_builder,
+            engine_builder,
             flow_dependencies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
         // 创建即视为进入运行状态(server::new 已初始化运行):直接刷新各
@@ -210,7 +210,7 @@ impl LandscapeDnsService {
                         let upstream_ids = upstream_ids.into_iter().collect::<HashSet<_>>();
                         // Unconditionally drop pooled resolvers for the changed
                         // upstreams so the refresh below rebuilds them.
-                        dns_service_clone.matcher_builder.invalidate_upstreams(&upstream_ids);
+                        dns_service_clone.engine_builder.invalidate_upstreams(&upstream_ids);
                         let flow_ids = dns_service_clone
                             .collect_dependent_flows(|deps| {
                                 deps.upstream_ids
@@ -389,7 +389,7 @@ impl LandscapeDnsService {
         let dynamic_dns_redirects =
             self.dns_redirect_rule_service.list_flow_dynamic_batches(flow_id).await;
         let (redirect_engine, resolve_engine, dependencies) = self
-            .matcher_builder
+            .engine_builder
             .build_flow(
                 flow_id,
                 flow_dns_rules,

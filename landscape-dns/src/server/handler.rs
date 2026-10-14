@@ -7,18 +7,17 @@ use hickory_proto::{
 };
 
 #[cfg(test)]
-use crate::server::redirect_engine::RedirectAnswer;
+use crate::resolve::redirect::RedirectAnswer;
 use crate::{
     CheckChainDnsResult,
     domain::ParsedDomain,
     listener::wire::{self, DnsRequest},
+    resolve::{
+        answer::DnsQueryAnswer, chain::ResolveChain, engine::ResolveEngine, local::LocalResolver,
+        redirect::RedirectEngine,
+    },
     server::{
         CacheRuntimeConfig, MetricSenderState,
-        answer::DnsQueryAnswer,
-        chain::ResolveChain,
-        local::LocalResolver,
-        redirect_engine::RedirectEngine,
-        resolve_engine::ResolveEngine,
         snapshot::{RuntimeSnapshot, SnapshotPatch, SnapshotStore},
     },
 };

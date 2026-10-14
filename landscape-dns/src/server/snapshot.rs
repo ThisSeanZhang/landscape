@@ -7,12 +7,15 @@ use arc_swap::Guard;
 use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
 
 use crate::{
-    CacheDNSItem,
     domain::ParsedDomain,
-    server::{
-        CacheRuntimeConfig, cache::CacheHandle, local::LocalResolver,
-        redirect_engine::RedirectEngine, resolve_engine::ResolveEngine, rule::DNSResolveRuntime,
+    resolve::{
+        cache::{CacheDNSItem, CacheHandle},
+        engine::ResolveEngine,
+        local::LocalResolver,
+        redirect::RedirectEngine,
+        rule::DNSResolveRuntime,
     },
+    server::CacheRuntimeConfig,
 };
 
 /// Migrated cache entries keep a TTL at most this long when rules are

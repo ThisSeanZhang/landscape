@@ -32,7 +32,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::server::LocalDnsAnswerProvider;
+use crate::resolve::LocalDnsAnswerProvider;
 
 const MDNS_PORT: u16 = 5353;
 const MDNS_V4_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);

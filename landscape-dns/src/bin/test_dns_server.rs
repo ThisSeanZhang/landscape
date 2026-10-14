@@ -6,7 +6,7 @@ use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry};
 use landscape_core::lan_device::LanDeviceDirectory;
-use landscape_dns::server::{CacheRuntimeConfig, LandscapeDnsServer, MatcherBuilder};
+use landscape_dns::server::{CacheRuntimeConfig, EngineBuilder, LandscapeDnsServer};
 
 /// cargo run --package landscape-dns --bin test_dns_server
 #[tokio::main]
@@ -32,7 +32,7 @@ async fn main() -> std::io::Result<()> {
     let registry = Arc::new(SiteMatcherRegistry::new(SiteCacheRepository::new(
         GeoCacheDatabase::site_mem().await,
     )));
-    let builder = MatcherBuilder::new(registry);
+    let builder = EngineBuilder::new(registry);
     let (redirect_engine, resolve_engine, _) =
         builder.build_flow(0, vec![default_rule], vec![], vec![], vec![upstream]).await;
     println!("=============================================");

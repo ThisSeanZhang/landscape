@@ -128,7 +128,9 @@ pub async fn create_udp_socket(address: SocketAddr) -> std::io::Result<(UdpSocke
     Ok((udp_socket, fd))
 }
 
-pub fn create_tcp_listener(address: SocketAddr) -> std::io::Result<(tokio::net::TcpListener, i32)> {
+pub(crate) fn create_tcp_listener(
+    address: SocketAddr,
+) -> std::io::Result<(tokio::net::TcpListener, i32)> {
     let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_port(true)?;
     socket.set_reuse_address(true)?;
