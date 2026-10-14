@@ -90,13 +90,15 @@ struct {
  *
  *    tc_wan_egress_route  (Route logic, three entry paths)
  *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)  (forwarded)
+ *      │    (routed by a landscape pick_wan earlier; its target chain id
+ *      │     rides in cb[TC_CHAIN_CB_CHAIN_ID_OFFSET])
  *      ├─ ingress_ifindex != 0 → TC_ACT_OK  (compat bypass)
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
  *           └─ tc_route4/6_pick_wan_in_wan_egress:
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
- *                └─ cross WAN → sets FORWARDED + bpf_redirect(target, 0)
+ *                └─ cross WAN → sets FORWARDED + chain id in cb + bpf_redirect(target, 0)
  *
  *    tc_wan_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
  *      ├─ L3 protocol fork: slot0 (v4) / slot1 (v6)

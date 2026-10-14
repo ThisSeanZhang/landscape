@@ -95,6 +95,7 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
         }
 
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+        skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target_info->link_chain_id;
 
         if (mac_stored) {
             return bpf_redirect(target_info->ifindex, 0);
@@ -169,6 +170,7 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
         }
 
         skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+        skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target_info->link_chain_id;
 
         if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
 
@@ -292,6 +294,8 @@ struct {
 SEC("tc/egress")
 int tc_wan_egress_route(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_route <<<"
+    // Already routed by a landscape pick_wan: enter the target link's
+    // chain directly, the decision (and its chain id) travels in cb.
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
         bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
         return TC_ACT_SHOT;
@@ -302,6 +306,9 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
 
+    // Locally originated: resolve the flow target (or the default one)
+    // and either redirect cross-WAN or enter this link's chain from the
+    // slot target.
     bool is_ipv4;
     int ret;
 
