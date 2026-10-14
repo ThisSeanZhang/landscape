@@ -28,11 +28,13 @@ impl DnsRequestHandler {
         Self::from_engines(
             redirect_engine,
             resolve_engine,
-            runtime_config,
-            flow_id,
-            msg_tx,
-            local_resolver,
-            Arc::new(NoopDnsResultSink),
+            HandlerDeps {
+                runtime_config,
+                flow_id,
+                msg_tx,
+                local_resolver,
+                sink: Arc::new(NoopDnsResultSink),
+            },
         )
     }
 

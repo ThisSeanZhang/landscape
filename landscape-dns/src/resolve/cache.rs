@@ -13,11 +13,11 @@ use moka::future::Cache;
 use uuid::Uuid;
 
 use landscape_common::{
-    dns::rule::FilterResult,
+    dns::{CacheRuntimeConfig, rule::FilterResult},
     flow::{DnsResultSink, DnsRuntimeMarkInfo, FlowMarkInfo},
 };
 
-use crate::{domain::ParsedDomain, server::CacheRuntimeConfig};
+use crate::domain::ParsedDomain;
 
 use super::rule::DNSResolveRuntime;
 

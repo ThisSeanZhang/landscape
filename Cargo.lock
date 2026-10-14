@@ -3183,7 +3183,6 @@ dependencies = [
  "landscape-common",
  "landscape-core",
  "landscape-database",
- "landscape-dns",
  "landscape-ebpf",
  "landscape-gateway",
  "once_cell",

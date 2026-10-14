@@ -11,9 +11,6 @@ pub(crate) mod snapshot;
 pub(crate) mod traits;
 
 pub use builder::EngineBuilder;
-pub use service::{FlowRuntimeRefreshKind, LandscapeDnsServer};
-pub use traits::DohAdvertiseProvider;
-
-pub use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig};
+pub use service::{DnsServiceDeps, FlowRuntimeRefreshKind, LandscapeDnsServer};
 
 pub(crate) type MetricSenderState = Arc<ArcSwapOption<mpsc::Sender<DnsMetricMessage>>>;

@@ -25,9 +25,7 @@ use landscape_common::{
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 
-use crate::{
-    domain::ParsedDomain, resolve::answer::response_code_for, server::DohAdvertiseProvider,
-};
+use crate::{domain::ParsedDomain, resolve::answer::response_code_for};
 
 pub trait LocalDnsAnswerProvider: Send + Sync {
     fn load_local_answer_addrs(
@@ -44,6 +42,11 @@ pub trait LocalDnsAnswerProvider: Send + Sync {
         let _ = ifindex;
         Arc::new(Vec::new())
     }
+}
+
+/// Supplies the DoH discovery (DDR) advertisement domains for local answers.
+pub trait DohAdvertiseProvider: Send + Sync {
+    fn advertise_domains(&self) -> Vec<String>;
 }
 
 const DDR_DISCOVERY_NAME: &str = "_dns.resolver.arpa.";

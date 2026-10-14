@@ -24,7 +24,7 @@ use landscape_dns::{
     listener::{DohTimeouts, EffectiveDohListenerConfig},
     prepare_system_dns,
     resolve::LocalDnsAnswerProvider,
-    server::{EngineBuilder, FlowRuntimeRefreshKind, LandscapeDnsServer},
+    server::{DnsServiceDeps, EngineBuilder, FlowRuntimeRefreshKind, LandscapeDnsServer},
 };
 use rustls::server::ResolvesServerCert;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
@@ -120,19 +120,22 @@ impl LandscapeDnsService {
             dns_hostname: None,
             http_endpoint: doh_runtime.http_endpoint.clone(),
         });
-        let dns_service = LandscapeDnsServer::new(
-            53,
+        let dns_service = LandscapeDnsServer::new(DnsServiceDeps {
+            listen_port: 53,
             msg_tx,
-            cache_runtime.clone(),
+            cache_runtime: cache_runtime.clone(),
             doh,
-            Some(Arc::new(RouteLocalAnswerProvider { view: route_service.local_addr_view() })
-                as Arc<dyn LocalDnsAnswerProvider>),
-            Some(Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::server::DohAdvertiseProvider>),
+            local_answer_provider: Some(Arc::new(RouteLocalAnswerProvider {
+                view: route_service.local_addr_view(),
+            }) as Arc<dyn LocalDnsAnswerProvider>),
+            doh_advertise_provider: Some(
+                Arc::new(api_tls_resolver) as Arc<dyn landscape_dns::resolve::DohAdvertiseProvider>
+            ),
             lan_device_directory,
             lan_hostname_config,
-            dns_result_sink,
-            flow_socket_registrar,
-        );
+            result_sink: dns_result_sink,
+            socket_registrar: flow_socket_registrar,
+        });
 
         // dns_service.restart(53).await;
         // dns_service.update_flow_map(&flow_rule_service.list().await).await;

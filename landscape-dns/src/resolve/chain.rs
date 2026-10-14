@@ -21,13 +21,13 @@ use crate::{
     CheckChainDnsResult,
     domain::ParsedDomain,
     resolve::{
+        RuntimeSnapshot,
         answer::{DnsQueryAnswer, response_code_for},
         cache::CacheHandle,
         local::{LocalAnswer, LocalResolver},
         redirect::RedirectAnswer,
         rule::DNSResolveRuntime,
     },
-    server::snapshot::RuntimeSnapshot,
 };
 
 /// Outer envelope for one rule's upstream lookup. Must stay strictly above

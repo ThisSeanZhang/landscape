@@ -22,10 +22,13 @@ use crate::{
     listener::{DohListenerState, EffectiveDohListenerConfig, start_flow_dns_listener},
     mdns::MdnsService,
     resolve::{
-        LocalDnsAnswerProvider, engine::ResolveEngine, local::LocalResolver,
+        DohAdvertiseProvider, LocalDnsAnswerProvider, engine::ResolveEngine, local::LocalResolver,
         redirect::RedirectEngine,
     },
-    server::{MetricSenderState, handler::DnsRequestHandler, traits::DohAdvertiseProvider},
+    server::{
+        MetricSenderState,
+        handler::{DnsRequestHandler, HandlerDeps},
+    },
 };
 
 /// DNS 服务的一次运行:父取消信号 + 任务追踪器。
@@ -89,20 +92,33 @@ impl FlowServerEntry {
     }
 }
 
+pub struct DnsServiceDeps {
+    pub listen_port: u16,
+    pub msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
+    pub cache_runtime: CacheRuntimeConfig,
+    pub doh: Option<EffectiveDohListenerConfig>,
+    pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
+    pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
+    pub lan_device_directory: Arc<LanDeviceDirectory>,
+    pub lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+    pub result_sink: Arc<dyn DnsResultSink>,
+    pub socket_registrar: Arc<dyn FlowSocketRegistrar>,
+}
+
 impl LandscapeDnsServer {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        listen_port: u16,
-        msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
-        cache_runtime: CacheRuntimeConfig,
-        doh: Option<EffectiveDohListenerConfig>,
-        local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
-        doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        lan_device_directory: Arc<LanDeviceDirectory>,
-        lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
-        result_sink: Arc<dyn DnsResultSink>,
-        socket_registrar: Arc<dyn FlowSocketRegistrar>,
-    ) -> Self {
+    pub fn new(deps: DnsServiceDeps) -> Self {
+        let DnsServiceDeps {
+            listen_port,
+            msg_tx,
+            cache_runtime,
+            doh,
+            local_answer_provider,
+            doh_advertise_provider,
+            lan_device_directory,
+            lan_hostname_config,
+            result_sink,
+            socket_registrar,
+        } = deps;
         let mdns_service = if local_answer_provider.is_some() {
             MdnsService::spawn(local_answer_provider.clone())
         } else {
@@ -284,11 +300,13 @@ impl LandscapeDnsServer {
         let handler = DnsRequestHandler::from_engines(
             redirect_engine,
             resolve_engine,
-            self.cache_live_config.clone(),
-            flow_id,
-            self.msg_tx.clone(),
-            self.local_resolver.clone(),
-            self.result_sink.clone(),
+            HandlerDeps {
+                runtime_config: self.cache_live_config.clone(),
+                flow_id,
+                msg_tx: self.msg_tx.clone(),
+                local_resolver: self.local_resolver.clone(),
+                sink: self.result_sink.clone(),
+            },
         );
         let Some(run) = self.current_run() else {
             tracing::debug!("[flow: {flow_id}]: dns service not running, skip listener build");
@@ -448,11 +466,13 @@ mod tests {
             let handler = DnsRequestHandler::from_engines(
                 RedirectEngine::default(),
                 ResolveEngine::default(),
-                Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
-                7,
-                Arc::new(ArcSwapOption::new(None)),
-                test_local_resolver(),
-                Arc::new(NoopDnsResultSink),
+                HandlerDeps {
+                    runtime_config: Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
+                    flow_id: 7,
+                    msg_tx: Arc::new(ArcSwapOption::new(None)),
+                    local_resolver: test_local_resolver(),
+                    sink: Arc::new(NoopDnsResultSink),
+                },
             );
             entry.runtime.store(Some(Arc::new(FlowServerRuntime {
                 handler,
@@ -478,18 +498,18 @@ mod tests {
     }
 
     fn test_dns_server() -> LandscapeDnsServer {
-        let mut server = LandscapeDnsServer::new(
-            53,
-            None,
-            test_cache_runtime_config(),
-            None,
-            None,
-            None,
-            LanDeviceDirectory::new_for_test(),
-            test_lan_hostname_config(),
-            Arc::new(NoopDnsResultSink),
-            Arc::new(NoopFlowSocketRegistrar),
-        );
+        let mut server = LandscapeDnsServer::new(DnsServiceDeps {
+            listen_port: 53,
+            msg_tx: None,
+            cache_runtime: test_cache_runtime_config(),
+            doh: None,
+            local_answer_provider: None,
+            doh_advertise_provider: None,
+            lan_device_directory: LanDeviceDirectory::new_for_test(),
+            lan_hostname_config: test_lan_hostname_config(),
+            result_sink: Arc::new(NoopDnsResultSink),
+            socket_registrar: Arc::new(NoopFlowSocketRegistrar),
+        });
         // 避免测试环境绑定特权端口 53:改用内核分配的临时端口
         server.udp_listener_addr = "[::]:0".parse().unwrap();
         server
