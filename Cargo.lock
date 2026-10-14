@@ -3139,6 +3139,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "hdrhistogram",
+ "hickory-proto",
  "landscape-common",
  "landscape-core",
  "serde_json",

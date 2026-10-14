@@ -7,8 +7,8 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
 use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig};
-use landscape_common::event::DnsMetricMessage;
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
+use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::lan_device::LanDeviceDirectory;
@@ -94,7 +94,7 @@ impl FlowServerEntry {
 
 pub struct DnsServiceDeps {
     pub listen_port: u16,
-    pub msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
+    pub msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
     pub cache_runtime: CacheRuntimeConfig,
     pub doh: Option<EffectiveDohListenerConfig>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
@@ -237,7 +237,7 @@ impl LandscapeDnsServer {
         }
     }
 
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
+    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
         self.msg_tx.store(msg_tx.map(Arc::new));
     }
 

@@ -1,10 +1,7 @@
-use std::{net::IpAddr, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
-use hickory_proto::{
-    op::{Message, ResponseCode},
-    rr::{Record, RecordType},
-};
+use hickory_proto::{op::Message, rr::RecordType};
 
 #[cfg(test)]
 use crate::resolve::redirect::RedirectAnswer;
@@ -24,9 +21,8 @@ use crate::{
 use landscape_common::utils::time::now_ms;
 use landscape_common::{
     dns::{CacheRuntimeConfig, error::DnsServiceError},
-    event::DnsMetricMessage,
     flow::DnsResultSink,
-    metric::dns::{DnsMetric, DnsOutcome},
+    metric::dns::DnsMetricEvent,
 };
 
 #[derive(Clone)]
@@ -131,15 +127,19 @@ impl DnsRequestHandler {
         let (records, outcome, response_code) =
             (answer.records, answer.outcome, answer.response_code);
 
-        self.send_metric(MetricSample {
-            domain: req.domain.raw(),
-            query_type,
-            outcome,
-            response_code,
-            start_time,
-            src_ip,
-            records: &records,
-        });
+        if let Some(msg_tx) = self.msg_tx.load_full() {
+            let _ = msg_tx.try_send(DnsMetricEvent {
+                flow_id: self.flow_id,
+                domain: req.domain.raw_arc().clone(),
+                query_type,
+                response_code,
+                status: outcome,
+                report_time: now_ms(),
+                duration_ms: start_time.elapsed().as_millis() as u32,
+                src_ip,
+                answers: records.clone(),
+            });
+        }
 
         wire::build_response(req, response_code, records)
     }
@@ -169,33 +169,6 @@ impl DnsRequestHandler {
         let runtime = self.snapshot.load_full();
         self.chain(&runtime).refresh(domain, query_type, apply_filter).await
     }
-
-    fn send_metric(&self, sample: MetricSample) {
-        if let Some(msg_tx) = self.msg_tx.load_full() {
-            let dns_metric = DnsMetric {
-                flow_id: self.flow_id,
-                domain: sample.domain.to_string(),
-                query_type: sample.query_type.to_string(),
-                response_code: sample.response_code.to_string(),
-                status: sample.outcome,
-                report_time: now_ms(),
-                duration_ms: sample.start_time.elapsed().as_millis() as u32,
-                src_ip: sample.src_ip,
-                answers: sample.records.iter().map(|r| r.to_string()).collect(),
-            };
-            let _ = msg_tx.try_send(DnsMetricMessage::Metric(dns_metric));
-        }
-    }
-}
-
-struct MetricSample<'a> {
-    domain: &'a str,
-    query_type: RecordType,
-    outcome: DnsOutcome,
-    response_code: ResponseCode,
-    start_time: Instant,
-    src_ip: IpAddr,
-    records: &'a [Record],
 }
 
 #[cfg(test)]

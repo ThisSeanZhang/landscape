@@ -11,8 +11,9 @@ use landscape_common::{
     dns::error::DnsServiceError,
     dns::redirect::DynamicDnsRedirectScope,
     dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
-    event::{DnsMetricMessage, dns::DnsEvent},
+    event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
+    metric::dns::DnsMetricEvent,
     service::{
         ServiceStatus,
         controller::{ConfigStoreController, ConfigStoreFlowController},
@@ -95,7 +96,7 @@ impl LandscapeDnsService {
         route_service: IpRouteService,
         dns_config: DnsRuntimeConfig,
         cert_service: CertService,
-        msg_tx: Option<mpsc::Sender<DnsMetricMessage>>,
+        msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
         lan_device_directory: Arc<LanDeviceDirectory>,
         lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
         dns_result_sink: Arc<dyn DnsResultSink>,
@@ -276,7 +277,7 @@ impl LandscapeDnsService {
         tracing::info!("DNS service stopped");
     }
 
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricMessage>>) {
+    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
         self.dns_service.update_metric_sender(msg_tx);
     }
 

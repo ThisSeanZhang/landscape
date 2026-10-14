@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
-use landscape_common::event::{ConnectMessage, DnsMetricMessage};
+use landscape_common::event::ConnectMessage;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
     ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat, IpRealtimeStat,
     MetricResolution,
 };
+use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
     DnsSummaryQueryParams, DnsSummaryResponse,
@@ -88,7 +89,7 @@ pub struct MetricEngine {
     config: MetricRuntimeConfig,
     sink: Arc<dyn MetricSink>,
     connect_tx: Option<mpsc::Sender<ConnectMessage>>,
-    dns_tx: Option<mpsc::Sender<DnsMetricMessage>>,
+    dns_tx: Option<mpsc::Sender<DnsMetricEvent>>,
     shutdown: CancellationToken,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
     connect_writer_tx: Arc<Mutex<Option<workers::ConnectBatchTx>>>,
@@ -121,7 +122,7 @@ impl MetricEngine {
         let dns_window = if is_persistent { Some(DnsRecentWindow::new()) } else { None };
 
         let (connect_tx, connect_rx) = mpsc::channel::<ConnectMessage>(agg::CHANNEL_CAPACITY);
-        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricMessage>(agg::CHANNEL_CAPACITY);
+        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricEvent>(agg::CHANNEL_CAPACITY);
 
         if !matches!(mode, MetricMode::Off) {
             // connect/dns 各自的 sqlite 文件相互独立,拆成两条 writer 链路并行写;
@@ -238,7 +239,7 @@ impl MetricEngine {
         self.connect_tx.clone()
     }
 
-    pub fn get_dns_msg_channel(&self) -> Option<mpsc::Sender<DnsMetricMessage>> {
+    pub fn get_dns_msg_channel(&self) -> Option<mpsc::Sender<DnsMetricEvent>> {
         self.dns_tx.clone()
     }
 
@@ -595,20 +596,22 @@ mod tests {
     #[cfg(feature = "metric-persistent")]
     mod persistent {
         use super::*;
-        use landscape_common::metric::dns::DnsOutcome;
+        use hickory_proto::op::ResponseCode;
+        use hickory_proto::rr::RecordType;
+        use landscape_common::metric::dns::{DnsMetricEvent, DnsOutcome};
 
-        fn dns_metric(report_time: u64) -> DnsMetricMessage {
-            DnsMetricMessage::Metric(landscape_common::metric::dns::DnsMetric {
+        fn dns_metric(report_time: u64) -> DnsMetricEvent {
+            DnsMetricEvent {
                 flow_id: 1,
-                domain: "example.com".to_string(),
-                query_type: "A".to_string(),
-                response_code: "NOERROR".to_string(),
+                domain: Arc::from("example.com"),
+                query_type: RecordType::A,
+                response_code: ResponseCode::NoError,
                 status: DnsOutcome::Normal,
                 report_time,
                 duration_ms: 12,
                 src_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 answers: Vec::new(),
-            })
+            }
         }
 
         #[tokio::test]
@@ -962,8 +965,7 @@ mod tests {
         }
 
         fn window_metric(report_time: u64) -> landscape_common::metric::dns::DnsMetric {
-            let DnsMetricMessage::Metric(metric) = dns_metric(report_time);
-            metric
+            dns_metric(report_time).into_metric()
         }
 
         #[tokio::test]

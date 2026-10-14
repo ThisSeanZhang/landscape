@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
-use landscape_common::event::DnsMetricMessage;
+use landscape_common::metric::dns::DnsMetricEvent;
 use tokio::sync::mpsc;
 
 pub mod builder;
@@ -13,4 +13,4 @@ pub(crate) mod traits;
 pub use builder::EngineBuilder;
 pub use service::{DnsServiceDeps, FlowRuntimeRefreshKind, LandscapeDnsServer};
 
-pub(crate) type MetricSenderState = Arc<ArcSwapOption<mpsc::Sender<DnsMetricMessage>>>;
+pub(crate) type MetricSenderState = Arc<ArcSwapOption<mpsc::Sender<DnsMetricEvent>>>;

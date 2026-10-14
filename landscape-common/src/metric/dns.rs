@@ -1,5 +1,8 @@
+use hickory_proto::op::ResponseCode;
+use hickory_proto::rr::{Record, RecordType};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use std::sync::Arc;
 
 pub use super::api::{DnsHistoryResponse, DnsLightweightSummaryResponse, DnsSummaryResponse};
 
@@ -30,6 +33,35 @@ pub struct DnsMetric {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub src_ip: IpAddr,
     pub answers: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct DnsMetricEvent {
+    pub flow_id: u32,
+    pub domain: Arc<str>,
+    pub query_type: RecordType,
+    pub response_code: ResponseCode,
+    pub status: DnsOutcome,
+    pub report_time: u64,
+    pub duration_ms: u32,
+    pub src_ip: IpAddr,
+    pub answers: Vec<Record>,
+}
+
+impl DnsMetricEvent {
+    pub fn into_metric(self) -> DnsMetric {
+        DnsMetric {
+            flow_id: self.flow_id,
+            domain: self.domain.to_string(),
+            query_type: self.query_type.to_string(),
+            response_code: self.response_code.to_string(),
+            status: self.status,
+            report_time: self.report_time,
+            duration_ms: self.duration_ms,
+            src_ip: self.src_ip,
+            answers: self.answers.iter().map(|r| r.to_string()).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

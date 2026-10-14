@@ -6,12 +6,12 @@ use landscape_common::{
     LANDSCAPE_METRIC_DIR_NAME,
     config::{MetricMode, MetricRuntimeConfig},
     database::error::DbError,
-    event::DnsMetricMessage,
     metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
         ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat,
         IpRealtimeStat, MetricResolution,
     },
+    metric::dns::DnsMetricEvent,
     metric::dns::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
@@ -114,7 +114,7 @@ impl MetricService {
         landscape_metric::resolved_metric_mode(config.mode)
     }
 
-    pub fn get_dns_metric_channel(&self) -> Option<mpsc::Sender<DnsMetricMessage>> {
+    pub fn get_dns_metric_channel(&self) -> Option<mpsc::Sender<DnsMetricEvent>> {
         if matches!(self.current_mode(), MetricMode::Off) {
             None
         } else {

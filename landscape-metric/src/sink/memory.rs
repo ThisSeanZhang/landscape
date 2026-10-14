@@ -16,7 +16,8 @@ use landscape_common::metric::dns::{
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
 
-use landscape_common::event::{ConnectMessage, DnsMetricMessage};
+use landscape_common::event::ConnectMessage;
+use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -107,7 +108,7 @@ impl MetricSink for MemoryMetricSink {
 #[derive(Clone)]
 pub struct MemoryMetricStore {
     connect_tx: mpsc::Sender<ConnectMessage>,
-    dns_tx: mpsc::Sender<DnsMetricMessage>,
+    dns_tx: mpsc::Sender<DnsMetricEvent>,
     shutdown: CancellationToken,
     flow_cache: FlowCache,
     iface_realtime: IfaceRealtimeCache,
@@ -148,7 +149,7 @@ impl MemoryMetricStore {
                         None => connect_closed = true,
                     },
                     msg = dns_rx.recv(), if !dns_closed => match msg {
-                        Some(DnsMetricMessage::Metric(_)) => {}
+                        Some(_) => {}
                         None => dns_closed = true,
                     },
                 }
@@ -173,7 +174,7 @@ impl MemoryMetricStore {
         self.connect_tx.clone()
     }
 
-    pub fn get_dns_msg_channel(&self) -> mpsc::Sender<DnsMetricMessage> {
+    pub fn get_dns_msg_channel(&self) -> mpsc::Sender<DnsMetricEvent> {
         self.dns_tx.clone()
     }
 

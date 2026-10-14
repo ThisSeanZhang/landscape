@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::config::MetricRuntimeConfig;
-use landscape_common::event::DnsMetricMessage;
 use landscape_common::metric::dns::DnsMetric;
+use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -110,10 +110,11 @@ async fn flush_dns_batch_on_shutdown(
 fn ingest_dns_metric(
     window: &Option<DnsRecentWindow>,
     raw_batch: &mut Vec<DnsMetric>,
-    metric: DnsMetric,
+    event: DnsMetricEvent,
 ) {
     // window 为 None(persistent 初始化失败回退内存)时直接丢弃,不攒批不投递。
     let Some(window) = window else { return };
+    let metric = event.into_metric();
     let now_ms = now_ms();
     window.ingest(&metric, now_ms);
     raw_batch.push(metric);
@@ -123,7 +124,7 @@ fn ingest_dns_metric(
 /// (writer 同批构建 1m 桶落库)。窗口不落库、不与 DB 合并,重启后为空。
 /// window 为 None 时仅消费并丢弃(sink 为内存实现时即为丢弃语义)。
 pub(crate) async fn run_dns_worker(
-    mut dns_rx: mpsc::Receiver<DnsMetricMessage>,
+    mut dns_rx: mpsc::Receiver<DnsMetricEvent>,
     writer_tx: Option<DnsBatchTx>,
     queue_stats: WriteQueueStats,
     config: MetricRuntimeConfig,
@@ -149,7 +150,7 @@ pub(crate) async fn run_dns_worker(
             _ = shutdown.cancelled() => break,
             msg_opt = dns_rx.recv(), if !dns_closed => {
                 match msg_opt {
-                    Some(DnsMetricMessage::Metric(metric)) => {
+                    Some(metric) => {
                         ingest_dns_metric(&window, &mut raw_batch, metric);
                         if raw_batch.len() >= DNS_BATCH_MAX_ROWS {
                             flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
@@ -172,7 +173,7 @@ pub(crate) async fn run_dns_worker(
         tokio::select! {
             _ = shutdown.cancelled() => break,
             msg_opt = dns_rx.recv() => match msg_opt {
-                Some(DnsMetricMessage::Metric(metric)) => {
+                Some(metric) => {
                     ingest_dns_metric(&window, &mut raw_batch, metric);
                 }
                 None => break,
@@ -187,9 +188,9 @@ pub(crate) async fn run_dns_worker(
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{RecordingSink, dns_metric, test_config};
+    use super::super::testing::{RecordingSink, dns_metric, dns_metric_event, test_config};
     use super::*;
-    use landscape_common::event::DnsMetricMessage;
+    use landscape_common::metric::dns::DnsMetricEvent;
     use std::sync::atomic::Ordering;
 
     #[tokio::test]
@@ -272,7 +273,7 @@ mod tests {
         ));
 
         for i in 0..DNS_BATCH_MAX_ROWS {
-            dns_tx.send(DnsMetricMessage::Metric(dns_metric(60_000 + i as u64))).await.unwrap();
+            dns_tx.send(dns_metric_event(60_000 + i as u64)).await.unwrap();
         }
         drop(dns_tx);
         tokio::time::timeout(Duration::from_secs(5), worker).await.unwrap().unwrap();
@@ -302,18 +303,18 @@ mod tests {
 
         // 窗口内 5 个分钟桶;shutdown 时窗口不落库(纯内存),仅原始行批次投递。
         for offset in 1..=5 {
-            let metric = landscape_common::metric::dns::DnsMetric {
+            let metric = landscape_common::metric::dns::DnsMetricEvent {
                 flow_id: 1,
-                domain: "example.com".to_string(),
-                query_type: "A".to_string(),
-                response_code: "NOERROR".to_string(),
+                domain: std::sync::Arc::from("example.com"),
+                query_type: hickory_proto::rr::RecordType::A,
+                response_code: hickory_proto::op::ResponseCode::NoError,
                 status: landscape_common::metric::dns::DnsOutcome::Normal,
                 report_time: now_ms.saturating_sub(offset * 60_000),
                 duration_ms: 10,
                 src_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
                 answers: Vec::new(),
             };
-            dns_tx.send(DnsMetricMessage::Metric(metric)).await.unwrap();
+            dns_tx.send(metric).await.unwrap();
         }
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -338,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn dns_worker_discards_metrics_without_persistent_link() {
-        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricMessage>(8);
+        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricEvent>(8);
         let worker = tokio::spawn(run_dns_worker(
             dns_rx,
             None,
@@ -348,7 +349,7 @@ mod tests {
             CancellationToken::new(),
         ));
 
-        dns_tx.send(DnsMetricMessage::Metric(dns_metric(60_000))).await.unwrap();
+        dns_tx.send(dns_metric_event(60_000)).await.unwrap();
         drop(dns_tx);
         tokio::time::timeout(Duration::from_secs(5), worker).await.unwrap().unwrap();
     }

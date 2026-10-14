@@ -250,6 +250,8 @@ pub(crate) mod testing {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex, RwLock};
 
+    use hickory_proto::op::ResponseCode;
+    use hickory_proto::rr::RecordType;
     use landscape_common::config::{MetricMode, MetricRuntimeConfig};
     use landscape_common::database::error::DbError;
     use landscape_common::metric::connect::{
@@ -260,7 +262,7 @@ pub(crate) mod testing {
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
     };
-    use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
+    use landscape_common::metric::dns::{DnsMetric, DnsMetricEvent, DnsOutcome};
 
     use crate::agg::dns_bucket::DnsBucketRow;
     use crate::agg::dns_bucket::DnsSummaryParts;
@@ -328,6 +330,20 @@ pub(crate) mod testing {
             domain: "example.com".to_string(),
             query_type: "A".to_string(),
             response_code: "NOERROR".to_string(),
+            status: DnsOutcome::Normal,
+            report_time,
+            duration_ms: 12,
+            src_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            answers: Vec::new(),
+        }
+    }
+
+    pub(crate) fn dns_metric_event(report_time: u64) -> DnsMetricEvent {
+        DnsMetricEvent {
+            flow_id: 1,
+            domain: Arc::from("example.com"),
+            query_type: RecordType::A,
+            response_code: ResponseCode::NoError,
             status: DnsOutcome::Normal,
             report_time,
             duration_ms: 12,
