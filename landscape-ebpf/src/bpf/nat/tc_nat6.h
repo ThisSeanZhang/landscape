@@ -6,7 +6,7 @@
 #include "nat/nat_common.h"
 #include "nat/nat6_map_ops.h"
 #include "nat/nat6_ct_timer.h"
-#include "route/wan_ip.h"
+#include "nat/nat_rodata.h"
 
 static __always_inline int update_ipv6_cache_value(struct __sk_buff *skb, struct inet_pair *ip_pair,
                                                    struct nat6_timer_value *value) {
@@ -106,16 +106,11 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
 #define BPF_LOG_TOPIC "ipv6_egress_prefix_check_and_replace"
     int ret;
 
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info == NULL) {
+    if (wan_ro_prefix6.b[0] == 0) {
         return TC_ACT_SHOT;
     }
 
-    u8 npt_id_mask = (u8)(wan_ip_info->npt_mask >> 56);
+    u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
     struct nat6_timer_value *ct_value = lookup_ct6_egress(skb, idx, ip_pair, npt_id_mask);
     if (ct_value) {
@@ -160,9 +155,7 @@ do_nptv6:
     if (idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0) {
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, ip_pair->src_addr.all);
-        COPY_ADDR_FROM(&new_ip_prefix, wan_ip_info->addr.all);
-        new_ip_prefix =
-            (old_ip_prefix & wan_ip_info->npt_mask) | (new_ip_prefix & ~wan_ip_info->npt_mask);
+        new_ip_prefix = (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
         u32 error_sender_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
         u32 inner_l3_ip_dst_offset = idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
@@ -180,10 +173,8 @@ do_nptv6:
         }
         old_sender_ip_prefix = *error_sender_point;
 #endif
-        COPY_ADDR_FROM(&new_sender_ip_prefix, wan_ip_info->addr.all);
-
-        new_sender_ip_prefix = (old_sender_ip_prefix & wan_ip_info->npt_mask) |
-                               (new_sender_ip_prefix & ~wan_ip_info->npt_mask);
+        new_sender_ip_prefix =
+            (old_sender_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
         u32 inner_l4_checksum_offset = 0;
         if (nat6_l4_checksum(idx->icmp_error_inner_l4_offset, idx->icmp_error_l4_protocol,
@@ -231,9 +222,7 @@ do_nptv6:
 
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, ip_pair->src_addr.all);
-        COPY_ADDR_FROM(&new_ip_prefix, wan_ip_info->addr.all);
-        new_ip_prefix =
-            (old_ip_prefix & wan_ip_info->npt_mask) | (new_ip_prefix & ~wan_ip_info->npt_mask);
+        new_ip_prefix = (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
         bpf_skb_store_bytes(skb, ip_src_offset, &new_ip_prefix, 8, 0);
         L4_CSUM_REPLACE_U64_OR_SHOT(skb, l4_checksum_offset, old_ip_prefix, new_ip_prefix,
                                     BPF_F_PSEUDO_HDR);
@@ -289,16 +278,11 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
     int ret = 0;
     __be64 local_client_prefix = {0};
 
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info == NULL) {
+    if (wan_ro_prefix6.b[0] == 0) {
         return TC_ACT_SHOT;
     }
 
-    u8 npt_id_mask = (u8)(wan_ip_info->npt_mask >> 56);
+    u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
     bool is_icmpx = idx->icmp_error_l3_offset > 0 && idx->icmp_error_inner_l4_offset > 0;
     bool allow_create = !is_icmpx && pkt_can_begin_ct(idx->pkt_type);

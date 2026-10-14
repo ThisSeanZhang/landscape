@@ -9,7 +9,7 @@
 #include "nat/nat_common.h"
 #include "nat/nat4_map_ops.h"
 #include "nat/nat4_ct_timer.h"
-#include "route/wan_ip.h"
+#include "nat/nat_rodata.h"
 #include "scanner/xdp_scanner4.h"
 #include "fragment/frag_common.h"
 #include "fragment/xdp_frag4.h"
@@ -373,14 +373,9 @@ static __always_inline int xdp_nat4_st_egress_lookup(u32 wan_ifindex, u8 ip_prot
 
     if (!nat4_lookup_static_ingress(ip_protocol, st_egress->port)) return -1;
 
-    struct wan_ip_info_key wan_key = {
-        .ifindex = wan_ifindex,
-        .l3_protocol = LANDSCAPE_IPV4_TYPE,
-    };
-    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
-    if (!wan_info) return -1;
+    if (wan_ro_addr4 == 0) return -1;
 
-    result->nat_addr = wan_info->addr.ip;
+    result->nat_addr = wan_ro_addr4;
     result->nat_port = st_egress->port;
     return 0;
 }
@@ -435,18 +430,13 @@ static __always_inline int xdp_nat4_dyn_egress_lookup_and_check(
 
     if (!allow_create) return -1;
 
-    struct wan_ip_info_key wan_key = {
-        .ifindex = wan_ifindex,
-        .l3_protocol = LANDSCAPE_IPV4_TYPE,
-    };
-    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
-    if (!wan_info) return -1;
+    if (wan_ro_addr4 == 0) return -1;
 
     if (nat4_alloc_port(ip_protocol, alloc_item) != 0) return -1;
 
     u16 generation = alloc_item->last_generation + 1;
     struct nat4_egress_mapping_value_v3 new_value = {
-        .addr = wan_info->addr.ip,
+        .addr = wan_ro_addr4,
         .trigger_addr = pkt_ip_pair->dst_addr.addr,
         .port = alloc_item->port,
         .trigger_port = pkt_ip_pair->dst_port,
@@ -462,7 +452,7 @@ static __always_inline int xdp_nat4_dyn_egress_lookup_and_check(
     }
 
     result->is_created = 1;
-    result->nat_addr = wan_info->addr.ip;
+    result->nat_addr = wan_ro_addr4;
     result->nat_port = alloc_item->port;
     *dyn_ingress_out = ingress_value;
     return 0;

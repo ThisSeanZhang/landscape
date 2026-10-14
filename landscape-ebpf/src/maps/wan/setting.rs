@@ -59,7 +59,7 @@ pub fn add_ipv4_wan_ip(
 /// of the IPv6 address (in network order). Bits *inside* the prefix are 0
 /// (replaced by the WAN prefix) and bits *outside* the prefix (up to bit 63)
 /// are 1 (kept from the LAN address).
-fn compute_npt_mask(prefix_len: u8) -> u64 {
+pub(crate) fn compute_npt_mask(prefix_len: u8) -> u64 {
     if prefix_len >= 64 {
         return 0;
     }

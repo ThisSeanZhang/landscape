@@ -15,12 +15,19 @@ async fn main() {
     );
     let ifindex: u32 = 96;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
+    // Still consumed by the route side (is_current checks).
     landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, addr, None, 24, None);
 
-    let nat4 = landscape_ebpf::stages::nat4::attach_nat4(&rt, ifindex, true, &NatConfig::default())
-        .expect("failed to start nat4 test");
-    let nat6 = landscape_ebpf::stages::nat6::attach_nat6(&rt, ifindex, true)
-        .expect("failed to start nat6 test");
+    let nat4 =
+        landscape_ebpf::stages::nat4::attach_nat4(&rt, ifindex, true, &NatConfig::default(), addr)
+            .expect("failed to start nat4 test");
+    let nat6 = landscape_ebpf::stages::nat6::attach_nat6(
+        &rt,
+        ifindex,
+        true,
+        Some((std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0), 56)),
+    )
+    .expect("failed to start nat6 test");
 
     let _ = tokio::signal::ctrl_c().await;
 

@@ -1,20 +1,12 @@
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv6Addr},
-    str::FromStr,
-};
+use std::{mem::MaybeUninit, net::Ipv6Addr, str::FromStr};
 
-use landscape_common::net::MacAddr;
 use libbpf_rs::{
     ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
-use crate::{
-    maps::wan::add_wan_ip,
-    tests::{TestSkb, nat::test_nat6_v3::TestNat6V3SkelBuilder},
-};
+use crate::tests::{TestSkb, nat::test_nat6_v3::TestNat6V3SkelBuilder};
 
 // 2001:db8:12::2 => 2001:db8:1::1 inner 2001:db8:1::1 => 2001:db8:2::2 id 0x5edf
 fn build_ipv6_icmp_too_big() -> Vec<u8> {
@@ -136,20 +128,19 @@ pub fn run_ipv6_egress_helper(payload: Vec<u8>) {
     let pin_root = crate::tests::isolated_pin_root("nat-v6-egress-helper");
     landscape_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let landscape_open = landscape_builder.open(&mut open_object).unwrap();
+    let mut landscape_open = landscape_builder.open(&mut open_object).unwrap();
+    {
+        let rodata = landscape_open.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(
+            (Ipv6Addr::from_str("2409:8888:6666:4f21::").unwrap()),
+        ));
+        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+    }
 
     let landscape_skel = landscape_open.load().unwrap();
 
     let ifindex = 6;
 
-    add_wan_ip(
-        &landscape_skel.maps.wan_ip_binding,
-        ifindex,
-        IpAddr::V6(Ipv6Addr::from_str("2409:8888:6666:4f21::").unwrap()),
-        None,
-        60,
-        Some(MacAddr::broadcast()),
-    );
     let egress_helper = landscape_skel.progs.handle_ipv6_egress;
 
     let mut ctx = TestSkb { ifindex, ..Default::default() };

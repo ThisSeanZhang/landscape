@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
@@ -13,6 +14,15 @@ use crate::runtime::EbpfRuntime;
 
 pub(crate) mod tc_nat4_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat4.skel.rs"));
+}
+
+/// Bake value for the `wan_ro_addr4` rodata field shared by the nat4 objects.
+///
+/// The BPF side treats it as a network-order `__be32` (same convention as the
+/// old `wan_ip_binding` map values) — this is the single place that knows the
+/// conversion; all loaders and tests go through it.
+pub(crate) fn wan_ro_addr4(wan_addr: Ipv4Addr) -> u32 {
+    wan_addr.to_bits().to_be()
 }
 
 pub(crate) mod xdp_nat4_skel {
@@ -105,6 +115,7 @@ pub fn attach_nat4(
     ifindex: u32,
     has_eth_header: bool,
     config: &NatConfig,
+    wan_addr: Ipv4Addr,
 ) -> LdEbpfResult<Nat4Handle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::chain::xdp_manager::{StageEntry as XdpStageEntry, StageType as XdpStageType};
@@ -124,6 +135,7 @@ pub fn attach_nat4(
 
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
     tc_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
+    tc_rodata.wan_ro_addr4 = wan_ro_addr4(wan_addr);
     tc_rodata.tcp_range_start = config.tcp_range.start;
     tc_rodata.tcp_range_end = config.tcp_range.end;
     tc_rodata.udp_range_start = config.udp_range.start;
@@ -139,7 +151,6 @@ pub fn attach_nat4(
         &mut tc_open.maps.tc_pipe_exits_wan_egress,
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(&mut tc_open.maps.wan_ip_binding, &paths.wan_ip)?;
     pin_and_reuse_map(&mut tc_open.maps.nat4_static_map, &paths.nat4_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
 
@@ -182,10 +193,6 @@ pub fn attach_nat4(
     )?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.wan_ip_binding, &paths.wan_ip),
-        "xdp_nat4 pin wan_ip_binding"
-    )?;
-    crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.nat4_static_map, &paths.nat4_static_map),
         "xdp_nat4 pin nat4_static_map"
     )?;
@@ -224,6 +231,7 @@ pub fn attach_nat4(
         let xdp_rodata =
             xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat4 rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
+        xdp_rodata.wan_ro_addr4 = wan_ro_addr4(wan_addr);
         xdp_rodata.tcp_range_start = config.tcp_range.start;
         xdp_rodata.tcp_range_end = config.tcp_range.end;
         xdp_rodata.udp_range_start = config.udp_range.start;

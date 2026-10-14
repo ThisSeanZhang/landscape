@@ -1,11 +1,6 @@
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv6Addr},
-    str::FromStr,
-};
+use std::{mem::MaybeUninit, net::Ipv6Addr, str::FromStr};
 
 use etherparse::{Icmpv6Type, PacketBuilder, PacketHeaders, icmpv6};
-use landscape_common::net::MacAddr;
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
@@ -13,7 +8,6 @@ use libbpf_rs::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    maps::wan::add_wan_ip,
     maps::{Nat6TimerKey, Nat6TimerValue},
     stages::nat6::tc_nat6_skel::TcNat6SkelBuilder,
     tests::TestSkb,
@@ -119,17 +113,13 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let open_skel = builder.open(&mut open_object).unwrap();
+    let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+    }
     let skel = open_skel.load().unwrap();
-
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        IFINDEX,
-        IpAddr::V6(wan_ip()),
-        None,
-        prefix_len,
-        Some(MacAddr::broadcast()),
-    );
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
     set_ct6_status(&skel.maps.nat6_timer_map, &key, initial_status);
 
@@ -158,17 +148,13 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let open_skel = builder.open(&mut open_object).unwrap();
+    let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+    }
     let skel = open_skel.load().unwrap();
-
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        IFINDEX,
-        IpAddr::V6(wan_ip()),
-        None,
-        prefix_len,
-        Some(MacAddr::broadcast()),
-    );
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
     let pkt = build_ipv6_tcp(src, dst, CLIENT_PORT, 443);
@@ -219,17 +205,13 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let open_skel = builder.open(&mut open_object).unwrap();
+    let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
+        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+    }
     let skel = open_skel.load().unwrap();
-
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        IFINDEX,
-        IpAddr::V6(wan_ip()),
-        None,
-        prefix_len,
-        Some(MacAddr::broadcast()),
-    );
     add_ct6_entry(&skel.maps.nat6_timer_map, &old_key, old_src, old_remote, 443);
 
     let pkt = build_ipv6_tcp(new_src, new_remote, CLIENT_PORT, 8443);
@@ -371,17 +353,13 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V6(wan_ip()),
-            None,
-            prefix_len,
-            Some(MacAddr::broadcast()),
-        );
         add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(dst, src, 443, CLIENT_PORT);
@@ -450,17 +428,13 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V6(wan_ip()),
-            None,
-            prefix_len,
-            Some(MacAddr::broadcast()),
-        );
         add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(wan_src, dst, CLIENT_PORT, 443);
@@ -528,17 +502,13 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V6(wan_ip()),
-            None,
-            prefix_len,
-            Some(MacAddr::broadcast()),
-        );
 
         let mut value = Nat6TimerValue {
             server_status: 1,
@@ -603,17 +573,13 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V6(wan_ip()),
-            None,
-            prefix_len,
-            Some(MacAddr::broadcast()),
-        );
 
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, old_src, old_remote, 443);
 
@@ -665,17 +631,13 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V6(wan_ip()),
-            None,
-            prefix_len,
-            Some(MacAddr::broadcast()),
-        );
 
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, old_src, old_remote, 443);
 

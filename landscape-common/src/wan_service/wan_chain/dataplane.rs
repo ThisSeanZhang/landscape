@@ -50,24 +50,29 @@ pub trait WanChainDataplane: Send + Sync {
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
     /// Attach the v4 NAT stage (TC ingress/egress + XDP with shared
-    /// runtime maps) for `chain` on `ifindex`.  Dropping the returned
-    /// guard removes the stage from the chains.
+    /// runtime maps) for `chain` on `ifindex`, baking `wan_addr` into
+    /// the objects.  Dropping the returned guard removes the stage from
+    /// the chains.
     fn attach_nat4(
         &self,
         chain: u16,
         ifindex: u32,
         has_eth_header: bool,
         config: &NatConfig,
+        wan_addr: Ipv4Addr,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
     /// Attach the v6 NAT stage (TC ingress/egress + XDP with a shared
-    /// conntrack timer map) for `chain` on `ifindex`.  Dropping the
-    /// returned guard removes the stage from the chains.
+    /// conntrack timer map) for `chain` on `ifindex`, baking the WAN
+    /// prefix into the objects.  `None` bakes the unconfigured (drop)
+    /// prefix.  Dropping the returned guard removes the stage from the
+    /// chains.
     fn attach_nat6(
         &self,
         chain: u16,
         ifindex: u32,
         has_eth_header: bool,
+        prefix: Option<(Ipv6Addr, u8)>,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
     /// Attach the firewall stage (TC ingress/egress + XDP LAN/WAN) for
@@ -142,6 +147,7 @@ impl WanChainDataplane for NoopWanChainDataplane {
         _ifindex: u32,
         _has_eth_header: bool,
         _config: &NatConfig,
+        _wan_addr: Ipv4Addr,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }
@@ -151,6 +157,7 @@ impl WanChainDataplane for NoopWanChainDataplane {
         _chain: u16,
         _ifindex: u32,
         _has_eth_header: bool,
+        _prefix: Option<(Ipv6Addr, u8)>,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }

@@ -1,20 +1,12 @@
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv6Addr},
-    str::FromStr,
-};
+use std::{mem::MaybeUninit, net::Ipv6Addr, str::FromStr};
 
 use etherparse::{PacketBuilder, PacketHeaders};
-use landscape_common::net::MacAddr;
 use libbpf_rs::{
     ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::{
-    maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
-    tests::xdp_nat6_skel::XdpNat6SkelBuilder,
-};
+use crate::{maps::nat::StaticNatMappingV6Item, tests::xdp_nat6_skel::XdpNat6SkelBuilder};
 
 const IFINDEX: u32 = 6;
 const XDP_PASS: u32 = 2;
@@ -87,17 +79,13 @@ fn assert_xdp_round_trip(
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
     let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+    }
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;
     let skel = open_skel.load().unwrap();
-
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        IFINDEX,
-        IpAddr::V6(wan_ip()),
-        None,
-        60,
-        Some(MacAddr::broadcast()),
-    );
     if let Some(target) = static_target {
         crate::maps::nat::add_static_nat6_mapping(
             &skel.maps.nat6_static_map,

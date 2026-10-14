@@ -13,7 +13,7 @@ use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 
-mod tc_wan_ingress_route_skel {
+pub(crate) mod tc_wan_ingress_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
 }
 mod tc_wan_egress_exit_skel {

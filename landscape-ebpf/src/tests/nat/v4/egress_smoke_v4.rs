@@ -1,16 +1,12 @@
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::{mem::MaybeUninit, net::Ipv4Addr};
 
-use landscape_common::net::MacAddr;
 use libbpf_rs::{
     ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
 
-use crate::{maps::wan::add_wan_ip, stages::nat4::tc_nat4_skel::TcNat4SkelBuilder, tests::TestSkb};
+use crate::{stages::nat4::tc_nat4_skel::TcNat4SkelBuilder, tests::TestSkb};
 
 /// https://www.cloudshark.org/captures/456a264486bf?filter=tcp
 /// 192.168.101.201:56186 -> 50.18.88.205:443
@@ -30,20 +26,15 @@ pub fn run_ipv4_egress_smoke(payload: Vec<u8>) {
     let pin_root = crate::tests::isolated_pin_root("nat-v4-egress");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
-    let open_skel = builder.open(&mut open_object).unwrap();
+    let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(192, 168, 101, 201));
+    }
 
     let skel = open_skel.load().unwrap();
 
     let ifindex = 6;
-
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        ifindex,
-        IpAddr::V4(Ipv4Addr::new(192, 168, 101, 201)),
-        None,
-        24,
-        Some(MacAddr::broadcast()),
-    );
     let egress_nat = skel.progs.tc_nat_wan_egress_v4;
 
     let mut ctx = TestSkb { ifindex, ..Default::default() };

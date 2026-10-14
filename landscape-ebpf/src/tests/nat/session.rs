@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::tests::net_utils::{VethPair, send_raw_packet, settle, wait_for};
@@ -209,6 +210,8 @@ fn xdp_nat_static_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let d_b = TestXdpDummySkelBuilder::default();
@@ -342,6 +345,8 @@ fn xdp_nat_dynamic_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let d_b = TestXdpDummySkelBuilder::default();
@@ -415,7 +420,7 @@ fn xdp_nat_dynamic_egress() {
         l4proto: 6,
         _pad: [0; 3],
         src_addr: u32::from_be_bytes([93, 184, 216, 34]).to_be(),
-        dst_addr: u32::from_be_bytes([203, 0, 113, 1]).to_be(),
+        dst_addr: u32::from_le_bytes([203, 0, 113, 1]).to_be(),
         src_port: 80u16.to_be(),
         dst_port: 4096u16.to_be(),
     };
@@ -471,6 +476,10 @@ fn xdp_nat_v6_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_prefix6.b =
+        [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0];
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_npt_mask =
+        u64::from_le_bytes([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat_v6.attach_xdp(nat_h_i as i32).unwrap();
@@ -521,6 +530,8 @@ fn xdp_nat_firewall_pipeline() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let mut fw_b = XdpFirewallSkelBuilder::default();
@@ -732,6 +743,8 @@ fn xdp_nat_fragment_v4() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat_v4.attach_xdp(nat_h_i as i32).unwrap();
@@ -814,6 +827,10 @@ fn xdp_nat_v6_ingress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_prefix6.b =
+        [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0];
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_npt_mask =
+        u64::from_le_bytes([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.ingress_nat_v6.attach_xdp(nat_h_i as i32).unwrap();
@@ -863,6 +880,8 @@ fn xdp_nat_ct_dynamic_multi_pkt() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat_v4.attach_xdp(nat_h_i as i32).unwrap();
@@ -1014,6 +1033,8 @@ fn xdp_nat_fragment_ingress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let d_b = TestXdpDummySkelBuilder::default();
@@ -1191,6 +1212,8 @@ fn xdp_nat_dynamic_ingress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -1282,6 +1305,8 @@ fn xdp_nat_udp_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -1367,6 +1392,8 @@ fn xdp_nat_udp_ingress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -1459,6 +1486,8 @@ fn xdp_nat_fragment_middle() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -1508,6 +1537,8 @@ fn xdp_nat_icmp_error_egress() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
     let _l0 = nat.progs.egress_nat_v4.attach_xdp(nat_h_i as i32).unwrap();
 
@@ -1635,6 +1666,8 @@ fn xdp_nat_chain_pipeline() {
     let mut nat_obj = std::mem::MaybeUninit::uninit();
     let mut nat_open = nat_b.open(&mut nat_obj).unwrap();
     nat_open.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = nat_h_i;
+    nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
+        crate::stages::nat4::wan_ro_addr4(Ipv4Addr::new(203, 0, 113, 1));
     let nat = nat_open.load().unwrap();
 
     let mut fw_b = XdpFirewallSkelBuilder::default();

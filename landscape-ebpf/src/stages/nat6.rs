@@ -1,3 +1,4 @@
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use crate::bpf_ctx;
@@ -14,6 +15,19 @@ pub(crate) mod tc_nat6_skel {
 
 pub(crate) mod xdp_nat6_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat6.skel.rs"));
+}
+
+/// Bake value for the `wan_ro_prefix6` rodata field shared by the nat6
+/// objects: the first 8 bytes (the /64-or-shorter span) of the WAN prefix,
+/// network order, written through the union's byte view. `None` bakes the
+/// all-zero "unconfigured" prefix (drop semantics). Single place that knows
+/// the layout; all loaders and tests go through it.
+pub(crate) fn wan_ro_prefix6(prefix: Option<Ipv6Addr>) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    if let Some(prefix) = prefix {
+        out.copy_from_slice(&prefix.octets()[..8]);
+    }
+    out
 }
 
 /// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with a shared
@@ -62,6 +76,7 @@ pub fn attach_nat6(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     has_eth_header: bool,
+    prefix: Option<(Ipv6Addr, u8)>,
 ) -> LdEbpfResult<Nat6Handle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::chain::xdp_manager::{StageEntry as XdpStageEntry, StageType as XdpStageType};
@@ -70,6 +85,14 @@ pub fn attach_nat6(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
+
+    // Bake the WAN prefix into rodata; `None` bakes the all-zero
+    // "unconfigured" prefix, which the dataplane treats as drop (the
+    // old map-miss semantics).
+    let npt_mask = match prefix {
+        Some((_, prefix_len)) => crate::maps::wan::compute_npt_mask(prefix_len),
+        None => 0,
+    };
 
     // ── 1. Load TC nat6 first (ingress + egress, for timer map sharing with XDP) ──
 
@@ -81,6 +104,8 @@ pub fn attach_nat6(
 
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
     tc_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
+    tc_rodata.wan_ro_prefix6.b = wan_ro_prefix6(prefix.map(|(addr, _)| addr));
+    tc_rodata.wan_ro_npt_mask = npt_mask;
 
     pin_and_reuse_map(
         &mut tc_open.maps.tc_pipe_exits_wan_ingress,
@@ -90,7 +115,6 @@ pub fn attach_nat6(
         &mut tc_open.maps.tc_pipe_exits_wan_egress,
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(&mut tc_open.maps.wan_ip_binding, &paths.wan_ip)?;
     pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &paths.nat6_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
 
@@ -126,10 +150,6 @@ pub fn attach_nat6(
     )?;
 
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.wan_ip_binding, &paths.wan_ip),
-        "xdp_nat6 pin wan_ip_binding"
-    )?;
-    crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.nat6_static_map, &paths.nat6_static_map,),
         "xdp_nat6 pin nat6_static_map"
     )?;
@@ -147,6 +167,8 @@ pub fn attach_nat6(
         let xdp_rodata =
             xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat6 rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
+        xdp_rodata.wan_ro_prefix6.b = wan_ro_prefix6(prefix.map(|(addr, _)| addr));
+        xdp_rodata.wan_ro_npt_mask = npt_mask;
     }
 
     let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat6 skeleton")?;

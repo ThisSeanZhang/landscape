@@ -8,7 +8,7 @@
 #include "nat/nat_metric.h"
 #include "nat/nat4_map_ops.h"
 #include "nat/nat4_ct_timer.h"
-#include "route/wan_ip.h"
+#include "nat/nat_rodata.h"
 #include "einat/einat_nat4.h"
 
 static __always_inline void nat_metric_accumulate(struct __sk_buff *skb, bool ingress,
@@ -114,12 +114,7 @@ static __always_inline int nat4_dyn_egress_lookup_and_check(
         return TC_ACT_SHOT;
     }
 
-    struct wan_ip_info_key wan_search_key = {
-        .ifindex = ifindex,
-        .l3_protocol = LANDSCAPE_IPV4_TYPE,
-    };
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (!wan_ip_info) {
+    if (wan_ro_addr4 == 0) {
         return TC_ACT_SHOT;
     }
 
@@ -129,7 +124,7 @@ static __always_inline int nat4_dyn_egress_lookup_and_check(
 
     u16 generation = alloc_item->last_generation + 1;
     struct nat4_egress_mapping_value_v3 new_value = {
-        .addr = wan_ip_info->addr.ip,
+        .addr = wan_ro_addr4,
         .trigger_addr = pkt_ip_pair->dst_addr.addr,
         .port = alloc_item->port,
         .trigger_port = pkt_ip_pair->dst_port,
@@ -145,7 +140,7 @@ static __always_inline int nat4_dyn_egress_lookup_and_check(
     }
 
     result->is_created = 1;
-    result->nat_addr = wan_ip_info->addr.ip;
+    result->nat_addr = wan_ro_addr4;
     result->nat_port = alloc_item->port;
     *dyn_ingress_out = ingress_value;
     return TC_ACT_OK;
@@ -172,14 +167,9 @@ static __always_inline int nat4_st_egress_lookup(u32 ifindex, u8 ip_protocol,
         nat4_lookup_static_ingress(ip_protocol, static_egress->port);
     if (!st_ingress) return TC_ACT_SHOT;
 
-    struct wan_ip_info_key wan_search_key = {
-        .ifindex = ifindex,
-        .l3_protocol = LANDSCAPE_IPV4_TYPE,
-    };
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (!wan_ip_info) return TC_ACT_SHOT;
+    if (wan_ro_addr4 == 0) return TC_ACT_SHOT;
 
-    result->nat_addr = wan_ip_info->addr.ip;
+    result->nat_addr = wan_ro_addr4;
     result->nat_port = static_egress->port;
     return TC_ACT_OK;
 }

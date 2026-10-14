@@ -156,9 +156,10 @@ impl WanChainDataplane for EbpfWanChainDataplane {
         ifindex: u32,
         has_eth_header: bool,
         config: &NatConfig,
+        wan_addr: Ipv4Addr,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         self.observe(chain, ifindex, has_eth_header);
-        crate::stages::nat4::attach_nat4(&self.rt, ifindex, has_eth_header, config)
+        crate::stages::nat4::attach_nat4(&self.rt, ifindex, has_eth_header, config, wan_addr)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
@@ -168,9 +169,10 @@ impl WanChainDataplane for EbpfWanChainDataplane {
         chain: u16,
         ifindex: u32,
         has_eth_header: bool,
+        prefix: Option<(Ipv6Addr, u8)>,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         self.observe(chain, ifindex, has_eth_header);
-        crate::stages::nat6::attach_nat6(&self.rt, ifindex, has_eth_header)
+        crate::stages::nat6::attach_nat6(&self.rt, ifindex, has_eth_header, prefix)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }

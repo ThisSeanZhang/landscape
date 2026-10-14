@@ -246,15 +246,31 @@ impl ServiceStarterTrait for WanLinkService {
             {
                 let dataplane = self.chain_dataplane.clone();
                 let nat_runtime = sections.nat4_slot();
+                let state_rx = state_rx.clone();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let nat_runtime = nat_runtime.clone();
+                    let mut state_rx = state_rx.clone();
                     Box::pin(async move {
                         let runtime = RuntimeWanLinkConfig::from_config(&cfg);
+                        // The ready gate guarantees a v4 lease; read its
+                        // address to bake into the NAT objects.
+                        let wan_addr = match state_rx.borrow_and_update().session.v4_ip() {
+                            Some(std::net::IpAddr::V4(addr)) => addr,
+                            _ => {
+                                tracing::error!(
+                                    "nat4 started without a v4 lease for {}",
+                                    iface.iface_name
+                                );
+                                status.just_change_status(ServiceStatus::Failed);
+                                return;
+                            }
+                        };
                         nat4::run(
                             runtime.link_chain_id,
                             iface,
                             runtime.nat,
+                            wan_addr,
                             status,
                             dataplane,
                             nat_runtime,
@@ -279,12 +295,14 @@ impl ServiceStarterTrait for WanLinkService {
             {
                 let dataplane = self.chain_dataplane.clone();
                 let nat_runtime = sections.nat6_slot();
+                let state_rx = state_rx.clone();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let nat_runtime = nat_runtime.clone();
+                    let state_rx = state_rx.clone();
                     Box::pin(async move {
                         let chain_id = RuntimeWanLinkConfig::from_config(&cfg).link_chain_id;
-                        nat6::run(chain_id, iface, status, dataplane, nat_runtime).await;
+                        nat6::run(chain_id, iface, state_rx, status, dataplane, nat_runtime).await;
                     })
                 })
             },

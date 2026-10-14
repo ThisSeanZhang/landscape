@@ -37,13 +37,14 @@ pub fn init_wan_ip_binding_map(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::nat4::xdp_nat4_skel::XdpNat4SkelBuilder;
+    use crate::chain::tc_manager::tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]
     fn wan_ip_binding_params_match_skel() {
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open = XdpNat4SkelBuilder::default().open(&mut obj).expect("open anchor skel");
+        let open =
+            TcWanIngressRouteSkelBuilder::default().open(&mut obj).expect("open anchor skel");
         crate::maps::assert_skel_map_matches(&open.maps.wan_ip_binding, &WAN_IP_BINDING_SPEC);
     }
 }

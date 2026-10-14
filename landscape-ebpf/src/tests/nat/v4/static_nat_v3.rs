@@ -1,10 +1,6 @@
-use std::{
-    mem::MaybeUninit,
-    net::{IpAddr, Ipv4Addr},
-};
+use std::{mem::MaybeUninit, net::Ipv4Addr};
 
 use etherparse::PacketBuilder;
-use landscape_common::net::MacAddr;
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
@@ -13,12 +9,9 @@ use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
+    maps::nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
     maps::{Nat4TimerKey, Nat4TimerValueV3},
-    maps::{
-        nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
-        wan::add_wan_ip,
-    },
-    stages::nat4::tc_nat4_skel::TcNat4SkelBuilder,
+    stages::nat4::{tc_nat4_skel, tc_nat4_skel::TcNat4SkelBuilder},
     tests::TestSkb,
 };
 
@@ -117,17 +110,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -185,17 +173,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -253,17 +236,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -321,17 +299,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local-create");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         // Static mapping with lan_ip = 0.0.0.0 (passthrough / local router)
         add_static_nat4_mapping_v3(
@@ -404,17 +377,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -466,17 +434,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -528,17 +491,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
@@ -590,17 +548,12 @@ mod tests {
         let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
-        let open_skel = builder.open(&mut open_object).unwrap();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        }
         let skel = open_skel.load().unwrap();
-
-        add_wan_ip(
-            &skel.maps.wan_ip_binding,
-            IFINDEX,
-            IpAddr::V4(WAN_IP),
-            None,
-            24,
-            Some(MacAddr::broadcast()),
-        );
 
         add_static_nat4_mapping_v3(
             &skel.maps.nat4_static_map,
