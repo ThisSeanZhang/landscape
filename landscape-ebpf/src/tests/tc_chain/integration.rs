@@ -247,8 +247,8 @@ fn tc_firewall_wan_egress_ingress() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _ae = TCAttach::attach_egress(&skel.progs.tc_firewall_wan_egress, env.h_i as i32);
-        _ai = TCAttach::attach_ingress(&skel.progs.tc_firewall_wan_ingress, env.h_i as i32);
+        _ae = TCAttach::attach_egress(&skel.progs.tc_firewall_wan_egress_v4, env.h_i as i32);
+        _ai = TCAttach::attach_ingress(&skel.progs.tc_firewall_wan_ingress_v4, env.h_i as i32);
     }
     {
         let _e = env.peer_ns.enter();
@@ -367,7 +367,7 @@ fn tc_pppoe_wan_egress_encap() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _attach = TCAttach::attach_egress(&skel.progs.tc_pppoe_wan_egress, env.h_i as i32);
+        _attach = TCAttach::attach_egress(&skel.progs.tc_pppoe_wan_egress_v4, env.h_i as i32);
     }
     {
         let _e = env.peer_ns.enter();

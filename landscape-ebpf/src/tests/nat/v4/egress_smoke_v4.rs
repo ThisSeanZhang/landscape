@@ -44,7 +44,7 @@ pub fn run_ipv4_egress_smoke(payload: Vec<u8>) {
         24,
         Some(MacAddr::broadcast()),
     );
-    let egress_nat = skel.progs.tc_nat_wan_egress;
+    let egress_nat = skel.progs.tc_nat_wan_egress_v4;
 
     let mut ctx = TestSkb { ifindex, ..Default::default() };
 

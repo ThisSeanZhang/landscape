@@ -2904,6 +2904,7 @@ dependencies = [
  "landscape-ebpf",
  "landscape-metric",
  "landscape-protobuf",
+ "libbpf-rs",
  "libc",
  "md-5 0.11.0",
  "netlink-packet-core",

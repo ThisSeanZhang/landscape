@@ -1,4 +1,3 @@
-use super::cmd::cmd_output;
 use super::env::{EnvConfig, PPPoETestEnv};
 use super::runner::{ClientSpec, start_client, wait_for_exit, wait_for_running};
 use super::scripted_server::{ScriptedServerMode, start_scripted_server};
@@ -15,23 +14,38 @@ fn spec_from(cfg: &EnvConfig) -> ClientSpec {
     }
 }
 
-/// Poll `tc filter show egress` inside the client namespace until the output
-/// contains `needle`, returning the last output either way.
-fn wait_for_egress_filter(client_ns: &str, iface: &str, needle: &str, timeout: Duration) -> String {
+/// Poll the scenario's pinned `tc_wan_egress_roots` prog array until the
+/// client iface's entry (`key = ifindex`) reaches `want_present`.  The entry
+/// is created by `TcChainManager::ensure_roots` when the PPPoE stage attaches
+/// and removed by `remove_roots` when the last stage detaches — the
+/// chain-injected successor of the old standalone `tc_pppoe_wan_egress`
+/// TC filter's attach/detach lifecycle.
+fn wait_for_egress_root_entry(
+    scenario: &str,
+    ifindex: u32,
+    want_present: bool,
+    timeout: Duration,
+) -> bool {
+    use libbpf_rs::{MapCore, MapHandle};
+
+    let path = std::path::PathBuf::from("/sys/fs/bpf/landscape")
+        .join(super::test_bpf_map_space(scenario))
+        .join("tc_chain")
+        .join("tc_wan_egress_roots");
     let deadline = Instant::now() + timeout;
-    let mut last = String::new();
     while Instant::now() < deadline {
-        last = cmd_output(
-            "ip",
-            &["netns", "exec", client_ns, "tc", "filter", "show", "egress", "dev", iface],
-        )
-        .unwrap_or_default();
-        if last.contains(needle) {
-            break;
+        let present = MapHandle::from_pinned_path(&path)
+            .ok()
+            .and_then(|map| {
+                map.lookup(&ifindex.to_ne_bytes(), libbpf_rs::MapFlags::ANY).ok().flatten()
+            })
+            .is_some();
+        if present == want_present {
+            return true;
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    last
+    false
 }
 
 /// Full session negotiation reaches `Running` (which — after the Running
@@ -158,13 +172,17 @@ async fn link_loss_triggers_redial_and_reconnect() {
     drop(env);
 }
 
-/// After the session is established, the `tc_pppoe_wan_egress` TC filter is
-/// attached to the client veth; after the client stops, the filter is
-/// detached again (TcHookProxy teardown).
+/// After the session is established, the client iface's WAN egress chain
+/// root is registered (keyed by ifindex in the pinned `tc_wan_egress_roots`
+/// prog array) with the link's terminal PPPoE encap stage injected into the
+/// chain; after the client stops, the last stage's teardown removes the
+/// entry again.
 #[tokio::test]
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn ebpf_pipeline_attaches_and_detaches() {
     require_root();
+    // First binding → drops last, after the client exited and released its
+    // map fds: removes this scenario's eBPF map space from bpffs.
     let _map_space_cleanup = MapSpaceCleanup::new("ebpf-pipeline");
 
     let env_cfg = EnvConfig::default();
@@ -182,33 +200,18 @@ async fn ebpf_pipeline_attaches_and_detaches() {
         .await
         .expect("client should reach Running");
 
-    // The kernel truncates the program name to 15 chars.
-    let iface_name = env.client_info().name.clone();
-    let client_ns = env.client_ns().to_string();
-    let tc =
-        wait_for_egress_filter(&client_ns, &iface_name, "tc_pppoe_wan_eg", Duration::from_secs(5));
+    let ifindex = env.client_info().index;
     assert!(
-        tc.contains("tc_pppoe_wan_eg"),
-        "egress filter should reference tc_pppoe_wan_egress, got: {tc}"
+        wait_for_egress_root_entry("ebpf-pipeline", ifindex, true, Duration::from_secs(5)),
+        "WAN egress chain root should be registered for ifindex {ifindex} while running"
     );
 
     client.stop_and_join(Duration::from_secs(15)).expect("client should stop cleanly");
 
-    let detach_deadline = Instant::now() + Duration::from_secs(5);
-    let mut detached = false;
-    while Instant::now() < detach_deadline {
-        let out = cmd_output(
-            "ip",
-            &["netns", "exec", &client_ns, "tc", "filter", "show", "egress", "dev", &iface_name],
-        )
-        .unwrap_or_default();
-        if !out.contains("tc_pppoe_wan_eg") {
-            detached = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    assert!(detached, "egress filter should be detached after the client stops");
+    assert!(
+        wait_for_egress_root_entry("ebpf-pipeline", ifindex, false, Duration::from_secs(5)),
+        "WAN egress chain root entry should be removed after the client stops"
+    );
 
     server.wait().expect("server should observe the client termination");
     drop(env);

@@ -148,8 +148,10 @@ pub fn attach_tc_nat(
     );
 
     let entry = StageEntry {
-        wan_ingress_prog_fd: skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
-        wan_egress_prog_fd: skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
+        wan_ingress_prog_v4_fd: skel.progs.tc_nat_wan_ingress_v4.as_fd().as_raw_fd(),
+        wan_ingress_prog_v6_fd: skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
+        wan_egress_prog_v4_fd: skel.progs.tc_nat_wan_egress_v4.as_fd().as_raw_fd(),
+        wan_egress_prog_v6_fd: skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
@@ -175,7 +177,7 @@ fn init_nat_xdp_unified(
     config: &NatConfig,
 ) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
     use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::chain::xdp_manager::StageType as XdpStageType;
+    use crate::chain::xdp_manager::{StageEntry as XdpStageEntry, StageType as XdpStageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -314,17 +316,23 @@ fn init_nat_xdp_unified(
     // ── 3. Inject into chain managers ──
 
     let tc_entry = StageEntry {
-        wan_ingress_prog_fd: tc_skel.progs.tc_nat_wan_ingress.as_fd().as_raw_fd(),
-        wan_egress_prog_fd: tc_skel.progs.tc_nat_wan_egress.as_fd().as_raw_fd(),
+        wan_ingress_prog_v4_fd: tc_skel.progs.tc_nat_wan_ingress_v4.as_fd().as_raw_fd(),
+        wan_ingress_prog_v6_fd: tc_skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
+        wan_egress_prog_v4_fd: tc_skel.progs.tc_nat_wan_egress_v4.as_fd().as_raw_fd(),
+        wan_egress_prog_v6_fd: tc_skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
     rt.tc.inject(ifindex, StageType::Nat, tc_entry)?;
 
-    let xdp_lan_fd = xdp_skel.progs.egress_nat.as_fd().as_raw_fd();
-    let xdp_wan_fd = xdp_skel.progs.ingress_nat.as_fd().as_raw_fd();
-    let xdp_next_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
-    rt.xdp.inject(ifindex, XdpStageType::Nat, xdp_lan_fd, xdp_wan_fd, xdp_next_fd)?;
+    let xdp_entry = XdpStageEntry {
+        lan_prog_v4_fd: xdp_skel.progs.egress_nat_v4.as_fd().as_raw_fd(),
+        lan_prog_v6_fd: xdp_skel.progs.egress_nat_v6.as_fd().as_raw_fd(),
+        wan_prog_v4_fd: xdp_skel.progs.ingress_nat_v4.as_fd().as_raw_fd(),
+        wan_prog_v6_fd: xdp_skel.progs.ingress_nat_v6.as_fd().as_raw_fd(),
+        next_stage_map_fd: xdp_skel.maps.next_stage.as_fd().as_raw_fd(),
+    };
+    rt.xdp.inject(ifindex, XdpStageType::Nat, xdp_entry)?;
 
     Ok((
         TcNatHandle {

@@ -171,10 +171,6 @@ impl LandscapeMapPath {
     }
 }
 
-// Fire wall -> nat -> pppoe
-// const PPPOE_MTU_FILTER_EGRESS_PRIORITY: u32 = 1;
-const PPPOE_EGRESS_PRIORITY: u32 = 2;
-
 // LAN ingress TC classifier priorities (smaller runs first)
 pub(crate) const TC_LAN_INGRESS_INTRO_PRIORITY: u32 = 1;
 pub(crate) const TC_LAN_INGRESS_DAO_PRIORITY: u32 = 2;

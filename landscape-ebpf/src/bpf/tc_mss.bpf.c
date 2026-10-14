@@ -132,41 +132,54 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline void clamp_tcp_if_present(struct __sk_buff *skb, u32 current_l3_offset,
-                                                 u16 mtu) {
-    int ret = 0;
-    u8 l3_protocol = 0;
-    ret = current_l3_protocol(skb, current_l3_offset, &l3_protocol);
-    if (ret != TC_ACT_OK) return;
+static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
+    struct iphdr *iph;
+    if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return;
+    if (iph->protocol != IPPROTO_TCP) return;
+    u32 ip_hdr_len = iph->ihl * 4;
 
+    do_mss_clamp(skb, ip_hdr_len + current_l3_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+}
+
+static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
     u32 ip_hdr_len;
-    if (l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        struct iphdr *iph;
-        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return;
-        if (iph->protocol != IPPROTO_TCP) return;
-        ip_hdr_len = iph->ihl * 4;
-    } else {
-        ret = extract_ipv6_tcp_offset(skb, current_l3_offset, &ip_hdr_len);
-        if (ret != TC_ACT_OK) return;
-    }
+    if (extract_ipv6_tcp_offset(skb, current_l3_offset, &ip_hdr_len) != TC_ACT_OK) return;
 
     do_mss_clamp(skb, ip_hdr_len + current_l3_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
 }
 
 SEC("tc/ingress")
-int tc_mss_wan_ingress(struct __sk_buff *skb) {
-    clamp_tcp_if_present(skb, current_l3_offset, mtu_size);
+int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
+    clamp_tcp_v4(skb, current_l3_offset, mtu_size);
 
-    TC_CHAIN_WAN_INGRESS(skb);
-    TC_CHAIN_EXIT_WAN_INGRESS(skb);
+    TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
+    TC_FROM_WAN_CHAIN_EXIT(skb);
+    return TC_ACT_OK;
+}
+
+SEC("tc/ingress")
+int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
+    clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+
+    TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
+    TC_FROM_WAN_CHAIN_EXIT(skb);
     return TC_ACT_OK;
 }
 
 SEC("tc/egress")
-int tc_mss_wan_egress(struct __sk_buff *skb) {
-    clamp_tcp_if_present(skb, current_l3_offset, mtu_size);
+int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
+    clamp_tcp_v4(skb, current_l3_offset, mtu_size);
 
-    TC_CHAIN_WAN_EGRESS(skb);
-    TC_CHAIN_EXIT_WAN_EGRESS(skb);
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
+    return TC_ACT_UNSPEC;
+}
+
+SEC("tc/egress")
+int tc_mss_wan_egress_v6(struct __sk_buff *skb) {
+    clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
 }

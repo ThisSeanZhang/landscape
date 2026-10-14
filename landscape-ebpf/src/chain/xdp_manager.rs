@@ -105,13 +105,35 @@ impl ManagerInner {
 #[derive(Default)]
 struct ChainState {
     root: Option<ChainRoot>,
-    stages: BTreeMap<StageType, StageEntry>,
+    stages: BTreeMap<StageType, DirEntry>,
 }
 
-struct StageEntry {
-    prog_fd: i32,
+/// One stage's per-family entry programs, split by chain direction.
+/// Shared with the stage loaders; split into per-direction [`DirEntry`]
+/// on inject.
+pub struct StageEntry {
+    pub lan_prog_v4_fd: i32,
+    pub lan_prog_v6_fd: i32,
+    pub wan_prog_v4_fd: i32,
+    pub wan_prog_v6_fd: i32,
+    pub next_stage_map_fd: i32,
+}
+
+struct DirEntry {
+    prog_v4_fd: i32,
+    prog_v6_fd: i32,
     next_stage_map_fd: i32,
 }
+
+// Family-indexed chain slots; must match chain/xdp_stage.h and
+// chain/xdp_cb.h (next_stage slots are direction x family, root
+// slots are family-only).
+const XDP_FROM_LAN_SLOT_V4: u32 = 0;
+const XDP_FROM_LAN_SLOT_V6: u32 = 1;
+const XDP_FROM_WAN_SLOT_V4: u32 = 2;
+const XDP_FROM_WAN_SLOT_V6: u32 = 3;
+const XDP_ROOT_SLOT_V4: u32 = 0;
+const XDP_ROOT_SLOT_V6: u32 = 1;
 
 enum ChainRoot {
     Wan {
@@ -150,6 +172,9 @@ pub struct XdpChainManager {
     inner: Mutex<ManagerInner>,
     skb_bundles: Mutex<HashMap<u32, SkbXdpBundle>>,
     skb_pending: Mutex<HashMap<u32, SkbPending>>,
+    // Per-iface interest count of native PPPoE links sharing the SKB
+    // fallback program (attach on first, detach on last release).
+    pppoe_fallback_refs: Mutex<HashMap<u32, usize>>,
 }
 
 // Landscape owns route interfaces, so native XDP attach intentionally replaces
@@ -383,6 +408,33 @@ impl Drop for NativeXdpLink {
     }
 }
 
+// Pure interest-count decision helpers for the shared PPPoE SKB
+// fallback, kept free of manager state so the semantics are
+// unit-testable without loading any BPF objects.
+
+/// Register interest; returns `true` when this is the first link on the
+/// interface (the caller must prepare and park/attach the program).
+fn acquire_fallback_interest(refs: &mut HashMap<u32, usize>, ifindex: u32) -> bool {
+    let count = refs.entry(ifindex).or_insert(0);
+    *count += 1;
+    *count == 1
+}
+
+/// Drop interest; returns `true` when this was the last link (the
+/// caller must detach and forget the shared program).
+fn release_fallback_interest(refs: &mut HashMap<u32, usize>, ifindex: u32) -> bool {
+    match refs.get_mut(&ifindex) {
+        Some(count) if *count > 1 => {
+            *count -= 1;
+            false
+        }
+        _ => {
+            refs.remove(&ifindex);
+            true
+        }
+    }
+}
+
 impl XdpChainManager {
     /// Create the XDP pin directory, seed its prog-array maps, clear stale
     /// entries left by previous runs, and load the per-direction exit programs
@@ -468,6 +520,7 @@ impl XdpChainManager {
             inner: Mutex::new(ManagerInner::new()),
             skb_bundles: Mutex::new(HashMap::new()),
             skb_pending: Mutex::new(HashMap::new()),
+            pppoe_fallback_refs: Mutex::new(HashMap::new()),
         })
     }
 
@@ -540,20 +593,34 @@ impl XdpChainManager {
         Ok(())
     }
 
-    pub fn inject(
-        &self,
-        ifindex: u32,
-        stage: StageType,
-        lan_prog_fd: i32,
-        wan_prog_fd: i32,
-        next_stage_map_fd: i32,
-    ) -> LdEbpfResult<()> {
+    pub fn inject(&self, ifindex: u32, stage: StageType, entry: StageEntry) -> LdEbpfResult<()> {
+        let StageEntry {
+            lan_prog_v4_fd,
+            lan_prog_v6_fd,
+            wan_prog_v4_fd,
+            wan_prog_v6_fd,
+            next_stage_map_fd,
+        } = entry;
         {
             let mut inner = self.inner.lock().unwrap();
             let lan_state = inner.chains.entry((ifindex, ChainDir::Lan)).or_default();
-            lan_state.stages.insert(stage, StageEntry { prog_fd: lan_prog_fd, next_stage_map_fd });
+            lan_state.stages.insert(
+                stage,
+                DirEntry {
+                    prog_v4_fd: lan_prog_v4_fd,
+                    prog_v6_fd: lan_prog_v6_fd,
+                    next_stage_map_fd,
+                },
+            );
             let wan_state = inner.chains.entry((ifindex, ChainDir::Wan)).or_default();
-            wan_state.stages.insert(stage, StageEntry { prog_fd: wan_prog_fd, next_stage_map_fd });
+            wan_state.stages.insert(
+                stage,
+                DirEntry {
+                    prog_v4_fd: wan_prog_v4_fd,
+                    prog_v6_fd: wan_prog_v6_fd,
+                    next_stage_map_fd,
+                },
+            );
         }
         self.rebuild(ifindex, ChainDir::Lan)?;
         self.rebuild(ifindex, ChainDir::Wan)?;
@@ -669,6 +736,50 @@ impl XdpChainManager {
         self.skb_pending.lock().unwrap().remove(&ifindex)
     }
 
+    /// Register one native PPPoE link's interest in the shared per-iface
+    /// SKB fallback program.  The first link prepares and parks (or, in
+    /// TC-only mode, attaches) a single fallback; further links only bump
+    /// the count, so they neither replace nor duplicate it.
+    pub(crate) fn acquire_pppoe_skb_fallback(
+        &self,
+        ifindex: u32,
+        make: impl FnOnce() -> LdEbpfResult<SkbPending>,
+    ) -> LdEbpfResult<()> {
+        let first = {
+            let mut refs = self.pppoe_fallback_refs.lock().unwrap();
+            acquire_fallback_interest(&mut refs, ifindex)
+        };
+        if !first {
+            return Ok(());
+        }
+
+        match make() {
+            Ok(pending) => {
+                self.set_skb_pending(ifindex, pending);
+                Ok(())
+            }
+            Err(e) => {
+                // Roll the just-created interest back on failure.
+                let mut refs = self.pppoe_fallback_refs.lock().unwrap();
+                let _ = release_fallback_interest(&mut refs, ifindex);
+                Err(e)
+            }
+        }
+    }
+
+    /// Drop one link's interest; the last one out detaches (if attached)
+    /// and forgets the shared fallback program.
+    pub(crate) fn release_pppoe_skb_fallback(&self, ifindex: u32) {
+        let last = {
+            let mut refs = self.pppoe_fallback_refs.lock().unwrap();
+            release_fallback_interest(&mut refs, ifindex)
+        };
+        if last {
+            self.take_skb_bundle(ifindex);
+            let _ = self.take_skb_pending(ifindex);
+        }
+    }
+
     fn create_wan_root(&self, ifindex: u32) -> LdEbpfResult<ChainRoot> {
         let builder = XdpWanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
@@ -762,32 +873,92 @@ impl XdpChainManager {
         })?;
 
         let root = state.root.as_ref().unwrap();
-        let dir_slot = match chain {
-            ChainDir::Lan => 0u32,
-            ChainDir::Wan => 1u32,
+        let (dir_slot_v4, dir_slot_v6) = match chain {
+            ChainDir::Lan => (XDP_FROM_LAN_SLOT_V4, XDP_FROM_LAN_SLOT_V6),
+            ChainDir::Wan => (XDP_FROM_WAN_SLOT_V4, XDP_FROM_WAN_SLOT_V6),
         };
 
         for entry in state.stages.values() {
-            delete_prog_array_fd(entry.next_stage_map_fd, dir_slot);
+            delete_prog_array_fd(entry.next_stage_map_fd, dir_slot_v4);
+            delete_prog_array_fd(entry.next_stage_map_fd, dir_slot_v6);
         }
-        delete_prog_array_fd(root.root_next_stage_fd(), 0);
+        delete_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V4);
+        delete_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V6);
 
-        let sorted: Vec<&StageEntry> = state
+        let sorted: Vec<&DirEntry> = state
             .stages
             .iter()
             .filter(|(k, _)| !matches!((*k, chain), (StageType::Pppoe, ChainDir::Wan)))
             .map(|(_, v)| v)
+            .filter(|v| v.prog_v4_fd != 0 && v.prog_v6_fd != 0)
             .collect();
         if sorted.is_empty() {
             return Ok(());
         }
 
-        update_prog_array_fd(root.root_next_stage_fd(), 0, sorted[0].prog_fd)?;
+        update_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V4, sorted[0].prog_v4_fd)?;
+        update_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V6, sorted[0].prog_v6_fd)?;
 
         for i in 0..sorted.len().saturating_sub(1) {
-            update_prog_array_fd(sorted[i].next_stage_map_fd, dir_slot, sorted[i + 1].prog_fd)?;
+            update_prog_array_fd(
+                sorted[i].next_stage_map_fd,
+                dir_slot_v4,
+                sorted[i + 1].prog_v4_fd,
+            )?;
+            update_prog_array_fd(
+                sorted[i].next_stage_map_fd,
+                dir_slot_v6,
+                sorted[i + 1].prog_v6_fd,
+            )?;
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_first_acquire_prepares_and_last_release_removes() {
+        let mut refs = HashMap::new();
+        assert!(acquire_fallback_interest(&mut refs, 9), "first link must prepare");
+        assert!(release_fallback_interest(&mut refs, 9), "last link must remove");
+        assert!(!refs.contains_key(&9));
+    }
+
+    #[test]
+    fn fallback_extra_links_do_not_reprepare() {
+        let mut refs = HashMap::new();
+        assert!(acquire_fallback_interest(&mut refs, 3));
+        assert!(!acquire_fallback_interest(&mut refs, 3), "second link must reuse");
+        assert!(!acquire_fallback_interest(&mut refs, 3), "third link must reuse");
+
+        assert!(!release_fallback_interest(&mut refs, 3));
+        assert!(!release_fallback_interest(&mut refs, 3));
+        assert!(release_fallback_interest(&mut refs, 3), "only the last removes");
+        assert!(!refs.contains_key(&3));
+    }
+
+    #[test]
+    fn fallback_interests_are_per_ifindex() {
+        let mut refs = HashMap::new();
+        assert!(acquire_fallback_interest(&mut refs, 1));
+        assert!(acquire_fallback_interest(&mut refs, 2));
+        assert!(!acquire_fallback_interest(&mut refs, 2), "second link on ifindex 2 reuses");
+        // Releasing all links of ifindex 1 must not touch ifindex 2.
+        assert!(release_fallback_interest(&mut refs, 1));
+        assert!(!release_fallback_interest(&mut refs, 2));
+        assert_eq!(refs.get(&2), Some(&1));
+    }
+
+    #[test]
+    fn fallback_release_without_acquire_is_noop_last() {
+        let mut refs = HashMap::new();
+        // Defensive: a release with no registered interest still reports
+        // "last" so callers cleaning up shared state stay idempotent.
+        assert!(release_fallback_interest(&mut refs, 7));
+        assert!(!refs.contains_key(&7));
     }
 }

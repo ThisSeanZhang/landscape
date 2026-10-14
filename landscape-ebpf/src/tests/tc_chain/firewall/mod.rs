@@ -19,8 +19,8 @@ pub fn test_ingress_and_egress(egress_payload: Vec<u8>, ingress_payload: Vec<u8>
 
     let skel = firewall_open_skel.load().unwrap();
 
-    let egress_firewall = skel.progs.tc_firewall_wan_egress;
-    let ingress_firewall = skel.progs.tc_firewall_wan_ingress;
+    let egress_firewall = skel.progs.tc_firewall_wan_egress_v4;
+    let ingress_firewall = skel.progs.tc_firewall_wan_ingress_v4;
 
     let egress_input = ProgramInput {
         data_in: Some(&egress_payload),

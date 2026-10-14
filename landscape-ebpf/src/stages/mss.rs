@@ -65,8 +65,10 @@ pub fn attach_tc_mss(
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
 
     let entry = StageEntry {
-        wan_ingress_prog_fd: skel.progs.tc_mss_wan_ingress.as_fd().as_raw_fd(),
-        wan_egress_prog_fd: skel.progs.tc_mss_wan_egress.as_fd().as_raw_fd(),
+        wan_ingress_prog_v4_fd: skel.progs.tc_mss_wan_ingress_v4.as_fd().as_raw_fd(),
+        wan_ingress_prog_v6_fd: skel.progs.tc_mss_wan_ingress_v6.as_fd().as_raw_fd(),
+        wan_egress_prog_v4_fd: skel.progs.tc_mss_wan_egress_v4.as_fd().as_raw_fd(),
+        wan_egress_prog_v6_fd: skel.progs.tc_mss_wan_egress_v6.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
@@ -111,7 +113,7 @@ pub fn init_xdp_mss(
     ifindex: u32,
     mtu_size: u16,
 ) -> LdEbpfResult<XdpMssHandle> {
-    use crate::chain::xdp_manager::StageType;
+    use crate::chain::xdp_manager::{StageEntry, StageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -154,11 +156,15 @@ pub fn init_xdp_mss(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_mss skeleton")?;
 
-    let lan_fd = skel.progs.xdp_mss_lan.as_fd().as_raw_fd();
-    let wan_fd = skel.progs.xdp_mss_wan.as_fd().as_raw_fd();
-    let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
+    let entry = StageEntry {
+        lan_prog_v4_fd: skel.progs.xdp_mss_lan_v4.as_fd().as_raw_fd(),
+        lan_prog_v6_fd: skel.progs.xdp_mss_lan_v6.as_fd().as_raw_fd(),
+        wan_prog_v4_fd: skel.progs.xdp_mss_wan_v4.as_fd().as_raw_fd(),
+        wan_prog_v6_fd: skel.progs.xdp_mss_wan_v6.as_fd().as_raw_fd(),
+        next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
+    };
 
-    rt.xdp.inject(ifindex, StageType::Mss, lan_fd, wan_fd, next_fd)?;
+    rt.xdp.inject(ifindex, StageType::Mss, entry)?;
 
     Ok(XdpMssHandle {
         runtime: rt.clone(),

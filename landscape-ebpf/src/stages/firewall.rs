@@ -71,8 +71,10 @@ pub fn attach_tc_firewall(
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
     let entry = StageEntry {
-        wan_ingress_prog_fd: skel.progs.tc_firewall_wan_ingress.as_fd().as_raw_fd(),
-        wan_egress_prog_fd: skel.progs.tc_firewall_wan_egress.as_fd().as_raw_fd(),
+        wan_ingress_prog_v4_fd: skel.progs.tc_firewall_wan_ingress_v4.as_fd().as_raw_fd(),
+        wan_ingress_prog_v6_fd: skel.progs.tc_firewall_wan_ingress_v6.as_fd().as_raw_fd(),
+        wan_egress_prog_v4_fd: skel.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd(),
+        wan_egress_prog_v6_fd: skel.progs.tc_firewall_wan_egress_v6.as_fd().as_raw_fd(),
         wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
@@ -113,7 +115,7 @@ impl Drop for XdpFirewallHandle {
 }
 
 pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
-    use crate::chain::xdp_manager::StageType;
+    use crate::chain::xdp_manager::{StageEntry, StageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -166,11 +168,15 @@ pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<Xd
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_firewall skeleton")?;
 
-    let lan_fd = skel.progs.xdp_firewall_lan.as_fd().as_raw_fd();
-    let wan_fd = skel.progs.xdp_firewall_wan.as_fd().as_raw_fd();
-    let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
+    let entry = StageEntry {
+        lan_prog_v4_fd: skel.progs.xdp_firewall_lan_v4.as_fd().as_raw_fd(),
+        lan_prog_v6_fd: skel.progs.xdp_firewall_lan_v6.as_fd().as_raw_fd(),
+        wan_prog_v4_fd: skel.progs.xdp_firewall_wan_v4.as_fd().as_raw_fd(),
+        wan_prog_v6_fd: skel.progs.xdp_firewall_wan_v6.as_fd().as_raw_fd(),
+        next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
+    };
 
-    rt.xdp.inject(ifindex, StageType::Firewall, lan_fd, wan_fd, next_fd)?;
+    rt.xdp.inject(ifindex, StageType::Firewall, entry)?;
 
     Ok(XdpFirewallHandle {
         runtime: rt.clone(),

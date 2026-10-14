@@ -143,7 +143,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
         ..Default::default()
     };
 
-    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+    let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
     assert_eq!(
         result.return_value as i32, -1,
         "timer status contention must not fail the current packet"
@@ -181,7 +181,7 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
         ..Default::default()
     };
 
-    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+    let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
     let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -242,7 +242,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
         ..Default::default()
     };
 
-    let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+    let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
     assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
     let value = lookup_ct6_entry(&skel.maps.nat6_timer_map, &new_key);
@@ -396,7 +396,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(
             result.return_value as i32, -1,
             "egress ICMP error should return TC_ACT_UNSPEC(-1)"
@@ -475,7 +475,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress ICMP error should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -566,7 +566,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let ct_value = lookup_ct6_entry(&skel.maps.nat6_timer_map, &new_key);
@@ -628,7 +628,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let ct_value = lookup_ct6_entry(&skel.maps.nat6_timer_map, &new_key);
@@ -689,7 +689,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let ct_value = lookup_ct6_entry(&skel.maps.nat6_timer_map, &new_key);

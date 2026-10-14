@@ -14,53 +14,77 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-static __always_inline int firewall_check(struct xdp_md *ctx, bool block_src) {
+static __always_inline int fw_check_v4(struct xdp_md *ctx, bool block_src) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
 
-    enum xdp_l3_proto proto = xdp_classify_l3(ctx);
-    if (proto != XDP_L3_V4 && proto != XDP_L3_V6) return XDP_PASS;
+    struct iphdr *iph = data + sizeof(struct ethhdr);
+    if ((void *)(iph + 1) > data_end) return XDP_PASS;
 
-    if (proto == XDP_L3_V4) {
-        struct iphdr *iph = data + sizeof(struct ethhdr);
-        if ((void *)(iph + 1) > data_end) return XDP_PASS;
+    struct ipv4_lpm_key key = {
+        .prefixlen = 32,
+        .addr = block_src ? iph->saddr : iph->daddr,
+    };
+    if (bpf_map_lookup_elem(&firewall_block_ip4_map, &key)) return XDP_DROP;
 
-        struct ipv4_lpm_key key = {
-            .prefixlen = 32,
-            .addr = block_src ? iph->saddr : iph->daddr,
-        };
-        if (bpf_map_lookup_elem(&firewall_block_ip4_map, &key)) return XDP_DROP;
-    } else {
-        struct ipv6hdr *ip6h = data + sizeof(struct ethhdr);
-        if ((void *)(ip6h + 1) > data_end) return XDP_PASS;
+    return XDP_PASS;
+}
 
-        struct ipv6_lpm_key key = {
-            .prefixlen = 128,
-        };
-        __builtin_memcpy(&key.addr, block_src ? &ip6h->saddr : &ip6h->daddr, sizeof(key.addr));
-        if (bpf_map_lookup_elem(&firewall_block_ip6_map, &key)) return XDP_DROP;
-    }
+static __always_inline int fw_check_v6(struct xdp_md *ctx, bool block_src) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+
+    struct ipv6hdr *ip6h = data + sizeof(struct ethhdr);
+    if ((void *)(ip6h + 1) > data_end) return XDP_PASS;
+
+    struct ipv6_lpm_key key = {
+        .prefixlen = 128,
+    };
+    __builtin_memcpy(&key.addr, block_src ? &ip6h->saddr : &ip6h->daddr, sizeof(key.addr));
+    if (bpf_map_lookup_elem(&firewall_block_ip6_map, &key)) return XDP_DROP;
 
     return XDP_PASS;
 }
 
 SEC("xdp")
-int xdp_firewall_lan(struct xdp_md *ctx) {
-    int verdict = firewall_check(ctx, false);
+int xdp_firewall_lan_v4(struct xdp_md *ctx) {
+    int verdict = fw_check_v4(ctx, false);
     if (verdict != XDP_PASS) return verdict;
 
-    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V4(ctx);
     XDP_FROM_LAN_CHAIN_EXIT(ctx);
     bpf_printk("[fw_lan] all tailcalls failed");
     return XDP_PASS;
 }
 
 SEC("xdp")
-int xdp_firewall_wan(struct xdp_md *ctx) {
-    int verdict = firewall_check(ctx, true);
+int xdp_firewall_lan_v6(struct xdp_md *ctx) {
+    int verdict = fw_check_v6(ctx, false);
     if (verdict != XDP_PASS) return verdict;
 
-    XDP_FROM_WAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V6(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
+    bpf_printk("[fw_lan] all tailcalls failed");
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int xdp_firewall_wan_v4(struct xdp_md *ctx) {
+    int verdict = fw_check_v4(ctx, true);
+    if (verdict != XDP_PASS) return verdict;
+
+    XDP_FROM_WAN_CHAIN_NEXT_V4(ctx);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
+    bpf_printk("[fw_wan] all tailcalls failed");
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int xdp_firewall_wan_v6(struct xdp_md *ctx) {
+    int verdict = fw_check_v6(ctx, true);
+    if (verdict != XDP_PASS) return verdict;
+
+    XDP_FROM_WAN_CHAIN_NEXT_V6(ctx);
     XDP_FROM_WAN_CHAIN_EXIT(ctx);
     bpf_printk("[fw_wan] all tailcalls failed");
     return XDP_PASS;

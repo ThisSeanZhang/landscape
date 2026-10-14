@@ -139,7 +139,7 @@ fn xdp_mss_syn() {
     let mut obj = std::mem::MaybeUninit::uninit();
     let open = builder.open(&mut obj).expect("open");
     let skel = open.load().expect("load");
-    let _link = skel.progs.xdp_mss_lan.attach_xdp(ifindex).expect("attach");
+    let _link = skel.progs.xdp_mss_lan_v4.attach_xdp(ifindex).expect("attach");
 
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();
@@ -182,12 +182,12 @@ fn xdp_mss_bidirectional() {
     let builder1 = XdpMssSkelBuilder::default();
     let mut obj1 = std::mem::MaybeUninit::uninit();
     let skel_h = builder1.open(&mut obj1).expect("open").load().expect("load");
-    let _link_h = skel_h.progs.xdp_mss_lan.attach_xdp(host_ifindex).expect("attach host");
+    let _link_h = skel_h.progs.xdp_mss_lan_v4.attach_xdp(host_ifindex).expect("attach host");
 
     let builder2 = XdpMssSkelBuilder::default();
     let mut obj2 = std::mem::MaybeUninit::uninit();
     let skel_p = builder2.open(&mut obj2).expect("open").load().expect("load");
-    let _link_p = skel_p.progs.xdp_mss_lan.attach_xdp(peer_ifindex).expect("attach peer");
+    let _link_p = skel_p.progs.xdp_mss_lan_v4.attach_xdp(peer_ifindex).expect("attach peer");
 
     let d_b1 = TestXdpDummySkelBuilder::default();
     let mut d1_obj = std::mem::MaybeUninit::uninit();
@@ -266,7 +266,7 @@ fn xdp_mss_non_syn_passthrough() {
     let builder = XdpMssSkelBuilder::default();
     let mut obj = std::mem::MaybeUninit::uninit();
     let skel = builder.open(&mut obj).expect("open").load().expect("load");
-    let _link = skel.progs.xdp_mss_lan.attach_xdp(ifindex).expect("attach");
+    let _link = skel.progs.xdp_mss_lan_v4.attach_xdp(ifindex).expect("attach");
 
     let d_b = TestXdpDummySkelBuilder::default();
     let mut d_obj = std::mem::MaybeUninit::uninit();

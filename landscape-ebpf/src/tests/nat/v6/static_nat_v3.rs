@@ -171,7 +171,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -234,7 +234,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -297,7 +297,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -359,7 +359,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -421,7 +421,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -483,7 +483,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -537,7 +537,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(
             result.return_value as i32, TC_ACT_SHOT,
             "ingress with no matching mapping should return TC_ACT_SHOT(2)",
@@ -577,7 +577,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -628,7 +628,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -684,7 +684,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
@@ -735,7 +735,7 @@ mod tests {
         let mut outgoing_out = vec![0u8; outgoing.len()];
         let outgoing_result = skel
             .progs
-            .tc_nat_wan_egress
+            .tc_nat_wan_egress_v6
             .test_run(ProgramInput {
                 data_in: Some(&outgoing),
                 context_in: Some(outgoing_ctx.as_mut_bytes()),
@@ -755,7 +755,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");

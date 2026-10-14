@@ -30,7 +30,7 @@ pub fn init_xdp_pppoe(
     ifindex: u32,
     session_id: u16,
 ) -> LdEbpfResult<XdpPppoeHandle> {
-    use crate::chain::xdp_manager::StageType;
+    use crate::chain::xdp_manager::{StageEntry, StageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -71,10 +71,17 @@ pub fn init_xdp_pppoe(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_pppoe skeleton")?;
 
-    let lan_fd = skel.progs.xdp_pppoe_encap_lan.as_fd().as_raw_fd();
-    let next_fd = skel.maps.next_stage.as_fd().as_raw_fd();
+    // PPPoE encap is family-agnostic (one body, two entry programs)
+    // and LAN-side only: the WAN chain has no PPPoE stage.
+    let entry = StageEntry {
+        lan_prog_v4_fd: skel.progs.xdp_pppoe_encap_lan_v4.as_fd().as_raw_fd(),
+        lan_prog_v6_fd: skel.progs.xdp_pppoe_encap_lan_v6.as_fd().as_raw_fd(),
+        wan_prog_v4_fd: 0,
+        wan_prog_v6_fd: 0,
+        next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
+    };
 
-    rt.xdp.inject(ifindex, StageType::Pppoe, lan_fd, 0, next_fd)?;
+    rt.xdp.inject(ifindex, StageType::Pppoe, entry)?;
 
     Ok(XdpPppoeHandle {
         runtime: rt.clone(),

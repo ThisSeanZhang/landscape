@@ -109,7 +109,7 @@ fn assert_xdp_round_trip(
     let mut egress_out = vec![0; egress.len() + 8];
     let result = skel
         .progs
-        .egress_nat
+        .egress_nat_v6
         .test_run(ProgramInput {
             data_in: Some(&egress),
             data_out: Some(&mut egress_out),
@@ -123,7 +123,7 @@ fn assert_xdp_round_trip(
     let mut ingress_out = vec![0; ingress.len() + 8];
     let result = skel
         .progs
-        .ingress_nat
+        .ingress_nat_v6
         .test_run(ProgramInput {
             data_in: Some(&ingress),
             data_out: Some(&mut ingress_out),

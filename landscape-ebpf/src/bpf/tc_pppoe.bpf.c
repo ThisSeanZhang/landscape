@@ -5,6 +5,9 @@
 
 #include "base/landscape.h"
 #include "base/pppoe_def.h"
+#include "chain/tc_cb.h"
+#include "chain/tc_stage.h"
+#include "chain/tc_wan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -21,15 +24,15 @@ struct pppoe_egress_tmpl {
 
 const volatile struct pppoe_egress_tmpl pppoe_tmpl = {};
 
-static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
+// Family-agnostic PPPoE encap: the per-family entry program passes the
+// family flag (the chain root already forked on the L3 protocol), and
+// the hop slot likewise comes from the entry.
+static __always_inline void tc_pppoe_encap(struct __sk_buff *skb, bool is_v6) {
     void *data_end = (void *)(long)skb->data_end;
     void *data = (void *)(long)skb->data;
     struct ethhdr *eth = data;
 
     if ((void *)(eth + 1) > data_end) return;
-
-    bool is_v6 = (eth->h_proto == ETH_IPV6);
-    if (!is_v6 && eth->h_proto != ETH_IPV4) return;
 
     u64 adj_flag = is_v6 ? BPF_F_ADJ_ROOM_ENCAP_L3_IPV6 : BPF_F_ADJ_ROOM_ENCAP_L3_IPV4;
 
@@ -43,8 +46,22 @@ static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
     bpf_skb_store_bytes(skb, 0, &hdr, sizeof(hdr), 0);
 }
 
+// Terminal per-link egress stage: encapsulates only the packets that
+// traversed this link's chain, with this link's session template.
 SEC("tc/egress")
-int tc_pppoe_wan_egress(struct __sk_buff *skb) {
-    tc_pppoe_encap(skb);
+int tc_pppoe_wan_egress_v4(struct __sk_buff *skb) {
+    tc_pppoe_encap(skb, false);
+
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
+    return TC_ACT_UNSPEC;
+}
+
+SEC("tc/egress")
+int tc_pppoe_wan_egress_v6(struct __sk_buff *skb) {
+    tc_pppoe_encap(skb, true);
+
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
 }

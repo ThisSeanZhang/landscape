@@ -13,17 +13,15 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u16 session_id = 0;
 
-static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx) {
+// Family-agnostic PPPoE encap: the entry program passes the PPP
+// protocol for its family (the chain root already forked on the L3
+// protocol), and the hop slot likewise comes from the entry.
+static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx, u16 ppp_proto) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
 
     if ((void *)(eth + 1) > data_end) return XDP_PASS;
-
-    bool is_v6 = (eth->h_proto == ETH_IPV6);
-    if (!is_v6 && eth->h_proto != ETH_IPV4) return XDP_PASS;
-
-    u16 ppp_proto = is_v6 ? ETH_P_PPP_IPV6 : ETH_P_PPP_IPV4;
 
     int ret = bpf_xdp_adjust_head(ctx, -8);
     if (ret) return XDP_PASS;
@@ -55,11 +53,22 @@ static __always_inline int xdp_pppoe_encap(struct xdp_md *ctx) {
 }
 
 SEC("xdp")
-int xdp_pppoe_encap_lan(struct xdp_md *ctx) {
-    int ret = xdp_pppoe_encap(ctx);
+int xdp_pppoe_encap_lan_v4(struct xdp_md *ctx) {
+    int ret = xdp_pppoe_encap(ctx, ETH_P_PPP_IPV4);
     if (ret != XDP_PASS) return ret;
 
-    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V4(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
+
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int xdp_pppoe_encap_lan_v6(struct xdp_md *ctx) {
+    int ret = xdp_pppoe_encap(ctx, ETH_P_PPP_IPV6);
+    if (ret != XDP_PASS) return ret;
+
+    XDP_FROM_LAN_CHAIN_NEXT_V6(ctx);
     XDP_FROM_LAN_CHAIN_EXIT(ctx);
 
     return XDP_PASS;

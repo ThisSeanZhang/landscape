@@ -128,11 +128,17 @@ struct EgressRoot {
 }
 
 pub struct StageEntry {
-    pub wan_ingress_prog_fd: i32,
-    pub wan_egress_prog_fd: i32,
+    pub wan_ingress_prog_v4_fd: i32,
+    pub wan_ingress_prog_v6_fd: i32,
+    pub wan_egress_prog_v4_fd: i32,
+    pub wan_egress_prog_v6_fd: i32,
     pub wan_ingress_next_stage_fd: i32,
     pub wan_egress_next_stage_fd: i32,
 }
+
+// Family-indexed chain slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.
+const TC_SLOT_V4: u32 = 0;
+const TC_SLOT_V6: u32 = 1;
 
 #[derive(Default)]
 struct IfState {
@@ -323,7 +329,7 @@ impl TcChainManager {
             state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
         }
         if state.egress_root.is_none() {
-            state.egress_root = Some(self.create_egress_roots(ifindex)?);
+            state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
         }
         Ok(())
     }
@@ -361,11 +367,13 @@ impl TcChainManager {
         })
     }
 
-    fn create_egress_roots(&self, ifindex: u32) -> LdEbpfResult<EgressRoot> {
+    fn create_egress_roots(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<EgressRoot> {
         let egress_builder = TcWanEgressRootSkelBuilder::default();
         let (egress_back, egress_obj) = OwnedOpenObject::new();
         let mut egress_open_skel =
             bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
+
+        egress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
 
         pin_and_reuse_map(
             &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
@@ -449,22 +457,23 @@ impl TcChainManager {
         let has_eth_header =
             inner.interfaces.get(&ifindex).map(|s| s.has_eth_header).unwrap_or(false);
 
+        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
+
         {
             let state = inner.interfaces.entry(ifindex).or_default();
             state.has_eth_header = has_eth_header;
             match chain {
                 ChainDir::WanIngress => {
                     if state.ingress_root.is_none() {
-                        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
                         state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
                     }
                     if state.egress_root.is_none() {
-                        state.egress_root = Some(self.create_egress_roots(ifindex)?);
+                        state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
                     }
                 }
                 ChainDir::WanEgress => {
                     if state.egress_root.is_none() {
-                        state.egress_root = Some(self.create_egress_roots(ifindex)?);
+                        state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
                     }
                 }
             }
@@ -482,41 +491,53 @@ impl TcChainManager {
                 ChainDir::WanEgress => entry.wan_egress_next_stage_fd,
             };
             if next_fd != 0 {
-                delete_prog_array_fd(next_fd, 0);
+                delete_prog_array_fd(next_fd, TC_SLOT_V4);
+                delete_prog_array_fd(next_fd, TC_SLOT_V6);
             }
         }
-        delete_prog_array_fd(root_next_stage_fd, 0);
+        delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V4);
+        delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V6);
 
         let sorted: Vec<&StageEntry> = state
             .stages
-            .iter()
-            .filter(|(k, _)| !matches!((k, chain), (StageType::Pppoe, ChainDir::WanIngress)))
-            .map(|(_, v)| v)
+            .values()
             .filter(|v| match chain {
-                ChainDir::WanIngress => v.wan_ingress_prog_fd != 0,
-                ChainDir::WanEgress => v.wan_egress_prog_fd != 0,
+                ChainDir::WanIngress => {
+                    v.wan_ingress_prog_v4_fd != 0 && v.wan_ingress_prog_v6_fd != 0
+                }
+                ChainDir::WanEgress => v.wan_egress_prog_v4_fd != 0 && v.wan_egress_prog_v6_fd != 0,
             })
             .collect();
         if sorted.is_empty() {
             return Ok(());
         }
 
-        let first_prog_fd = match chain {
-            ChainDir::WanIngress => sorted[0].wan_ingress_prog_fd,
-            ChainDir::WanEgress => sorted[0].wan_egress_prog_fd,
+        let (first_v4, first_v6) = match chain {
+            ChainDir::WanIngress => {
+                (sorted[0].wan_ingress_prog_v4_fd, sorted[0].wan_ingress_prog_v6_fd)
+            }
+            ChainDir::WanEgress => {
+                (sorted[0].wan_egress_prog_v4_fd, sorted[0].wan_egress_prog_v6_fd)
+            }
         };
-        update_prog_array_fd(root_next_stage_fd, 0, first_prog_fd)?;
+        update_prog_array_fd(root_next_stage_fd, TC_SLOT_V4, first_v4)?;
+        update_prog_array_fd(root_next_stage_fd, TC_SLOT_V6, first_v6)?;
 
         for i in 0..sorted.len().saturating_sub(1) {
             let next_fd = match chain {
                 ChainDir::WanIngress => sorted[i].wan_ingress_next_stage_fd,
                 ChainDir::WanEgress => sorted[i].wan_egress_next_stage_fd,
             };
-            let next_prog_fd = match chain {
-                ChainDir::WanIngress => sorted[i + 1].wan_ingress_prog_fd,
-                ChainDir::WanEgress => sorted[i + 1].wan_egress_prog_fd,
+            let (next_v4, next_v6) = match chain {
+                ChainDir::WanIngress => {
+                    (sorted[i + 1].wan_ingress_prog_v4_fd, sorted[i + 1].wan_ingress_prog_v6_fd)
+                }
+                ChainDir::WanEgress => {
+                    (sorted[i + 1].wan_egress_prog_v4_fd, sorted[i + 1].wan_egress_prog_v6_fd)
+                }
             };
-            update_prog_array_fd(next_fd, 0, next_prog_fd)?;
+            update_prog_array_fd(next_fd, TC_SLOT_V4, next_v4)?;
+            update_prog_array_fd(next_fd, TC_SLOT_V6, next_v6)?;
         }
 
         Ok(())

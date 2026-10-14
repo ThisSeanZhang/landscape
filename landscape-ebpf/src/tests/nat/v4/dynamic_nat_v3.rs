@@ -467,7 +467,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -539,7 +539,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -621,7 +621,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(
             result.return_value as i32, 2,
@@ -687,7 +687,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -793,7 +793,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(
             result.return_value as i32, 2,
@@ -874,7 +874,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 0);
 
@@ -968,7 +968,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 0);
 
@@ -1027,7 +1027,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 2, "closed mapping should reject new ingress CT");
 
@@ -1078,7 +1078,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 2, "active|0 mapping should reject new ingress CT");
 
@@ -1154,7 +1154,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 0);
 
@@ -1249,7 +1249,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, 0, "TIMER_RELEASE CT should be reactivated");
 
@@ -1291,7 +1291,7 @@ mod tests {
             ..Default::default()
         };
         let cleanup_result =
-            skel.progs.tc_nat_wan_ingress.test_run(cleanup_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_ingress_v4.test_run(cleanup_input).expect("test_run failed");
         assert_eq!(
             cleanup_result.return_value as i32, 2,
             "CT cleanup states after TIMER_RELEASE should still be rejected"
@@ -1306,8 +1306,11 @@ mod tests {
             data_out: Some(&mut cleanup_egress_packet_out),
             ..Default::default()
         };
-        let cleanup_egress_result =
-            skel.progs.tc_nat_wan_egress.test_run(cleanup_egress_input).expect("test_run failed");
+        let cleanup_egress_result = skel
+            .progs
+            .tc_nat_wan_egress_v4
+            .test_run(cleanup_egress_input)
+            .expect("test_run failed");
         assert_eq!(
             cleanup_egress_result.return_value as i32, 2,
             "CT cleanup states after TIMER_RELEASE should be rejected on egress"
@@ -1397,7 +1400,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(
             result.return_value as i32, 2,
@@ -1477,7 +1480,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_ingress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 2, "is_allow_reuse=0 should prevent CT creation");
     }
 
@@ -1519,7 +1522,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 
@@ -1645,7 +1648,7 @@ mod tests {
         };
 
         let first_result =
-            skel.progs.tc_nat_wan_egress.test_run(first_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress_v4.test_run(first_input).expect("test_run failed");
 
         assert_eq!(
             first_result.return_value as i32, 2,
@@ -1683,7 +1686,7 @@ mod tests {
         };
 
         let second_result =
-            skel.progs.tc_nat_wan_egress.test_run(second_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress_v4.test_run(second_input).expect("test_run failed");
 
         assert_eq!(second_result.return_value as i32, -1);
 
@@ -1790,7 +1793,7 @@ mod tests {
         };
 
         let first_result =
-            skel.progs.tc_nat_wan_egress.test_run(first_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress_v4.test_run(first_input).expect("test_run failed");
 
         assert_eq!(
             first_result.return_value as i32, 2,
@@ -1812,7 +1815,7 @@ mod tests {
         };
 
         let second_result =
-            skel.progs.tc_nat_wan_egress.test_run(second_input).expect("test_run failed");
+            skel.progs.tc_nat_wan_egress_v4.test_run(second_input).expect("test_run failed");
 
         assert_eq!(second_result.return_value as i32, -1);
 
@@ -1946,7 +1949,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = skel.progs.tc_nat_wan_egress.test_run(input).expect("test_run failed");
+        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
 
         assert_eq!(result.return_value as i32, -1);
 

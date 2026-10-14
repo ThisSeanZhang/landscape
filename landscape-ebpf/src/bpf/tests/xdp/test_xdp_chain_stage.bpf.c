@@ -34,7 +34,7 @@ int xdp_test_chain_stage(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
-    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V4(ctx);
     XDP_FROM_LAN_CHAIN_EXIT(ctx);
 
     u32 k = 0;

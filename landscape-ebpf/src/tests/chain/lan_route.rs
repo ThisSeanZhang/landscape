@@ -360,11 +360,11 @@ fn xdp_lan_route_wan_pipeline() {
     }
 
     let root_fd = lan_root.progs.xdp_lan_root.as_fd().as_raw_fd();
-    let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
+    let mss_lan_fd = mss.progs.xdp_mss_lan_v4.as_fd().as_raw_fd();
     let exit_fd = lan_exit.progs.xdp_lan_exit.as_fd().as_raw_fd();
 
     let wan_root_fd = wan_root.progs.xdp_wan_root.as_fd().as_raw_fd();
-    let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
+    let mss_wan_fd = mss.progs.xdp_mss_wan_v4.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
 
     // Mark redirect targets native-XDP able, otherwise xdp_lan_route falls back
@@ -419,7 +419,8 @@ fn xdp_lan_route_wan_pipeline() {
         .root_next_stage
         .update(&0u32.to_ne_bytes(), &mss_wan_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
-    mss.maps.next_stage.update(&1u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    // XDP_FROM_WAN_SLOT_V4 = 2 (direction x family, see chain/xdp_stage.h)
+    mss.maps.next_stage.update(&2u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
     wan_root
         .maps
         .xdp_pipe_exits_wan

@@ -243,70 +243,86 @@ static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifind
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_egress_dispatch(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_nat_egress_dispatch <<<"
-    bool is_ipv4;
-    int ret;
-
+static __always_inline int tc_nat_egress_v4_entry(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_nat_egress_v4 <<<"
     if (likely(current_l3_offset > 0)) {
-        ret = is_broadcast_mac(skb);
-        if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
+        if (unlikely(is_broadcast_mac(skb) != TC_ACT_OK)) return TC_ACT_OK;
     }
-
-    ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
-    if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
-
-    u32 ifindex = skb->ifindex;
-
-    if (is_ipv4) {
-        return tc_nat_v4_egress_do(skb, ifindex);
-    } else {
-        return tc_nat_v6_egress_do(skb, ifindex);
-    }
+    return tc_nat_v4_egress_do(skb, skb->ifindex);
 #undef BPF_LOG_TOPIC
 }
 
-static __always_inline int tc_nat_ingress_dispatch(struct __sk_buff *skb) {
-    bool is_ipv4;
-    int ret;
-
+static __always_inline int tc_nat_egress_v6_entry(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_nat_egress_v6 <<<"
     if (likely(current_l3_offset > 0)) {
-        ret = is_broadcast_mac(skb);
-        if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
+        if (unlikely(is_broadcast_mac(skb) != TC_ACT_OK)) return TC_ACT_OK;
     }
+    return tc_nat_v6_egress_do(skb, skb->ifindex);
+#undef BPF_LOG_TOPIC
+}
 
-    ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
-    if (unlikely(ret != TC_ACT_OK)) return TC_ACT_OK;
-
-    u32 ifindex = skb->ifindex;
-
-    if (is_ipv4) {
-        return tc_nat_v4_ingress_do(skb, ifindex);
-    } else {
-        return tc_nat_v6_ingress_do(skb, ifindex);
+static __always_inline int tc_nat_ingress_v4_entry(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC ">>> tc_nat_ingress_v4 >>>"
+    if (likely(current_l3_offset > 0)) {
+        if (unlikely(is_broadcast_mac(skb) != TC_ACT_OK)) return TC_ACT_OK;
     }
+    return tc_nat_v4_ingress_do(skb, skb->ifindex);
+#undef BPF_LOG_TOPIC
+}
+
+static __always_inline int tc_nat_ingress_v6_entry(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC ">>> tc_nat_ingress_v6 >>>"
+    if (likely(current_l3_offset > 0)) {
+        if (unlikely(is_broadcast_mac(skb) != TC_ACT_OK)) return TC_ACT_OK;
+    }
+    return tc_nat_v6_ingress_do(skb, skb->ifindex);
+#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
-int tc_nat_wan_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_nat_wan_egress <<<"
+int tc_nat_wan_egress_v4(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_nat_wan_egress_v4 <<<"
 
-    if (unlikely(tc_nat_egress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    if (unlikely(tc_nat_egress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
-    TC_CHAIN_WAN_EGRESS(skb);
-    TC_CHAIN_EXIT_WAN_EGRESS(skb);
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
+    return TC_ACT_UNSPEC;
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc/egress")
+int tc_nat_wan_egress_v6(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "<<< tc_nat_wan_egress_v6 <<<"
+
+    if (unlikely(tc_nat_egress_v6_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+
+    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
+    TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
 #undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
-int tc_nat_wan_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_nat_wan_ingress <<<"
+int tc_nat_wan_ingress_v4(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC ">>> tc_nat_wan_ingress_v4 >>>"
 
-    if (unlikely(tc_nat_ingress_dispatch(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    if (unlikely(tc_nat_ingress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
-    TC_CHAIN_WAN_INGRESS(skb);
-    TC_CHAIN_EXIT_WAN_INGRESS(skb);
+    TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
+    TC_FROM_WAN_CHAIN_EXIT(skb);
+    return TC_ACT_OK;
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc/ingress")
+int tc_nat_wan_ingress_v6(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC ">>> tc_nat_wan_ingress_v6 >>>"
+
+    if (unlikely(tc_nat_ingress_v6_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+
+    TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
+    TC_FROM_WAN_CHAIN_EXIT(skb);
     return TC_ACT_OK;
 #undef BPF_LOG_TOPIC
 }

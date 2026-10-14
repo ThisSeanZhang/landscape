@@ -131,10 +131,14 @@ fn xdp_firewall_pipeline() {
     };
 
     let root_fd = lan_root.progs.xdp_lan_root.as_fd().as_raw_fd();
-    let mss_lan_fd = mss.progs.xdp_mss_lan.as_fd().as_raw_fd();
-    let mss_wan_fd = mss.progs.xdp_mss_wan.as_fd().as_raw_fd();
-    let fw_lan_fd = fw.progs.xdp_firewall_lan.as_fd().as_raw_fd();
-    let fw_wan_fd = fw.progs.xdp_firewall_wan.as_fd().as_raw_fd();
+    let mss_lan_v4_fd = mss.progs.xdp_mss_lan_v4.as_fd().as_raw_fd();
+    let mss_lan_v6_fd = mss.progs.xdp_mss_lan_v6.as_fd().as_raw_fd();
+    let mss_wan_v4_fd = mss.progs.xdp_mss_wan_v4.as_fd().as_raw_fd();
+    let mss_wan_v6_fd = mss.progs.xdp_mss_wan_v6.as_fd().as_raw_fd();
+    let fw_lan_v4_fd = fw.progs.xdp_firewall_lan_v4.as_fd().as_raw_fd();
+    let fw_lan_v6_fd = fw.progs.xdp_firewall_lan_v6.as_fd().as_raw_fd();
+    let fw_wan_v4_fd = fw.progs.xdp_firewall_wan_v4.as_fd().as_raw_fd();
+    let fw_wan_v6_fd = fw.progs.xdp_firewall_wan_v6.as_fd().as_raw_fd();
     let exit_fd = lan_exit.progs.xdp_lan_exit.as_fd().as_raw_fd();
     let wan_root_fd = wan_root.progs.xdp_wan_root.as_fd().as_raw_fd();
     let wr_fd = wr.progs.xdp_wan_route_ingress.as_fd().as_raw_fd();
@@ -161,7 +165,10 @@ fn xdp_firewall_pipeline() {
         .update(&lan_h_i.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    // ── LAN chain: root → mss_lan → firewall_lan → exit ──
+    // ── LAN chain: root → mss_lan_{v4,v6} → firewall_lan_{v4,v6} → exit ──
+    // Root slots are family-indexed (XDP_ROOT_SLOT_V4=0/V6=1, chain/xdp_cb.h);
+    // stage slots are direction x family (XDP_FROM_LAN_SLOT_V4=0/V6=1,
+    // XDP_FROM_WAN_SLOT_V4=2/V6=3, chain/xdp_stage.h).
     lr.maps
         .xdp_lan_pipe_root_progs
         .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
@@ -169,13 +176,23 @@ fn xdp_firewall_pipeline() {
     lan_root
         .maps
         .root_next_stage
-        .update(&0u32.to_ne_bytes(), &mss_lan_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&0u32.to_ne_bytes(), &mss_lan_v4_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    lan_root
+        .maps
+        .root_next_stage
+        .update(&1u32.to_ne_bytes(), &mss_lan_v6_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     mss.maps
         .next_stage
-        .update(&0u32.to_ne_bytes(), &fw_lan_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&0u32.to_ne_bytes(), &fw_lan_v4_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    mss.maps
+        .next_stage
+        .update(&1u32.to_ne_bytes(), &fw_lan_v6_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     fw.maps.next_stage.update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    fw.maps.next_stage.update(&1u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
 
     // LAN fallback exits: all point to exit
     lan_root
@@ -192,17 +209,27 @@ fn xdp_firewall_pipeline() {
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    // ── WAN chain: wan_root → mss_wan → firewall_wan → wan_route ──
+    // ── WAN chain: wan_root → mss_wan_{v4,v6} → firewall_wan_{v4,v6} → wan_route ──
     wan_root
         .maps
         .root_next_stage
-        .update(&0u32.to_ne_bytes(), &mss_wan_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&0u32.to_ne_bytes(), &mss_wan_v4_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    wan_root
+        .maps
+        .root_next_stage
+        .update(&1u32.to_ne_bytes(), &mss_wan_v6_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     mss.maps
         .next_stage
-        .update(&1u32.to_ne_bytes(), &fw_wan_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&2u32.to_ne_bytes(), &fw_wan_v4_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
-    fw.maps.next_stage.update(&1u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    mss.maps
+        .next_stage
+        .update(&3u32.to_ne_bytes(), &fw_wan_v6_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    fw.maps.next_stage.update(&2u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
+    fw.maps.next_stage.update(&3u32.to_ne_bytes(), &wr_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
 
     // WAN fallback exits
     wan_root

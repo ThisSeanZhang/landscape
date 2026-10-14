@@ -18,42 +18,15 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u16 mtu_size = 1492;
 
-static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
-
-    enum xdp_l3_proto proto = xdp_classify_l3(ctx);
-    if (proto == XDP_L3_ERR || proto == XDP_L3_NONE) return XDP_PASS;
-
-    u16 l4_offset;
-    u8 l4_protocol;
-    u8 pkt_type;
-
-    if (proto == XDP_L3_V4) {
-        struct scan_ipv4_idx idx;
-        if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
-        l4_offset = idx.l4_offset;
-        l4_protocol = idx.l4_protocol;
-        pkt_type = idx.pkt_type;
-    } else {
-        struct scan_ipv6_idx idx;
-        if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
-        l4_offset = idx.l4_offset;
-        l4_protocol = idx.l4_protocol;
-        pkt_type = idx.pkt_type;
-    }
-
-    if (l4_protocol != IPPROTO_TCP) return XDP_PASS;
-    if (pkt_type != PKT_TCP_SYN_V2) return XDP_PASS;
-
+static __always_inline void mss_clamp_tcp_opts(void *data, void *data_end, u16 l4_offset,
+                                               u16 ip_hdr_bytes) {
     struct tcphdr *tcph = data + l4_offset;
-    if ((void *)(tcph + 1) > data_end) return XDP_PASS;
+    if ((void *)(tcph + 1) > data_end) return;
     u8 tcp_bytes = tcph->doff * 4;
-    if (tcp_bytes <= 20) return XDP_PASS;
-    if ((void *)tcph + tcp_bytes > data_end) return XDP_PASS;
+    if (tcp_bytes <= 20) return;
+    if ((void *)tcph + tcp_bytes > data_end) return;
 
     u8 opts_len = tcp_bytes - 20;
-    u16 ip_hdr_bytes = l4_offset - sizeof(struct ethhdr);
     u16 max_mss = mtu_size - ip_hdr_bytes - 20;
 
     u8 pos = 0;
@@ -91,25 +64,65 @@ static __always_inline int mss_clamp_packet(struct xdp_md *ctx) {
             pos += olen;
         }
     }
+}
 
+static __always_inline int mss_clamp_v4(struct xdp_md *ctx) {
+    struct scan_ipv4_idx idx;
+    if (xdp_scan_ipv4_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
+    if (idx.l4_protocol != IPPROTO_TCP) return XDP_PASS;
+    if (idx.pkt_type != PKT_TCP_SYN_V2) return XDP_PASS;
+
+    mss_clamp_tcp_opts((void *)(long)ctx->data, (void *)(long)ctx->data_end, idx.l4_offset,
+                       idx.l4_offset - sizeof(struct ethhdr));
+    return XDP_PASS;
+}
+
+static __always_inline int mss_clamp_v6(struct xdp_md *ctx) {
+    struct scan_ipv6_idx idx;
+    if (xdp_scan_ipv6_full(ctx, sizeof(struct ethhdr), &idx)) return XDP_PASS;
+    if (idx.l4_protocol != IPPROTO_TCP) return XDP_PASS;
+    if (idx.pkt_type != PKT_TCP_SYN_V2) return XDP_PASS;
+
+    mss_clamp_tcp_opts((void *)(long)ctx->data, (void *)(long)ctx->data_end, idx.l4_offset,
+                       idx.l4_offset - sizeof(struct ethhdr));
     return XDP_PASS;
 }
 
 SEC("xdp")
-int xdp_mss_lan(struct xdp_md *ctx) {
-    mss_clamp_packet(ctx);
+int xdp_mss_lan_v4(struct xdp_md *ctx) {
+    mss_clamp_v4(ctx);
 
-    XDP_FROM_LAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V4(ctx);
     XDP_FROM_LAN_CHAIN_EXIT(ctx);
     bpf_printk("[mss_lan] all tailcalls failed");
     return XDP_PASS;
 }
 
 SEC("xdp")
-int xdp_mss_wan(struct xdp_md *ctx) {
-    mss_clamp_packet(ctx);
+int xdp_mss_lan_v6(struct xdp_md *ctx) {
+    mss_clamp_v6(ctx);
 
-    XDP_FROM_WAN_CHAIN_NEXT(ctx);
+    XDP_FROM_LAN_CHAIN_NEXT_V6(ctx);
+    XDP_FROM_LAN_CHAIN_EXIT(ctx);
+    bpf_printk("[mss_lan] all tailcalls failed");
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int xdp_mss_wan_v4(struct xdp_md *ctx) {
+    mss_clamp_v4(ctx);
+
+    XDP_FROM_WAN_CHAIN_NEXT_V4(ctx);
+    XDP_FROM_WAN_CHAIN_EXIT(ctx);
+    bpf_printk("[mss_wan] all tailcalls failed");
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int xdp_mss_wan_v6(struct xdp_md *ctx) {
+    mss_clamp_v6(ctx);
+
+    XDP_FROM_WAN_CHAIN_NEXT_V6(ctx);
     XDP_FROM_WAN_CHAIN_EXIT(ctx);
     bpf_printk("[mss_wan] all tailcalls failed");
     return XDP_PASS;

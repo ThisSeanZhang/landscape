@@ -24,14 +24,17 @@ fn run_mss_clamp(payload: Vec<u8>) -> Vec<u8> {
     let skel = open.load().unwrap();
 
     let mut packet_out = vec![0_u8; payload.len()];
-    skel.progs
-        .tc_mss_wan_ingress
-        .test_run(ProgramInput {
-            data_in: Some(&payload),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        })
-        .expect("test_run failed");
+    let prog = if payload.len() >= 14 && payload[12] == 0x86 && payload[13] == 0xdd {
+        skel.progs.tc_mss_wan_ingress_v6
+    } else {
+        skel.progs.tc_mss_wan_ingress_v4
+    };
+    prog.test_run(ProgramInput {
+        data_in: Some(&payload),
+        data_out: Some(&mut packet_out),
+        ..Default::default()
+    })
+    .expect("test_run failed");
 
     packet_out
 }
