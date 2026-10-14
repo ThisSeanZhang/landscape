@@ -1,14 +1,6 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
-use hickory_proto::{
-    op::{Header, Metadata, ResponseCode},
-    serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
-};
-use hickory_server::{
-    net::xfer::Protocol,
-    server::{Request, RequestHandler},
-};
 use http::{Request as HttpRequest, StatusCode};
 use rustls::{ServerConfig, crypto::CryptoProvider, server::ResolvesServerCert};
 use tokio::net::{TcpListener, TcpStream};
@@ -16,7 +8,9 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
+use crate::listener::is_unrecoverable_socket_error;
 use crate::listener::spawn_tracked;
+use crate::listener::wire::{self, Protocol};
 use crate::{listener::DohTimeouts, server::handler::DnsRequestHandler};
 use landscape_common::concurrency::task_label;
 use tokio_util::task::TaskTracker;
@@ -251,48 +245,37 @@ async fn handle_dns_message(
     handler: Arc<DnsRequestHandler>,
     response_handle: DohResponseHandle,
 ) {
-    match Request::from_bytes(message_bytes.to_vec(), src_addr, Protocol::Https) {
-        Ok(request) => {
-            if request.metadata.message_type == hickory_proto::op::MessageType::Response {
-                return;
+    match wire::decode(message_bytes, src_addr, Protocol::Https) {
+        wire::DecodeOutcome::Request(request) => {
+            let response = handler.handle(&request).await;
+            let buffer = wire::encode_response(&response, u16::MAX);
+            if let Err(e) = response_handle.send_dns_message(buffer).await {
+                tracing::debug!("DoH response to {src_addr} failed: {e}");
             }
-            handler
-                .handle_request::<_, hickory_server::net::runtime::TokioTime>(
-                    &request,
-                    response_handle,
-                )
-                .await;
         }
-        Err(e) => {
-            tracing::debug!("failed to parse DoH DNS message from {src_addr}: {e}");
-            respond_to_invalid_dns_message(message_bytes, response_handle).await;
+        wire::DecodeOutcome::Reply { message, max_size } => {
+            let buffer = wire::encode_response(&message, max_size);
+            if let Err(e) = response_handle.send_dns_message(buffer).await {
+                tracing::debug!("DoH reply to {src_addr} failed: {e}");
+            }
+        }
+        wire::DecodeOutcome::Malformed => {
+            if let Err(e) = response_handle
+                .send_http_error(StatusCode::BAD_REQUEST, "invalid DNS wire message")
+                .await
+            {
+                tracing::debug!("DoH bad request response to {src_addr} failed: {e}");
+            }
+        }
+        wire::DecodeOutcome::Ignore => {
+            if let Err(e) = response_handle
+                .send_http_error(StatusCode::BAD_REQUEST, "DNS message was not a query")
+                .await
+            {
+                tracing::debug!("DoH non-query rejection to {src_addr} failed: {e}");
+            }
         }
     }
-}
-
-async fn respond_to_invalid_dns_message(message_bytes: &[u8], response_handle: DohResponseHandle) {
-    if let Some(buffer) = formerr_response(message_bytes) {
-        let _ = response_handle.send_dns_message(buffer).await;
-    } else {
-        let _ = response_handle
-            .send_http_error(StatusCode::BAD_REQUEST, "invalid DNS wire message")
-            .await;
-    }
-}
-
-fn formerr_response(message_bytes: &[u8]) -> Option<Vec<u8>> {
-    let mut decoder = BinDecoder::new(message_bytes);
-    let header = Header::read(&mut decoder).ok()?;
-    let mut response_metadata = Metadata::response_from_request(&header.metadata);
-    response_metadata.response_code = ResponseCode::FormErr;
-    let response_header = Header {
-        metadata: response_metadata,
-        counts: Default::default(),
-    };
-    let mut buffer = Vec::with_capacity(12); // DNS header is always 12 bytes
-    let mut encoder = BinEncoder::new(&mut buffer);
-    response_header.emit(&mut encoder).ok()?;
-    Some(buffer)
 }
 
 fn sanitize_src_address(src: SocketAddr) -> Result<(), String> {
@@ -305,36 +288,162 @@ fn sanitize_src_address(src: SocketAddr) -> Result<(), String> {
     Ok(())
 }
 
-fn is_unrecoverable_socket_error(err: &io::Error) -> bool {
-    matches!(err.kind(), io::ErrorKind::NotConnected | io::ErrorKind::ConnectionAborted)
-}
-
 fn reap_tasks<T: 'static>(tasks: &mut JoinSet<T>) {
     while tasks.try_join_next().is_some() {}
 }
 
 #[cfg(test)]
 mod tests {
-    use hickory_proto::op::{Header, MessageType, ResponseCode};
-    use hickory_proto::serialize::binary::{BinDecodable, BinDecoder};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use super::formerr_response;
+    use bytes::Bytes;
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::{Name, RData, RecordType, rdata::A};
+    use http::header;
+    use rustls::server::ResolvesServerCert;
 
-    #[test]
-    fn invalid_dns_with_header_returns_formerr_wire_response() {
-        let request = [0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
+    use crate::listener::DohTimeouts;
+    use crate::server::handler::DnsRequestHandler;
+    use crate::server::handler::tests::redirect_test_handler;
 
-        let response = formerr_response(&request).unwrap();
-        let mut decoder = BinDecoder::new(&response);
-        let header = Header::read(&mut decoder).unwrap();
+    use super::{DohListenerConfig, MIME_APPLICATION_DNS, sanitize_src_address};
 
-        assert_eq!(header.id, 0x1234);
-        assert_eq!(header.message_type, MessageType::Response);
-        assert_eq!(header.response_code, ResponseCode::FormErr);
+    const TEST_SRC: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 5300);
+    const TEST_ANSWER: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+
+    #[derive(Debug)]
+    struct NoCertResolver;
+
+    impl ResolvesServerCert for NoCertResolver {
+        fn resolve(
+            &self,
+            _client_hello: rustls::server::ClientHello,
+        ) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+            None
+        }
+    }
+
+    fn test_config() -> DohListenerConfig {
+        DohListenerConfig {
+            timeouts: DohTimeouts::default(),
+            server_cert_resolver: std::sync::Arc::new(NoCertResolver),
+            dns_hostname: None,
+            http_endpoint: "/dns-query".to_string(),
+        }
+    }
+
+    async fn doh_exchange(
+        body: Bytes,
+        handler: std::sync::Arc<DnsRequestHandler>,
+    ) -> (http::StatusCode, Vec<u8>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Serve requests until the client closes the connection: dropping the
+        // socket right after responding would RST and destroy the response.
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut server = super::h2_server_handshake(stream).await.unwrap();
+            while let Some(accepted) = server.accept().await {
+                let (request, respond) = accepted.unwrap();
+                super::handle_h2_request(
+                    1,
+                    TEST_SRC,
+                    request,
+                    respond,
+                    test_config(),
+                    handler.clone(),
+                )
+                .await;
+            }
+        });
+
+        let client_io = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut send_request, connection) = h2::client::handshake(client_io).await.unwrap();
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        let request = http::Request::post("https://dns.local/dns-query")
+            .header(header::CONTENT_TYPE, MIME_APPLICATION_DNS)
+            .body(())
+            .unwrap();
+        let (response_fut, mut send_body) = send_request.send_request(request, false).unwrap();
+        send_body.send_data(body, true).unwrap();
+
+        let response = response_fut.await.unwrap();
+        let status = response.status();
+        let mut body_stream = response.into_body();
+        let mut received = Vec::new();
+        while let Some(chunk) = body_stream.data().await {
+            let chunk = chunk.unwrap();
+            let len = chunk.len();
+            received.extend_from_slice(&chunk);
+            let _ = body_stream.flow_control().release_capacity(len);
+        }
+        drop(send_body);
+        drop(send_request);
+        drop(body_stream);
+        server_task.await.unwrap();
+        (status, received)
+    }
+
+    fn query_bytes(id: u16) -> Vec<u8> {
+        let mut query = Message::new(id, MessageType::Query, OpCode::Query);
+        query.add_query(Query::query(Name::from_ascii("www.example.com.").unwrap(), RecordType::A));
+        query.to_vec().unwrap()
+    }
+
+    fn response_bytes(id: u16) -> Vec<u8> {
+        Message::new(id, MessageType::Response, OpCode::Query).to_vec().unwrap()
+    }
+
+    #[tokio::test]
+    async fn resolves_doh_post_query_end_to_end() {
+        let handler =
+            std::sync::Arc::new(redirect_test_handler("www.example.com.", TEST_ANSWER, 60));
+
+        let (status, body) = doh_exchange(Bytes::from(query_bytes(0x1234)), handler).await;
+
+        assert_eq!(status, http::StatusCode::OK);
+        let response = Message::from_vec(&body).unwrap();
+        assert_eq!(response.id, 0x1234);
+        assert_eq!(response.response_code, hickory_proto::op::ResponseCode::NoError);
+        assert_eq!(response.answers.len(), 1);
+        assert!(matches!(
+            &response.answers[0].data,
+            RData::A(A(ip)) if *ip == Ipv4Addr::new(192, 0, 2, 1)
+        ));
+    }
+
+    #[tokio::test]
+    async fn malformed_body_answers_http_400() {
+        let handler =
+            std::sync::Arc::new(redirect_test_handler("www.example.com.", TEST_ANSWER, 60));
+
+        let (status, body) = doh_exchange(Bytes::from(vec![0; 11]), handler).await;
+
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        let text = String::from_utf8(body).unwrap();
+        assert!(text.contains("invalid DNS wire message"));
+    }
+
+    #[tokio::test]
+    async fn answers_http_400_for_response_type_body() {
+        let handler =
+            std::sync::Arc::new(redirect_test_handler("www.example.com.", TEST_ANSWER, 60));
+
+        let (status, body) = doh_exchange(Bytes::from(response_bytes(0x4321)), handler).await;
+
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        let text = String::from_utf8(body).unwrap();
+        assert!(text.contains("DNS message was not a query"));
     }
 
     #[test]
-    fn invalid_dns_without_header_has_no_wire_response() {
-        assert!(formerr_response(&[0; 11]).is_none());
+    fn rejects_port_zero_and_unspecified_sources() {
+        assert!(sanitize_src_address("192.168.1.1:0".parse().unwrap()).is_err());
+        assert!(sanitize_src_address("0.0.0.0:53".parse().unwrap()).is_err());
+        assert!(sanitize_src_address("192.168.1.1:5300".parse().unwrap()).is_ok());
     }
 }

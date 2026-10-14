@@ -203,6 +203,8 @@ pub mod task_label {
         pub const DNS_LISTENER_SERVE: &str = "dns.listener.serve";
         /// DNS-over-HTTPS socket serve loop.
         pub const DNS_DOH_HANDLER: &str = "dns.doh.handler";
+        /// DNS per-query resolution task (UDP/DoH listener dispatch).
+        pub const DNS_QUERY_HANDLE: &str = "dns.query.handle";
         /// DHCPv4 server per-socket packet loop.
         pub const DHCP_V4_SERVER_HANDLER: &str = "dhcp.server.handler";
         /// DHCPv4 service listener reacting to iface/config events.

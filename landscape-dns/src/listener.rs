@@ -3,20 +3,20 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hickory_server::Server;
 use rustls::server::ResolvesServerCert;
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
-use landscape_common::concurrency::task_label;
 use landscape_common::dns::DohRuntimeConfig;
 use landscape_common::flow::FlowSocketRegistrar;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
 
-mod doh;
+pub(crate) mod doh;
+pub(crate) mod udp;
+pub(crate) mod wire;
 
 #[derive(Clone)]
 pub struct DohTimeouts {
@@ -167,45 +167,18 @@ pub(crate) async fn start_flow_dns_listener(
 
     attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, false);
 
-    let doh_handler = handler.clone();
-    let mut server = Server::new(handler);
-    server.register_socket(udp);
+    udp::spawn_udp_listener(flow_id, udp, handler.clone(), token.clone(), tracker.clone());
 
     if let Some(doh) = doh {
         register_doh_listener(
             flow_id,
             doh,
-            doh_handler,
+            handler,
             socket_registrar.clone(),
             token.clone(),
-            tracker.clone(),
+            tracker,
         );
     }
-
-    // hickory server 自身的关闭 token:父 token 触发时转发取消,
-    // 让 server 停止 accept 并使 block_until_done 返回
-    let server_shutdown = server.shutdown_token().clone();
-    let serve_token = token.clone();
-
-    spawn_tracked(&tracker, task_label::task::DNS_LISTENER_SERVE, async move {
-        tokio::select! {
-            result = server.block_until_done() => {
-                if let Err(e) = result {
-                    tracing::error!("[flow: {flow_id}]: server down, error: {e:?}");
-                } else {
-                    tracing::info!("[flow: {flow_id}]: server down");
-                }
-                // server 自身退出(如 socket 错误):标记本 flow 终止,
-                // 同 token 的 DoH 监听一并退出
-                serve_token.cancel();
-            }
-            () = serve_token.cancelled() => {
-                // 服务停止/flow 替换:转发取消并等待 server 收尾
-                server_shutdown.cancel();
-                let _ = server.block_until_done().await;
-            }
-        }
-    });
 
     token
 }
@@ -222,6 +195,13 @@ where
         landscape_common::memtrack::TaggedFuture::new(tag, future)
             .instrument(tracing::info_span!("task", task = label)),
     );
+}
+
+/// Fatal for a listening socket: the kernel-side association is gone and
+/// every future accept/recv would fail identically. Anything else
+/// (transient errors like `ConnectionReset`/`Interrupted`) is retried.
+pub(crate) fn is_unrecoverable_socket_error(err: &std::io::Error) -> bool {
+    matches!(err.kind(), std::io::ErrorKind::NotConnected | std::io::ErrorKind::ConnectionAborted)
 }
 
 fn register_doh_listener(
@@ -262,4 +242,25 @@ fn attach_dns_socket(
     is_tcp: bool,
 ) {
     socket_registrar.register_dns_socket(flow_id, sock_fd, is_tcp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_unrecoverable_socket_error;
+
+    #[test]
+    fn classifies_unrecoverable_socket_errors() {
+        assert!(is_unrecoverable_socket_error(&std::io::Error::from(
+            std::io::ErrorKind::NotConnected
+        )));
+        assert!(is_unrecoverable_socket_error(&std::io::Error::from(
+            std::io::ErrorKind::ConnectionAborted
+        )));
+        assert!(!is_unrecoverable_socket_error(&std::io::Error::from(
+            std::io::ErrorKind::Interrupted
+        )));
+        assert!(!is_unrecoverable_socket_error(&std::io::Error::from(
+            std::io::ErrorKind::ConnectionReset
+        )));
+    }
 }

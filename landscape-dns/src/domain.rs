@@ -23,13 +23,21 @@ impl ParsedDomain {
         let normalized = normalize_domain_text(fqdn);
         let dns_name = Name::from_utf8(normalized.as_ref())
             .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
-        // Hickory parses Unicode labels as IDNA and stores their ASCII/Punycode
-        // form. Keep that canonical representation everywhere downstream so
-        // byte-oriented matchers and suffix checks never see UTF-8 labels.
+        Ok(Self::canonicalize(dns_name))
+    }
+
+    pub fn from_wire_name(name: Name) -> Self {
+        Self::canonicalize(name.to_lowercase())
+    }
+
+    // Hickory parses Unicode labels as IDNA and stores their ASCII/Punycode
+    // form. Keep that canonical representation everywhere downstream so
+    // byte-oriented matchers and suffix checks never see UTF-8 labels.
+    fn canonicalize(dns_name: Name) -> Self {
         let name = dns_name.to_ascii().trim_end_matches('.').to_ascii_lowercase();
         let labels: Vec<String> = name.split('.').map(String::from).collect();
         let raw = Arc::from(format!("{}.", name).as_str());
-        Ok(Self { raw, name, labels, dns_name })
+        Self { raw, name, labels, dns_name }
     }
 
     pub fn as_dns_name(&self) -> &Name {
@@ -74,6 +82,8 @@ impl ParsedDomain {
 
 #[cfg(test)]
 mod tests {
+    use hickory_proto::rr::Name;
+
     use super::ParsedDomain;
 
     #[test]
@@ -91,5 +101,18 @@ mod tests {
 
         assert_eq!(domain.name(), "www.example.com");
         assert_eq!(domain.raw(), "www.example.com.");
+    }
+
+    #[test]
+    fn from_wire_name_matches_string_construction() {
+        let wire = ParsedDomain::from_wire_name(Name::from_ascii("WWW.Example.COM.").unwrap());
+        let text = ParsedDomain::new("www.example.com").unwrap();
+
+        assert_eq!(wire.raw(), text.raw());
+        assert_eq!(wire.name(), text.name());
+        assert_eq!(
+            wire.as_dns_name().to_ascii().trim_end_matches('.'),
+            text.as_dns_name().to_ascii().trim_end_matches('.')
+        );
     }
 }

@@ -2,13 +2,8 @@ use std::{sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
 use hickory_proto::{
-    op::{Header, Metadata, OpCode, ResponseCode},
-    rr::{DNSClass, Record, RecordType},
-};
-use hickory_server::{
-    net::runtime::Time,
-    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
-    zone_handler::MessageResponseBuilder,
+    op::{Message, ResponseCode},
+    rr::{Record, RecordType},
 };
 
 #[cfg(test)]
@@ -16,6 +11,7 @@ use crate::server::redirect_engine::RedirectAnswer;
 use crate::{
     CheckChainDnsResult,
     domain::ParsedDomain,
+    listener::wire::{self, DnsRequest},
     server::{
         CacheRuntimeConfig, MetricSenderState,
         answer::DnsQueryAnswer,
@@ -116,6 +112,28 @@ impl DnsRequestHandler {
         self.chain(&runtime).resolve(domain, query_type).await
     }
 
+    pub async fn handle(&self, req: &DnsRequest) -> Message {
+        let start_time = Instant::now();
+        let query_type = req.query_type;
+        let src_ip = req.src.ip();
+
+        let answer = self.resolve_query(&req.domain, query_type).await;
+        let (records, outcome, response_code) =
+            (answer.records, answer.outcome, answer.response_code);
+
+        self.send_metric(
+            req.domain.raw(),
+            query_type,
+            outcome,
+            response_code,
+            start_time,
+            src_ip,
+            &records,
+        );
+
+        wire::build_response(req, response_code, records)
+    }
+
     pub async fn check_domain(
         &self,
         domain: &ParsedDomain,
@@ -168,126 +186,8 @@ impl DnsRequestHandler {
             let _ = msg_tx.try_send(DnsMetricMessage::Metric(dns_metric));
         }
     }
-
-    async fn send_error_response<R: ResponseHandler>(
-        &self,
-        request: &Request,
-        mut response_handle: R,
-        code: ResponseCode,
-    ) -> ResponseInfo {
-        let response = MessageResponseBuilder::from_message_request(request)
-            .build_no_records(response_metadata(&request.metadata, code));
-        match response_handle.send_response(response).await {
-            Ok(info) => info,
-            Err(e) => {
-                tracing::error!("Error response failed: {}", e);
-                serve_failed(&request.metadata)
-            }
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl RequestHandler for DnsRequestHandler {
-    async fn handle_request<R: ResponseHandler, T: Time>(
-        &self,
-        request: &Request,
-        mut response_handle: R,
-    ) -> ResponseInfo {
-        let start_time = Instant::now();
-
-        // Validation
-        let req = match validate_request(request) {
-            Ok(req) => req,
-            Err(code) => {
-                return self.send_error_response(request, response_handle, code).await;
-            }
-        };
-        let query_type = req.query_type();
-        let src_ip = request.src().ip();
-
-        // Dispatch
-        let pd = match ParsedDomain::new(&req.name().to_string()) {
-            Ok(pd) => pd,
-            Err(_) => {
-                return self
-                    .send_error_response(request, response_handle, ResponseCode::FormErr)
-                    .await;
-            }
-        };
-        let answer = self.resolve_query(&pd, query_type).await;
-        let (records, outcome, response_code) =
-            (answer.records, answer.outcome, answer.response_code);
-
-        // Build response
-        let builder = MessageResponseBuilder::from_message_request(request);
-        let metadata = response_metadata(&request.metadata, response_code);
-        let result = if records.is_empty() {
-            let response = builder.build_no_records(metadata);
-            response_handle.send_response(response).await
-        } else {
-            let response = builder.build(metadata, records.iter(), vec![], vec![], vec![]);
-            response_handle.send_response(response).await
-        };
-        self.send_metric(
-            pd.raw(),
-            query_type,
-            outcome,
-            response_code,
-            start_time,
-            src_ip,
-            &records,
-        );
-
-        match result {
-            Ok(info) => info,
-            Err(e) => {
-                tracing::error!("Response failed: {}", e);
-                serve_failed(&request.metadata)
-            }
-        }
-    }
-}
-
-/// Response metadata with the common authoritative/recursion flags set.
-fn response_metadata(request_metadata: &Metadata, code: ResponseCode) -> Metadata {
-    let mut metadata = Metadata::response_from_request(request_metadata);
-    metadata.response_code = code;
-    metadata.recursion_available = true;
-    metadata.authoritative = true;
-    metadata
-}
-
-fn serve_failed(req_metadata: &Metadata) -> ResponseInfo {
-    ResponseInfo::from(Header {
-        metadata: response_metadata(req_metadata, ResponseCode::ServFail),
-        counts: Default::default(),
-    })
-}
-
-/// Validates the request; returns the query it carries on success, or the
-/// response code to send on failure.
-fn validate_request(request: &Request) -> Result<&hickory_proto::op::LowerQuery, ResponseCode> {
-    let queries = request.queries.queries();
-    if queries.len() != 1 {
-        return Err(ResponseCode::FormErr);
-    }
-    if request.metadata.op_code != OpCode::Query {
-        return Err(ResponseCode::NotImp);
-    }
-
-    let req = &queries[0];
-    if req.query_class() != DNSClass::IN {
-        return Err(ResponseCode::Refused);
-    }
-    match req.query_type() {
-        RecordType::ANY | RecordType::AXFR | RecordType::IXFR => Err(ResponseCode::Refused),
-        RecordType::OPT | RecordType::ZERO => Err(ResponseCode::FormErr),
-        RecordType::TSIG | RecordType::Unknown(249) => Err(ResponseCode::NotImp),
-        _ => Ok(req),
-    }
 }
 
 #[cfg(test)]
 #[path = "handler_tests.rs"]
-mod tests;
+pub(crate) mod tests;

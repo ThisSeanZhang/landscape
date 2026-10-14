@@ -19,11 +19,10 @@ landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
-hickory-server = { workspace = true, features = ["https-ring", "quic-ring"] }
 hickory-resolver = { workspace = true, features = [
     "system-config",
-    "__tls",
-    "__https",
+    "tls-ring",
+    "https-ring",
     "quic-ring",
     "rustls-platform-verifier",
 ] }
@@ -66,6 +65,7 @@ rustls-platform-verifier = { workspace = true, optional = true }
 
 
 [dev-dependencies]
+hickory-server = { workspace = true, features = ["https-ring", "quic-ring"] }
 homedir = { workspace = true }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
