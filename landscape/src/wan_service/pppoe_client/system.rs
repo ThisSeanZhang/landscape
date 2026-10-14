@@ -2,7 +2,9 @@ use std::net::IpAddr;
 
 use landscape_common::ebpf::DataplaneGuard;
 use landscape_common::net::MacAddr;
-use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
+use landscape_common::sys_service::route_service::{
+    LanRouteInfo, LanRouteMode, RouteTargetInfo, WanRouteTarget,
+};
 use landscape_common::wan_service::wan_chain::dataplane::{PppoeEgressTmpl, WanChainDataplane};
 
 use uuid::Uuid;
@@ -158,16 +160,19 @@ pub(crate) async fn create_session(
     route_service
         .insert_ipv4_link_route(
             config.link_id,
-            RouteTargetInfo {
-                ifindex: index,
-                weight: 1,
-                mac: Some(iface_mac),
-                is_docker: false,
-                iface_name: iface_name.clone(),
-                iface_ip: IpAddr::V4(client_ip),
-                default_route: config.default_router,
-                gateway_ip: IpAddr::V4(server_ip),
-                dev_only_nexthop: false,
+            WanRouteTarget {
+                info: RouteTargetInfo {
+                    ifindex: index,
+                    weight: 1,
+                    mac: Some(iface_mac),
+                    is_docker: false,
+                    iface_name: iface_name.clone(),
+                    iface_ip: IpAddr::V4(client_ip),
+                    default_route: config.default_router,
+                    gateway_ip: IpAddr::V4(server_ip),
+                    dev_only_nexthop: false,
+                },
+                chain: config.chain_id,
             },
         )
         .await;

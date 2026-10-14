@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use landscape_common::{
     config::FlowId,
     flow::{FlowTarget, config::FlowConfig},
-    sys_service::route_service::{RouteOwner, RouteTargetInfo, dataplane::RouteTableDataplane},
+    sys_service::route_service::{RouteOwner, WanRouteTarget, dataplane::RouteTableDataplane},
 };
 
 use super::{IpRouteService, WanRoutesByOwner};
@@ -18,7 +18,7 @@ use super::{IpRouteService, WanRoutesByOwner};
 fn find_route_target<'a>(
     wan_infos: &'a WanRoutesByOwner,
     target: &FlowTarget,
-) -> Option<&'a RouteTargetInfo> {
+) -> Option<&'a WanRouteTarget> {
     match target {
         FlowTarget::Interface { link_id, .. } => wan_infos.get(&RouteOwner::Link(*link_id)),
         FlowTarget::Netns { container_name } => {
@@ -30,7 +30,7 @@ fn find_route_target<'a>(
 pub(super) fn collect_target_refresh_result(
     flow_configs: &[FlowConfig],
     wan_infos: &WanRoutesByOwner,
-) -> HashMap<FlowId, Vec<(RouteTargetInfo, u32)>> {
+) -> HashMap<FlowId, Vec<(WanRouteTarget, u32)>> {
     let mut result = HashMap::new();
 
     for flow_config in flow_configs {
@@ -56,8 +56,8 @@ pub(super) fn collect_target_refresh_result(
 
 fn warn_fully_unresolved_flows(
     flow_configs: &[FlowConfig],
-    ipv4_result: &HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
-    ipv6_result: &HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+    ipv4_result: &HashMap<FlowId, Vec<(WanRouteTarget, u32)>>,
+    ipv6_result: &HashMap<FlowId, Vec<(WanRouteTarget, u32)>>,
 ) {
     for flow_config in flow_configs {
         if !flow_config.enable || flow_config.flow_targets.is_empty() {
@@ -77,7 +77,7 @@ fn warn_fully_unresolved_flows(
 
 fn apply_ipv4_target_refresh_result(
     dataplane: &dyn RouteTableDataplane,
-    result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+    result: HashMap<FlowId, Vec<(WanRouteTarget, u32)>>,
 ) {
     tracing::info!("ipv4 flow target refresh result: {result:#?}");
 
@@ -92,7 +92,7 @@ fn apply_ipv4_target_refresh_result(
 
 fn apply_ipv6_target_refresh_result(
     dataplane: &dyn RouteTableDataplane,
-    result: HashMap<FlowId, Vec<(RouteTargetInfo, u32)>>,
+    result: HashMap<FlowId, Vec<(WanRouteTarget, u32)>>,
 ) {
     tracing::info!("ipv6 flow target refresh result: {result:#?}");
 

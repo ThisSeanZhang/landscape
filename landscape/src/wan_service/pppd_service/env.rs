@@ -9,6 +9,7 @@ use std::time::Duration;
 use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
+use landscape_common::sys_service::route_service::WanRouteTarget;
 use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 
 use crate::sys_service::route::IpRouteService;
@@ -132,7 +133,9 @@ impl PppRouteSink for SystemRouteSink {
     }
 
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
-        self.route_service.insert_ipv4_link_route(self.link_id, info).await;
+        self.route_service
+            .insert_ipv4_link_route(self.link_id, WanRouteTarget { info, chain: self.chain_id })
+            .await;
     }
 
     async fn insert_lan_route(&self, iface: &str, info: LanRouteInfo) {

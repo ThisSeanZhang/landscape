@@ -6,7 +6,9 @@ use landscape_common::LANDSCAPE_DEFAULE_DHCP_V4_CLIENT_PORT;
 use landscape_common::args::LAND_HOSTNAME;
 use landscape_common::dev::LandscapeInterface;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
-use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
+use landscape_common::sys_service::route_service::{
+    LanRouteInfo, LanRouteMode, RouteTargetInfo, WanRouteTarget,
+};
 use landscape_common::wan_link::{
     LinkStateHandle, RuntimeWanLinkConfig, RuntimeWanLinkKind, SessionIface, V4Runtime,
     WanLinkV4Model, WanV4Lease, swap_if_changed,
@@ -238,7 +240,9 @@ async fn run_static_v4(
             gateway_ip: IpAddr::V4(default_router_ip),
             dev_only_nexthop: false,
         };
-        route_service.insert_ipv4_link_route(link_id, info).await;
+        route_service
+            .insert_ipv4_link_route(link_id, WanRouteTarget { info, chain: chain_id })
+            .await;
     }
 
     if let Some(session) = session.as_ref() {

@@ -4,7 +4,7 @@
 use std::net::IpAddr;
 
 use landscape_common::config::FlowId;
-use landscape_common::sys_service::route_service::RouteTargetInfo;
+use landscape_common::sys_service::route_service::WanRouteTarget;
 use libbpf_rs::{MapCore, MapFlags};
 use zerocopy::IntoBytes;
 
@@ -15,7 +15,7 @@ const FLOW_TARGET_SLOT_COUNT: usize = 16;
 pub fn replace_wan_route_slots_v4(
     paths: &LandscapeMapPath,
     flow_id: FlowId,
-    targets: &[(RouteTargetInfo, u32)],
+    targets: &[(WanRouteTarget, u32)],
 ) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_slot_map).unwrap();
     replace_wan_route_slots_v4_with_map(&rt_target_map, flow_id, targets);
@@ -24,7 +24,7 @@ pub fn replace_wan_route_slots_v4(
 pub fn replace_wan_route_slots_v6(
     paths: &LandscapeMapPath,
     flow_id: FlowId,
-    targets: &[(RouteTargetInfo, u32)],
+    targets: &[(WanRouteTarget, u32)],
 ) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_slot_map).unwrap();
     replace_wan_route_slots_v6_with_map(&rt_target_map, flow_id, targets);
@@ -76,13 +76,13 @@ fn build_slot_indices(weights: &[u32]) -> Vec<usize> {
 pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
-    targets: &[(RouteTargetInfo, u32)],
+    targets: &[(WanRouteTarget, u32)],
 ) where
     T: MapCore,
 {
     let filtered: Vec<_> = targets
         .iter()
-        .filter(|(target, weight)| *weight > 0 && matches!(target.gateway_ip, IpAddr::V4(_)))
+        .filter(|(target, weight)| *weight > 0 && matches!(target.info.gateway_ip, IpAddr::V4(_)))
         .collect();
     if filtered.is_empty() {
         clear_wan_route_slots_v4(rt_target_map, flow_id);
@@ -102,12 +102,12 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
         key.slot = slot as u32;
 
         let mut value = Route4TargetInfo::default();
-        value.ifindex = target.ifindex;
-        value.is_docker = u8::from(target.is_docker);
-        if let IpAddr::V4(ipv4_addr) = target.gateway_ip {
+        value.ifindex = target.info.ifindex;
+        value.is_docker = u8::from(target.info.is_docker);
+        if let IpAddr::V4(ipv4_addr) = target.info.gateway_ip {
             value.gate_addr = ipv4_addr.to_bits().to_be();
         }
-        match target.mac {
+        match target.info.mac {
             Some(mac) => {
                 value.has_mac = 1;
                 value.mac = mac.octets();
@@ -130,13 +130,13 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
 pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
-    targets: &[(RouteTargetInfo, u32)],
+    targets: &[(WanRouteTarget, u32)],
 ) where
     T: MapCore,
 {
     let filtered: Vec<_> = targets
         .iter()
-        .filter(|(target, weight)| *weight > 0 && matches!(target.gateway_ip, IpAddr::V6(_)))
+        .filter(|(target, weight)| *weight > 0 && matches!(target.info.gateway_ip, IpAddr::V6(_)))
         .collect();
     if filtered.is_empty() {
         clear_wan_route_slots_v6(rt_target_map, flow_id);
@@ -156,12 +156,12 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
         key.slot = slot as u32;
 
         let mut value = Route6TargetInfo::default();
-        value.ifindex = target.ifindex;
-        value.is_docker = u8::from(target.is_docker);
-        if let IpAddr::V6(ipv6_addr) = target.gateway_ip {
+        value.ifindex = target.info.ifindex;
+        value.is_docker = u8::from(target.info.is_docker);
+        if let IpAddr::V6(ipv6_addr) = target.info.gateway_ip {
             value.gate_addr = ipv6_addr.to_bits().to_be_bytes();
         }
-        match target.mac {
+        match target.info.mac {
             Some(mac) => {
                 value.has_mac = 1;
                 value.mac = mac.octets();

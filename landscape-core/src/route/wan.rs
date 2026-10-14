@@ -5,7 +5,9 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use landscape_common::{
     ddns::IpFamily,
-    sys_service::route_service::{RouteOwner, RouteTargetInfo, dataplane::RouteTableDataplane},
+    sys_service::route_service::{
+        RouteOwner, RouteTargetInfo, WanRouteTarget, dataplane::RouteTableDataplane,
+    },
 };
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -33,14 +35,17 @@ pub struct WanRouteEvent {
 fn reconcile_wan_route(
     routes: &mut WanRoutesByOwner,
     owner: &RouteOwner,
-    info: RouteTargetInfo,
+    target: WanRouteTarget,
 ) -> WanRouteUpdate {
     match routes.get(owner) {
-        Some(old) if old == &info => WanRouteUpdate::Noop,
+        // The whole entry (info + chain) participates in the comparison:
+        // a chain change must re-trigger the flow-target join so the
+        // eBPF slot values pick up the new chain.
+        Some(old) if old == &target => WanRouteUpdate::Noop,
         _ => {
-            let mut refresh_default_router = info.default_route;
-            if let Some(old_info) = routes.insert(owner.clone(), info) {
-                refresh_default_router = refresh_default_router || old_info.default_route;
+            let mut refresh_default_router = target.info.default_route;
+            if let Some(old_target) = routes.insert(owner.clone(), target) {
+                refresh_default_router = refresh_default_router || old_target.info.default_route;
             }
             WanRouteUpdate::Changed { refresh_default_router }
         }
@@ -49,7 +54,7 @@ fn reconcile_wan_route(
 
 fn sync_default_ipv4_wan_route(
     dataplane: &dyn RouteTableDataplane,
-    default_route: Option<RouteTargetInfo>,
+    default_route: Option<WanRouteTarget>,
 ) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
@@ -62,7 +67,7 @@ fn sync_default_ipv4_wan_route(
 
 fn sync_default_ipv6_wan_route(
     dataplane: &dyn RouteTableDataplane,
-    default_route: Option<RouteTargetInfo>,
+    default_route: Option<WanRouteTarget>,
 ) {
     if let Some(route) = default_route {
         let default_target = [(route, 1)];
@@ -82,13 +87,13 @@ fn sync_default_ipv6_wan_route(
 pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
     let mut candidates: Vec<RouteTargetInfo> = routes
         .values()
-        .filter(|route| route.default_route)
-        .filter(|route| {
-            route.dev_only_nexthop
-                || matches!(route.gateway_ip, IpAddr::V4(gateway) if gateway != Ipv4Addr::UNSPECIFIED)
+        .filter(|entry| entry.info.default_route)
+        .filter(|entry| {
+            entry.info.dev_only_nexthop
+                || matches!(entry.info.gateway_ip, IpAddr::V4(gateway) if gateway != Ipv4Addr::UNSPECIFIED)
         })
-        .map(|route| {
-            let mut nexthop = route.clone();
+        .map(|entry| {
+            let mut nexthop = entry.info.clone();
             nexthop.weight = nexthop.weight.max(1);
             nexthop.ifindex = 0;
             nexthop.mac = None;
@@ -143,26 +148,26 @@ impl IpRouteService {
         }
     }
 
-    async fn apply_removed_ipv4_wan_route(&self, removed: Option<RouteTargetInfo>) {
-        if let Some(info) = removed
-            && info.default_route
+    async fn apply_removed_ipv4_wan_route(&self, removed: Option<WanRouteTarget>) {
+        if let Some(entry) = removed
+            && entry.info.default_route
         {
             self.refresh_default_router().await;
         }
     }
 
-    async fn apply_removed_ipv6_wan_route(&self, removed: Option<RouteTargetInfo>) {
-        if let Some(info) = removed
-            && info.default_route
+    async fn apply_removed_ipv6_wan_route(&self, removed: Option<WanRouteTarget>) {
+        if let Some(entry) = removed
+            && entry.info.default_route
         {
             self.refresh_default_router().await;
         }
     }
 
-    pub async fn insert_ipv4_wan_route(&self, owner: &RouteOwner, info: RouteTargetInfo) {
+    pub async fn insert_ipv4_wan_route(&self, owner: &RouteOwner, target: WanRouteTarget) {
         let update = {
             let mut lock = self.ipv4_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, owner, info)
+            reconcile_wan_route(&mut lock, owner, target)
         };
         let changed = !matches!(update, WanRouteUpdate::Noop);
 
@@ -172,10 +177,10 @@ impl IpRouteService {
         }
     }
 
-    pub async fn insert_ipv6_wan_route(&self, owner: &RouteOwner, info: RouteTargetInfo) {
+    pub async fn insert_ipv6_wan_route(&self, owner: &RouteOwner, target: WanRouteTarget) {
         let update = {
             let mut lock = self.ipv6_wan_ifaces.write().await;
-            reconcile_wan_route(&mut lock, owner, info)
+            reconcile_wan_route(&mut lock, owner, target)
         };
         let changed = !matches!(update, WanRouteUpdate::Noop);
 
@@ -208,12 +213,12 @@ impl IpRouteService {
         }
     }
 
-    pub async fn insert_ipv4_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
-        self.insert_ipv4_wan_route(&RouteOwner::Link(link_id), info).await;
+    pub async fn insert_ipv4_link_route(&self, link_id: Uuid, target: WanRouteTarget) {
+        self.insert_ipv4_wan_route(&RouteOwner::Link(link_id), target).await;
     }
 
-    pub async fn insert_ipv6_link_route(&self, link_id: Uuid, info: RouteTargetInfo) {
-        self.insert_ipv6_wan_route(&RouteOwner::Link(link_id), info).await;
+    pub async fn insert_ipv6_link_route(&self, link_id: Uuid, target: WanRouteTarget) {
+        self.insert_ipv6_wan_route(&RouteOwner::Link(link_id), target).await;
     }
 
     pub async fn remove_ipv4_link_route(&self, link_id: Uuid) {
@@ -225,11 +230,11 @@ impl IpRouteService {
     }
 
     pub async fn get_ipv4_wan_route(&self, owner: &RouteOwner) -> Option<RouteTargetInfo> {
-        self.ipv4_wan_ifaces.read().await.get(owner).cloned()
+        self.ipv4_wan_ifaces.read().await.get(owner).map(|entry| entry.info.clone())
     }
 
     pub async fn get_ipv6_wan_route(&self, owner: &RouteOwner) -> Option<RouteTargetInfo> {
-        self.ipv6_wan_ifaces.read().await.get(owner).cloned()
+        self.ipv6_wan_ifaces.read().await.get(owner).map(|entry| entry.info.clone())
     }
 
     pub async fn get_all_ipv4_wan_routes(&self) -> WanRoutesByOwner {
@@ -245,12 +250,22 @@ impl IpRouteService {
     }
 
     pub async fn refresh_default_router(&self) {
-        let ipv4_default =
-            self.ipv4_wan_ifaces.read().await.values().find(|route| route.default_route).cloned();
+        let ipv4_default = self
+            .ipv4_wan_ifaces
+            .read()
+            .await
+            .values()
+            .find(|entry| entry.info.default_route)
+            .cloned();
         sync_default_ipv4_wan_route(&*self.dataplane, ipv4_default);
 
-        let ipv6_default =
-            self.ipv6_wan_ifaces.read().await.values().find(|route| route.default_route).cloned();
+        let ipv6_default = self
+            .ipv6_wan_ifaces
+            .read()
+            .await
+            .values()
+            .find(|entry| entry.info.default_route)
+            .cloned();
         sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
 
         // The kernel IPv4 default route is owned by the single-writer
@@ -309,10 +324,10 @@ impl IpRouteService {
         {
             let mut lock = self.ipv4_wan_ifaces.write().await;
             lock.retain(|key, value| {
-                if value.is_docker {
+                if value.info.is_docker {
                     removed_ipv4_owners.push(key.clone());
                 }
-                !value.is_docker
+                !value.info.is_docker
             });
         }
 
@@ -320,10 +335,10 @@ impl IpRouteService {
         {
             let mut lock = self.ipv6_wan_ifaces.write().await;
             lock.retain(|key, value| {
-                if value.is_docker {
+                if value.info.is_docker {
                     removed_ipv6_owners.push(key.clone());
                 }
-                !value.is_docker
+                !value.info.is_docker
             });
         }
 

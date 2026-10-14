@@ -9,7 +9,7 @@ mod tests {
     use landscape_common::{
         flow::ip_mark::{IpConfig, IpMarkInfo},
         flow::mark::FlowMark,
-        sys_service::route_service::RouteTargetInfo,
+        sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
     };
     use libbpf_rs::{
         MapCore, MapFlags, ProgramInput,
@@ -76,16 +76,19 @@ mod tests {
 
         // Route target: flow_id=5 → ifindex=11
         let targets = [(
-            RouteTargetInfo {
-                weight: 0,
-                ifindex: 11,
-                mac: None,
-                default_route: false,
-                is_docker: false,
-                iface_name: "test-wan".to_string(),
-                iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                dev_only_nexthop: false,
+            WanRouteTarget {
+                info: RouteTargetInfo {
+                    weight: 0,
+                    ifindex: 11,
+                    mac: None,
+                    default_route: false,
+                    is_docker: false,
+                    iface_name: "test-wan".to_string(),
+                    iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    dev_only_nexthop: false,
+                },
+                chain: 0,
             },
             1,
         )];
@@ -149,16 +152,19 @@ mod tests {
         create_inner_flow_match_map_v4(&skel.maps.flow4_ip_map, 0, &rules).unwrap();
 
         let targets = [(
-            RouteTargetInfo {
-                weight: 0,
-                ifindex: 11,
-                mac: None,
-                default_route: false,
-                is_docker: false,
-                iface_name: "test-wan".to_string(),
-                iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                gateway_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                dev_only_nexthop: false,
+            WanRouteTarget {
+                info: RouteTargetInfo {
+                    weight: 0,
+                    ifindex: 11,
+                    mac: None,
+                    default_route: false,
+                    is_docker: false,
+                    iface_name: "test-wan".to_string(),
+                    iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    gateway_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    dev_only_nexthop: false,
+                },
+                chain: 0,
             },
             1,
         )];

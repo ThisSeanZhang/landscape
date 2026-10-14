@@ -8,7 +8,7 @@ use landscape_common::{
     ddns::IpFamily,
     flow::{FlowTarget, WeightedFlowTarget, config::FlowConfig},
     sys_service::route_service::{
-        LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteOwner, RouteTargetInfo,
+        LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteOwner, RouteTargetInfo, WanRouteTarget,
     },
 };
 use uuid::Uuid;
@@ -18,31 +18,37 @@ use super::lan::{Ipv4LanBucketUpdate, Ipv6LanRouteUpdate, reconcile_ipv4_lan_buc
 use super::wan::{WanRouteEvent, WanRouteEventKind};
 use super::*;
 
-fn ipv4_wan_route(iface_name: &str, iface_ip: Ipv4Addr) -> RouteTargetInfo {
-    RouteTargetInfo {
-        weight: 1,
-        ifindex: 1,
-        mac: None,
-        default_route: true,
-        is_docker: false,
-        iface_name: iface_name.to_string(),
-        iface_ip: IpAddr::V4(iface_ip),
-        gateway_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-        dev_only_nexthop: false,
+fn ipv4_wan_route(iface_name: &str, iface_ip: Ipv4Addr) -> WanRouteTarget {
+    WanRouteTarget {
+        chain: 0,
+        info: RouteTargetInfo {
+            weight: 1,
+            ifindex: 1,
+            mac: None,
+            default_route: true,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: IpAddr::V4(iface_ip),
+            gateway_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            dev_only_nexthop: false,
+        },
     }
 }
 
-fn ipv6_wan_default_route(iface_name: &str) -> RouteTargetInfo {
-    RouteTargetInfo {
-        weight: 1,
-        ifindex: 2,
-        mac: None,
-        default_route: true,
-        is_docker: false,
-        iface_name: iface_name.to_string(),
-        iface_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-        gateway_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-        dev_only_nexthop: false,
+fn ipv6_wan_default_route(iface_name: &str) -> WanRouteTarget {
+    WanRouteTarget {
+        chain: 0,
+        info: RouteTargetInfo {
+            weight: 1,
+            ifindex: 2,
+            mac: None,
+            default_route: true,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+            gateway_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+            dev_only_nexthop: false,
+        },
     }
 }
 
@@ -118,6 +124,39 @@ fn wan_route_events_only_fire_on_real_changes() {
 }
 
 #[test]
+fn wan_route_events_fire_on_chain_change() {
+    run_async_test(async {
+        let service = test_used_ip_route();
+        let mut events = service.subscribe_wan_route_events();
+        let owner = RouteOwner::Link(Uuid::nil());
+
+        service
+            .insert_ipv4_wan_route(&owner, ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 10)))
+            .await;
+        let _ = events.recv().await; // initial upsert
+
+        // Same route info but a different chain: the stored entry changed,
+        // so subscribers (the flow-target join) must re-run and rewrite the
+        // eBPF slot values with the new chain.
+        let mut reanchored = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 10));
+        reanchored.chain = 3;
+        service.insert_ipv4_wan_route(&owner, reanchored.clone()).await;
+        assert_eq!(
+            events.recv().await.unwrap(),
+            WanRouteEvent {
+                owner: owner.clone(),
+                family: IpFamily::Ipv4,
+                kind: WanRouteEventKind::Upserted,
+            }
+        );
+
+        // And an identical re-registration stays quiet.
+        service.insert_ipv4_wan_route(&owner, reanchored).await;
+        assert!(tokio::time::timeout(Duration::from_millis(50), events.recv()).await.is_err());
+    });
+}
+
+#[test]
 fn remove_all_wan_docker_notifies_and_refreshes_default_router() {
     run_async_test(async {
         let service = test_used_ip_route();
@@ -126,8 +165,8 @@ fn remove_all_wan_docker_notifies_and_refreshes_default_router() {
         let docker_owner = RouteOwner::Netns("docker0".to_string());
         let wan_owner = RouteOwner::Link(Uuid::nil());
         let mut docker_route = ipv4_wan_route("docker0", Ipv4Addr::new(172, 17, 0, 1));
-        docker_route.is_docker = true;
-        docker_route.default_route = false;
+        docker_route.info.is_docker = true;
+        docker_route.info.default_route = false;
         service.insert_ipv4_wan_route(&docker_owner, docker_route).await;
         service
             .insert_ipv4_wan_route(
@@ -619,8 +658,24 @@ fn collect_refresh_enabled_flow_with_matching_targets() {
     assert_eq!(targets.len(), 2);
     assert_eq!(targets[0].1, 3); // weight preserved
     assert_eq!(targets[1].1, 1);
-    assert_eq!(targets[0].0.iface_name, "wan0");
-    assert_eq!(targets[1].0.iface_name, "wan1");
+    assert_eq!(targets[0].0.info.iface_name, "wan0");
+    assert_eq!(targets[1].0.info.iface_name, "wan1");
+}
+
+#[test]
+fn collect_refresh_carries_chain_id() {
+    let mut wan_infos = WanRoutesByOwner::new();
+    let mut anchored = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1));
+    anchored.chain = 7;
+    wan_infos.insert(link_owner("wan0"), anchored);
+
+    let configs = vec![flow_config(5, true, vec![iface_target("wan0", 1)])];
+
+    let result = collect_target_refresh_result(&configs, &wan_infos);
+
+    let targets = result.get(&5).expect("flow_id 5 should be present");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].0.chain, 7, "the join must pass the chain into the slot targets");
 }
 
 #[test]
@@ -660,7 +715,7 @@ fn collect_refresh_partial_match_keeps_only_resolved() {
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].0.iface_name, "wan0");
+    assert_eq!(targets[0].0.info.iface_name, "wan0");
     assert_eq!(targets[0].1, 3);
 }
 
@@ -685,7 +740,7 @@ fn collect_refresh_resolves_by_link_id_with_stale_name() {
     let targets = result.get(&7).expect("flow_id 7 should be present");
     assert_eq!(targets.len(), 1, "a correct link_id must resolve regardless of its stale name");
     assert_eq!(
-        targets[0].0.iface_name, "wan0",
+        targets[0].0.info.iface_name, "wan0",
         "the resolved iface comes from the registered route"
     );
 }
@@ -723,7 +778,7 @@ fn collect_refresh_netns_target_resolves_by_container_name() {
 
     let targets = result.get(&3).expect("flow_id 3 should be present");
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].0.iface_name, "ns0");
+    assert_eq!(targets[0].0.info.iface_name, "ns0");
     assert_eq!(targets[0].1, 5);
 }
 
@@ -775,9 +830,9 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
 
     fn del_lan_route(&self, _info: LanRouteInfo) {}
 
-    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(RouteTargetInfo, u32)]) {}
+    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
 
-    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(RouteTargetInfo, u32)]) {}
+    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
 
     fn del_wan_slots_v4(&self, _flow_id: FlowId) {}
 
@@ -804,12 +859,12 @@ fn kernel_default_nexthops_filters_dedups_and_sorts() {
 
     // Non-default routes never contribute.
     let mut non_default = ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 3));
-    non_default.default_route = false;
+    non_default.info.default_route = false;
     routes.insert(link_owner("wan1"), non_default);
 
     // A default route behind an IPv6 gateway is skipped (v4 route table).
     let mut v6_gateway = ipv4_wan_route("wan2", Ipv4Addr::new(198, 51, 100, 4));
-    v6_gateway.gateway_ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
+    v6_gateway.info.gateway_ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
     routes.insert(link_owner("wan2"), v6_gateway);
 
     let nexthops = super::wan::kernel_default_nexthops(&routes);
@@ -825,7 +880,7 @@ fn kernel_default_skips_unspecified_gateway() {
 
     // `via 0.0.0.0` is not a valid nexthop; such a route must be skipped.
     let mut unspecified = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1));
-    unspecified.gateway_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+    unspecified.info.gateway_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
     routes.insert(link_owner("wan0"), unspecified);
 
     routes.insert(link_owner("wan1"), ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 2)));
@@ -842,7 +897,7 @@ fn kernel_default_clamps_zero_weight_and_normalizes() {
 
     // The kernel rejects `weight 0`; it must be clamped to 1.
     let mut zero_weight = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1));
-    zero_weight.weight = 0;
+    zero_weight.info.weight = 0;
     routes.insert(link_owner("wan0"), zero_weight);
 
     let nexthops = super::wan::kernel_default_nexthops(&routes);

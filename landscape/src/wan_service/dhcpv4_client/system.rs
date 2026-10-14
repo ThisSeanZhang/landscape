@@ -2,7 +2,9 @@ use landscape_common::SYSCTL_IPV4_RP_FILTER_PATTERN;
 use landscape_common::net_proto::dhcp::{
     DhcpV4Option as DhcpOption, DhcpV4OptionCode as OptionCode, DhcpV4Options,
 };
-use landscape_common::sys_service::route_service::{LanRouteInfo, LanRouteMode, RouteTargetInfo};
+use landscape_common::sys_service::route_service::{
+    LanRouteInfo, LanRouteMode, RouteTargetInfo, WanRouteTarget,
+};
 use std::net::{IpAddr, Ipv4Addr};
 
 use super::fsm::LeaseParams;
@@ -97,16 +99,19 @@ pub(crate) async fn apply_lease(
             .route_service
             .insert_ipv4_link_route(
                 config.link_id,
-                RouteTargetInfo {
-                    ifindex: config.ifindex,
-                    weight: 1,
-                    mac: Some(config.mac_addr),
-                    is_docker: false,
-                    default_route: config.default_router,
-                    iface_name: config.iface_name.clone(),
-                    iface_ip: IpAddr::V4(params.yiaddr),
-                    gateway_ip: IpAddr::V4(router_ip),
-                    dev_only_nexthop: false,
+                WanRouteTarget {
+                    info: RouteTargetInfo {
+                        ifindex: config.ifindex,
+                        weight: 1,
+                        mac: Some(config.mac_addr),
+                        is_docker: false,
+                        default_route: config.default_router,
+                        iface_name: config.iface_name.clone(),
+                        iface_ip: IpAddr::V4(params.yiaddr),
+                        gateway_ip: IpAddr::V4(router_ip),
+                        dev_only_nexthop: false,
+                    },
+                    chain: config.chain_id,
                 },
             )
             .await;

@@ -35,7 +35,7 @@ use landscape_common::{
     concurrency::{spawn_task, task_label},
     event::hub::IAPrefixEvent,
     net::MacAddr,
-    sys_service::route_service::RouteTargetInfo,
+    sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
 use landscape_core::pd_prefix::IAPrefixMap;
 
@@ -996,7 +996,12 @@ async fn handle_packet(
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
-                            route_service.insert_ipv6_link_route(link_id, info).await;
+                            route_service
+                                .insert_ipv6_link_route(
+                                    link_id,
+                                    WanRouteTarget { info, chain: chain_id },
+                                )
+                                .await;
                             replace_ip_route(
                                 &ia_prefix,
                                 chain_id,

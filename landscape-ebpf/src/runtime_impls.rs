@@ -252,7 +252,7 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
     fn replace_wan_slots_v4(
         &self,
         flow_id: u32,
-        targets: &[(landscape_common::sys_service::route_service::RouteTargetInfo, u32)],
+        targets: &[(landscape_common::sys_service::route_service::WanRouteTarget, u32)],
     ) {
         maps::route::replace_wan_route_slots_v4(&self.rt.paths, flow_id, targets);
     }
@@ -260,7 +260,7 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
     fn replace_wan_slots_v6(
         &self,
         flow_id: u32,
-        targets: &[(landscape_common::sys_service::route_service::RouteTargetInfo, u32)],
+        targets: &[(landscape_common::sys_service::route_service::WanRouteTarget, u32)],
     ) {
         maps::route::replace_wan_route_slots_v6(&self.rt.paths, flow_id, targets);
     }

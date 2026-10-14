@@ -4,7 +4,7 @@
 
 use crate::config::FlowId;
 
-use super::{LanRouteInfo, RouteTargetInfo};
+use super::{LanRouteInfo, RouteTargetInfo, WanRouteTarget};
 
 /// eBPF capability for the IP route service.
 #[async_trait::async_trait]
@@ -18,10 +18,10 @@ pub trait RouteTableDataplane: Send + Sync {
 
     /// Replace the IPv4 WAN target slots of `flow_id` with the weighted
     /// `targets`.
-    fn replace_wan_slots_v4(&self, flow_id: FlowId, targets: &[(RouteTargetInfo, u32)]);
+    fn replace_wan_slots_v4(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]);
 
     /// Replace the IPv6 WAN target slots of `flow_id`.
-    fn replace_wan_slots_v6(&self, flow_id: FlowId, targets: &[(RouteTargetInfo, u32)]);
+    fn replace_wan_slots_v6(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]);
 
     /// Drop all IPv4 WAN target slots of `flow_id`.
     fn del_wan_slots_v4(&self, flow_id: FlowId);
@@ -49,9 +49,9 @@ impl RouteTableDataplane for NoopRouteTableDataplane {
 
     fn del_lan_route(&self, _info: LanRouteInfo) {}
 
-    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(RouteTargetInfo, u32)]) {}
+    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
 
-    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(RouteTargetInfo, u32)]) {}
+    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
 
     fn del_wan_slots_v4(&self, _flow_id: FlowId) {}
 

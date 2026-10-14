@@ -14,7 +14,7 @@ use std::{
 use landscape_common::{
     flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
     net::MacAddr,
-    sys_service::route_service::RouteTargetInfo,
+    sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
@@ -134,16 +134,19 @@ fn seed_wan_slots(
     mac: Option<MacAddr>,
 ) {
     let targets = [(
-        RouteTargetInfo {
-            weight: 0,
-            ifindex,
-            mac,
-            default_route: false,
-            is_docker,
-            iface_name: "test-wan".to_string(),
-            iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            gateway_ip: IpAddr::V6(gateway_addr()),
-            dev_only_nexthop: false,
+        WanRouteTarget {
+            info: RouteTargetInfo {
+                weight: 0,
+                ifindex,
+                mac,
+                default_route: false,
+                is_docker,
+                iface_name: "test-wan".to_string(),
+                iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                gateway_ip: IpAddr::V6(gateway_addr()),
+                dev_only_nexthop: false,
+            },
+            chain: 0,
         },
         1,
     )];

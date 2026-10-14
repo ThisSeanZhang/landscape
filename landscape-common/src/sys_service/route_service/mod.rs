@@ -67,6 +67,20 @@ impl RouteTargetInfo {
     }
 }
 
+/// A WAN route target paired with the owning link's eBPF chain slot.
+///
+/// `chain` is the `link_chain_id` of the WAN link that registered the
+/// route; the flow-target join passes it into the eBPF WAN slot maps so
+/// the dataplane can enter the link's chain without re-resolving its
+/// identity. `0` means "no chain": docker/netns targets and links whose
+/// dataplane chain is not anchored. Construction stays explicit (no
+/// `From<RouteTargetInfo>`) so callers cannot silently drop the chain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WanRouteTarget {
+    pub info: RouteTargetInfo,
+    pub chain: u16,
+}
+
 #[derive(Eq, Hash, PartialEq, Debug, Default, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub enum LanRouteMode {

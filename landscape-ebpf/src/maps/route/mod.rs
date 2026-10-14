@@ -26,7 +26,7 @@ mod tests {
     use landscape_common::{
         flow::mark::FlowMark,
         flow::trace::{FlowMatchSource, FlowRuleMatchResult, FlowVerdictSource},
-        sys_service::route_service::RouteTargetInfo,
+        sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
     };
     use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
     use zerocopy::IntoBytes;
@@ -97,7 +97,7 @@ mod tests {
         assert!(lookup_v6_slot(&map, 5, 1));
 
         // Call replace with all-zero weights
-        let zero_weight_target = (dummy_v6_route_target(11), 0);
+        let zero_weight_target = (WanRouteTarget { info: dummy_v6_route_target(11), chain: 0 }, 0);
         replace_wan_route_slots_v6_with_map(&map, 5, &[zero_weight_target]);
 
         // Slots should be cleared

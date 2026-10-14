@@ -94,16 +94,16 @@ async fn get_routing_status(
 
     let mut ipv4_wan: Vec<WanRouteEntry> = ipv4_wan
         .into_iter()
-        .map(|(owner, info)| {
+        .map(|(owner, target)| {
             let health = link_health(&link_healths, &owner);
-            WanRouteEntry { owner, info, health }
+            WanRouteEntry { owner, info: target.info, health }
         })
         .collect();
     let mut ipv6_wan: Vec<WanRouteEntry> = ipv6_wan
         .into_iter()
-        .map(|(owner, info)| {
+        .map(|(owner, target)| {
             let health = link_health(&link_healths, &owner);
-            WanRouteEntry { owner, info, health }
+            WanRouteEntry { owner, info: target.info, health }
         })
         .collect();
     ipv4_wan.sort_by_key(|entry| entry.info.iface_name.clone());
