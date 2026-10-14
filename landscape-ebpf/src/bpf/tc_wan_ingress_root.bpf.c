@@ -18,9 +18,15 @@ struct {
 
 const volatile u32 current_l3_offset = 0;
 
+/* Chain id of the owning WAN link; stamped into the skb cb so the ingress
+ * chain workers (e.g. the tc-side WAN cache writers) can record which link
+ * a flow arrived on. */
+const volatile u32 current_chain = 0;
+
 SEC("tc/ingress")
 int tc_wan_ingress_root(struct __sk_buff *skb) {
     skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
+    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = current_chain;
 
     u8 l3_protocol = 0;
     if (current_l3_protocol(skb, current_l3_offset, &l3_protocol) == TC_ACT_OK) {

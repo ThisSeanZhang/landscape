@@ -48,7 +48,6 @@ pub fn init_tc_wan_route(
     xdp_handoff_enabled: bool,
 ) -> LdEbpfResult<TcWanRouteHandle> {
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
 

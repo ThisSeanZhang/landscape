@@ -89,15 +89,19 @@ struct {
  *  ─────────────────────────────────────────────────────────────────────────
  *
  *    tc_wan_egress_route  (Route logic, three entry paths)
- *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)  (forwarded)
- *      │    (routed by a landscape pick_wan earlier; its target chain id
- *      │     rides in cb[TC_CHAIN_CB_CHAIN_ID_OFFSET])
- *      ├─ ingress_ifindex != 0 → TC_ACT_OK  (compat bypass)
+ *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots,
+ *      │    cb[TC_CHAIN_CB_CHAIN_ID_OFFSET])  (forwarded; routed by a
+ *      │    landscape pick_wan earlier, its target chain id rides in cb)
+ *      ├─ ingress_ifindex != 0 → DIRECT_{V4,V6}_SLOT of ls_wan_e_tails
+ *      │    (LAN-originated forwarded handoff: the LAN side already ran
+ *      │    its flow verdict, so the direct workers skip the verdict and
+ *      │    hand the preserved flow id to pick_wan — flow-0 default
+ *      │    slots when the mark carries none)
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
  *           └─ tc_route4/6_pick_wan_in_wan_egress:
- *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target)
+ *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target chain)
  *                └─ cross WAN → sets FORWARDED + chain id in cb + bpf_redirect(target, 0)
  *
  *    tc_wan_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
@@ -124,7 +128,8 @@ struct {
  *
  *    ▸ packet arrives at the egress of the target WAN interface
  *
- *    tc_wan_egress_route sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots, skb->ifindex)
+ *    tc_wan_egress_route sees CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots,
+ *                                                          cb chain id)
  *      └─ tc_wan_egress_root
  *           ├─ MSS → FW → NAT  (WAN egress chain)
  *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect → TC_ACT_OK
@@ -141,7 +146,7 @@ struct {
  *  and `wan_egress_root_next_stage` (in tc_wan_egress_root.bpf.c)
  *  maps (family-indexed, max_entries=2 each, no tc_stage.h dependency).
  *
- *  Intro → tc_wan_egress_roots[ifindex]    → tc_wan_egress_root  (WAN egress)
+ *  Intro → tc_wan_egress_roots[chain]    → tc_wan_egress_root  (WAN egress)
  *  Stage → wan_ingress_next_stage[slot]    → next WAN ingress stage (slot = v4/v6)
  *  Stage → wan_egress_next_stage[slot]     → next WAN egress stage (slot = v4/v6)
  *
@@ -199,7 +204,8 @@ struct {
  *    tc_pipe_exits_wan_egress  — WAN egress exit
  *
  *  Multi-entry prog arrays (declared in tc_wan_egress_route.bpf.c):
- *    tc_wan_egress_roots — per-WAN egress chain roots (SEC tc/egress)
+ *    tc_wan_egress_roots — per-WAN-link egress chain roots, keyed by the
+ *    link's chain id (SEC tc/egress)
  */
 
 #endif /* __LD_TC_STAGE_H_ */

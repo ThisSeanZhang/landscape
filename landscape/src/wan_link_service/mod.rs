@@ -961,6 +961,7 @@ pub struct WanLinkServiceManagerService {
     store: WanLinkRepository,
     service: ServiceManager<WanLinkService>,
     prefix_map: IAPrefixMap,
+    chain_dataplane: Arc<dyn WanChainDataplane>,
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
     status_store: WanLinkStatusStore,
     runtime_status_store: WanLinkRuntimeStatusStore,
@@ -1011,6 +1012,9 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         let old = self.get_store().delete_and_get(id).await?;
         let Some(old) = old else { return Ok(None) };
         let status = self.get_service().stop_service(id.to_string()).await;
+        // The whole link is gone: tear down its chain roots and any
+        // lingering publications.
+        self.chain_dataplane.teardown_chain(old.link_chain_id);
         self.status_store.write().await.remove(&id);
         self.runtime_status_store.remove(&id);
         self.config_channels.lock().unwrap().remove(&id);
@@ -1041,7 +1045,7 @@ impl WanLinkServiceManagerService {
 
         let starter = WanLinkService::new(
             route_service,
-            chain_dataplane,
+            chain_dataplane.clone(),
             health_probe,
             prefix_map.clone(),
             prefix_sender,
@@ -1070,6 +1074,7 @@ impl WanLinkServiceManagerService {
             service,
             store,
             prefix_map,
+            chain_dataplane,
             config_channels,
             status_store,
             runtime_status_store,

@@ -21,19 +21,19 @@ pub struct TcMssHandle {
     runtime: Arc<EbpfRuntime>,
     _skel: tc_mss_skel::TcMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 impl Drop for TcMssHandle {
     fn drop(&mut self) {
         use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Mss);
+        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Mss);
     }
 }
 
 pub fn attach_tc_mss(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     mtu: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<TcMssHandle> {
@@ -43,7 +43,6 @@ pub fn attach_tc_mss(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -73,13 +72,13 @@ pub fn attach_tc_mss(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.tc.inject(ifindex, StageType::Mss, entry)?;
+    rt.tc.inject(link_chain_id, StageType::Mss, entry)?;
 
     Ok(TcMssHandle {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }
 
@@ -95,7 +94,7 @@ pub struct XdpMssHandle {
     runtime: Arc<EbpfRuntime>,
     _skel: xdp_mss_skel::XdpMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpMssHandle {}
@@ -104,13 +103,13 @@ unsafe impl Sync for XdpMssHandle {}
 impl Drop for XdpMssHandle {
     fn drop(&mut self) {
         use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Mss);
+        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Mss);
     }
 }
 
 pub fn init_xdp_mss(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     mtu_size: u16,
 ) -> LdEbpfResult<XdpMssHandle> {
     use crate::chain::xdp_manager::{StageEntry, StageType};
@@ -164,13 +163,13 @@ pub fn init_xdp_mss(
         next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.xdp.inject(ifindex, StageType::Mss, entry)?;
+    rt.xdp.inject(link_chain_id, StageType::Mss, entry)?;
 
     Ok(XdpMssHandle {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }
 
@@ -180,12 +179,12 @@ pub fn init_xdp_mss(
 
 pub fn init_mss(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     mtu: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
-        tc: Some(attach_tc_mss(rt, ifindex, mtu, has_eth_header)?),
-        xdp: Some(init_xdp_mss(rt, ifindex, mtu)?),
+        tc: Some(attach_tc_mss(rt, link_chain_id, mtu, has_eth_header)?),
+        xdp: Some(init_xdp_mss(rt, link_chain_id, mtu)?),
     })
 }

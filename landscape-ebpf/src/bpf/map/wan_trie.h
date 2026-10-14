@@ -101,25 +101,25 @@ static __always_inline u32 wan_trie_resolve(struct wan_trie_tbl __arena *tbl, u6
     return vals[idx];
 }
 
-/* Namespace tags for non-IPv6 keys: the first key byte. All three live in
- * IETF-reserved IPv6 space (0000::/8, 0200::/7, 0300::/8), so they can
- * never collide with a real IPv6 prefix; the Rust builder additionally
- * rejects v6 entries whose masked byte0 is below 0x04.
+/* Namespace tags for non-IPv6 keys: the first key byte. All live in
+ * IETF-reserved IPv6 space (0000::/8, 0300::/8), so they can never
+ * collide with a real IPv6 prefix; the Rust builder additionally
+ * rejects v6 entries whose masked byte0 is below 0x04.  (The 0x02 tag
+ * once keyed an ifindex namespace used as an ingress fallback; it is
+ * retired — dispatch is chain-keyed and trie-published only.)
  */
 #define WAN_TRIE_TAG_V4 0x00
-#define WAN_TRIE_TAG_IFX 0x02
 #define WAN_TRIE_TAG_PPP 0x03
 
 /* Key layout, in walk order (resolve reads key byte j from bits 8j..8j+7,
  * i.e. packet byte j sits in the LOW end of the u64 register on LE):
  *   IPv6  [ a0 a1 a2 a3 a4 a5 a6 a7 ]    plen 0..64,  up to 8 hops
  *   IPv4  [ 00 | a  b  c  d | 0  0  0 ]  plen 8+n,    up to 5 hops
- *   ifx   [ 02 | i0 i1 i2 i3 | 0  0  0 ]  plen 40,    5 hops
  *   ppp   [ 03 | sh sl | 0  0  0  0  0 ]  plen 24,    3 hops
  *
  * A big-endian header field loaded into a register already packs its
  * packet bytes ascending (byte j at bits 8j), so it just shifts up by one
- * byte behind the tag; host-order values (ifindex) swap first.
+ * byte behind the tag.
  */
 static __always_inline u64 wan_trie_key_v4(__be32 daddr) {
     return WAN_TRIE_TAG_V4 | ((u64)daddr << 8);
@@ -127,10 +127,6 @@ static __always_inline u64 wan_trie_key_v4(__be32 daddr) {
 
 static __always_inline u64 wan_trie_key_ppp(__be16 session) {
     return WAN_TRIE_TAG_PPP | ((u64)session << 8);
-}
-
-static __always_inline u64 wan_trie_key_ifx(u32 ifindex) {
-    return WAN_TRIE_TAG_IFX | ((u64)bpf_htonl(ifindex) << 8);
 }
 
 /* Pages needed for the trie table (all sizes in bytes, rounded up). */

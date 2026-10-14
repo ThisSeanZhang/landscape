@@ -141,11 +141,11 @@ pub fn init_xdp_lan_route(
 
     let link = NativeXdpLink::attach(rt.clone(), &skel.progs.xdp_lan_route, ifindex)?;
 
-    rt.xdp.ensure_roots(ifindex)?;
+    // LAN ifaces carry no chains of their own: xdp_lan_route is attached
+    // directly and reaches the WAN link chains through the tail-call
+    // arrays, whose roots the WAN link hub owns.
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
-
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcLanIngressRouteSkelBuilder::default();

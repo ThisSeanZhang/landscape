@@ -6,6 +6,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "base/landscape.h"
+#include "chain/tc_cb.h"
 #include "route/route4_path.h"
 #include "route/route6_path.h"
 
@@ -66,7 +67,8 @@ int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
         return ret;
     }
 
-    return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex);
+    return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex,
+                                   skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
 #undef BPF_LOG_TOPIC
 }
 

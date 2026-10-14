@@ -22,19 +22,19 @@ pub struct TcFirewallHandle {
     runtime: Arc<EbpfRuntime>,
     _skel: tc_firewall_skel::TcFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 impl Drop for TcFirewallHandle {
     fn drop(&mut self) {
         use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Firewall);
+        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Firewall);
     }
 }
 
 pub fn attach_tc_firewall(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
@@ -43,7 +43,6 @@ pub fn attach_tc_firewall(
     use std::os::fd::{AsFd, AsRawFd};
 
     let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -79,13 +78,13 @@ pub fn attach_tc_firewall(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.tc.inject(ifindex, StageType::Firewall, entry)?;
+    rt.tc.inject(link_chain_id, StageType::Firewall, entry)?;
 
     Ok(TcFirewallHandle {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }
 
@@ -101,7 +100,7 @@ pub struct XdpFirewallHandle {
     runtime: Arc<EbpfRuntime>,
     _skel: xdp_firewall_skel::XdpFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpFirewallHandle {}
@@ -110,11 +109,14 @@ unsafe impl Sync for XdpFirewallHandle {}
 impl Drop for XdpFirewallHandle {
     fn drop(&mut self) {
         use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Firewall);
+        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Firewall);
     }
 }
 
-pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<XdpFirewallHandle> {
+pub fn init_xdp_firewall(
+    rt: &Arc<EbpfRuntime>,
+    link_chain_id: u16,
+) -> LdEbpfResult<XdpFirewallHandle> {
     use crate::chain::xdp_manager::{StageEntry, StageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -176,13 +178,13 @@ pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<Xd
         next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.xdp.inject(ifindex, StageType::Firewall, entry)?;
+    rt.xdp.inject(link_chain_id, StageType::Firewall, entry)?;
 
     Ok(XdpFirewallHandle {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }
 
@@ -192,11 +194,11 @@ pub fn init_xdp_firewall(rt: &Arc<EbpfRuntime>, ifindex: u32) -> LdEbpfResult<Xd
 
 pub fn init_firewall(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<FirewallHandle> {
     Ok(FirewallHandle {
-        tc: Some(attach_tc_firewall(rt, ifindex, has_eth_header)?),
-        xdp: Some(init_xdp_firewall(rt, ifindex)?),
+        tc: Some(attach_tc_firewall(rt, link_chain_id, has_eth_header)?),
+        xdp: Some(init_xdp_firewall(rt, link_chain_id)?),
     })
 }

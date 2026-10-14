@@ -10,9 +10,11 @@
 #define TC_CHAIN_CB_FORWARDED_OFFSET 0
 // set by tc_wan_ingress_root; read by WAN ingress exit
 #define TC_CHAIN_CB_L3_OFFSET 1
-// set by pick_wan alongside FORWARDED; carries the target WAN link's
-// link_chain_id (0 = none) so the egress entry can enter the target
-// link's chain without re-resolving the routing decision
+// set by tc_wan_ingress_root (current link) alongside L3_OFFSET and by
+// pick_wan (target link) alongside FORWARDED; carries the WAN link's
+// link_chain_id (0 = none).  Read by the WAN ingress cache writers and by
+// tc_wan_egress_route to enter the target link's chain without
+// re-resolving the routing decision.
 #define TC_CHAIN_CB_CHAIN_ID_OFFSET 2
 
 #endif /* __LD_TC_CB_H_ */

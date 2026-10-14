@@ -210,7 +210,8 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
 // ── main XDP wan_route ingress ──
 
 static __always_inline void xdp_route4_set_cache_in_wan(struct xdp_md *ctx,
-                                                        const struct route4_context *context) {
+                                                        const struct route4_context *context,
+                                                        u32 link_chain_id) {
     struct route4_cache_key cache_key = {
         .local_addr = context->daddr,
         .remote_addr = context->saddr,
@@ -237,6 +238,7 @@ static __always_inline void xdp_route4_set_cache_in_wan(struct xdp_md *ctx,
             target->ifindex = ctx->ingress_ifindex;
             target->has_mac = 1;
             target->xdp_redirect_able = xdp_redirect_target_able(ctx->ingress_ifindex) ? 1 : 0;
+            target->link_chain_id = link_chain_id;
         } else {
             // bpf_printk("[wan_cache_w] v4 NEW local=%pI4 remote=%pI4 ifindex=%u has_mac=1",
             //            &cache_key.local_addr, &cache_key.remote_addr, ctx->ingress_ifindex);
@@ -244,13 +246,15 @@ static __always_inline void xdp_route4_set_cache_in_wan(struct xdp_md *ctx,
             new_target.has_mac = 1;
             new_target.ifindex = ctx->ingress_ifindex;
             new_target.xdp_redirect_able = xdp_redirect_target_able(ctx->ingress_ifindex) ? 1 : 0;
+            new_target.link_chain_id = link_chain_id;
             bpf_map_update_elem(wan_cache, &cache_key, &new_target, BPF_ANY);
         }
     }
 }
 
 static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
-                                                        const struct route6_context *context) {
+                                                        const struct route6_context *context,
+                                                        u32 link_chain_id) {
     struct route6_cache_key cache_key = {};
     __builtin_memcpy(cache_key.local_addr.bytes, context->daddr.bytes, 16);
     __builtin_memcpy(cache_key.remote_addr.bytes, context->saddr.bytes, 16);
@@ -276,6 +280,7 @@ static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
             target->ifindex = ctx->ingress_ifindex;
             target->has_mac = 1;
             target->xdp_redirect_able = xdp_redirect_target_able(ctx->ingress_ifindex) ? 1 : 0;
+            target->link_chain_id = link_chain_id;
         } else {
             // bpf_printk("[wan_cache_w] v6 NEW local=%pI6c remote=%pI6c ifindex=%u has_mac=1",
             //            &cache_key.local_addr, &cache_key.remote_addr, ctx->ingress_ifindex);
@@ -283,6 +288,7 @@ static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
             new_target.has_mac = 1;
             new_target.ifindex = ctx->ingress_ifindex;
             new_target.xdp_redirect_able = xdp_redirect_target_able(ctx->ingress_ifindex) ? 1 : 0;
+            new_target.link_chain_id = link_chain_id;
             bpf_map_update_elem(wan_cache, &cache_key, &new_target, BPF_ANY);
         }
     }
@@ -316,7 +322,7 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         ret = xdp_route4_lan_redirect_check_in_wan(ctx, &context, &meta);
         if (ret && (ret != XDP_PASS || meta.mark == XDP_HANDOFF_TC_REDIRECT_MAGIC)) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
-                xdp_route4_set_cache_in_wan(ctx, &context);
+                xdp_route4_set_cache_in_wan(ctx, &context, meta.target_chain_id);
             }
         }
         return ret;
@@ -334,7 +340,7 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         ret = xdp_route6_lan_redirect_check_in_wan(ctx, &context, &meta);
         if (ret && (ret != XDP_PASS || meta.mark == XDP_HANDOFF_TC_REDIRECT_MAGIC)) {
             if (get_cache_mask(meta.mark) == INGRESS_STATIC_MARK) {
-                xdp_route6_set_cache_in_wan(ctx, &context);
+                xdp_route6_set_cache_in_wan(ctx, &context, meta.target_chain_id);
             }
         }
         return ret;

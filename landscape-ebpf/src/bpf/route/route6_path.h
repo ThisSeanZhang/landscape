@@ -614,7 +614,8 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
 }
 
 static __always_inline int route6_set_cache_in_wan(const struct route6_context *context,
-                                                   u32 current_l3_offset, u32 ifindex) {
+                                                   u32 current_l3_offset, u32 ifindex,
+                                                   u32 link_chain_id) {
 #define BPF_LOG_TOPIC "route6_set_cache_in_wan"
     struct route6_cache_key search_key = {0};
     struct route6_cache_value *target = NULL;
@@ -646,11 +647,13 @@ static __always_inline int route6_set_cache_in_wan(const struct route6_context *
             target->ifindex = ifindex;
             target->has_mac = current_l3_offset > 0;
             target->xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
+            target->link_chain_id = link_chain_id;
         } else {
             struct route6_cache_value new_target_cache = {0};
             new_target_cache.ifindex = ifindex;
             new_target_cache.has_mac = current_l3_offset > 0;
             new_target_cache.xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
+            new_target_cache.link_chain_id = link_chain_id;
             bpf_map_update_elem(wan_cache, &search_key, &new_target_cache, BPF_ANY);
         }
 

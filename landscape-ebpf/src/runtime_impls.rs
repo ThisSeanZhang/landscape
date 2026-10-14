@@ -136,10 +136,6 @@ impl LanRouteDataplane for EbpfLanRouteDataplane {
         .map_err(|e| e.to_string())
     }
 
-    fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.xdp.remove_roots(ifindex);
-    }
-
     fn set_redirect_able(&self, ifindex: u32, able: bool) {
         maps::redirect_able::set_xdp_redirect_able(&self.rt.paths, ifindex, able);
     }
@@ -210,10 +206,6 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
         )
         .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
         .map_err(|e| e.to_string())
-    }
-
-    fn remove_xdp_roots(&self, ifindex: u32) {
-        self.rt.xdp.remove_roots(ifindex);
     }
 
     fn set_redirect_able(&self, ifindex: u32, able: bool) {

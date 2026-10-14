@@ -14,6 +14,10 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Chain id of the owning WAN link; stamped into the packet metadata
+ * alongside the mark/target_ifindex written by xdp_lan_route. */
+const volatile u32 current_chain = 0;
+
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, 2);
@@ -23,6 +27,11 @@ struct {
 
 SEC("xdp")
 int xdp_lan_root(struct xdp_md *ctx) {
+    if (xdp_stamp_chain_id(ctx, current_chain) != 0) {
+        bpf_printk("[lan_root] stamp chain meta failed, chain=%u", current_chain);
+        return XDP_DROP;
+    }
+
     struct xdp_pipe_meta meta = {};
 
     if (xdp_get_meta(ctx, &meta) != 0) {

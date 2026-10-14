@@ -285,7 +285,11 @@ fn xdp_lan_route_wan_pipeline() {
 
     let share_pin = crate::tests::isolated_pin_root("xdp-lr-pipe");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
-    // A→C: slot target → wan_h
+    // Root prog-arrays and the dispatch trie are keyed by the WAN link's
+    // chain id (ifindex keys are gone).
+    const TEST_CHAIN: u32 = 9;
+    // A→C: slot target → wan_h (link_chain_id at bytes 16..18 of the
+    // 20-byte route4_target_info)
     {
         let s = route_slot(0xCB007101);
         let mut k = [0u8; 8];
@@ -293,6 +297,7 @@ fn xdp_lan_route_wan_pipeline() {
         k[0..4].copy_from_slice(&0u32.to_ne_bytes());
         k[4..8].copy_from_slice(&s.to_ne_bytes());
         v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
+        v[16..18].copy_from_slice(&(TEST_CHAIN as u16).to_ne_bytes());
         maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
     // C→A: lan route → lan_p
@@ -381,7 +386,7 @@ fn xdp_lan_route_wan_pipeline() {
     // ── LAN chain (A→C): lan_route → root → mss → exit ──
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&TEST_CHAIN.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     lan_root
         .maps
@@ -401,18 +406,19 @@ fn xdp_lan_route_wan_pipeline() {
 
     // ── WAN chain (C→A): wan_intro → wan_root → mss → wan_route_ingress ──
     {
-        // Dispatch trie: route 10.0.0.1 → wan_h.
+        // Dispatch trie: route 10.0.0.1 → the WAN link's chain (dispatch
+        // values are chain ids).
         let data = intro.maps.wan_trie_arena_data.as_mut().unwrap();
         wan_trie_publish(
             cast_arena_tbl(&mut data.wan_trie_tbl),
-            &[v4_entry(Ipv4Addr::new(10, 0, 0, 1), 32, wan_h_i).unwrap()],
+            &[v4_entry(Ipv4Addr::new(10, 0, 0, 1), 32, TEST_CHAIN).unwrap()],
         )
         .unwrap();
     }
     intro
         .maps
         .xdp_pipe_root_progs
-        .update(&wan_h_i.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&TEST_CHAIN.to_ne_bytes(), &wan_root_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     wan_root
         .maps

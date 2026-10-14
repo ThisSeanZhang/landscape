@@ -1,8 +1,12 @@
 //! IPv4 whole-flow baseline for the WAN-egress route worker
 //! `tc_route4_wan_egress` (tc_wan_egress_route.bpf.c).
 //!
-//! This worker only handles locally-generated traffic (ingress_ifindex == 0;
-//! forwarded frames enter via the egress route/root tail-call chain instead).
+//! The workers cover the local path (ingress_ifindex == 0, flow verdict +
+//! pick_wan) and — via the DIRECT_{V4,V6}_SLOT dispatch — the LAN-originated
+//! handoff (tc_route4_wan_direct_egress skips the verdict and hands the
+//! LAN-stamped flow id to pick_wan untouched; flow-0 default slots when the
+//! mark carries no id); already forwarded frames enter via
+//! tc_wan_egress_roots[chain] tail-call instead.
 //! Each test runs the complete pipeline once — scan →
 //! lan_redirect_check_in_wan_egress → flow_verdict → pick_wan_in_wan_egress —
 //! and locks the current behaviour before any route rewrite.
@@ -12,9 +16,9 @@
 //!     lan worker; the legacy route4_pick_wan_and_send_by_flow_id twin passes
 //!     default-flow traffic instead);
 //!   * a slot target on the egress device itself (ifindex == skb->ifindex)
-//!     tail-calls into tc_wan_egress_roots[ifindex]; with the root map empty
-//!     (no chain assembled) the packet is dropped — root assembly is out of
-//!     scope for these worker-level tests;
+//!     tail-calls into tc_wan_egress_roots[target chain]; with the root map
+//!     empty (no chain assembled) the packet is dropped — root assembly is
+//!     out of scope for these worker-level tests;
 //!   * the docker slot branch never sets the forwarded cb flag;
 //!   * the worker never writes any route cache;
 //!   * F3 (in_wan_egress) skips WAN-typed lan entries with TC_ACT_OK.
@@ -27,6 +31,7 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr},
+    os::fd::{AsFd, AsRawFd},
     str::FromStr,
 };
 
@@ -36,7 +41,7 @@ use landscape_common::{
     sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
 use libbpf_rs::{
-    ProgramInput,
+    MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::IntoBytes;
@@ -284,8 +289,8 @@ fn wan_egress_docker_slot_pushes_vlan_and_redirects() {
 #[test]
 fn wan_egress_same_device_target_tailcalls_into_empty_root_and_shots() {
     // A slot target on the egress device itself tail-calls into
-    // tc_wan_egress_roots[ifindex]; with no chain assembled the tail call
-    // fails and the worker falls back to TC_ACT_SHOT.
+    // tc_wan_egress_roots[0] (empty chain); with no chain assembled the
+    // tail call fails and the worker falls back to TC_ACT_SHOT.
     load_skel!("tc-wan-eg-same-dev", skel);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
     seed_wan_slots(&skel, 5, LOOPBACK_IFINDEX, false, None, 0);
@@ -295,6 +300,154 @@ fn wan_egress_same_device_target_tailcalls_into_empty_root_and_shots() {
 
     assert_eq!(ret, RET_SHOT, "empty egress root map → tail call falls through to SHOT");
     assert_eq!(forwarded, 0, "same-device branch never sets the forwarded flag");
+}
+
+// ---------------------------------------------------------------------------
+// entry (tc_wan_egress_route) dispatch rows
+// ---------------------------------------------------------------------------
+
+/// Runs the entry prog; returns (ret, out, mark, forwarded, chain_id).
+fn run_wan_egress_entry(
+    skel: &TcWanEgressRouteSkel<'_>,
+    pkt: &[u8],
+    ctx: &mut TestSkb,
+) -> (i32, Vec<u8>, u32, u32, u32) {
+    let mut out = vec![0_u8; pkt.len()];
+    let mut ctx_out = TestSkb::default();
+    let ret = skel
+        .progs
+        .tc_wan_egress_route
+        .test_run(ProgramInput {
+            data_in: Some(pkt),
+            data_out: Some(&mut out),
+            context_in: Some(ctx.as_mut_bytes()),
+            context_out: Some(ctx_out.as_mut_bytes()),
+            ..Default::default()
+        })
+        .expect("run tc_wan_egress_route")
+        .return_value as i32;
+    let mark = ctx_out.mark;
+    let forwarded = ctx_out.cb[0];
+    let chain_id = ctx_out.cb[2];
+    (ret, out, mark, forwarded, chain_id)
+}
+
+/// Registers the v4 route worker as the egress root of chain `chain`.
+fn register_v4_root_at_chain(skel: &TcWanEgressRouteSkel<'_>, chain: u32) {
+    let root_fd = skel.progs.tc_route4_wan_egress.as_fd().as_raw_fd();
+    skel.maps
+        .tc_wan_egress_roots
+        .update(&chain.to_ne_bytes(), &root_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+}
+
+#[test]
+fn wan_egress_entry_forwarded_tailcalls_target_chain_root() {
+    // FORWARDED cb + chain id: the entry tail-calls straight into
+    // tc_wan_egress_roots[chain]; the registered root (the v4 worker
+    // itself as a stand-in) completes the routing.
+    load_skel!("tc-wan-eg-entry-fwd", skel);
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None, 9);
+    register_v4_root_at_chain(&skel, 9);
+
+    let mut ctx = TestSkb {
+        ifindex: LOOPBACK_IFINDEX,
+        cb: [1, 0, 9, 0, 0],
+        ..Default::default()
+    };
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, _out, mark, forwarded, chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
+
+    assert_eq!(ret, RET_REDIRECT, "entry → chain root → worker redirects");
+    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(forwarded, 1);
+    assert_eq!(chain_id, 9, "chain id rides the cb untouched");
+}
+
+#[test]
+fn wan_egress_entry_forwarded_with_empty_chain_shots() {
+    // FORWARDED cb + chain id but no root assembled at that chain: the
+    // tail call misses and the entry drops the packet.
+    load_skel!("tc-wan-eg-entry-fwd-empty", skel);
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None, 9);
+
+    let mut ctx = TestSkb {
+        ifindex: LOOPBACK_IFINDEX,
+        cb: [1, 0, 9, 0, 0],
+        ..Default::default()
+    };
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, _out, _mark, _forwarded, _chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
+
+    assert_eq!(ret, RET_SHOT, "empty egress root map → tail call falls through to SHOT");
+}
+
+#[test]
+fn wan_egress_entry_lan_handoff_skips_verdict_and_honors_lan_flow() {
+    // LAN-originated handoff (ingress_ifindex != 0, no XDP fast path on
+    // the LAN iface): the entry dispatches to the DIRECT_V4 worker,
+    // which skips the flow verdict and hands the LAN-stamped flow id to
+    // pick_wan untouched.  Discrimination: flow 5's trie carries a DROP
+    // rule — had the verdict run, the packet would drop — and only the
+    // flow-5 slot is seeded.
+    load_skel!("tc-wan-eg-entry-handoff", skel);
+    seed_flow_rule_under(&skel, 5, remote_wan_addr(), FLOW_DROP_MARK);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None, 9);
+
+    let mut ctx = TestSkb {
+        ifindex: LOOPBACK_IFINDEX,
+        ingress_ifindex: 7,
+        mark: FLOW_REDIRECT_MARK, // LAN side already chose flow 5
+        ..Default::default()
+    };
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, _out, mark, forwarded, chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
+
+    assert_eq!(ret, RET_REDIRECT, "preserved LAN flow id routes via its slot");
+    assert_eq!(mark, FLOW_REDIRECT_MARK, "the direct worker never rewrites the mark");
+    assert_eq!(forwarded, 1, "pick_wan sets the forwarded flag");
+    assert_eq!(chain_id, 9, "flow-5 slot target chain rides the cb");
+}
+
+#[test]
+fn wan_egress_entry_lan_handoff_without_flow_id_uses_default_slots() {
+    // LAN matched no flow rule: the mark carries no flow id and pick_wan
+    // falls back to the flow-0 default slots.
+    load_skel!("tc-wan-eg-entry-handoff-default", skel);
+    seed_wan_slots(&skel, 0, TARGET_IFINDEX, false, None, 9);
+
+    let mut ctx = TestSkb {
+        ifindex: LOOPBACK_IFINDEX,
+        ingress_ifindex: 7,
+        ..Default::default()
+    };
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, _out, mark, forwarded, chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
+
+    assert_eq!(ret, RET_REDIRECT, "flow-0 default slot routes the handoff");
+    assert_eq!(mark, 0, "the direct worker never rewrites the mark");
+    assert_eq!(forwarded, 1);
+    assert_eq!(chain_id, 9);
+}
+
+#[test]
+fn wan_egress_entry_local_traffic_runs_verdict() {
+    // Locally generated (ingress_ifindex == 0): the normal worker runs
+    // the verdict (flow-0 trie rule redirects to flow 5's slot).
+    load_skel!("tc-wan-eg-entry-local", skel);
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None, 9);
+
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, _out, mark, forwarded, chain_id) =
+        run_wan_egress_entry(&skel, &pkt, &mut egress_ctx());
+
+    assert_eq!(ret, RET_REDIRECT);
+    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(forwarded, 1);
+    assert_eq!(chain_id, 9);
 }
 
 // ---------------------------------------------------------------------------

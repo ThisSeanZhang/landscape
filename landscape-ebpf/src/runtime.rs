@@ -86,7 +86,7 @@ impl EbpfRuntime {
         }
         let paths = init_map_paths(space)?;
         let wan_trie = Arc::new(WanTrieDispatcher::new());
-        let tc = Arc::new(TcChainManager::new(paths.clone(), wan_trie.clone())?);
+        let tc = Arc::new(TcChainManager::new(paths.clone())?);
         let xdp = Arc::new(XdpChainManager::new(paths.clone(), wan_trie.clone())?);
         Ok(Self { paths, tc, xdp, wan_trie, try_native_xdp })
     }

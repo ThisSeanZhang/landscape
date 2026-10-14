@@ -14,15 +14,27 @@ async fn main() {
             .expect("failed to init ebpf runtime"),
     );
     let ifindex: u32 = 96;
+    let link_chain_id: u16 = 1;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
     // Still consumed by the route side (is_current checks).
     landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, addr, None, 24, None);
 
-    let nat4 =
-        landscape_ebpf::stages::nat4::attach_nat4(&rt, ifindex, true, &NatConfig::default(), addr)
-            .expect("failed to start nat4 test");
+    // The test drives the stage directly; ensure its chain roots first.
+    rt.xdp().ensure_roots(link_chain_id).expect("ensure xdp roots");
+    rt.tc().ensure_roots(link_chain_id, true).expect("ensure tc roots");
+
+    let nat4 = landscape_ebpf::stages::nat4::attach_nat4(
+        &rt,
+        link_chain_id,
+        ifindex,
+        true,
+        &NatConfig::default(),
+        addr,
+    )
+    .expect("failed to start nat4 test");
     let nat6 = landscape_ebpf::stages::nat6::attach_nat6(
         &rt,
+        link_chain_id,
         ifindex,
         true,
         Some((std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0), 56)),

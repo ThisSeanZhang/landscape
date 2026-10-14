@@ -20,8 +20,9 @@ char LICENSE[] SEC("license") = "GPL";
 // Attached to TC egress.  `tc_wan_egress_route` decides the destination
 // (local outbound routing / forwarded handoff) and tail-calls the v4/v6 route
 // worker (tc_route4/6_wan_egress) through the static `ls_wan_e_tails` prog
-// array; the workers tail-call into the per-interface egress chain roots.
-// This is the "route" role for egress: routing happens before the chain.
+// array; the workers tail-call into the per-link egress chain roots
+// (tc_wan_egress_roots, keyed by the WAN link's chain id).  This is the
+// "route" role for egress: routing happens before the chain.
 
 const volatile u32 current_l3_offset = 14;
 
@@ -29,6 +30,8 @@ const volatile u32 current_l3_offset = 14;
 
 #define TC_EGRESS_V4_SLOT 0
 #define TC_EGRESS_V6_SLOT 1
+#define TC_EGRESS_DIRECT_V4_SLOT 2
+#define TC_EGRESS_DIRECT_V6_SLOT 3
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
@@ -111,7 +114,7 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
         return ret;
     }
 
-    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
+    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }
@@ -182,7 +185,7 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
         return ret;
     }
 
-    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->ifindex);
+    bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
     return TC_ACT_SHOT;
 #undef BPF_LOG_TOPIC
 }
@@ -234,6 +237,42 @@ int tc_route4_wan_egress(struct __sk_buff *skb) {
 }
 
 SEC("tc/egress")
+int tc_route4_wan_direct_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route4_wan_direct_egress"
+    int ret = 0;
+    u32 flow_mark = skb->mark;
+    struct route4_context context = {0};
+    struct packet_offset_info offset_info = {0};
+
+    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    if (ret == LD_SCAN_ERR) {
+        return TC_ACT_SHOT;
+    }
+    if (ret != TC_ACT_OK) {
+        return TC_ACT_OK;
+    }
+
+    ret = route4_read_context_from_scan(skb, &offset_info, &context);
+    if (ret != TC_ACT_OK) {
+        return TC_ACT_OK;
+    }
+
+    if (unlikely(is_broadcast_ip4(context.daddr))) {
+        return TC_ACT_UNSPEC;
+    }
+
+    ret = tc_route4_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    ret = tc_route4_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
+
+    return ret;
+#undef BPF_LOG_TOPIC
+}
+
+SEC("tc/egress")
 int tc_route6_wan_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route6_wan_egress"
     int ret = 0;
@@ -277,9 +316,45 @@ int tc_route6_wan_egress(struct __sk_buff *skb) {
 #undef BPF_LOG_TOPIC
 }
 
+SEC("tc/egress")
+int tc_route6_wan_direct_egress(struct __sk_buff *skb) {
+#define BPF_LOG_TOPIC "tc_route6_wan_direct_egress"
+    int ret = 0;
+    u32 flow_mark = skb->mark;
+    struct route6_context context = {0};
+    struct packet_offset_info offset_info = {0};
+
+    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
+    if (ret == LD_SCAN_ERR) {
+        return TC_ACT_SHOT;
+    }
+    if (ret != TC_ACT_OK) {
+        return TC_ACT_OK;
+    }
+
+    ret = route6_read_context_from_scan(skb, &offset_info, &context);
+    if (ret != TC_ACT_OK) {
+        return TC_ACT_OK;
+    }
+
+    if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
+        return TC_ACT_UNSPEC;
+    }
+
+    ret = tc_route6_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    ret = tc_route6_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
+
+    return ret;
+#undef BPF_LOG_TOPIC
+}
+
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 2);
+    __uint(max_entries, 4);
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(__u32));
     __array(values, int());
@@ -288,6 +363,8 @@ struct {
         {
             [TC_EGRESS_V4_SLOT] = (void *)&tc_route4_wan_egress,
             [TC_EGRESS_V6_SLOT] = (void *)&tc_route6_wan_egress,
+            [TC_EGRESS_DIRECT_V4_SLOT] = (void *)&tc_route4_wan_direct_egress,
+            [TC_EGRESS_DIRECT_V6_SLOT] = (void *)&tc_route6_wan_direct_egress,
         },
 };
 
@@ -297,18 +374,10 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     // Already routed by a landscape pick_wan: enter the target link's
     // chain directly, the decision (and its chain id) travels in cb.
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
-        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
+        bpf_tail_call(skb, &tc_wan_egress_roots, skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
         return TC_ACT_SHOT;
     }
 
-    if (likely(skb->ingress_ifindex != 0)) {
-        bpf_tail_call(skb, &tc_wan_egress_roots, skb->ifindex);
-        return TC_ACT_SHOT;
-    }
-
-    // Locally originated: resolve the flow target (or the default one)
-    // and either redirect cross-WAN or enter this link's chain from the
-    // slot target.
     bool is_ipv4;
     int ret;
 
@@ -324,6 +393,24 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
+    // LAN-originated forwarded handoff: traffic from LAN ifaces without
+    // an XDP fast path arrives here through the TC redirect.  The LAN
+    // side already ran its flow verdict and stamped the mark, so the
+    // direct workers skip the verdict and hand the preserved flow id to
+    // pick_wan (flow-0 default slots when the mark carries none).
+    if (likely(skb->ingress_ifindex != 0)) {
+        if (is_ipv4) {
+            bpf_tail_call_static(skb, &ls_wan_e_tails, TC_EGRESS_DIRECT_V4_SLOT);
+            bpf_printk("bpf_tail_call_static error");
+        } else {
+            bpf_tail_call_static(skb, &ls_wan_e_tails, TC_EGRESS_DIRECT_V6_SLOT);
+            bpf_printk("bpf_tail_call_static error");
+        }
+    }
+
+    // Locally originated: resolve the flow target (or the default one)
+    // and either redirect cross-WAN or enter this link's chain from the
+    // slot target.
     if (is_ipv4) {
         bpf_tail_call_static(skb, &ls_wan_e_tails, TC_EGRESS_V4_SLOT);
         bpf_printk("bpf_tail_call_static error");

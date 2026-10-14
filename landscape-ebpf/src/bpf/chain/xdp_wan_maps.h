@@ -5,6 +5,11 @@
 
 #include "chain/xdp_pipe_def.h"
 
+/* From-WAN direction chain roots of WAN links, keyed by the owning link's
+ * chain id (LINK_CHAIN_ID_MIN..=LINK_CHAIN_ID_MAX, slot 0 unused).  Entered
+ * via bpf_tail_call from xdp_wan_intro after the dispatch trie resolves the
+ * destination to a chain.  The instances are xdp_wan_root programs stamped
+ * with their chain id; they are never attached, only tail-called. */
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, XDP_PIPE_MAX_ENTRIES);

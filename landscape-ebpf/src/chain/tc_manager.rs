@@ -11,7 +11,6 @@ use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
-use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 
 pub(crate) mod tc_wan_ingress_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
@@ -72,20 +71,20 @@ fn delete_prog_array_fd(map_fd: i32, key: u32) {
         unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
 }
 
-/// Link one family's chain: root slot → the first entry, then each
+/// Link one family's link_chain_id: root slot → the first entry, then each
 /// entry's next-stage map to its successor. Entries with a zero family
 /// program fd (family-partial stages, e.g. Nat4) never join this list.
 fn link_family_chain(
     root_fd: i32,
     slot: u32,
-    chain: &[&StageEntry],
+    link_chain_id: &[&StageEntry],
     prog_fd: impl Fn(&StageEntry) -> i32,
     next_fd: impl Fn(&StageEntry) -> i32,
 ) -> LdEbpfResult<()> {
-    let Some(first) = chain.first() else { return Ok(()) };
+    let Some(first) = link_chain_id.first() else { return Ok(()) };
     update_prog_array_fd(root_fd, slot, prog_fd(first))?;
-    for i in 0..chain.len() - 1 {
-        update_prog_array_fd(next_fd(chain[i]), slot, prog_fd(chain[i + 1]))?;
+    for i in 0..link_chain_id.len() - 1 {
+        update_prog_array_fd(next_fd(link_chain_id[i]), slot, prog_fd(link_chain_id[i + 1]))?;
     }
     Ok(())
 }
@@ -155,12 +154,12 @@ pub struct StageEntry {
     pub wan_egress_next_stage_fd: i32,
 }
 
-// Family-indexed chain slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.
+// Family-indexed link_chain_id slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.
 const TC_SLOT_V4: u32 = 0;
 const TC_SLOT_V6: u32 = 1;
 
 #[derive(Default)]
-struct IfState {
+struct ChainState {
     ingress_root: Option<IngressRoot>,
     egress_root: Option<EgressRoot>,
     stages: BTreeMap<StageType, StageEntry>,
@@ -168,18 +167,18 @@ struct IfState {
 }
 
 struct ManagerInner {
-    interfaces: HashMap<u32, IfState>,
+    // WAN-link chains, keyed by the owning link's link id.
+    chains: HashMap<u16, ChainState>,
 }
 
 impl ManagerInner {
     fn new() -> Self {
-        Self { interfaces: HashMap::new() }
+        Self { chains: HashMap::new() }
     }
 }
 
 pub struct TcChainManager {
     paths: Arc<LandscapeMapPath>,
-    wan_trie: Arc<WanTrieDispatcher>,
     _route_wi: tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>,
     _exit_we: tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>,
     _back_wi: OwnedOpenObject,
@@ -188,13 +187,10 @@ pub struct TcChainManager {
 }
 
 impl TcChainManager {
-    /// Create the TC chain pin directory, seed its prog-array maps and load
+    /// Create the TC link_chain_id pin directory, seed its prog-array maps and load
     /// the shared terminal skeletons: the WAN ingress route unit and the WAN
     /// egress exit.
-    pub fn new(
-        paths: Arc<LandscapeMapPath>,
-        wan_trie: Arc<WanTrieDispatcher>,
-    ) -> LdEbpfResult<Self> {
+    pub fn new(paths: Arc<LandscapeMapPath>) -> LdEbpfResult<Self> {
         let tc_chain_base = paths.tc_chain_base();
         std::fs::create_dir_all(&tc_chain_base).map_err(|e| LandscapeEbpfError::Context {
             context: format!("can not create tc chain dir {}", tc_chain_base.display()),
@@ -219,7 +215,6 @@ impl TcChainManager {
 
         Ok(Self {
             paths,
-            wan_trie,
             _route_wi: route_wi,
             _exit_we: exit_we,
             _back_wi: back_wi,
@@ -330,36 +325,42 @@ impl TcChainManager {
         Ok((skel, back))
     }
 
-    pub fn ensure_roots(&self, ifindex: u32, has_eth_header: bool) -> LdEbpfResult<()> {
+    /// Ensure both direction link_chain_id roots of the WAN link owning `link_chain_id`
+    /// exist (idempotent).  Called by the WAN link hub when the link comes
+    /// up; `has_eth_header` (derived from the link iface's MAC presence)
+    /// selects the L3 offset the roots operate with.
+    pub fn ensure_roots(&self, link_chain_id: u16, has_eth_header: bool) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
-        self.ensure_roots_locked(&mut inner, ifindex, has_eth_header)
+        self.ensure_roots_locked(&mut inner, link_chain_id, has_eth_header)
     }
 
     fn ensure_roots_locked(
         &self,
         inner: &mut ManagerInner,
-        ifindex: u32,
+        link_chain_id: u16,
         has_eth_header: bool,
     ) -> LdEbpfResult<()> {
-        let state = inner.interfaces.entry(ifindex).or_default();
+        let state = inner.chains.entry(link_chain_id).or_default();
         state.has_eth_header = has_eth_header;
         let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
         if state.ingress_root.is_none() {
-            state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
+            state.ingress_root = Some(self.create_ingress_root(link_chain_id, l3_offset)?);
         }
         if state.egress_root.is_none() {
-            state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
+            state.egress_root = Some(self.create_egress_root(link_chain_id, l3_offset)?);
         }
         Ok(())
     }
 
-    fn create_ingress_root(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<IngressRoot> {
+    fn create_ingress_root(&self, link_chain_id: u16, l3_offset: u32) -> LdEbpfResult<IngressRoot> {
         let ingress_builder = TcWanIngressRootSkelBuilder::default();
         let (ingress_back, ingress_obj) = OwnedOpenObject::new();
         let mut ingress_open_skel =
             bpf_ctx!(ingress_builder.open(ingress_obj), "open tc_wan_ingress_root")?;
 
         ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+        ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_chain =
+            link_chain_id as u32;
 
         pin_and_reuse_map(
             &mut ingress_open_skel.maps.tc_pipe_exits_wan_ingress,
@@ -372,12 +373,10 @@ impl TcChainManager {
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&self.paths.tc_pipe_root_progs_path())?.update(
-            &ifindex.to_ne_bytes(),
+            &link_chain_id.to_ne_bytes(),
             &ingress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
-
-        self.wan_trie.set_ifindex_root(ifindex, ifindex);
 
         Ok(IngressRoot {
             _skel: ingress_skel,
@@ -386,7 +385,7 @@ impl TcChainManager {
         })
     }
 
-    fn create_egress_roots(&self, ifindex: u32, l3_offset: u32) -> LdEbpfResult<EgressRoot> {
+    fn create_egress_root(&self, link_chain_id: u16, l3_offset: u32) -> LdEbpfResult<EgressRoot> {
         let egress_builder = TcWanEgressRootSkelBuilder::default();
         let (egress_back, egress_obj) = OwnedOpenObject::new();
         let mut egress_open_skel =
@@ -405,7 +404,7 @@ impl TcChainManager {
         let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
         pinned_map(&self.paths.tc_wan_egress_roots_path())?.update(
-            &ifindex.to_ne_bytes(),
+            &link_chain_id.to_ne_bytes(),
             &egress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
@@ -417,95 +416,80 @@ impl TcChainManager {
         })
     }
 
-    pub fn inject(&self, ifindex: u32, stage: StageType, entry: StageEntry) -> LdEbpfResult<()> {
+    pub fn inject(
+        &self,
+        link_chain_id: u16,
+        stage: StageType,
+        entry: StageEntry,
+    ) -> LdEbpfResult<()> {
         {
             let mut inner = self.inner.lock().unwrap();
-            let state = inner.interfaces.entry(ifindex).or_default();
+            let state = inner.chains.entry(link_chain_id).or_default();
             state.stages.insert(stage, entry);
         }
-        self.rebuild(ifindex, ChainDir::WanIngress)?;
-        self.rebuild(ifindex, ChainDir::WanEgress)?;
+        self.rebuild(link_chain_id, ChainDir::WanIngress)?;
+        self.rebuild(link_chain_id, ChainDir::WanEgress)?;
         Ok(())
     }
 
-    pub fn remove_roots(&self, ifindex: u32) {
+    /// Tear down the WAN link chain identified by `link_chain_id`: drop both
+    /// direction roots and their prog-array slots.  Called by the hub at
+    /// link teardown; stages still registered are discarded.
+    pub fn remove_roots(&self, link_chain_id: u16) {
         let mut inner = self.inner.lock().unwrap();
-        if inner.interfaces.remove(&ifindex).is_none() {
+        if let Some(state) = inner.chains.remove(&link_chain_id) {
+            if !state.stages.is_empty() {
+                tracing::warn!(
+                    "removing tc roots for link_chain_id={link_chain_id} with stages still registered ({})",
+                    state.stages.len()
+                );
+            }
+        } else {
             return;
         }
 
         if let Ok(map) = pinned_map(&self.paths.tc_pipe_root_progs_path()) {
-            let _ = map.delete(&ifindex.to_ne_bytes());
+            let _ = map.delete(&link_chain_id.to_ne_bytes());
         }
         if let Ok(map) = pinned_map(&self.paths.tc_wan_egress_roots_path()) {
-            let _ = map.delete(&ifindex.to_ne_bytes());
+            let _ = map.delete(&link_chain_id.to_ne_bytes());
         }
-
-        self.wan_trie.del_ifindex_root(ifindex);
     }
 
-    pub fn remove(&self, ifindex: u32, stage: StageType) -> LdEbpfResult<()> {
-        let empty;
+    /// Remove one stage from both direction chains of `link_chain_id`.  The roots
+    /// stay registered for the link's lifetime (the hub tears them down
+    /// when the link goes away).
+    pub fn remove(&self, link_chain_id: u16, stage: StageType) -> LdEbpfResult<()> {
+        let has_state;
         {
             let mut inner = self.inner.lock().unwrap();
-            if let Some(state) = inner.interfaces.get_mut(&ifindex) {
-                state.stages.remove(&stage);
-                empty = state.stages.is_empty();
-            } else {
-                return Ok(());
-            }
+            has_state = inner
+                .chains
+                .get_mut(&link_chain_id)
+                .is_some_and(|state| state.stages.remove(&stage).is_some());
         }
-        if empty {
-            self.remove_roots(ifindex);
-        } else {
-            self.rebuild(ifindex, ChainDir::WanIngress)?;
-            self.rebuild(ifindex, ChainDir::WanEgress)?;
+        if has_state {
+            self.rebuild(link_chain_id, ChainDir::WanIngress)?;
+            self.rebuild(link_chain_id, ChainDir::WanEgress)?;
         }
         Ok(())
     }
 
-    fn rebuild(&self, ifindex: u32, chain: ChainDir) -> LdEbpfResult<()> {
+    fn rebuild(&self, link_chain_id: u16, dir: ChainDir) -> LdEbpfResult<()> {
         let mut inner = self.inner.lock().unwrap();
 
-        if matches!(chain, ChainDir::WanIngress)
-            && !inner.interfaces.get(&ifindex).and_then(|s| s.ingress_root.as_ref()).is_some()
-        {
-            return Ok(());
-        }
-
         let has_eth_header =
-            inner.interfaces.get(&ifindex).map(|s| s.has_eth_header).unwrap_or(false);
+            inner.chains.get(&link_chain_id).map(|s| s.has_eth_header).unwrap_or(false);
+        self.ensure_roots_locked(&mut inner, link_chain_id, has_eth_header)?;
 
-        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
-
-        {
-            let state = inner.interfaces.entry(ifindex).or_default();
-            state.has_eth_header = has_eth_header;
-            match chain {
-                ChainDir::WanIngress => {
-                    if state.ingress_root.is_none() {
-                        state.ingress_root = Some(self.create_ingress_root(ifindex, l3_offset)?);
-                    }
-                    if state.egress_root.is_none() {
-                        state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
-                    }
-                }
-                ChainDir::WanEgress => {
-                    if state.egress_root.is_none() {
-                        state.egress_root = Some(self.create_egress_roots(ifindex, l3_offset)?);
-                    }
-                }
-            }
-        }
-
-        let state = inner.interfaces.get_mut(&ifindex).unwrap();
-        let root_next_stage_fd = match chain {
+        let state = inner.chains.get_mut(&link_chain_id).unwrap();
+        let root_next_stage_fd = match dir {
             ChainDir::WanIngress => state.ingress_root.as_ref().unwrap().next_stage_fd,
             ChainDir::WanEgress => state.egress_root.as_ref().unwrap().next_stage_fd,
         };
 
         for entry in state.stages.values() {
-            let next_fd = match chain {
+            let next_fd = match dir {
                 ChainDir::WanIngress => entry.wan_ingress_next_stage_fd,
                 ChainDir::WanEgress => entry.wan_egress_next_stage_fd,
             };
@@ -520,7 +504,7 @@ impl TcChainManager {
         let sorted_v4: Vec<&StageEntry> = state
             .stages
             .values()
-            .filter(|v| match chain {
+            .filter(|v| match dir {
                 ChainDir::WanIngress => v.wan_ingress_prog_v4_fd != 0,
                 ChainDir::WanEgress => v.wan_egress_prog_v4_fd != 0,
             })
@@ -528,14 +512,14 @@ impl TcChainManager {
         let sorted_v6: Vec<&StageEntry> = state
             .stages
             .values()
-            .filter(|v| match chain {
+            .filter(|v| match dir {
                 ChainDir::WanIngress => v.wan_ingress_prog_v6_fd != 0,
                 ChainDir::WanEgress => v.wan_egress_prog_v6_fd != 0,
             })
             .collect();
 
         type ProgFdFn = fn(&StageEntry) -> i32;
-        let (prog_v4_fd, prog_v6_fd, next_stage_fd): (ProgFdFn, ProgFdFn, ProgFdFn) = match chain {
+        let (prog_v4_fd, prog_v6_fd, next_stage_fd): (ProgFdFn, ProgFdFn, ProgFdFn) = match dir {
             ChainDir::WanIngress => (
                 |e: &StageEntry| e.wan_ingress_prog_v4_fd,
                 |e: &StageEntry| e.wan_ingress_prog_v6_fd,

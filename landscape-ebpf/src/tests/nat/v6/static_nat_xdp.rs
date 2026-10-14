@@ -63,8 +63,14 @@ fn packet_destination(packet: &[u8]) -> Ipv6Addr {
     ipv6.destination.into()
 }
 
+/// sizeof(struct xdp_pipe_meta): BPF_PROG_TEST_RUN copies the XDP
+/// metadata area into data_out as a prefix of the returned packet
+/// (test_run.c: size = data_end - data_meta), and the ingress static
+/// path allocates it via bpf_xdp_adjust_meta.
+const XDP_PIPE_META_LEN: usize = 12;
+
 fn packet_data(output: &[u8]) -> &[u8] {
-    if output.get(12..14) == Some(&[0x86, 0xdd]) { output } else { &output[8..] }
+    if output.get(12..14) == Some(&[0x86, 0xdd]) { output } else { &output[XDP_PIPE_META_LEN..] }
 }
 
 fn assert_xdp_round_trip(
@@ -81,7 +87,7 @@ fn assert_xdp_round_trip(
     let mut open_skel = builder.open(&mut open_object).unwrap();
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some((wan_ip())));
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
         rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
     }
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;
@@ -108,7 +114,8 @@ fn assert_xdp_round_trip(
     assert_eq!(packet_source(result.data.as_deref().unwrap()), external_address);
 
     let ingress = build_ipv6_udp(remote(), external_address, 9999, client_port);
-    let mut ingress_out = vec![0; ingress.len() + 8];
+    // room for the 12-byte meta prefix the static-ingress path appends
+    let mut ingress_out = vec![0; ingress.len() + XDP_PIPE_META_LEN];
     let result = skel
         .progs
         .ingress_nat_v6

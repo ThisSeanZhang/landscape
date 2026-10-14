@@ -13,6 +13,11 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Chain id of the owning WAN link; stamped into the packet metadata so
+ * chain stages (e.g. the WAN-side cache writers) can record which link
+ * the flow arrived on without re-resolving it. */
+const volatile u32 current_chain = 0;
+
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
     __uint(max_entries, 2);
@@ -22,6 +27,11 @@ struct {
 
 SEC("xdp")
 int xdp_wan_root(struct xdp_md *ctx) {
+    if (xdp_stamp_chain_id(ctx, current_chain) != 0) {
+        bpf_printk("[wan_root] stamp chain meta failed, chain=%u", current_chain);
+        return XDP_DROP;
+    }
+
     switch (xdp_classify_l3(ctx)) {
     case XDP_L3_V6:
         bpf_tail_call_static(ctx, &root_next_stage, XDP_ROOT_SLOT_V6);

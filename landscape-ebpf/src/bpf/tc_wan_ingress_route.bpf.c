@@ -63,7 +63,8 @@ int tc_route4_wan_ingress(struct __sk_buff *skb) {
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route4_set_cache_in_wan(&context, l3, skb->ifindex);
+            route4_set_cache_in_wan(&context, l3, skb->ifindex,
+                                    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
         }
     }
 
@@ -103,7 +104,8 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route6_set_cache_in_wan(&context, l3, skb->ifindex);
+            route6_set_cache_in_wan(&context, l3, skb->ifindex,
+                                    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
         }
     }
 

@@ -12,7 +12,7 @@ pub struct XdpPppoeHandle {
     runtime: Arc<EbpfRuntime>,
     _skel: xdp_pppoe_skel::XdpPppoeSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpPppoeHandle {}
@@ -21,13 +21,13 @@ unsafe impl Sync for XdpPppoeHandle {}
 impl Drop for XdpPppoeHandle {
     fn drop(&mut self) {
         use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Pppoe);
+        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Pppoe);
     }
 }
 
 pub fn init_xdp_pppoe(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     session_id: u16,
 ) -> LdEbpfResult<XdpPppoeHandle> {
     use crate::chain::xdp_manager::{StageEntry, StageType};
@@ -81,12 +81,12 @@ pub fn init_xdp_pppoe(
         next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.xdp.inject(ifindex, StageType::Pppoe, entry)?;
+    rt.xdp.inject(link_chain_id, StageType::Pppoe, entry)?;
 
     Ok(XdpPppoeHandle {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }

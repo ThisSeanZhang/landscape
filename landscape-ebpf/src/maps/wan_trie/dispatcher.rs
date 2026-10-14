@@ -22,8 +22,7 @@ use std::time::{Duration, Instant};
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 
 use super::builder::{
-    PrefixEntry, ifx_entry, masked_key, ppp_entry, reference_lpm, v4_entry, v6_entry,
-    wan_trie_publish,
+    PrefixEntry, masked_key, ppp_entry, reference_lpm, v4_entry, v6_entry, wan_trie_publish,
 };
 use super::types::WanTrieTbl;
 
@@ -133,15 +132,6 @@ impl WanTrieDispatcher {
             }
         }
         publish_all(&mut inner);
-    }
-
-    /// Ingress-ifindex fallback entry (chain root per WAN interface).
-    pub(crate) fn set_ifindex_root(&self, ifindex: u32, root: u32) {
-        self.apply(&[Op::Set(ifx_entry(ifindex, root))]);
-    }
-
-    pub(crate) fn del_ifindex_root(&self, ifindex: u32) {
-        self.apply(&[Op::Del { prefix: ifx_entry(ifindex, 0).prefix, plen: 40 }]);
     }
 
     /// IPv6 WAN prefix (PD delegation & friends).
@@ -320,20 +310,16 @@ mod tests {
         let mut t1 = t1;
         let _g1 = disp.register(&mut t1).unwrap();
 
-        disp.set_ifindex_root(7, 70);
         disp.set_ipv6_prefix(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 71).unwrap();
         disp.set_ipv4_prefix(Ipv4Addr::new(203, 0, 113, 0), 24, 72).unwrap();
         disp.set_ppp_session(0x1234, 73);
 
-        let ifx_key = ifx_entry(7, 0).prefix;
-        assert_eq!(wan_trie_resolve(&t1, &ifx_key), 70);
         assert_eq!(wan_trie_resolve(&t1, &d("fd22:2222:33ab::1")), 71);
         let v4_key = v4_entry(Ipv4Addr::new(203, 0, 113, 9), 32, 0).unwrap().prefix;
         assert_eq!(wan_trie_resolve(&t1, &v4_key), 72);
         assert_eq!(wan_trie_resolve(&t1, &ppp_entry(0x1234, 0).prefix), 73);
         assert_eq!(wan_trie_resolve(&t1, &d("fd99::1")), 0);
 
-        assert_eq!(disp.resolve(&ifx_key), 70);
         assert_eq!(disp.resolve(&d("fd22:2222:33ab::1")), 71);
     }
 
@@ -374,20 +360,21 @@ mod tests {
     #[test]
     fn register_initial_publish_and_guard_detach() {
         let disp = dispatcher();
-        disp.set_ifindex_root(3, 30);
+
+        disp.set_ppp_session(3, 30);
 
         let mut t1 = tbl();
         let g1 = disp.register(&mut t1).unwrap();
-        assert_eq!(wan_trie_resolve(&t1, &ifx_entry(3, 0).prefix), 30, "initial publish");
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0).prefix), 30, "initial publish");
 
         drop(g1);
-        disp.set_ifindex_root(4, 40);
+        disp.set_ppp_session(4, 40);
         assert_eq!(
-            wan_trie_resolve(&t1, &ifx_entry(4, 0).prefix),
+            wan_trie_resolve(&t1, &ppp_entry(4, 0).prefix),
             0,
             "detached target must not update"
         );
-        assert_eq!(wan_trie_resolve(&t1, &ifx_entry(3, 0).prefix), 30);
-        assert_eq!(disp.resolve(&ifx_entry(4, 0).prefix), 40);
+        assert_eq!(wan_trie_resolve(&t1, &ppp_entry(3, 0).prefix), 30);
+        assert_eq!(disp.resolve(&ppp_entry(4, 0).prefix), 40);
     }
 }

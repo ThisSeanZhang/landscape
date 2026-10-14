@@ -24,7 +24,7 @@ struct {
  * ELF-initial zero arena data on every load, so tables are never shared;
  * the runtime registers the arena with the global WanTrieDispatcher after
  * skeleton load and before attach). Dispatch roots are tc_pipe_root_progs
- * slots, indexed by the owning WAN ifindex.
+ * slots, indexed by the owning WAN link's chain id.
  */
 WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
 
@@ -67,8 +67,9 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
         __builtin_memcpy(&key64, &ip6h->daddr, sizeof(key64));
     }
 
+    // The trie is the only dispatch authority: WAN links publish their
+    // v4/v6 (and PPP) keys before this program can see their traffic.
     tc_intro_dispatch(skb, key64);
-    tc_intro_dispatch(skb, wan_trie_key_ifx(skb->ingress_ifindex));
 
     return TC_ACT_SHOT;
 }

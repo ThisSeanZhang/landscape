@@ -21,7 +21,8 @@ char LICENSE[] SEC("license") = "GPL";
  * right after skeleton load — which publishes the current entry set — and
  * only then attaches the program.
  *
- * Dispatch roots are prog-array slots, indexed by the owning WAN ifindex.
+ * Dispatch roots are prog-array slots, indexed by the owning WAN link's
+ * chain id.
  */
 WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
 
@@ -30,16 +31,12 @@ static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root
     ld_bpf_log("wan_intro tail call failed, root_index=%u", root_index);
 }
 
-/* Primary key hit -> its chain root; otherwise the ingress-ifindex
- * fallback; still nothing -> XDP_PASS.
+/* Primary key hit -> its chain root; miss -> XDP_PASS.  The trie is the
+ * only dispatch authority: every WAN link publishes its v4/v6/PPP keys
+ * (with its chain id as value) before this program can see its traffic.
  */
 static __always_inline int wan_intro_dispatch(struct xdp_md *ctx, u64 key) {
     u32 root = wan_trie_resolve(&wan_trie_tbl, key);
-    if (root) {
-        wan_intro_tailcall_root(ctx, root);
-    }
-
-    root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ifx(ctx->ingress_ifindex));
     if (root) {
         wan_intro_tailcall_root(ctx, root);
     }
@@ -67,9 +64,10 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     //   ├─ classifies IPv4 / IPv6 / PPPoE
     //   ├─ PPPoE → strips session header, rewrites ethhdr
     //   ├─ resolves the WAN dispatch trie (one arena trie, namespaced keys:
-    //   │     IPv6 prefix64 / IPv4 daddr / PPPoE session / ifindex)
-    //   │     ├─ miss  → ifindex fallback → miss → XDP_PASS
-    //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs, root)
+    //   │     IPv6 prefix64 / IPv4 daddr / PPPoE session; values are chain
+    //   │     ids published by the WAN link hub)
+    //   │     ├─ miss  → XDP_PASS
+    //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs, chain)
     //   │                    │
     //   │                    ▼  chain root (linked-list head)
     //   │                         │→ &next_stage[0] → ... → wan_route
@@ -203,11 +201,6 @@ int xdp_wan_intro(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    if (root) {
-        wan_intro_tailcall_root(ctx, root);
-    }
-
-    root = wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ifx(ctx->ingress_ifindex));
     if (root) {
         wan_intro_tailcall_root(ctx, root);
     }

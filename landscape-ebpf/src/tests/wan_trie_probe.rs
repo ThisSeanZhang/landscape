@@ -2,7 +2,7 @@
 //! entry set into the probe program's real arena through the mmap, then the
 //! same case matrix as the pure-Rust builder tests is replayed through
 //! `BPF_PROG_TEST_RUN` and compared against `reference_lpm` — proving the C
-//! `wan_trie_resolve` walk and the `wan_trie_key_v4/ppp/ifx` byte-order
+//! `wan_trie_resolve` walk and the `wan_trie_key_v4/ppp` byte-order
 //! layouts agree with the userspace builder, on a real kernel.
 //!
 //! All packet payload fields are NETWORK byte order (payload byte j is trie
@@ -23,7 +23,7 @@ use libbpf_rs::{
 
 use crate::maps::wan_trie::builder::tests::{d, p};
 use crate::maps::wan_trie::builder::{
-    PrefixEntry, ifx_entry, ppp_entry, reference_lpm, v4_entry, v6_entry, wan_trie_publish,
+    PrefixEntry, ppp_entry, reference_lpm, v4_entry, v6_entry, wan_trie_publish,
 };
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
@@ -31,7 +31,6 @@ use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTriePr
 const MODE_RAW: u8 = 0;
 const MODE_V4: u8 = 1;
 const MODE_PPP: u8 = 2;
-const MODE_IFX: u8 = 3;
 const BAD_KEY: u32 = 0xFFFF_FFFF;
 
 /// `[mode][7B pad][payload]`; payload bytes are already network order.
@@ -130,7 +129,6 @@ fn bpf_reader_matches_reference() {
         v6_entry(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 60).unwrap(),
         v4_entry(Ipv4Addr::new(203, 0, 113, 0), 24, 61).unwrap(), // 203.0.113.0/24
         ppp_entry(0x1234, 62),
-        ifx_entry(7, 63),
     ];
     publish(&mut skel, &entries);
 
@@ -145,11 +143,6 @@ fn bpf_reader_matches_reference() {
     // ppp session: payload 0x1234 big-endian
     assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0x12, 0x34])), 62);
     assert_eq!(resolve(&mut skel, &packet(MODE_PPP, &[0x12, 0x35])), 0);
-
-    // ifindex: payload 7 big-endian; the helper takes host order and swaps
-    // internally, mirroring how production feeds it ctx->ingress_ifindex
-    assert_eq!(resolve(&mut skel, &packet(MODE_IFX, &[0, 0, 0, 7])), 63);
-    assert_eq!(resolve(&mut skel, &packet(MODE_IFX, &[0, 0, 0, 8])), 0);
 
     // ── 4. republish flip drops stale entries (double buffering) ──
     publish(&mut skel, &[p("fd00::/16", 3)]);

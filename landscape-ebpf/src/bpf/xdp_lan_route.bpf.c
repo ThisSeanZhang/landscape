@@ -290,9 +290,9 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
     meta.target_ifindex = info->ifindex;
     xdp_set_meta(ctx, &meta);
 
-    // bpf_printk("[lan_route] cache_pick_wan_v4 tailcall to ifindex=%u", info->ifindex);
-    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
-    bpf_printk("[lan_route] cache_pick_wan_v4 tailcall FAILED for ifindex=%u", info->ifindex);
+    // bpf_printk("[lan_route] cache_pick_wan_v4 tailcall to chain=%u", info->link_chain_id);
+    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->link_chain_id);
+    bpf_printk("[lan_route] cache_pick_wan_v4 tailcall FAILED for chain=%u", info->link_chain_id);
     return XDP_DROP;
 }
 
@@ -385,9 +385,9 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
     meta.target_ifindex = info->ifindex;
     xdp_set_meta(ctx, &meta);
 
-    // bpf_printk("[lan_route] cache_pick_wan_v6 tailcall to ifindex=%u", info->ifindex);
-    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->ifindex);
-    bpf_printk("[lan_route] cache_pick_wan_v6 tailcall FAILED for ifindex=%u", info->ifindex);
+    // bpf_printk("[lan_route] cache_pick_wan_v6 tailcall to chain=%u", info->link_chain_id);
+    bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, info->link_chain_id);
+    bpf_printk("[lan_route] cache_pick_wan_v6 tailcall FAILED for chain=%u", info->link_chain_id);
     return XDP_DROP;
 }
 
@@ -573,11 +573,11 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
                 xdp_set_meta(ctx, &meta);
-                // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to ifindex=%u",
-                //            target->ifindex);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
-                bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED ifindex=%u",
-                           target->ifindex);
+                // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to chain=%u",
+                //            target->link_chain_id);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+                bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED chain=%u",
+                           target->link_chain_id);
                 return XDP_DROP;
             }
         }
@@ -616,11 +616,11 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
                 xdp_set_meta(ctx, &meta);
-                // bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall to ifindex=%u",
-                //            target->ifindex);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
-                bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall FAILED ifindex=%u",
-                           target->ifindex);
+                // bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall to chain=%u",
+                //            target->link_chain_id);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+                bpf_printk("[lan_route] search_lan_v4 LAN-hit tailcall FAILED chain=%u",
+                           target->link_chain_id);
                 return XDP_DROP;
             }
             return xdp_route4_cache_pick_wan(ctx, context, target->mark_value);
@@ -683,9 +683,9 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
                 xdp_set_meta(ctx, &meta);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
-                bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED ifindex=%u",
-                           target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+                bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED chain=%u",
+                           target->link_chain_id);
                 return XDP_DROP;
             }
         }
@@ -725,9 +725,9 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 meta.target_ifindex = target->ifindex;
                 meta.mark = target->mark_value;
                 xdp_set_meta(ctx, &meta);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->ifindex);
-                bpf_printk("[lan_route] search_lan_v6 LAN-hit tailcall FAILED ifindex=%u",
-                           target->ifindex);
+                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+                bpf_printk("[lan_route] search_lan_v6 LAN-hit tailcall FAILED chain=%u",
+                           target->link_chain_id);
                 return XDP_DROP;
             }
             return xdp_route6_cache_pick_wan(ctx, context, target->mark_value);

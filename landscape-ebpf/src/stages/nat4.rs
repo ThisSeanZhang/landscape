@@ -40,13 +40,13 @@ pub struct TcNat4Handle {
     runtime: Arc<EbpfRuntime>,
     _skel: tc_nat4_skel::TcNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 impl Drop for TcNat4Handle {
     fn drop(&mut self) {
         use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Nat4);
+        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Nat4);
     }
 }
 
@@ -54,7 +54,7 @@ pub struct XdpNat4Handle {
     runtime: Arc<EbpfRuntime>,
     _skel: xdp_nat4_skel::XdpNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpNat4Handle {}
@@ -63,7 +63,7 @@ unsafe impl Sync for XdpNat4Handle {}
 impl Drop for XdpNat4Handle {
     fn drop(&mut self) {
         use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Nat4);
+        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Nat4);
     }
 }
 
@@ -112,6 +112,7 @@ fn seed_runtime_queues<M1, M2, M3>(
 
 pub fn attach_nat4(
     rt: &Arc<EbpfRuntime>,
+    link_chain_id: u16,
     ifindex: u32,
     has_eth_header: bool,
     config: &NatConfig,
@@ -126,8 +127,6 @@ pub fn attach_nat4(
     let paths = &rt.paths;
 
     // ── 1. Load TC nat4 first (ingress + egress, for runtime map sharing with XDP) ──
-
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let tc_builder = tc_nat4_skel::TcNat4SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
@@ -242,7 +241,7 @@ pub fn attach_nat4(
 
     let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat4 skeleton")?;
 
-    // ── 3. Inject into chain managers ──
+    // ── 3. Inject into link_chain_id managers ──
 
     let tc_entry = StageEntry {
         wan_ingress_prog_v4_fd: tc_skel.progs.tc_nat_wan_ingress_v4.as_fd().as_raw_fd(),
@@ -252,7 +251,7 @@ pub fn attach_nat4(
         wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
-    rt.tc.inject(ifindex, StageType::Nat4, tc_entry)?;
+    rt.tc.inject(link_chain_id, StageType::Nat4, tc_entry)?;
 
     let xdp_entry = XdpStageEntry {
         lan_prog_v4_fd: xdp_skel.progs.egress_nat_v4.as_fd().as_raw_fd(),
@@ -261,20 +260,20 @@ pub fn attach_nat4(
         wan_prog_v6_fd: 0,
         next_stage_map_fd: xdp_skel.maps.next_stage.as_fd().as_raw_fd(),
     };
-    rt.xdp.inject(ifindex, XdpStageType::Nat4, xdp_entry)?;
+    rt.xdp.inject(link_chain_id, XdpStageType::Nat4, xdp_entry)?;
 
     Ok(Nat4Handle {
         tc: TcNat4Handle {
             runtime: rt.clone(),
             _skel: tc_skel,
             _backing: tc_backing,
-            ifindex,
+            link_chain_id,
         },
         xdp: XdpNat4Handle {
             runtime: rt.clone(),
             _skel: xdp_skel,
             _backing: xdp_backing,
-            ifindex,
+            link_chain_id,
         },
     })
 }

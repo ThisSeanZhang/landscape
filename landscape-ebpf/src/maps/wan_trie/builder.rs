@@ -32,9 +32,10 @@ pub(crate) struct PrefixEntry {
 
 /// Namespace tag constants, mirroring `WAN_TRIE_TAG_*` in the header: the
 /// first key byte of every non-IPv6 key. All live in IETF-reserved IPv6
-/// space, so they never collide with a real v6 prefix.
+/// space, so they never collide with a real v6 prefix.  (The 0x02 tag
+/// once keyed an ifindex namespace used as an ingress fallback; it is
+/// retired — dispatch is chain-keyed and trie-published only.)
 pub(crate) const TAG_V4: u8 = 0x00;
-pub(crate) const TAG_IFX: u8 = 0x02;
 pub(crate) const TAG_PPP: u8 = 0x03;
 
 /// IPv4 entry: daddr at trie bytes 1..4 behind the tag; trie plen = 8 + plen
@@ -62,16 +63,6 @@ pub(crate) fn ppp_entry(session: u16, root: u32) -> PrefixEntry {
     PrefixEntry {
         prefix: [TAG_PPP, (session >> 8) as u8, session as u8, 0, 0, 0, 0, 0],
         plen: 24,
-        root,
-    }
-}
-
-/// Ingress-ifindex fallback entry: exact match at plen 40 (5 hops).
-pub(crate) fn ifx_entry(ifindex: u32, root: u32) -> PrefixEntry {
-    let b = ifindex.to_be_bytes();
-    PrefixEntry {
-        prefix: [TAG_IFX, b[0], b[1], b[2], b[3], 0, 0, 0],
-        plen: 40,
         root,
     }
 }
@@ -523,15 +514,6 @@ pub(crate) mod tests {
             }
         );
 
-        assert_eq!(
-            ifx_entry(0x1122_3344, 4),
-            PrefixEntry {
-                prefix: [0x02, 0x11, 0x22, 0x33, 0x44, 0, 0, 0],
-                plen: 40,
-                root: 4
-            }
-        );
-
         // v6 passes through with its real first byte.
         assert_eq!(
             v6_entry(Ipv6Addr::from_str("fd00::").unwrap(), 8, 5).unwrap(),
@@ -543,7 +525,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// One table, four namespaces, zero crosstalk: every tagged key and the
+    /// One table, three namespaces, zero crosstalk: every tagged key and the
     /// v6 prefix resolve to their own root, and namespace misses fall to 0.
     #[test]
     fn namespaces_coexist_without_crosstalk() {
@@ -551,7 +533,6 @@ pub(crate) mod tests {
             v6_entry(Ipv6Addr::from_str("fd22:2222:33ab::").unwrap(), 48, 60).unwrap(),
             v4_entry(Ipv4Addr::new(203, 0, 113, 0), 24, 61).unwrap(), // 203.0.113.0/24
             ppp_entry(0x1234, 62),
-            ifx_entry(7, 63),
         ];
         let tbl = published(&entries);
 
@@ -567,21 +548,21 @@ pub(crate) mod tests {
         };
         let kv4 = (TAG_V4 as u64) | (u32::from_le_bytes([203, 0, 113, 7]) as u64) << 8;
         let kppp = (TAG_PPP as u64) | (u16::from_le_bytes([0x12, 0x34]) as u64) << 8;
-        let kifx = (TAG_IFX as u64) | (7u32.swap_bytes() as u64) << 8;
+        // The retired 0x02 tag namespace must not resolve anything.
+        let kifx = 0x02u64 | (7u32.swap_bytes() as u64) << 8;
 
         // The BPF key math must land exactly on the entry prefixes.
         assert_eq!(key(kv4), v4_entry(Ipv4Addr::new(203, 0, 113, 7), 32, 0).unwrap().prefix);
         assert_eq!(key(kppp), entries[2].prefix);
-        assert_eq!(key(kifx), entries[3].prefix);
 
         assert_eq!(wan_trie_resolve(&tbl, &key(kv4)), 61);
         assert_eq!(wan_trie_resolve(&tbl, &key(kv4 ^ (1 << 24))), 0); // outside /24
         assert_eq!(wan_trie_resolve(&tbl, &key(kppp)), 62);
         assert_eq!(wan_trie_resolve(&tbl, &key(kppp + 1)), 0);
-        assert_eq!(wan_trie_resolve(&tbl, &key(kifx)), 63);
+        assert_eq!(wan_trie_resolve(&tbl, &key(kifx)), 0);
         assert_eq!(wan_trie_resolve(&tbl, &key(kifx + 1)), 0);
         assert_eq!(wan_trie_resolve(&tbl, &d("fd22:2222:33ab::1")), 60);
-        assert_eq!(wan_trie_resolve(&tbl, &d("fd99::1")), 0); // no ifx leak
+        assert_eq!(wan_trie_resolve(&tbl, &d("fd99::1")), 0);
     }
 
     /// v6 prefixes whose masked first byte falls into the tag region are

@@ -28,12 +28,12 @@ struct TcPppoeStage {
     runtime: Arc<EbpfRuntime>,
     _skel: tc_pppoe_skel::TcPppoeSkel<'static>,
     _backing: OwnedOpenObject,
-    ifindex: u32,
+    link_chain_id: u16,
 }
 
 impl Drop for TcPppoeStage {
     fn drop(&mut self) {
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Pppoe);
+        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Pppoe);
     }
 }
 
@@ -57,14 +57,15 @@ impl Drop for PppoeHandle {
 
 pub fn create_pppoe_handle(
     rt: Arc<EbpfRuntime>,
+    link_chain_id: u16,
     ifindex: u32,
     tmpl: PppoeEgressTmpl,
     _mtu: u16,
 ) -> LdEbpfResult<PppoeHandle> {
     let session_id = u16::from_be(tmpl.session_id);
 
-    let tc = attach_tc_pppoe(&rt, ifindex, tmpl)?;
-    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, ifindex, session_id)?;
+    let tc = attach_tc_pppoe(&rt, link_chain_id, tmpl)?;
+    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, link_chain_id, session_id)?;
     rt.xdp.acquire_pppoe_skb_fallback(ifindex, prepare_pppoe_skb_pending)?;
 
     Ok(PppoeHandle {
@@ -77,12 +78,10 @@ pub fn create_pppoe_handle(
 
 fn attach_tc_pppoe(
     rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
+    link_chain_id: u16,
     tmpl: PppoeEgressTmpl,
 ) -> LdEbpfResult<TcPppoeStage> {
     let paths = &rt.paths;
-    // Native PPPoE always terminates on an Ethernet parent iface.
-    rt.tc.ensure_roots(ifindex, true)?;
 
     let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -112,13 +111,13 @@ fn attach_tc_pppoe(
         wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
 
-    rt.tc.inject(ifindex, StageType::Pppoe, entry)?;
+    rt.tc.inject(link_chain_id, StageType::Pppoe, entry)?;
 
     Ok(TcPppoeStage {
         runtime: rt.clone(),
         _skel: skel,
         _backing: backing,
-        ifindex,
+        link_chain_id,
     })
 }
 

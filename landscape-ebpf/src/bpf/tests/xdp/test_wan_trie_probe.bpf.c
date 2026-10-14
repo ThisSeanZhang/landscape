@@ -52,12 +52,6 @@ int test_wan_trie_probe(struct xdp_md *ctx) {
         key = wan_trie_key_ppp(session);
         break;
     }
-    case 3: {
-        __be32 be_ifindex;
-        __builtin_memcpy(&be_ifindex, data + 8, 4);
-        key = wan_trie_key_ifx(bpf_ntohl(be_ifindex));
-        break;
-    }
     default:
         return PROBE_BAD_KEY;
     }

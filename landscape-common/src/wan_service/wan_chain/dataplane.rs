@@ -125,6 +125,11 @@ pub trait WanChainDataplane: Send + Sync {
 
     /// Remove the chain's recorded WAN IPv6 binding.
     fn unbind_wan_ipv6(&self, chain: u16);
+
+    /// Tear down the chain entirely: remove its chain roots and any
+    /// lingering publications.  Called when the whole link goes away
+    /// (deleted or disabled), not on address or session changes.
+    fn teardown_chain(&self, chain: u16);
 }
 
 /// No-op implementation for tests.
@@ -206,4 +211,6 @@ impl WanChainDataplane for NoopWanChainDataplane {
     }
 
     fn unbind_wan_ipv6(&self, _chain: u16) {}
+
+    fn teardown_chain(&self, _chain: u16) {}
 }

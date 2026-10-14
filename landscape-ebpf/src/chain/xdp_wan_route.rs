@@ -62,15 +62,13 @@ pub fn init_xdp_wan_route(
     //
     // The WAN route/exit program is loaded once as a manager-lifetime
     // singleton (XdpChainManager::new) and pinned into the shared
-    // `xdp_pipe_exits_wan` slot, so this handle only needs to bring up the
-    // chains for this interface and attach the intro dispatcher.
+    // `xdp_pipe_exits_wan` slot, so this handle only attaches the intro
+    // dispatcher; the chain roots themselves are owned by the WAN link
+    // hub, which (idempotently) ensures them on link observation.
 
-    rt.xdp.ensure_roots(ifindex)?;
     let link = NativeXdpLink::attach(rt.clone(), rt.xdp.wan_intro_prog(), ifindex)?;
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
-
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
     let (intro_backing, intro_obj) = OwnedOpenObject::new();
     let intro_builder = TcWanIngressIntroSkelBuilder::default();

@@ -132,7 +132,7 @@ pub fn run_ipv6_egress_helper(payload: Vec<u8>) {
     {
         let rodata = landscape_open.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(
-            (Ipv6Addr::from_str("2409:8888:6666:4f21::").unwrap()),
+            Ipv6Addr::from_str("2409:8888:6666:4f21::").unwrap(),
         ));
         rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
     }
