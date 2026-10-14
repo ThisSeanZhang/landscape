@@ -168,8 +168,14 @@ const runtime_rows = computed<RuntimeRow[]>(() => {
   }
   if (link.nat.enable) {
     rows.push({
-      label: t("topology.panel.runtime_nat"),
-      display: formatServiceStatus(snapshot.nat, runtime_rt),
+      label: t("topology.panel.runtime_nat4"),
+      display: formatServiceStatus(snapshot.nat4, runtime_rt),
+    });
+  }
+  if (link.nat.enable && link.pd.enable) {
+    rows.push({
+      label: t("topology.panel.runtime_nat6"),
+      display: formatServiceStatus(snapshot.nat6, runtime_rt),
     });
   }
   if (link.mss.enable) {

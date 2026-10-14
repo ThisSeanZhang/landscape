@@ -49,15 +49,25 @@ pub trait WanChainDataplane: Send + Sync {
         has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
-    /// Attach the NAT stage (TC ingress/egress + XDP with shared runtime
-    /// maps) for `chain` on `ifindex`.  Dropping the returned guard
-    /// removes the stage from the chains.
-    fn attach_nat(
+    /// Attach the v4 NAT stage (TC ingress/egress + XDP with shared
+    /// runtime maps) for `chain` on `ifindex`.  Dropping the returned
+    /// guard removes the stage from the chains.
+    fn attach_nat4(
         &self,
         chain: u16,
         ifindex: u32,
         has_eth_header: bool,
         config: &NatConfig,
+    ) -> Result<Box<dyn DataplaneGuard>, String>;
+
+    /// Attach the v6 NAT stage (TC ingress/egress + XDP with a shared
+    /// conntrack timer map) for `chain` on `ifindex`.  Dropping the
+    /// returned guard removes the stage from the chains.
+    fn attach_nat6(
+        &self,
+        chain: u16,
+        ifindex: u32,
+        has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String>;
 
     /// Attach the firewall stage (TC ingress/egress + XDP LAN/WAN) for
@@ -126,12 +136,21 @@ impl WanChainDataplane for NoopWanChainDataplane {
         Ok(Box::new(()))
     }
 
-    fn attach_nat(
+    fn attach_nat4(
         &self,
         _chain: u16,
         _ifindex: u32,
         _has_eth_header: bool,
         _config: &NatConfig,
+    ) -> Result<Box<dyn DataplaneGuard>, String> {
+        Ok(Box::new(()))
+    }
+
+    fn attach_nat6(
+        &self,
+        _chain: u16,
+        _ifindex: u32,
+        _has_eth_header: bool,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         Ok(Box::new(()))
     }

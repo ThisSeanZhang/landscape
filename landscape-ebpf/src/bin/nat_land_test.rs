@@ -17,10 +17,13 @@ async fn main() {
     let addr = Ipv4Addr::new(10, 200, 1, 1);
     landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, addr, None, 24, None);
 
-    let nat = landscape_ebpf::stages::nat::init_nat(&rt, ifindex, true, &NatConfig::default())
-        .expect("failed to start nat test");
+    let nat4 = landscape_ebpf::stages::nat4::attach_nat4(&rt, ifindex, true, &NatConfig::default())
+        .expect("failed to start nat4 test");
+    let nat6 = landscape_ebpf::stages::nat6::attach_nat6(&rt, ifindex, true)
+        .expect("failed to start nat6 test");
 
     let _ = tokio::signal::ctrl_c().await;
 
-    drop(nat);
+    drop(nat4);
+    drop(nat6);
 }

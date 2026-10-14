@@ -10,7 +10,7 @@ use libbpf_rs::{
 };
 use zerocopy::IntoBytes;
 
-use crate::{maps::wan::add_wan_ip, stages::nat::tc_nat_skel::TcNatSkelBuilder, tests::TestSkb};
+use crate::{maps::wan::add_wan_ip, stages::nat4::tc_nat4_skel::TcNat4SkelBuilder, tests::TestSkb};
 
 /// https://www.cloudshark.org/captures/456a264486bf?filter=tcp
 /// 192.168.101.201:56186 -> 50.18.88.205:443
@@ -26,7 +26,7 @@ fn build_ipv4_tcp_syn() -> Vec<u8> {
 }
 
 pub fn run_ipv4_egress_smoke(payload: Vec<u8>) {
-    let mut builder = TcNatSkelBuilder::default();
+    let mut builder = TcNat4SkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("nat-v4-egress");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();

@@ -27,6 +27,7 @@ use landscape_common::{
     service::{ServiceHandle, ServiceStatus},
     utils::time::get_f64_timestamp,
     wan_link::runtime_status::{PdLease, PdRuntime, swap_if_changed},
+    wan_link::{LinkStateHandle, WanV6Prefix},
     wan_service::ipv6_pd::LDIAPrefix,
     wan_service::wan_chain::dataplane::WanChainDataplane,
 };
@@ -281,6 +282,7 @@ pub async fn dhcp_v6_pd_client(
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
     pd_runtime: Arc<ArcSwap<PdRuntime>>,
+    link_state: LinkStateHandle,
 ) {
     let client_id = gen_client_id(config_mac);
     service_status.just_change_status(ServiceStatus::Staring);
@@ -406,6 +408,7 @@ pub async fn dhcp_v6_pd_client(
                         &prefix_map,
                         &prefix_sender,
                         &mut current_wan_addr,
+                        &link_state,
                     )
                     .await;
                 }
@@ -438,6 +441,7 @@ pub async fn dhcp_v6_pd_client(
                             &mut current_wan_addr,
                             &prefix_sender,
                             expected_pd_len,
+                            &link_state,
                         )
                         .await;
                         if matches!(status, IpV6PdState::Bound { .. }) {
@@ -466,6 +470,7 @@ pub async fn dhcp_v6_pd_client(
                     &prefix_map,
                     &prefix_sender,
                     &mut current_wan_addr,
+                    &link_state,
                 )
                 .await;
                 cleaned_up = true;
@@ -492,6 +497,7 @@ pub async fn dhcp_v6_pd_client(
             &prefix_map,
             &prefix_sender,
             &mut current_wan_addr,
+            &link_state,
         )
         .await;
     }
@@ -517,6 +523,7 @@ async fn clear_active_pd_prefix(
     prefix_map: &IAPrefixMap,
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    link_state: &LinkStateHandle,
 ) {
     let removed = prefix_map.remove(&link_id);
     if let Some(status) = removed.as_ref() {
@@ -525,6 +532,7 @@ async fn clear_active_pd_prefix(
 
     route_service.remove_ipv6_link_route(link_id).await;
     chain_dataplane.unbind_wan_ipv6(chain_id);
+    link_state.clear_v6_prefix();
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
     }
@@ -834,6 +842,7 @@ async fn handle_packet(
     current_wan_addr: &mut Option<Ipv6Addr>,
     prefix_sender: &IAPrefixEventSender,
     expected_pd_len: u8,
+    link_state: &LinkStateHandle,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
         tracing::error!("unexpected IPV4 packet");
@@ -997,7 +1006,14 @@ async fn handle_packet(
                                 mac_addr,
                                 chain_dataplane,
                             );
+                            let wan_v6_prefix = WanV6Prefix {
+                                prefix_ip: ia_prefix.prefix_ip,
+                                prefix_len: ia_prefix.prefix_len,
+                            };
                             prefix_map.store(link_id, ia_prefix, expected_pd_len);
+                            // Publish the bound prefix so the nat6 section can
+                            // start; same-prefix renewals deduplicate.
+                            link_state.set_v6_prefix(wan_v6_prefix);
                             let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
                             tracing::debug!("current status move to: {:#?}", current_status);
                             return true;

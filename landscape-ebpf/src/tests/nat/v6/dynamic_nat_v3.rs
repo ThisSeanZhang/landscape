@@ -15,7 +15,7 @@ use zerocopy::{FromBytes, IntoBytes};
 use crate::{
     maps::wan::add_wan_ip,
     maps::{Nat6TimerKey, Nat6TimerValue},
-    stages::nat::tc_nat_skel::TcNatSkelBuilder,
+    stages::nat6::tc_nat6_skel::TcNat6SkelBuilder,
     tests::TestSkb,
 };
 
@@ -115,7 +115,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
     let prefix_len = 60;
     let key = timer_key_for(src, CLIENT_PORT, prefix_len);
 
-    let mut builder = TcNatSkelBuilder::default();
+    let mut builder = TcNat6SkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
@@ -154,7 +154,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
 fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     let key = timer_key_for(src, CLIENT_PORT, prefix_len);
 
-    let mut builder = TcNatSkelBuilder::default();
+    let mut builder = TcNat6SkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
@@ -215,7 +215,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
     assert_eq!(old_key, new_key, "test setup must keep the same dynamic NAT key",);
 
-    let mut builder = TcNatSkelBuilder::default();
+    let mut builder = TcNat6SkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();
@@ -367,7 +367,7 @@ mod tests {
         let mut key = key;
         key.l4_protocol = 58;
 
-        let mut builder = TcNatSkelBuilder::default();
+        let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
@@ -446,7 +446,7 @@ mod tests {
         let mut key = key;
         key.l4_protocol = 58;
 
-        let mut builder = TcNatSkelBuilder::default();
+        let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
@@ -524,7 +524,7 @@ mod tests {
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
         assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
-        let mut builder = TcNatSkelBuilder::default();
+        let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
@@ -599,7 +599,7 @@ mod tests {
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
         assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
-        let mut builder = TcNatSkelBuilder::default();
+        let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();
@@ -661,7 +661,7 @@ mod tests {
         let new_key = timer_key_for(new_src, CLIENT_PORT, prefix_len);
         assert_eq!(key, new_key, "test setup must keep the same dynamic NAT key",);
 
-        let mut builder = TcNatSkelBuilder::default();
+        let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = MaybeUninit::uninit();

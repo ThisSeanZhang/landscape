@@ -99,7 +99,7 @@ const dhcp_v4_status = computed(
   () => dhcpv4ConfigStore.GET_STATUS_BY_IFACE_NAME(props.node.name).value,
 );
 const nat_status = computed(() =>
-  node_link.value?.nat.enable ? link_status.value?.nat : undefined,
+  node_link.value?.nat.enable ? link_status.value?.nat4 : undefined,
 );
 const firewall_status = computed(() =>
   node_link.value?.firewall.enable ? link_status.value?.firewall : undefined,

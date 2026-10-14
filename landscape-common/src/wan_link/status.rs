@@ -34,7 +34,8 @@ pub struct WanLinkStatus {
     pub state: WanLinkState,
     pub session: ServiceStatus,
     pub pd: ServiceStatus,
-    pub nat: ServiceStatus,
+    pub nat4: ServiceStatus,
+    pub nat6: ServiceStatus,
     pub firewall: ServiceStatus,
     pub mss: ServiceStatus,
     /// Lifecycle of the health-check section; not part of the `state`
@@ -49,7 +50,8 @@ impl WanLinkStatus {
         active: bool,
         session: Option<ServiceStatus>,
         pd: ServiceStatus,
-        nat: ServiceStatus,
+        nat4: ServiceStatus,
+        nat6: ServiceStatus,
         firewall: ServiceStatus,
         mss: ServiceStatus,
     ) -> WanLinkState {
@@ -57,7 +59,7 @@ impl WanLinkStatus {
             return WanLinkState::Idle;
         }
 
-        let sections = [pd, nat, firewall, mss];
+        let sections = [pd, nat4, nat6, firewall, mss];
         let any_section_active =
             sections.iter().any(|s| matches!(s, ServiceStatus::Staring | ServiceStatus::Running));
         let any_section_failed = sections.iter().any(|s| matches!(s, ServiceStatus::Failed));
@@ -91,7 +93,8 @@ impl WanLinkStatus {
             active,
             Some(self.session.clone()),
             self.pd.clone(),
-            self.nat.clone(),
+            self.nat4.clone(),
+            self.nat6.clone(),
             self.firewall.clone(),
             self.mss.clone(),
         );
@@ -101,7 +104,8 @@ impl WanLinkStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionKind {
     Pd,
-    Nat,
+    Nat4,
+    Nat6,
     Firewall,
     Mss,
     HealthCheck,
@@ -137,7 +141,8 @@ impl WanLinkStatusHandle {
     pub async fn set_section(&self, kind: SectionKind, status: ServiceStatus) {
         self.update(|entry| match kind {
             SectionKind::Pd => entry.pd = status,
-            SectionKind::Nat => entry.nat = status,
+            SectionKind::Nat4 => entry.nat4 = status,
+            SectionKind::Nat6 => entry.nat6 = status,
             SectionKind::Firewall => entry.firewall = status,
             SectionKind::Mss => entry.mss = status,
             SectionKind::HealthCheck => entry.health_check = status,
@@ -183,6 +188,7 @@ mod tests {
                 failed(),
                 failed(),
                 failed(),
+                failed(),
                 failed()
             ),
             WanLinkState::Idle
@@ -192,7 +198,7 @@ mod tests {
     #[test]
     fn session_failed_means_link_failed() {
         assert_eq!(
-            WanLinkStatus::compute_state(true, Some(failed()), ok(), ok(), ok(), ok()),
+            WanLinkStatus::compute_state(true, Some(failed()), ok(), ok(), ok(), ok(), ok()),
             WanLinkState::Failed
         );
     }
@@ -200,7 +206,7 @@ mod tests {
     #[test]
     fn failed_section_degrades_a_running_link() {
         assert_eq!(
-            WanLinkStatus::compute_state(true, Some(ok()), ok(), failed(), dead(), failed()),
+            WanLinkStatus::compute_state(true, Some(ok()), ok(), ok(), failed(), dead(), failed()),
             WanLinkState::Degraded
         );
     }
@@ -208,7 +214,7 @@ mod tests {
     #[test]
     fn stopped_session_with_live_sections_is_degraded() {
         assert_eq!(
-            WanLinkStatus::compute_state(true, Some(dead()), ok(), dead(), dead(), dead()),
+            WanLinkStatus::compute_state(true, Some(dead()), ok(), ok(), dead(), dead(), dead()),
             WanLinkState::Degraded
         );
     }
@@ -216,7 +222,7 @@ mod tests {
     #[test]
     fn no_session_follows_sections() {
         assert_eq!(
-            WanLinkStatus::compute_state(true, None, ok(), dead(), dead(), dead()),
+            WanLinkStatus::compute_state(true, None, ok(), ok(), dead(), dead(), dead()),
             WanLinkState::Running
         );
     }

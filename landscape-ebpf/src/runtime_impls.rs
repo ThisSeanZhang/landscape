@@ -27,7 +27,8 @@ use landscape_common::wan_service::wan_route::dataplane::WanRouteDataplane;
 // ─────────────────────────────────────────────────────────────────────────
 
 impl DataplaneGuard for crate::stages::firewall::FirewallHandle {}
-impl DataplaneGuard for crate::stages::nat::NatHandle {}
+impl DataplaneGuard for crate::stages::nat4::Nat4Handle {}
+impl DataplaneGuard for crate::stages::nat6::Nat6Handle {}
 impl DataplaneGuard for crate::stages::mss::MssHandle {}
 impl DataplaneGuard for crate::pppoe::pppoe_handle::PppoeHandle {}
 impl DataplaneGuard for crate::chain::tc_lan_route::TcLanRouteHandle {}

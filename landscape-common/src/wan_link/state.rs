@@ -2,7 +2,7 @@
 //! sections (nat / mss / firewall / pd): physical carrier + current session.
 //! The v4 section writes `session`; the link environment task writes `carrier`.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use tokio::sync::watch;
 
@@ -46,6 +46,14 @@ impl WanV4Lease {
     }
 }
 
+/// The delegated v6 prefix the PD section bound to the WAN side. nat6 keys
+/// its startup on its presence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WanV6Prefix {
+    pub prefix_ip: Ipv6Addr,
+    pub prefix_len: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum SessionPhase {
     #[default]
@@ -70,6 +78,11 @@ impl SessionPhase {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionState {
     pub phase: SessionPhase,
+    /// The WAN v6 prefix currently bound by the PD section. Tracked outside
+    /// `phase` on purpose: prefix bind / unbind must not bump `epoch`, or the
+    /// pd section itself would restart on every renewal. `session_up` /
+    /// `session_down` clear it so a stale prefix never survives a re-anchor.
+    pub v6_prefix: Option<WanV6Prefix>,
     /// Bumped on (re)acquisition; a change tells dependents to re-attach.
     pub epoch: u64,
 }
@@ -85,6 +98,10 @@ impl SessionState {
 
     pub fn has_v4_lease(&self) -> bool {
         matches!(self.phase, SessionPhase::Up { lease: Some(_), .. })
+    }
+
+    pub fn has_v6_prefix(&self) -> bool {
+        self.v6_prefix.is_some()
     }
 
     pub fn v4_ip(&self) -> Option<IpAddr> {
@@ -145,6 +162,9 @@ impl LinkStateHandle {
             }
             state.session.phase = new_phase;
             state.session.epoch = state.session.epoch.wrapping_add(1);
+            // A new anchor invalidates any v6 prefix the pd section bound on
+            // the previous one; pd re-binds and re-publishes it.
+            state.session.v6_prefix = None;
             true
         });
     }
@@ -155,6 +175,30 @@ impl LinkStateHandle {
                 return false;
             }
             state.session.phase = SessionPhase::Down;
+            state.session.v6_prefix = None;
+            true
+        });
+    }
+
+    /// Publishes the WAN v6 prefix bound by the pd section. Does not bump
+    /// `epoch`: the pd section must not restart on its own bind, and a
+    /// same-prefix renewal is deduplicated into a no-op.
+    pub fn set_v6_prefix(&self, prefix: WanV6Prefix) {
+        self.tx.send_if_modified(|state| {
+            if state.session.v6_prefix == Some(prefix) {
+                return false;
+            }
+            state.session.v6_prefix = Some(prefix);
+            true
+        });
+    }
+
+    pub fn clear_v6_prefix(&self) {
+        self.tx.send_if_modified(|state| {
+            if state.session.v6_prefix.is_none() {
+                return false;
+            }
+            state.session.v6_prefix = None;
             true
         });
     }
@@ -205,5 +249,51 @@ mod tests {
         assert!(!snapshot.session.has_v4_lease());
         assert_eq!(snapshot.session.v4_ip(), None);
         assert!(snapshot.carrier.is_none());
+    }
+
+    fn v6_prefix(n: u16) -> WanV6Prefix {
+        WanV6Prefix {
+            prefix_ip: Ipv6Addr::new(0x2001, 0xdb8, 0, n, 0, 0, 0, 0),
+            prefix_len: 56,
+        }
+    }
+
+    #[test]
+    fn v6_prefix_updates_do_not_bump_epoch() {
+        let (handle, rx) = LinkStateHandle::new(None);
+        handle.session_up(iface(), None);
+        let epoch = rx.borrow().session.epoch;
+
+        handle.set_v6_prefix(v6_prefix(1));
+        assert!(rx.borrow().session.has_v6_prefix());
+        assert_eq!(rx.borrow().session.epoch, epoch);
+
+        // Same-prefix renewal is a no-op (no watch notification).
+        handle.set_v6_prefix(v6_prefix(1));
+        assert_eq!(rx.borrow().session.epoch, epoch);
+
+        handle.set_v6_prefix(v6_prefix(2));
+        assert_eq!(rx.borrow().session.v6_prefix, Some(v6_prefix(2)));
+        assert_eq!(rx.borrow().session.epoch, epoch);
+
+        handle.clear_v6_prefix();
+        assert!(!rx.borrow().session.has_v6_prefix());
+        handle.clear_v6_prefix();
+        assert_eq!(rx.borrow().session.epoch, epoch);
+    }
+
+    #[test]
+    fn session_transitions_clear_v6_prefix() {
+        let (handle, rx) = LinkStateHandle::new(None);
+        handle.session_up(iface(), None);
+        handle.set_v6_prefix(v6_prefix(1));
+
+        // Re-anchor (epoch bump) drops the stale prefix.
+        handle.session_up(iface(), Some(lease([10, 0, 0, 2])));
+        assert!(!rx.borrow().session.has_v6_prefix());
+
+        handle.set_v6_prefix(v6_prefix(2));
+        handle.session_down();
+        assert!(!rx.borrow().session.has_v6_prefix());
     }
 }

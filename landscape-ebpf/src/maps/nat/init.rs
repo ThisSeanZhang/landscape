@@ -80,15 +80,21 @@ pub fn init_nat_metric_events(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::nat::xdp_nat_skel::XdpNatSkelBuilder;
+    use crate::stages::nat4::xdp_nat4_skel::XdpNat4SkelBuilder;
+    use crate::stages::nat6::xdp_nat6_skel::XdpNat6SkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]
     fn nat_map_params_match_skel() {
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open = XdpNatSkelBuilder::default().open(&mut obj).expect("open anchor skel");
-        crate::maps::assert_skel_map_matches(&open.maps.nat4_static_map, &NAT4_STATIC_MAP_SPEC);
-        crate::maps::assert_skel_map_matches(&open.maps.nat6_static_map, &NAT6_STATIC_MAP_SPEC);
-        crate::maps::assert_skel_map_matches(&open.maps.nat_metric_events, &NAT_METRIC_EVENTS_SPEC);
+        let open4 = XdpNat4SkelBuilder::default().open(&mut obj).expect("open anchor skel");
+        crate::maps::assert_skel_map_matches(&open4.maps.nat4_static_map, &NAT4_STATIC_MAP_SPEC);
+        crate::maps::assert_skel_map_matches(
+            &open4.maps.nat_metric_events,
+            &NAT_METRIC_EVENTS_SPEC,
+        );
+        let mut obj = std::mem::MaybeUninit::uninit();
+        let open6 = XdpNat6SkelBuilder::default().open(&mut obj).expect("open anchor skel");
+        crate::maps::assert_skel_map_matches(&open6.maps.nat6_static_map, &NAT6_STATIC_MAP_SPEC);
     }
 }

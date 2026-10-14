@@ -35,8 +35,9 @@ use tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
 pub enum StageType {
     Mss = 0,
     Firewall = 1,
-    Nat = 2,
-    Pppoe = 3,
+    Nat4 = 2,
+    Nat6 = 3,
+    Pppoe = 4,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -69,6 +70,24 @@ fn delete_prog_array_fd(map_fd: i32, key: u32) {
     let k = key.to_ne_bytes();
     let _ =
         unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
+}
+
+/// Link one family's chain: root slot → the first entry, then each
+/// entry's next-stage map to its successor. Entries with a zero family
+/// program fd (family-partial stages, e.g. Nat4) never join this list.
+fn link_family_chain(
+    root_fd: i32,
+    slot: u32,
+    chain: &[&StageEntry],
+    prog_fd: impl Fn(&StageEntry) -> i32,
+    next_fd: impl Fn(&StageEntry) -> i32,
+) -> LdEbpfResult<()> {
+    let Some(first) = chain.first() else { return Ok(()) };
+    update_prog_array_fd(root_fd, slot, prog_fd(first))?;
+    for i in 0..chain.len() - 1 {
+        update_prog_array_fd(next_fd(chain[i]), slot, prog_fd(chain[i + 1]))?;
+    }
+    Ok(())
 }
 
 // ── Pure Rust map creation (delete-if-exists then create + pin) ──
@@ -498,47 +517,39 @@ impl TcChainManager {
         delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V4);
         delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V6);
 
-        let sorted: Vec<&StageEntry> = state
+        let sorted_v4: Vec<&StageEntry> = state
             .stages
             .values()
             .filter(|v| match chain {
-                ChainDir::WanIngress => {
-                    v.wan_ingress_prog_v4_fd != 0 && v.wan_ingress_prog_v6_fd != 0
-                }
-                ChainDir::WanEgress => v.wan_egress_prog_v4_fd != 0 && v.wan_egress_prog_v6_fd != 0,
+                ChainDir::WanIngress => v.wan_ingress_prog_v4_fd != 0,
+                ChainDir::WanEgress => v.wan_egress_prog_v4_fd != 0,
             })
             .collect();
-        if sorted.is_empty() {
-            return Ok(());
-        }
+        let sorted_v6: Vec<&StageEntry> = state
+            .stages
+            .values()
+            .filter(|v| match chain {
+                ChainDir::WanIngress => v.wan_ingress_prog_v6_fd != 0,
+                ChainDir::WanEgress => v.wan_egress_prog_v6_fd != 0,
+            })
+            .collect();
 
-        let (first_v4, first_v6) = match chain {
-            ChainDir::WanIngress => {
-                (sorted[0].wan_ingress_prog_v4_fd, sorted[0].wan_ingress_prog_v6_fd)
-            }
-            ChainDir::WanEgress => {
-                (sorted[0].wan_egress_prog_v4_fd, sorted[0].wan_egress_prog_v6_fd)
-            }
+        type ProgFdFn = fn(&StageEntry) -> i32;
+        let (prog_v4_fd, prog_v6_fd, next_stage_fd): (ProgFdFn, ProgFdFn, ProgFdFn) = match chain {
+            ChainDir::WanIngress => (
+                |e: &StageEntry| e.wan_ingress_prog_v4_fd,
+                |e: &StageEntry| e.wan_ingress_prog_v6_fd,
+                |e: &StageEntry| e.wan_ingress_next_stage_fd,
+            ),
+            ChainDir::WanEgress => (
+                |e: &StageEntry| e.wan_egress_prog_v4_fd,
+                |e: &StageEntry| e.wan_egress_prog_v6_fd,
+                |e: &StageEntry| e.wan_egress_next_stage_fd,
+            ),
         };
-        update_prog_array_fd(root_next_stage_fd, TC_SLOT_V4, first_v4)?;
-        update_prog_array_fd(root_next_stage_fd, TC_SLOT_V6, first_v6)?;
 
-        for i in 0..sorted.len().saturating_sub(1) {
-            let next_fd = match chain {
-                ChainDir::WanIngress => sorted[i].wan_ingress_next_stage_fd,
-                ChainDir::WanEgress => sorted[i].wan_egress_next_stage_fd,
-            };
-            let (next_v4, next_v6) = match chain {
-                ChainDir::WanIngress => {
-                    (sorted[i + 1].wan_ingress_prog_v4_fd, sorted[i + 1].wan_ingress_prog_v6_fd)
-                }
-                ChainDir::WanEgress => {
-                    (sorted[i + 1].wan_egress_prog_v4_fd, sorted[i + 1].wan_egress_prog_v6_fd)
-                }
-            };
-            update_prog_array_fd(next_fd, TC_SLOT_V4, next_v4)?;
-            update_prog_array_fd(next_fd, TC_SLOT_V6, next_v6)?;
-        }
+        link_family_chain(root_next_stage_fd, TC_SLOT_V4, &sorted_v4, prog_v4_fd, next_stage_fd)?;
+        link_family_chain(root_next_stage_fd, TC_SLOT_V6, &sorted_v6, prog_v6_fd, next_stage_fd)?;
 
         Ok(())
     }

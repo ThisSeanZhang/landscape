@@ -7,6 +7,7 @@ use landscape::{get_iface_by_name, wan_service::ipv6pd_client::v6::dhcp_v6_pd_cl
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT,
     service::{ServiceHandle, ServiceStatus},
+    wan_link::LinkStateHandle,
 };
 use landscape_common::{
     event::hub::IAPrefixEventSender, sys_service::route_service::RouteTargetInfo,
@@ -79,6 +80,7 @@ async fn main() {
             std::sync::Arc::new(2),
             prefix_sender,
             pd_runtime,
+            LinkStateHandle::new(None).0,
         )
         .await;
     });

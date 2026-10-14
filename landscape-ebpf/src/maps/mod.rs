@@ -1010,7 +1010,7 @@ mod tests {
     fn spec_rejects_wrong_value_size() {
         use libbpf_rs::skel::SkelBuilder as _;
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open = crate::stages::nat::xdp_nat_skel::XdpNatSkelBuilder::default()
+        let open = crate::stages::nat4::xdp_nat4_skel::XdpNat4SkelBuilder::default()
             .open(&mut obj)
             .expect("open anchor skel");
         let spec = crate::maps::wan::WAN_IP_BINDING_SPEC;

@@ -25,7 +25,7 @@ pub(crate) struct WanIpInfoValue {
 mod tests {
     use super::*;
     use crate::maps::Inet6Bytes;
-    use crate::stages::nat::xdp_nat_skel::types as share;
+    use crate::stages::nat4::xdp_nat4_skel::types as share;
 
     #[test]
     fn wan_ip_layouts_match_skel() {

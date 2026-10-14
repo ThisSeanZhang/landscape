@@ -8,7 +8,9 @@ use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT;
 use landscape_common::event::hub::IAPrefixEventSender;
 use landscape_common::service::ServiceHandle;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
-use landscape_common::wan_link::{PdRuntime, RuntimeWanLinkPdConfig, SessionIface};
+use landscape_common::wan_link::{
+    LinkStateHandle, PdRuntime, RuntimeWanLinkPdConfig, SessionIface,
+};
 use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 use landscape_core::pd_prefix::IAPrefixMap;
 
@@ -27,6 +29,7 @@ pub(super) async fn run(
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,
     pd_runtime: Arc<ArcSwap<PdRuntime>>,
+    link_state: LinkStateHandle,
 ) {
     let wan_route_info = RouteTargetInfo {
         ifindex: iface.ifindex,
@@ -57,6 +60,7 @@ pub(super) async fn run(
         shared_wan_iid,
         prefix_sender,
         pd_runtime,
+        link_state,
     )
     .await;
 }

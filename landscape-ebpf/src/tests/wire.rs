@@ -439,41 +439,47 @@ mod tests {
     #[test]
     fn nat_timer_layouts_match_xdp_skel() {
         use crate::maps::{Nat4TimerKey, Nat4TimerValueV3, Nat6TimerKey, Nat6TimerValue};
-        use crate::tests::xdp_nat_skel::types as xdp;
+        use crate::tests::xdp_nat4_skel::types as xdp4;
+        use crate::tests::xdp_nat6_skel::types as xdp6;
 
-        assert_size!(Nat4TimerKey, xdp::nat4_timer_key);
-        assert_field!(Nat4TimerKey, xdp::nat4_timer_key, l4proto);
-        assert_field_as!(Nat4TimerKey, src_addr, xdp::nat4_timer_key, pair_ip.src_addr.addr);
-        assert_field_as!(Nat4TimerKey, dst_addr, xdp::nat4_timer_key, pair_ip.dst_addr.addr);
-        assert_field_as!(Nat4TimerKey, src_port, xdp::nat4_timer_key, pair_ip.src_port);
-        assert_field_as!(Nat4TimerKey, dst_port, xdp::nat4_timer_key, pair_ip.dst_port);
+        assert_size!(Nat4TimerKey, xdp4::nat4_timer_key);
+        assert_field!(Nat4TimerKey, xdp4::nat4_timer_key, l4proto);
+        assert_field_as!(Nat4TimerKey, src_addr, xdp4::nat4_timer_key, pair_ip.src_addr.addr);
+        assert_field_as!(Nat4TimerKey, dst_addr, xdp4::nat4_timer_key, pair_ip.dst_addr.addr);
+        assert_field_as!(Nat4TimerKey, src_port, xdp4::nat4_timer_key, pair_ip.src_port);
+        assert_field_as!(Nat4TimerKey, dst_port, xdp4::nat4_timer_key, pair_ip.dst_port);
 
-        assert_size!(Nat4TimerValueV3, xdp::nat4_timer_value_v3);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, server_status);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, client_status);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, status);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, timer);
-        assert_field_as!(Nat4TimerValueV3, client_addr, xdp::nat4_timer_value_v3, client_addr.addr);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, client_port);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, gress);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, ifindex);
-        assert_field!(Nat4TimerValueV3, xdp::nat4_timer_value_v3, is_static);
+        assert_size!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, server_status);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, client_status);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, status);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, timer);
+        assert_field_as!(
+            Nat4TimerValueV3,
+            client_addr,
+            xdp4::nat4_timer_value_v3,
+            client_addr.addr
+        );
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, client_port);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, gress);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, ifindex);
+        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, is_static);
 
-        assert_size!(Nat6TimerKey, xdp::nat6_timer_key);
-        assert_field!(Nat6TimerKey, xdp::nat6_timer_key, client_suffix);
-        assert_field!(Nat6TimerKey, xdp::nat6_timer_key, client_port);
-        assert_field!(Nat6TimerKey, xdp::nat6_timer_key, id_byte);
-        assert_field!(Nat6TimerKey, xdp::nat6_timer_key, l4_protocol);
+        assert_size!(Nat6TimerKey, xdp6::nat6_timer_key);
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, client_suffix);
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, client_port);
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, id_byte);
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, l4_protocol);
 
-        assert_size!(Nat6TimerValue, xdp::nat6_timer_value);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, timer);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, server_status);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, status);
-        assert_field_as!(Nat6TimerValue, trigger_addr, xdp::nat6_timer_value, trigger_addr.bytes);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, trigger_port);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, is_allow_reuse);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, is_static);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, need_prefix_replace);
-        assert_field!(Nat6TimerValue, xdp::nat6_timer_value, client_prefix);
+        assert_size!(Nat6TimerValue, xdp6::nat6_timer_value);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, timer);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, server_status);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, status);
+        assert_field_as!(Nat6TimerValue, trigger_addr, xdp6::nat6_timer_value, trigger_addr.bytes);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, trigger_port);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_allow_reuse);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_static);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, need_prefix_replace);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, client_prefix);
     }
 }

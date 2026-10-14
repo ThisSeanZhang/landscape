@@ -8,50 +8,52 @@ use crate::bpf_error::LdEbpfResult;
 use crate::runtime::EbpfRuntime;
 
 // ========================================================================
-// TC NAT
+// v4 NAT stage — TC (map owner) + XDP (FD borrower)
 // ========================================================================
 
-pub(crate) mod tc_nat_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat.skel.rs"));
+pub(crate) mod tc_nat4_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat4.skel.rs"));
 }
 
-pub(crate) mod xdp_nat_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat.skel.rs"));
+pub(crate) mod xdp_nat4_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat4.skel.rs"));
 }
 
-pub struct NatHandle {
-    pub tc: Option<TcNatHandle>,
-    pub xdp: Option<XdpNatHandle>,
+/// The v4 NAT stage: TC ingress/egress + XDP LAN/WAN with shared runtime
+/// maps (dynamic NAT state, conntrack timers, port queues).
+pub struct Nat4Handle {
+    pub tc: TcNat4Handle,
+    pub xdp: XdpNat4Handle,
 }
 
-pub struct TcNatHandle {
+pub struct TcNat4Handle {
     runtime: Arc<EbpfRuntime>,
-    _skel: tc_nat_skel::TcNatSkel<'static>,
+    _skel: tc_nat4_skel::TcNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
 }
 
-impl Drop for TcNatHandle {
+impl Drop for TcNat4Handle {
     fn drop(&mut self) {
         use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.ifindex, StageType::Nat);
+        let _ = self.runtime.tc.remove(self.ifindex, StageType::Nat4);
     }
 }
 
-pub struct XdpNatHandle {
+pub struct XdpNat4Handle {
     runtime: Arc<EbpfRuntime>,
-    _skel: xdp_nat_skel::XdpNatSkel<'static>,
+    _skel: xdp_nat4_skel::XdpNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
     ifindex: u32,
 }
 
-unsafe impl Send for XdpNatHandle {}
-unsafe impl Sync for XdpNatHandle {}
+unsafe impl Send for XdpNat4Handle {}
+unsafe impl Sync for XdpNat4Handle {}
 
-impl Drop for XdpNatHandle {
+impl Drop for XdpNat4Handle {
     fn drop(&mut self) {
         use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Nat);
+        let _ = self.runtime.xdp.remove(self.ifindex, StageType::Nat4);
     }
 }
 
@@ -61,13 +63,15 @@ where
 {
     let fd = map.as_fd().as_raw_fd();
     for port in start..=end {
-        let value =
-            tc_nat_skel::types::nat4_port_queue_value_v3 { port: port.to_be(), last_generation: 0 };
+        let value = tc_nat4_skel::types::nat4_port_queue_value_v3 {
+            port: port.to_be(),
+            last_generation: 0,
+        };
         let ret = unsafe {
             libbpf_rs::libbpf_sys::bpf_map_update_elem(
                 fd,
                 std::ptr::null(),
-                (&value as *const tc_nat_skel::types::nat4_port_queue_value_v3).cast_mut().cast(),
+                (&value as *const tc_nat4_skel::types::nat4_port_queue_value_v3).cast_mut().cast(),
                 0,
             )
         };
@@ -93,89 +97,15 @@ fn seed_runtime_queues<M1, M2, M3>(
 }
 
 // ========================================================================
-// TC NAT — full (ingress + egress)
+// v4 NAT (ingress + egress, TC owns the runtime maps, XDP borrows them)
 // ========================================================================
 
-pub fn attach_tc_nat(
+pub fn attach_nat4(
     rt: &Arc<EbpfRuntime>,
     ifindex: u32,
     has_eth_header: bool,
     config: &NatConfig,
-) -> LdEbpfResult<TcNatHandle> {
-    use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
-    use libbpf_rs::skel::{OpenSkel, SkelBuilder};
-    use std::os::fd::{AsFd, AsRawFd};
-
-    let paths = &rt.paths;
-    rt.tc.ensure_roots(ifindex, has_eth_header)?;
-
-    let builder = tc_nat_skel::TcNatSkelBuilder::default();
-    let (backing, obj) = OwnedOpenObject::new();
-    let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_nat skeleton")?;
-
-    let rodata_data =
-        open_skel.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
-    rodata_data.current_l3_offset = if has_eth_header { 14 } else { 0 };
-    rodata_data.tcp_range_start = config.tcp_range.start;
-    rodata_data.tcp_range_end = config.tcp_range.end;
-    rodata_data.udp_range_start = config.udp_range.start;
-    rodata_data.udp_range_end = config.udp_range.end;
-    rodata_data.icmp_range_start = config.icmp_in_range.start;
-    rodata_data.icmp_range_end = config.icmp_in_range.end;
-
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-        &paths.tc_pipe_exits_wan_ingress_path(),
-    )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
-
-    pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat6_static_map, &paths.nat6_static_map)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat4_static_map, &paths.nat4_static_map)?;
-    pin_and_reuse_map(&mut open_skel.maps.nat_metric_events, &paths.nat_metric_events)?;
-
-    let skel = bpf_ctx!(open_skel.load(), "load tc_nat skeleton")?;
-
-    seed_runtime_queues(
-        &skel.maps.nat4_tcp_port_queue,
-        &skel.maps.nat4_udp_port_queue,
-        &skel.maps.nat4_icmp_port_queue,
-        config,
-    );
-
-    let entry = StageEntry {
-        wan_ingress_prog_v4_fd: skel.progs.tc_nat_wan_ingress_v4.as_fd().as_raw_fd(),
-        wan_ingress_prog_v6_fd: skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
-        wan_egress_prog_v4_fd: skel.progs.tc_nat_wan_egress_v4.as_fd().as_raw_fd(),
-        wan_egress_prog_v6_fd: skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
-        wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-    };
-
-    rt.tc.inject(ifindex, StageType::Nat, entry)?;
-
-    Ok(TcNatHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        ifindex,
-    })
-}
-
-// ========================================================================
-// Unified XDP+TC NAT (ingress+egress, FD sharing for runtime maps)
-// ========================================================================
-
-fn init_nat_xdp_unified(
-    rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
-    has_eth_header: bool,
-    config: &NatConfig,
-) -> LdEbpfResult<(TcNatHandle, XdpNatHandle)> {
+) -> LdEbpfResult<Nat4Handle> {
     use crate::chain::tc_manager::{StageEntry, StageType};
     use crate::chain::xdp_manager::{StageEntry as XdpStageEntry, StageType as XdpStageType};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
@@ -184,13 +114,13 @@ fn init_nat_xdp_unified(
 
     let paths = &rt.paths;
 
-    // ── 1. Load TC nat first (ingress + egress, for runtime map sharing with XDP) ──
+    // ── 1. Load TC nat4 first (ingress + egress, for runtime map sharing with XDP) ──
 
     rt.tc.ensure_roots(ifindex, has_eth_header)?;
 
-    let tc_builder = tc_nat_skel::TcNatSkelBuilder::default();
+    let tc_builder = tc_nat4_skel::TcNat4SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
-    let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat skeleton")?;
+    let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat4 skeleton")?;
 
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
     tc_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
@@ -210,11 +140,10 @@ fn init_nat_xdp_unified(
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
     pin_and_reuse_map(&mut tc_open.maps.wan_ip_binding, &paths.wan_ip)?;
-    pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &paths.nat6_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat4_static_map, &paths.nat4_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
 
-    let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat skeleton")?;
+    let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat4 skeleton")?;
 
     seed_runtime_queues(
         &tc_skel.maps.nat4_tcp_port_queue,
@@ -223,85 +152,77 @@ fn init_nat_xdp_unified(
         config,
     );
 
-    // ── 2. Open XDP nat, reuse TC's runtime map FDs ──
+    // ── 2. Open XDP nat4, reuse TC's runtime map FDs ──
 
-    let xdp_builder = xdp_nat_skel::XdpNatSkelBuilder::default();
+    let xdp_builder = xdp_nat4_skel::XdpNat4SkelBuilder::default();
     let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
-    let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat skeleton")?;
+    let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat4 skeleton")?;
 
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut xdp_open.maps.xdp_pipe_root_progs,
             &paths.xdp_pipe_root_progs_path()
         ),
-        "xdp_nat pin xdp_pipe_root_progs"
+        "xdp_nat4 pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
-        "xdp_nat pin xdp_pipe_exits_lan"
+        "xdp_nat4 pin xdp_pipe_exits_lan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
-        "xdp_nat pin xdp_pipe_exits_wan"
+        "xdp_nat4 pin xdp_pipe_exits_wan"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut xdp_open.maps.xdp_lan_pipe_root_progs,
             &paths.xdp_lan_pipe_root_progs_path(),
         ),
-        "xdp_nat pin xdp_lan_pipe_root_progs"
+        "xdp_nat4 pin xdp_lan_pipe_root_progs"
     )?;
 
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.wan_ip_binding, &paths.wan_ip),
-        "xdp_nat pin wan_ip_binding"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.nat6_static_map, &paths.nat6_static_map,),
-        "xdp_nat pin nat6_static_map"
+        "xdp_nat4 pin wan_ip_binding"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.nat4_static_map, &paths.nat4_static_map),
-        "xdp_nat pin nat4_static_map"
+        "xdp_nat4 pin nat4_static_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.nat_metric_events, &paths.nat_metric_events,),
-        "xdp_nat pin nat_metric_events"
+        "xdp_nat4 pin nat_metric_events"
     )?;
 
     // Reuse TC's runtime map FDs in XDP (FD sharing, no pinning)
     crate::bpf_ctx!(
         xdp_open.maps.nat4_ingress_dyn_map.reuse_fd(tc_skel.maps.nat4_ingress_dyn_map.as_fd()),
-        "xdp_nat reuse nat4_ingress_dyn_map fd"
+        "xdp_nat4 reuse nat4_ingress_dyn_map fd"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat4_egress_dyn_map.reuse_fd(tc_skel.maps.nat4_egress_dyn_map.as_fd()),
-        "xdp_nat reuse nat4_egress_dyn_map fd"
+        "xdp_nat4 reuse nat4_egress_dyn_map fd"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat4_timer_map.reuse_fd(tc_skel.maps.nat4_timer_map.as_fd()),
-        "xdp_nat reuse nat4_timer_map fd"
+        "xdp_nat4 reuse nat4_timer_map fd"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat4_tcp_port_queue.reuse_fd(tc_skel.maps.nat4_tcp_port_queue.as_fd()),
-        "xdp_nat reuse nat4_tcp_port_queue fd"
+        "xdp_nat4 reuse nat4_tcp_port_queue fd"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat4_udp_port_queue.reuse_fd(tc_skel.maps.nat4_udp_port_queue.as_fd()),
-        "xdp_nat reuse nat4_udp_port_queue fd"
+        "xdp_nat4 reuse nat4_udp_port_queue fd"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat4_icmp_port_queue.reuse_fd(tc_skel.maps.nat4_icmp_port_queue.as_fd()),
-        "xdp_nat reuse nat4_icmp_port_queue fd"
-    )?;
-    crate::bpf_ctx!(
-        xdp_open.maps.nat6_timer_map.reuse_fd(tc_skel.maps.nat6_timer_map.as_fd()),
-        "xdp_nat reuse nat6_timer_map fd"
+        "xdp_nat4 reuse nat4_icmp_port_queue fd"
     )?;
 
     {
         let xdp_rodata =
-            xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat rodata not memory mapped");
+            xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat4 rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
         xdp_rodata.tcp_range_start = config.tcp_range.start;
         xdp_rodata.tcp_range_end = config.tcp_range.end;
@@ -311,55 +232,41 @@ fn init_nat_xdp_unified(
         xdp_rodata.icmp_range_end = config.icmp_in_range.end;
     }
 
-    let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat skeleton")?;
+    let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat4 skeleton")?;
 
     // ── 3. Inject into chain managers ──
 
     let tc_entry = StageEntry {
         wan_ingress_prog_v4_fd: tc_skel.progs.tc_nat_wan_ingress_v4.as_fd().as_raw_fd(),
-        wan_ingress_prog_v6_fd: tc_skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
+        wan_ingress_prog_v6_fd: 0,
         wan_egress_prog_v4_fd: tc_skel.progs.tc_nat_wan_egress_v4.as_fd().as_raw_fd(),
-        wan_egress_prog_v6_fd: tc_skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
+        wan_egress_prog_v6_fd: 0,
         wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
     };
-    rt.tc.inject(ifindex, StageType::Nat, tc_entry)?;
+    rt.tc.inject(ifindex, StageType::Nat4, tc_entry)?;
 
     let xdp_entry = XdpStageEntry {
         lan_prog_v4_fd: xdp_skel.progs.egress_nat_v4.as_fd().as_raw_fd(),
-        lan_prog_v6_fd: xdp_skel.progs.egress_nat_v6.as_fd().as_raw_fd(),
+        lan_prog_v6_fd: 0,
         wan_prog_v4_fd: xdp_skel.progs.ingress_nat_v4.as_fd().as_raw_fd(),
-        wan_prog_v6_fd: xdp_skel.progs.ingress_nat_v6.as_fd().as_raw_fd(),
+        wan_prog_v6_fd: 0,
         next_stage_map_fd: xdp_skel.maps.next_stage.as_fd().as_raw_fd(),
     };
-    rt.xdp.inject(ifindex, XdpStageType::Nat, xdp_entry)?;
+    rt.xdp.inject(ifindex, XdpStageType::Nat4, xdp_entry)?;
 
-    Ok((
-        TcNatHandle {
+    Ok(Nat4Handle {
+        tc: TcNat4Handle {
             runtime: rt.clone(),
             _skel: tc_skel,
             _backing: tc_backing,
             ifindex,
         },
-        XdpNatHandle {
+        xdp: XdpNat4Handle {
             runtime: rt.clone(),
             _skel: xdp_skel,
             _backing: xdp_backing,
             ifindex,
         },
-    ))
-}
-
-// ========================================================================
-// Mode-aware unified entry (TC ingress+egress + XDP LAN+WAN)
-// ========================================================================
-
-pub fn init_nat(
-    rt: &Arc<EbpfRuntime>,
-    ifindex: u32,
-    has_eth_header: bool,
-    config: &NatConfig,
-) -> LdEbpfResult<NatHandle> {
-    let (tc, xdp) = init_nat_xdp_unified(rt, ifindex, has_eth_header, config)?;
-    Ok(NatHandle { tc: Some(tc), xdp: Some(xdp) })
+    })
 }

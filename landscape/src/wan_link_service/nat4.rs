@@ -20,10 +20,10 @@ pub(super) async fn run(
         icmp_in_range: config.icmp_in_range,
     };
     let nat =
-        match dataplane.attach_nat(chain_id, iface.ifindex, iface.has_eth_header(), &nat_config) {
+        match dataplane.attach_nat4(chain_id, iface.ifindex, iface.has_eth_header(), &nat_config) {
             Ok(handle) => handle,
             Err(err) => {
-                tracing::error!("failed to start nat for {}: {err}", iface.iface_name);
+                tracing::error!("failed to start nat4 for {}: {err}", iface.iface_name);
                 service_status.just_change_status(ServiceStatus::Failed);
                 swap_if_changed(&runtime, ServiceStatus::Failed);
                 return;

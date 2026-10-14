@@ -13,7 +13,7 @@ use libbpf_rs::{
 
 use crate::{
     maps::{nat::StaticNatMappingV6Item, wan::add_wan_ip},
-    tests::xdp_nat_skel::XdpNatSkelBuilder,
+    tests::xdp_nat6_skel::XdpNat6SkelBuilder,
 };
 
 const IFINDEX: u32 = 6;
@@ -82,7 +82,7 @@ fn assert_xdp_round_trip(
     external_address: Ipv6Addr,
     client_port: u16,
 ) {
-    let mut builder = XdpNatSkelBuilder::default();
+    let mut builder = XdpNat6SkelBuilder::default();
     let pin_root = crate::tests::isolated_pin_root(name);
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut open_object = MaybeUninit::uninit();

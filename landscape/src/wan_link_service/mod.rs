@@ -1,7 +1,8 @@
 mod firewall;
 mod health_check;
 mod mss;
-mod nat;
+mod nat4;
+mod nat6;
 mod pd;
 pub mod probe;
 mod v4;
@@ -55,7 +56,13 @@ const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(200);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SectionTag {
     V4,
-    Nat,
+    Nat4,
+    /// Never broadcast: nat6 has no runtime config of its own (port
+    /// ranges are v4-only), so nothing reconfigures this section; the
+    /// tag exists so the section can filter reconfig events like the
+    /// others.
+    #[allow(dead_code)]
+    Nat6,
     Mss,
     Firewall,
     Pd,
@@ -158,7 +165,8 @@ impl ServiceStarterTrait for WanLinkService {
             .set_session(if active { ServiceStatus::Staring } else { ServiceStatus::Disabled })
             .await;
         board.set_section(SectionKind::Pd, ServiceStatus::Stop).await;
-        board.set_section(SectionKind::Nat, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::Nat4, ServiceStatus::Stop).await;
+        board.set_section(SectionKind::Nat6, ServiceStatus::Stop).await;
         board.set_section(SectionKind::Firewall, ServiceStatus::Stop).await;
         board.set_section(SectionKind::Mss, ServiceStatus::Stop).await;
         board.set_section(SectionKind::HealthCheck, ServiceStatus::Stop).await;
@@ -230,20 +238,20 @@ impl ServiceStarterTrait for WanLinkService {
             state_rx.clone(),
             cfg_rx.clone(),
             reconfig_tx.subscribe(),
-            SectionTag::Nat,
-            SectionKind::Nat,
+            SectionTag::Nat4,
+            SectionKind::Nat4,
             task_label::task::NAT_RUN,
             |cfg| cfg.nat.enable,
             |state| state.has_v4_lease(),
             {
                 let dataplane = self.chain_dataplane.clone();
-                let nat_runtime = sections.nat_slot();
+                let nat_runtime = sections.nat4_slot();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let nat_runtime = nat_runtime.clone();
                     Box::pin(async move {
                         let runtime = RuntimeWanLinkConfig::from_config(&cfg);
-                        nat::run(
+                        nat4::run(
                             runtime.link_chain_id,
                             iface,
                             runtime.nat,
@@ -252,6 +260,31 @@ impl ServiceStarterTrait for WanLinkService {
                             nat_runtime,
                         )
                         .await;
+                    })
+                })
+            },
+        );
+
+        self.spawn_section(
+            &link_status,
+            &board,
+            state_rx.clone(),
+            cfg_rx.clone(),
+            reconfig_tx.subscribe(),
+            SectionTag::Nat6,
+            SectionKind::Nat6,
+            task_label::task::NAT_RUN,
+            |cfg| cfg.nat.enable,
+            |state| state.has_v6_prefix(),
+            {
+                let dataplane = self.chain_dataplane.clone();
+                let nat_runtime = sections.nat6_slot();
+                Arc::new(move |iface, cfg, status| {
+                    let dataplane = dataplane.clone();
+                    let nat_runtime = nat_runtime.clone();
+                    Box::pin(async move {
+                        let chain_id = RuntimeWanLinkConfig::from_config(&cfg).link_chain_id;
+                        nat6::run(chain_id, iface, status, dataplane, nat_runtime).await;
                     })
                 })
             },
@@ -341,6 +374,7 @@ impl ServiceStarterTrait for WanLinkService {
                 let prefix_sender = self.prefix_sender.clone();
                 let shared_wan_iid = self.shared_wan_iid.clone();
                 let pd_runtime = pd_runtime.clone();
+                let link_state = link_state.clone();
                 Arc::new(move |iface, cfg, status| {
                     let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                     let route_service = route_service.clone();
@@ -349,6 +383,7 @@ impl ServiceStarterTrait for WanLinkService {
                     let prefix_sender = prefix_sender.clone();
                     let shared_wan_iid = shared_wan_iid.clone();
                     let pd_runtime = pd_runtime.clone();
+                    let link_state = link_state.clone();
                     Box::pin(async move {
                         pd::run(
                             runtime.id,
@@ -362,6 +397,7 @@ impl ServiceStarterTrait for WanLinkService {
                             shared_wan_iid,
                             prefix_sender,
                             pd_runtime,
+                            link_state,
                         )
                         .await;
                     })
@@ -548,7 +584,7 @@ fn config_change_tags(applied: &WanLinkConfig, new: &WanLinkConfig) -> Vec<Secti
     let new_rt = RuntimeWanLinkConfig::from_config(new);
     let old_rt = RuntimeWanLinkConfig::from_config(applied);
     if new_rt.nat != old_rt.nat {
-        tags.push(SectionTag::Nat);
+        tags.push(SectionTag::Nat4);
     }
     if new_rt.mss != old_rt.mss {
         tags.push(SectionTag::Mss);

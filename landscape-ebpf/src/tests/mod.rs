@@ -159,8 +159,12 @@ pub(crate) mod xdp_firewall_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_firewall.skel.rs"));
 }
 
-pub(crate) mod xdp_nat_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat.skel.rs"));
+pub(crate) mod xdp_nat4_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat4.skel.rs"));
+}
+
+pub(crate) mod xdp_nat6_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat6.skel.rs"));
 }
 
 pub(crate) mod test_xdp_nat4_modify_skel {

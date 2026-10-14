@@ -55,8 +55,9 @@ impl std::fmt::Debug for ChainDir {
 pub enum StageType {
     Mss = 0,
     Firewall = 1,
-    Nat = 2,
-    Pppoe = 3,
+    Nat4 = 2,
+    Nat6 = 3,
+    Pppoe = 4,
 }
 
 fn update_prog_array_fd(map_fd: i32, key: u32, val: i32) -> LdEbpfResult<()> {
@@ -83,6 +84,26 @@ fn delete_prog_array_fd(map_fd: i32, key: u32) {
     let k = key.to_ne_bytes();
     let _ =
         unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
+}
+
+/// Link one family's chain: root slot → the first entry, then each
+/// entry's next-stage map to its successor at the direction's family
+/// slot. Entries with a zero family program fd (family-partial stages,
+/// e.g. Nat4) never join this list.
+fn link_family_chain(
+    root_fd: i32,
+    root_slot: u32,
+    chain: &[&DirEntry],
+    prog_fd: impl Fn(&DirEntry) -> i32,
+    next_fd: impl Fn(&DirEntry) -> i32,
+    dir_slot: u32,
+) -> LdEbpfResult<()> {
+    let Some(first) = chain.first() else { return Ok(()) };
+    update_prog_array_fd(root_fd, root_slot, prog_fd(first))?;
+    for i in 0..chain.len() - 1 {
+        update_prog_array_fd(next_fd(chain[i]), dir_slot, prog_fd(chain[i + 1]))?;
+    }
+    Ok(())
 }
 
 fn clear_map_entries(map: &libbpf_rs::MapMut<'_>) {
@@ -885,32 +906,33 @@ impl XdpChainManager {
         delete_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V4);
         delete_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V6);
 
-        let sorted: Vec<&DirEntry> = state
+        let in_chain: Vec<&DirEntry> = state
             .stages
             .iter()
             .filter(|(k, _)| !matches!((*k, chain), (StageType::Pppoe, ChainDir::Wan)))
             .map(|(_, v)| v)
-            .filter(|v| v.prog_v4_fd != 0 && v.prog_v6_fd != 0)
             .collect();
-        if sorted.is_empty() {
-            return Ok(());
-        }
+        let sorted_v4: Vec<&DirEntry> =
+            in_chain.iter().copied().filter(|v| v.prog_v4_fd != 0).collect();
+        let sorted_v6: Vec<&DirEntry> =
+            in_chain.iter().copied().filter(|v| v.prog_v6_fd != 0).collect();
 
-        update_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V4, sorted[0].prog_v4_fd)?;
-        update_prog_array_fd(root.root_next_stage_fd(), XDP_ROOT_SLOT_V6, sorted[0].prog_v6_fd)?;
-
-        for i in 0..sorted.len().saturating_sub(1) {
-            update_prog_array_fd(
-                sorted[i].next_stage_map_fd,
-                dir_slot_v4,
-                sorted[i + 1].prog_v4_fd,
-            )?;
-            update_prog_array_fd(
-                sorted[i].next_stage_map_fd,
-                dir_slot_v6,
-                sorted[i + 1].prog_v6_fd,
-            )?;
-        }
+        link_family_chain(
+            root.root_next_stage_fd(),
+            XDP_ROOT_SLOT_V4,
+            &sorted_v4,
+            |e: &DirEntry| e.prog_v4_fd,
+            |e: &DirEntry| e.next_stage_map_fd,
+            dir_slot_v4,
+        )?;
+        link_family_chain(
+            root.root_next_stage_fd(),
+            XDP_ROOT_SLOT_V6,
+            &sorted_v6,
+            |e: &DirEntry| e.prog_v6_fd,
+            |e: &DirEntry| e.next_stage_map_fd,
+            dir_slot_v6,
+        )?;
 
         Ok(())
     }
