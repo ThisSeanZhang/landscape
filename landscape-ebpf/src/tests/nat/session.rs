@@ -479,7 +479,7 @@ fn xdp_nat_v6_egress() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_prefix6.b =
         [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0];
     nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_npt_mask =
-        u64::from_le_bytes([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+        crate::maps::wan::compute_npt_mask(48);
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.egress_nat_v6.attach_xdp(nat_h_i as i32).unwrap();
@@ -491,7 +491,7 @@ fn xdp_nat_v6_egress() {
     wan_val[0..8].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0]);
     wan_val[16..24].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0]);
     wan_val[32] = 48;
-    wan_val[40..48].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+    wan_val[40..48].copy_from_slice(&crate::maps::wan::compute_npt_mask(48).to_le_bytes());
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let lan_prefix = [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -507,7 +507,7 @@ fn xdp_nat_v6_egress() {
         &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0],
         &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0],
         48,
-        &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0],
+        &crate::maps::wan::compute_npt_mask(48).to_le_bytes(),
     );
 
     drop(nat);
@@ -830,7 +830,7 @@ fn xdp_nat_v6_ingress() {
     nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_prefix6.b =
         [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0];
     nat_open.maps.rodata_data.as_deref_mut().unwrap().wan_ro_npt_mask =
-        u64::from_le_bytes([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+        crate::maps::wan::compute_npt_mask(48);
     let nat = nat_open.load().unwrap();
 
     let _l0 = nat.progs.ingress_nat_v6.attach_xdp(nat_h_i as i32).unwrap();
@@ -842,7 +842,7 @@ fn xdp_nat_v6_ingress() {
     wan_val[0..8].copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0]);
     wan_val[16..24].copy_from_slice(&[0xfd, 0x00, 0, 0, 0, 0, 0, 0]);
     wan_val[32] = 48;
-    wan_val[40..48].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0]);
+    wan_val[40..48].copy_from_slice(&crate::maps::wan::compute_npt_mask(48).to_le_bytes());
     maps.wan_ip_binding.update(&wan_key, &wan_val, MapFlags::ANY).unwrap();
 
     let wan_src = [0x20, 0x01, 0x0d, 0xb8, 0x12, 0x34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
@@ -858,7 +858,7 @@ fn xdp_nat_v6_ingress() {
         &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0],
         &[0xfd, 0x00, 0, 0, 0, 0, 0, 0],
         48,
-        &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 0],
+        &crate::maps::wan::compute_npt_mask(48).to_le_bytes(),
     );
 
     drop(nat);
