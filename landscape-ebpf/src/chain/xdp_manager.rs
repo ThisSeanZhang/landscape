@@ -708,8 +708,9 @@ impl XdpChainManager {
             );
         }
 
-        let _ = self._seed.skel.maps.xdp_pipe_root_progs.delete(&link_chain_id.to_ne_bytes());
-        let _ = self._seed.skel.maps.xdp_lan_pipe_root_progs.delete(&link_chain_id.to_ne_bytes());
+        let slot_key = (link_chain_id as u32).to_ne_bytes();
+        let _ = self._seed.skel.maps.xdp_pipe_root_progs.delete(&slot_key);
+        let _ = self._seed.skel.maps.xdp_lan_pipe_root_progs.delete(&slot_key);
 
         // The exit programs are manager-lifetime singletons pinned into the
         // shared exit slots at construction, so they are never cleared here.
@@ -890,7 +891,7 @@ impl XdpChainManager {
         let root_prog_fd = skel.progs.xdp_wan_root.as_fd().as_raw_fd();
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
-        let slot_bytes = link_chain_id.to_ne_bytes();
+        let slot_bytes = (link_chain_id as u32).to_ne_bytes();
         let root_bytes = root_prog_fd.to_ne_bytes();
         self._seed.skel.maps.xdp_pipe_root_progs.update(&slot_bytes, &root_bytes, MapFlags::ANY)?;
 
@@ -935,7 +936,7 @@ impl XdpChainManager {
         let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
         self._seed.skel.maps.xdp_lan_pipe_root_progs.update(
-            &link_chain_id.to_ne_bytes(),
+            &(link_chain_id as u32).to_ne_bytes(),
             &root_prog_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;

@@ -372,8 +372,9 @@ impl TcChainManager {
         let ingress_root_fd = ingress_skel.progs.tc_wan_ingress_root.as_fd().as_raw_fd();
         let ing_next_fd = ingress_skel.maps.wan_ingress_root_next_stage.as_fd().as_raw_fd();
 
+        let slot_key = (link_chain_id as u32).to_ne_bytes();
         pinned_map(&self.paths.tc_pipe_root_progs_path())?.update(
-            &link_chain_id.to_ne_bytes(),
+            &slot_key,
             &ingress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
@@ -403,8 +404,9 @@ impl TcChainManager {
         let egress_root_fd = egress_skel.progs.tc_wan_egress_root.as_fd().as_raw_fd();
         let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
 
+        let slot_key = (link_chain_id as u32).to_ne_bytes();
         pinned_map(&self.paths.tc_wan_egress_roots_path())?.update(
-            &link_chain_id.to_ne_bytes(),
+            &slot_key,
             &egress_root_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
@@ -448,11 +450,12 @@ impl TcChainManager {
             return;
         }
 
+        let slot_key = (link_chain_id as u32).to_ne_bytes();
         if let Ok(map) = pinned_map(&self.paths.tc_pipe_root_progs_path()) {
-            let _ = map.delete(&link_chain_id.to_ne_bytes());
+            let _ = map.delete(&slot_key);
         }
         if let Ok(map) = pinned_map(&self.paths.tc_wan_egress_roots_path()) {
-            let _ = map.delete(&link_chain_id.to_ne_bytes());
+            let _ = map.delete(&slot_key);
         }
     }
 
