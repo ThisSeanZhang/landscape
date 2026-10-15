@@ -27,8 +27,19 @@ pub struct TcFirewallHandle {
 
 impl Drop for TcFirewallHandle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Firewall);
+        use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
+        for family in StageFamily::ALL {
+            let _ = self.runtime.tc.remove_from_wan(
+                self.link_chain_id,
+                FromWanStageType::Firewall,
+                family,
+            );
+            let _ = self.runtime.tc.remove_from_lan(
+                self.link_chain_id,
+                FromLanStageType::Firewall,
+                family,
+            );
+        }
     }
 }
 
@@ -37,7 +48,7 @@ pub fn attach_tc_firewall(
     link_chain_id: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<TcFirewallHandle> {
-    use crate::chain::tc_manager::{StageEntry, StageType};
+    use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -69,16 +80,30 @@ pub fn attach_tc_firewall(
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
-    let entry = StageEntry {
-        wan_ingress_prog_v4_fd: skel.progs.tc_firewall_wan_ingress_v4.as_fd().as_raw_fd(),
-        wan_ingress_prog_v6_fd: skel.progs.tc_firewall_wan_ingress_v6.as_fd().as_raw_fd(),
-        wan_egress_prog_v4_fd: skel.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd(),
-        wan_egress_prog_v6_fd: skel.progs.tc_firewall_wan_egress_v6.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
-        wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-    };
-
-    rt.tc.inject(link_chain_id, StageType::Firewall, entry)?;
+    let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
+    let next_egress_fd = skel.maps.wan_egress_next_stage.as_fd().as_raw_fd();
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.tc_firewall_wan_ingress_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.tc_firewall_wan_ingress_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.tc.inject_from_wan(
+            link_chain_id,
+            FromWanStageType::Firewall,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_ingress_fd },
+        )?;
+    }
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.tc_firewall_wan_egress_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.tc.inject_from_lan(
+            link_chain_id,
+            FromLanStageType::Firewall,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_egress_fd },
+        )?;
+    }
 
     Ok(TcFirewallHandle {
         runtime: rt.clone(),
@@ -108,8 +133,19 @@ unsafe impl Sync for XdpFirewallHandle {}
 
 impl Drop for XdpFirewallHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Firewall);
+        use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
+        for family in StageFamily::ALL {
+            let _ = self.runtime.xdp.remove_from_wan(
+                self.link_chain_id,
+                FromWanStageType::Firewall,
+                family,
+            );
+            let _ = self.runtime.xdp.remove_from_lan(
+                self.link_chain_id,
+                FromLanStageType::Firewall,
+                family,
+            );
+        }
     }
 }
 
@@ -117,7 +153,7 @@ pub fn init_xdp_firewall(
     rt: &Arc<EbpfRuntime>,
     link_chain_id: u16,
 ) -> LdEbpfResult<XdpFirewallHandle> {
-    use crate::chain::xdp_manager::{StageEntry, StageType};
+    use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -170,15 +206,29 @@ pub fn init_xdp_firewall(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_firewall skeleton")?;
 
-    let entry = StageEntry {
-        lan_prog_v4_fd: skel.progs.xdp_firewall_lan_v4.as_fd().as_raw_fd(),
-        lan_prog_v6_fd: skel.progs.xdp_firewall_lan_v6.as_fd().as_raw_fd(),
-        wan_prog_v4_fd: skel.progs.xdp_firewall_wan_v4.as_fd().as_raw_fd(),
-        wan_prog_v6_fd: skel.progs.xdp_firewall_wan_v6.as_fd().as_raw_fd(),
-        next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
-    };
-
-    rt.xdp.inject(link_chain_id, StageType::Firewall, entry)?;
+    let next_stage_fd = skel.maps.next_stage.as_fd().as_raw_fd();
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.xdp_firewall_wan_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.xdp_firewall_wan_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.xdp.inject_from_wan(
+            link_chain_id,
+            FromWanStageType::Firewall,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
+        )?;
+    }
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.xdp_firewall_lan_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.xdp_firewall_lan_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.xdp.inject_from_lan(
+            link_chain_id,
+            FromLanStageType::Firewall,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
+        )?;
+    }
 
     Ok(XdpFirewallHandle {
         runtime: rt.clone(),

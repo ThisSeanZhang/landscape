@@ -9,7 +9,7 @@ use libbpf_rs::{
 use crate::{
     bpf_error::LdEbpfResult,
     bpf_rs_shared::pppoe_skb_fallback_skel,
-    chain::tc_manager::{StageEntry, StageType},
+    chain::stage::{FamilyProg, FromLanStageType, StageFamily},
     chain::xdp_manager::SkbPending,
     landscape::{OwnedOpenObject, pin_and_reuse_map},
     runtime::EbpfRuntime,
@@ -36,7 +36,13 @@ struct TcPppoeStage {
 
 impl Drop for TcPppoeStage {
     fn drop(&mut self) {
-        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Pppoe);
+        for family in StageFamily::ALL {
+            let _ = self.runtime.tc.remove_from_lan(
+                self.link_chain_id,
+                FromLanStageType::Pppoe,
+                family,
+            );
+        }
     }
 }
 
@@ -110,18 +116,19 @@ fn attach_tc_pppoe(
 
     let skel = crate::bpf_ctx!(open_skel.load(), "load tc_pppoe skeleton")?;
 
-    // Egress-only terminal stage: the empty ingress fds keep it out of
-    // the WAN ingress chain (decap happens at the intro dispatch).
-    let entry = StageEntry {
-        wan_ingress_prog_v4_fd: 0,
-        wan_ingress_prog_v6_fd: 0,
-        wan_egress_prog_v4_fd: skel.progs.tc_pppoe_wan_egress_v4.as_fd().as_raw_fd(),
-        wan_egress_prog_v6_fd: skel.progs.tc_pppoe_wan_egress_v6.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
-        wan_egress_next_stage_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-    };
-
-    rt.tc.inject(link_chain_id, StageType::Pppoe, entry)?;
+    // Egress-only terminal stage (decap happens at the intro dispatch).
+    let next_egress_fd = skel.maps.wan_egress_next_stage.as_fd().as_raw_fd();
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.tc_pppoe_wan_egress_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.tc_pppoe_wan_egress_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.tc.inject_from_lan(
+            link_chain_id,
+            FromLanStageType::Pppoe,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_egress_fd },
+        )?;
+    }
 
     Ok(TcPppoeStage {
         runtime: rt.clone(),

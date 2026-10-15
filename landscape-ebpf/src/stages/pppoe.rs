@@ -20,8 +20,14 @@ unsafe impl Sync for XdpPppoeHandle {}
 
 impl Drop for XdpPppoeHandle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Pppoe);
+        use crate::chain::stage::{FromLanStageType, StageFamily};
+        for family in StageFamily::ALL {
+            let _ = self.runtime.xdp.remove_from_lan(
+                self.link_chain_id,
+                FromLanStageType::Pppoe,
+                family,
+            );
+        }
     }
 }
 
@@ -30,7 +36,7 @@ pub fn init_xdp_pppoe(
     link_chain_id: u16,
     session_id: u16,
 ) -> LdEbpfResult<XdpPppoeHandle> {
-    use crate::chain::xdp_manager::{StageEntry, StageType};
+    use crate::chain::stage::{FamilyProg, FromLanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -71,17 +77,20 @@ pub fn init_xdp_pppoe(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_pppoe skeleton")?;
 
-    // PPPoE encap is family-agnostic (one body, two entry programs)
-    // and LAN-side only: the WAN chain has no PPPoE stage.
-    let entry = StageEntry {
-        lan_prog_v4_fd: skel.progs.xdp_pppoe_encap_lan_v4.as_fd().as_raw_fd(),
-        lan_prog_v6_fd: skel.progs.xdp_pppoe_encap_lan_v6.as_fd().as_raw_fd(),
-        wan_prog_v4_fd: 0,
-        wan_prog_v6_fd: 0,
-        next_stage_map_fd: skel.maps.next_stage.as_fd().as_raw_fd(),
-    };
-
-    rt.xdp.inject(link_chain_id, StageType::Pppoe, entry)?;
+    // PPPoE encap is family-agnostic (one body, two entry programs) and
+    // LAN-side only.
+    let next_stage_fd = skel.maps.next_stage.as_fd().as_raw_fd();
+    for (family, prog_fd) in [
+        (StageFamily::V4, skel.progs.xdp_pppoe_encap_lan_v4.as_fd().as_raw_fd()),
+        (StageFamily::V6, skel.progs.xdp_pppoe_encap_lan_v6.as_fd().as_raw_fd()),
+    ] {
+        rt.xdp.inject_from_lan(
+            link_chain_id,
+            FromLanStageType::Pppoe,
+            family,
+            FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
+        )?;
+    }
 
     Ok(XdpPppoeHandle {
         runtime: rt.clone(),

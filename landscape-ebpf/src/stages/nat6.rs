@@ -46,8 +46,17 @@ pub struct TcNat6Handle {
 
 impl Drop for TcNat6Handle {
     fn drop(&mut self) {
-        use crate::chain::tc_manager::StageType;
-        let _ = self.runtime.tc.remove(self.link_chain_id, StageType::Nat6);
+        use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
+        let _ = self.runtime.tc.remove_from_wan(
+            self.link_chain_id,
+            FromWanStageType::Nat,
+            StageFamily::V6,
+        );
+        let _ = self.runtime.tc.remove_from_lan(
+            self.link_chain_id,
+            FromLanStageType::Nat,
+            StageFamily::V6,
+        );
     }
 }
 
@@ -63,8 +72,17 @@ unsafe impl Sync for XdpNat6Handle {}
 
 impl Drop for XdpNat6Handle {
     fn drop(&mut self) {
-        use crate::chain::xdp_manager::StageType;
-        let _ = self.runtime.xdp.remove(self.link_chain_id, StageType::Nat6);
+        use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
+        let _ = self.runtime.xdp.remove_from_wan(
+            self.link_chain_id,
+            FromWanStageType::Nat,
+            StageFamily::V6,
+        );
+        let _ = self.runtime.xdp.remove_from_lan(
+            self.link_chain_id,
+            FromLanStageType::Nat,
+            StageFamily::V6,
+        );
     }
 }
 
@@ -79,8 +97,7 @@ pub fn attach_nat6(
     has_eth_header: bool,
     prefix: Option<(Ipv6Addr, u8)>,
 ) -> LdEbpfResult<Nat6Handle> {
-    use crate::chain::tc_manager::{StageEntry, StageType};
-    use crate::chain::xdp_manager::{StageEntry as XdpStageEntry, StageType as XdpStageType};
+    use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
@@ -174,24 +191,44 @@ pub fn attach_nat6(
 
     // ── 3. Inject into link_chain_id managers ──
 
-    let tc_entry = StageEntry {
-        wan_ingress_prog_v4_fd: 0,
-        wan_ingress_prog_v6_fd: tc_skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
-        wan_egress_prog_v4_fd: 0,
-        wan_egress_prog_v6_fd: tc_skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
-        wan_ingress_next_stage_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
-        wan_egress_next_stage_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
-    };
-    rt.tc.inject(link_chain_id, StageType::Nat6, tc_entry)?;
+    rt.tc.inject_from_wan(
+        link_chain_id,
+        FromWanStageType::Nat,
+        StageFamily::V6,
+        FamilyProg {
+            prog_fd: tc_skel.progs.tc_nat_wan_ingress_v6.as_fd().as_raw_fd(),
+            next_stage_map_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
+        },
+    )?;
+    rt.tc.inject_from_lan(
+        link_chain_id,
+        FromLanStageType::Nat,
+        StageFamily::V6,
+        FamilyProg {
+            prog_fd: tc_skel.progs.tc_nat_wan_egress_v6.as_fd().as_raw_fd(),
+            next_stage_map_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
+        },
+    )?;
 
-    let xdp_entry = XdpStageEntry {
-        lan_prog_v4_fd: 0,
-        lan_prog_v6_fd: xdp_skel.progs.egress_nat_v6.as_fd().as_raw_fd(),
-        wan_prog_v4_fd: 0,
-        wan_prog_v6_fd: xdp_skel.progs.ingress_nat_v6.as_fd().as_raw_fd(),
-        next_stage_map_fd: xdp_skel.maps.next_stage.as_fd().as_raw_fd(),
-    };
-    rt.xdp.inject(link_chain_id, XdpStageType::Nat6, xdp_entry)?;
+    let next_stage_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
+    rt.xdp.inject_from_wan(
+        link_chain_id,
+        FromWanStageType::Nat,
+        StageFamily::V6,
+        FamilyProg {
+            prog_fd: xdp_skel.progs.ingress_nat_v6.as_fd().as_raw_fd(),
+            next_stage_map_fd: next_stage_fd,
+        },
+    )?;
+    rt.xdp.inject_from_lan(
+        link_chain_id,
+        FromLanStageType::Nat,
+        StageFamily::V6,
+        FamilyProg {
+            prog_fd: xdp_skel.progs.egress_nat_v6.as_fd().as_raw_fd(),
+            next_stage_map_fd: next_stage_fd,
+        },
+    )?;
 
     Ok(Nat6Handle {
         tc: TcNat6Handle {

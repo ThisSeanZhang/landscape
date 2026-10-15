@@ -174,8 +174,9 @@ struct {
  *
  *    PPPoE (native mode) is egress-only and per-link: each link injects
  *    its own terminal stage with its session template in rodata
- *    (see PppoeHandle::attach_tc_pppoe); its empty ingress fds keep it
- *    out of the WAN ingress chain.
+ *    (see PppoeHandle::attach_tc_pppoe).  Rust-side it only registers
+ *    from-LAN (egress) rows: the from-WAN stage enum has no Pppoe
+ *    variant, so it can never join the WAN ingress chain.
  *
  *    Example — LAN ingress chain:  tc_lan_ingress_route → bpf_redirect (bypass)
  *      intro → route → pick_wan → FORWARDED + bpf_redirect(target_wan, 0)

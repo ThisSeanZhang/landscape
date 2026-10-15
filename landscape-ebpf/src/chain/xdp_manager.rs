@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,9 @@ use libbpf_rs::{MapCore, MapFlags, Program, Xdp, XdpFlags};
 use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
+use crate::chain::stage::{
+    FamilyProg, FromLanStageType, FromWanStageType, StageFamily, StageTable, relink_family_stages,
+};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 use crate::maps::wan_trie::dispatcher::{WanTrieDispatcher, cast_arena_tbl};
 use crate::runtime::EbpfRuntime;
@@ -51,61 +54,6 @@ impl std::fmt::Debug for ChainDir {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum StageType {
-    Mss = 0,
-    Firewall = 1,
-    Nat4 = 2,
-    Nat6 = 3,
-    Pppoe = 4,
-}
-
-fn update_prog_array_fd(map_fd: i32, key: u32, val: i32) -> LdEbpfResult<()> {
-    let k = key.to_ne_bytes();
-    let v = val.to_ne_bytes();
-    let ret = unsafe {
-        libbpf_sys::bpf_map_update_elem(
-            map_fd,
-            k.as_ptr() as *const std::ffi::c_void,
-            v.as_ptr() as *const std::ffi::c_void,
-            0,
-        )
-    };
-    if ret != 0 {
-        return Err(crate::bpf_error::LandscapeEbpfError::Context {
-            context: format!("update_prog_array fd={} key={}", map_fd, key),
-            source: libbpf_rs::Error::from_raw_os_error(-ret),
-        });
-    }
-    Ok(())
-}
-
-fn delete_prog_array_fd(map_fd: i32, key: u32) {
-    let k = key.to_ne_bytes();
-    let _ =
-        unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
-}
-
-/// Link one family's link_chain_id: root slot → the first entry, then each
-/// entry's next-stage map to its successor at the direction's family
-/// slot. Entries with a zero family program fd (family-partial stages,
-/// e.g. Nat4) never join this list.
-fn link_family_chain(
-    root_fd: i32,
-    root_slot: u32,
-    link_chain_id: &[&DirEntry],
-    prog_fd: impl Fn(&DirEntry) -> i32,
-    next_fd: impl Fn(&DirEntry) -> i32,
-    dir_slot: u32,
-) -> LdEbpfResult<()> {
-    let Some(first) = link_chain_id.first() else { return Ok(()) };
-    update_prog_array_fd(root_fd, root_slot, prog_fd(first))?;
-    for i in 0..link_chain_id.len() - 1 {
-        update_prog_array_fd(next_fd(link_chain_id[i]), dir_slot, prog_fd(link_chain_id[i + 1]))?;
-    }
-    Ok(())
-}
-
 fn clear_map_entries(map: &libbpf_rs::MapMut<'_>) {
     let keys: Vec<Vec<u8>> = map.keys().collect();
     for key in keys {
@@ -128,33 +76,16 @@ impl ManagerInner {
 
 /// Both direction chains of one WAN link.  Each direction has its own
 /// root (registered under the link's link id in the direction's prog
-/// array) and its own stage list; a stage injects per-direction program
-/// fds into both lists at once.
+/// array) and its own stage table keyed by `(stage, family)` — see
+/// [`crate::chain::stage`].
 #[derive(Default)]
 struct WanChainState {
     // from-WAN direction (WAN→LAN), root of xdp_wan_root
     wan_root: Option<ChainRoot>,
     // from-LAN direction (LAN→WAN), root of xdp_lan_root
     lan_root: Option<ChainRoot>,
-    lan_stages: BTreeMap<StageType, DirEntry>,
-    wan_stages: BTreeMap<StageType, DirEntry>,
-}
-
-/// One stage's per-family entry programs, split by chain direction.
-/// Shared with the stage loaders; split into per-direction [`DirEntry`]
-/// on inject.
-pub struct StageEntry {
-    pub lan_prog_v4_fd: i32,
-    pub lan_prog_v6_fd: i32,
-    pub wan_prog_v4_fd: i32,
-    pub wan_prog_v6_fd: i32,
-    pub next_stage_map_fd: i32,
-}
-
-struct DirEntry {
-    prog_v4_fd: i32,
-    prog_v6_fd: i32,
-    next_stage_map_fd: i32,
+    lan_stages: StageTable<FromLanStageType>,
+    wan_stages: StageTable<FromWanStageType>,
 }
 
 // Family-indexed link_chain_id slots; must match link_chain_id/xdp_stage.h and
@@ -633,59 +564,87 @@ impl XdpChainManager {
         Ok(())
     }
 
-    pub fn inject(
+    /// Register one family of a stage on the from-WAN chain of the WAN
+    /// link owning `link_chain_id`; the direction is relinked afterwards.
+    pub fn inject_from_wan(
         &self,
         link_chain_id: u16,
-        stage: StageType,
-        entry: StageEntry,
+        stage: FromWanStageType,
+        family: StageFamily,
+        prog: FamilyProg,
     ) -> LdEbpfResult<()> {
-        let StageEntry {
-            lan_prog_v4_fd,
-            lan_prog_v6_fd,
-            wan_prog_v4_fd,
-            wan_prog_v6_fd,
-            next_stage_map_fd,
-        } = entry;
         {
             let mut inner = self.inner.lock().unwrap();
-            let state = inner.wan_chains.entry(link_chain_id).or_default();
-            state.lan_stages.insert(
-                stage,
-                DirEntry {
-                    prog_v4_fd: lan_prog_v4_fd,
-                    prog_v6_fd: lan_prog_v6_fd,
-                    next_stage_map_fd,
-                },
-            );
-            state.wan_stages.insert(
-                stage,
-                DirEntry {
-                    prog_v4_fd: wan_prog_v4_fd,
-                    prog_v6_fd: wan_prog_v6_fd,
-                    next_stage_map_fd,
-                },
-            );
+            inner
+                .wan_chains
+                .entry(link_chain_id)
+                .or_default()
+                .wan_stages
+                .insert((stage, family), prog);
         }
-        self.rebuild(link_chain_id, ChainDir::Lan)?;
-        self.rebuild(link_chain_id, ChainDir::Wan)?;
+        self.rebuild(link_chain_id, ChainDir::Wan)
+    }
+
+    /// Register one family of a stage on the from-LAN chain of the WAN
+    /// link owning `link_chain_id` (see [`inject_from_wan`]).
+    pub fn inject_from_lan(
+        &self,
+        link_chain_id: u16,
+        stage: FromLanStageType,
+        family: StageFamily,
+        prog: FamilyProg,
+    ) -> LdEbpfResult<()> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .wan_chains
+                .entry(link_chain_id)
+                .or_default()
+                .lan_stages
+                .insert((stage, family), prog);
+        }
+        self.rebuild(link_chain_id, ChainDir::Lan)
+    }
+
+    /// Unregister one family of a stage from the from-WAN chain of
+    /// `link_chain_id`.  The roots stay registered for the link's
+    /// lifetime (the hub tears them down when the link goes away).
+    pub fn remove_from_wan(
+        &self,
+        link_chain_id: u16,
+        stage: FromWanStageType,
+        family: StageFamily,
+    ) -> LdEbpfResult<()> {
+        let removed = {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .wan_chains
+                .get_mut(&link_chain_id)
+                .is_some_and(|state| state.wan_stages.remove(&(stage, family)).is_some())
+        };
+        if removed {
+            self.rebuild(link_chain_id, ChainDir::Wan)?;
+        }
         Ok(())
     }
 
-    /// Remove one stage from both direction chains of `link_chain_id`.  The roots
-    /// stay registered for the link's lifetime (the hub tears them down
-    /// when the link goes away).
-    pub fn remove(&self, link_chain_id: u16, stage: StageType) -> LdEbpfResult<()> {
-        let has_state;
-        {
+    /// Unregister one family of a stage from the from-LAN chain of
+    /// `link_chain_id` (see [`remove_from_wan`]).
+    pub fn remove_from_lan(
+        &self,
+        link_chain_id: u16,
+        stage: FromLanStageType,
+        family: StageFamily,
+    ) -> LdEbpfResult<()> {
+        let removed = {
             let mut inner = self.inner.lock().unwrap();
-            has_state = inner.wan_chains.get_mut(&link_chain_id).is_some_and(|state| {
-                state.lan_stages.remove(&stage).is_some()
-                    | state.wan_stages.remove(&stage).is_some()
-            });
-        }
-        if has_state {
+            inner
+                .wan_chains
+                .get_mut(&link_chain_id)
+                .is_some_and(|state| state.lan_stages.remove(&(stage, family)).is_some())
+        };
+        if removed {
             self.rebuild(link_chain_id, ChainDir::Lan)?;
-            self.rebuild(link_chain_id, ChainDir::Wan)?;
         }
         Ok(())
     }
@@ -701,8 +660,8 @@ impl XdpChainManager {
         let Some(state) = inner.wan_chains.remove(&link_chain_id) else { return };
         if !state.lan_stages.is_empty() || !state.wan_stages.is_empty() {
             tracing::warn!(
-                "removing xdp roots for link_chain_id={link_chain_id} with stages still registered \
-                 (lan={}, wan={})",
+                "removing xdp roots for link_chain_id={link_chain_id} with stage slots still \
+                 registered (lan={}, wan={})",
                 state.lan_stages.len(),
                 state.wan_stages.len()
             );
@@ -959,55 +918,24 @@ impl XdpChainManager {
             }
         })?;
 
-        let root = match dir {
-            ChainDir::Wan => state.wan_root.as_ref(),
-            ChainDir::Lan => state.lan_root.as_ref(),
+        match dir {
+            ChainDir::Wan => relink_family_stages(
+                state.wan_root.as_ref().unwrap().root_next_stage_fd(),
+                &state.wan_stages,
+                XDP_ROOT_SLOT_V4,
+                XDP_ROOT_SLOT_V6,
+                XDP_FROM_WAN_SLOT_V4,
+                XDP_FROM_WAN_SLOT_V6,
+            ),
+            ChainDir::Lan => relink_family_stages(
+                state.lan_root.as_ref().unwrap().root_next_stage_fd(),
+                &state.lan_stages,
+                XDP_ROOT_SLOT_V4,
+                XDP_ROOT_SLOT_V6,
+                XDP_FROM_LAN_SLOT_V4,
+                XDP_FROM_LAN_SLOT_V6,
+            ),
         }
-        .unwrap();
-        let (stages, root_fd) = match dir {
-            ChainDir::Wan => (&state.wan_stages, root.root_next_stage_fd()),
-            ChainDir::Lan => (&state.lan_stages, root.root_next_stage_fd()),
-        };
-        let (dir_slot_v4, dir_slot_v6) = match dir {
-            ChainDir::Lan => (XDP_FROM_LAN_SLOT_V4, XDP_FROM_LAN_SLOT_V6),
-            ChainDir::Wan => (XDP_FROM_WAN_SLOT_V4, XDP_FROM_WAN_SLOT_V6),
-        };
-
-        for entry in stages.values() {
-            delete_prog_array_fd(entry.next_stage_map_fd, dir_slot_v4);
-            delete_prog_array_fd(entry.next_stage_map_fd, dir_slot_v6);
-        }
-        delete_prog_array_fd(root_fd, XDP_ROOT_SLOT_V4);
-        delete_prog_array_fd(root_fd, XDP_ROOT_SLOT_V6);
-
-        let in_chain: Vec<&DirEntry> = stages
-            .iter()
-            .filter(|(k, _)| !matches!((*k, dir), (StageType::Pppoe, ChainDir::Wan)))
-            .map(|(_, v)| v)
-            .collect();
-        let sorted_v4: Vec<&DirEntry> =
-            in_chain.iter().copied().filter(|v| v.prog_v4_fd != 0).collect();
-        let sorted_v6: Vec<&DirEntry> =
-            in_chain.iter().copied().filter(|v| v.prog_v6_fd != 0).collect();
-
-        link_family_chain(
-            root_fd,
-            XDP_ROOT_SLOT_V4,
-            &sorted_v4,
-            |e: &DirEntry| e.prog_v4_fd,
-            |e: &DirEntry| e.next_stage_map_fd,
-            dir_slot_v4,
-        )?;
-        link_family_chain(
-            root_fd,
-            XDP_ROOT_SLOT_V6,
-            &sorted_v6,
-            |e: &DirEntry| e.prog_v6_fd,
-            |e: &DirEntry| e.next_stage_map_fd,
-            dir_slot_v6,
-        )?;
-
-        Ok(())
     }
 }
 

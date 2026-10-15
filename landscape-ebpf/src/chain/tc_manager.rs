@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,9 @@ use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType};
 use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
+use crate::chain::stage::{
+    FamilyProg, FromLanStageType, FromWanStageType, StageFamily, StageTable, relink_family_stages,
+};
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 
 pub(crate) mod tc_wan_ingress_route_skel {
@@ -30,63 +33,14 @@ use tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder;
 use tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder;
 use tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum StageType {
-    Mss = 0,
-    Firewall = 1,
-    Nat4 = 2,
-    Nat6 = 3,
-    Pppoe = 4,
-}
-
+/// Which TC chain direction an operation targets.  WAN ingress is the
+/// from-WAN chain (traffic received on the WAN link); WAN egress is the
+/// from-LAN chain (LAN-forwarded and local-outbound traffic leaving
+/// through the WAN link).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ChainDir {
     WanIngress,
     WanEgress,
-}
-
-fn update_prog_array_fd(map_fd: i32, key: u32, val: i32) -> LdEbpfResult<()> {
-    let k = key.to_ne_bytes();
-    let v = val.to_ne_bytes();
-    let ret = unsafe {
-        libbpf_sys::bpf_map_update_elem(
-            map_fd,
-            k.as_ptr() as *const std::ffi::c_void,
-            v.as_ptr() as *const std::ffi::c_void,
-            0,
-        )
-    };
-    if ret != 0 {
-        return Err(crate::bpf_error::LandscapeEbpfError::Context {
-            context: format!("update_prog_array fd={} key={}", map_fd, key),
-            source: libbpf_rs::Error::from_raw_os_error(-ret),
-        });
-    }
-    Ok(())
-}
-
-fn delete_prog_array_fd(map_fd: i32, key: u32) {
-    let k = key.to_ne_bytes();
-    let _ =
-        unsafe { libbpf_sys::bpf_map_delete_elem(map_fd, k.as_ptr() as *const std::ffi::c_void) };
-}
-
-/// Link one family's link_chain_id: root slot → the first entry, then each
-/// entry's next-stage map to its successor. Entries with a zero family
-/// program fd (family-partial stages, e.g. Nat4) never join this list.
-fn link_family_chain(
-    root_fd: i32,
-    slot: u32,
-    link_chain_id: &[&StageEntry],
-    prog_fd: impl Fn(&StageEntry) -> i32,
-    next_fd: impl Fn(&StageEntry) -> i32,
-) -> LdEbpfResult<()> {
-    let Some(first) = link_chain_id.first() else { return Ok(()) };
-    update_prog_array_fd(root_fd, slot, prog_fd(first))?;
-    for i in 0..link_chain_id.len() - 1 {
-        update_prog_array_fd(next_fd(link_chain_id[i]), slot, prog_fd(link_chain_id[i + 1]))?;
-    }
-    Ok(())
 }
 
 // ── Pure Rust map creation (delete-if-exists then create + pin) ──
@@ -145,15 +99,6 @@ struct EgressRoot {
     next_stage_fd: i32,
 }
 
-pub struct StageEntry {
-    pub wan_ingress_prog_v4_fd: i32,
-    pub wan_ingress_prog_v6_fd: i32,
-    pub wan_egress_prog_v4_fd: i32,
-    pub wan_egress_prog_v6_fd: i32,
-    pub wan_ingress_next_stage_fd: i32,
-    pub wan_egress_next_stage_fd: i32,
-}
-
 // Family-indexed link_chain_id slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.
 const TC_SLOT_V4: u32 = 0;
 const TC_SLOT_V6: u32 = 1;
@@ -162,7 +107,8 @@ const TC_SLOT_V6: u32 = 1;
 struct ChainState {
     ingress_root: Option<IngressRoot>,
     egress_root: Option<EgressRoot>,
-    stages: BTreeMap<StageType, StageEntry>,
+    ingress_stages: StageTable<FromWanStageType>,
+    egress_stages: StageTable<FromLanStageType>,
     has_eth_header: bool,
 }
 
@@ -418,20 +364,46 @@ impl TcChainManager {
         })
     }
 
-    pub fn inject(
+    /// Register one family of a stage on the from-WAN chain (WAN ingress
+    /// direction) of `link_chain_id`; the direction is relinked afterwards.
+    pub fn inject_from_wan(
         &self,
         link_chain_id: u16,
-        stage: StageType,
-        entry: StageEntry,
+        stage: FromWanStageType,
+        family: StageFamily,
+        prog: FamilyProg,
     ) -> LdEbpfResult<()> {
         {
             let mut inner = self.inner.lock().unwrap();
-            let state = inner.chains.entry(link_chain_id).or_default();
-            state.stages.insert(stage, entry);
+            inner
+                .chains
+                .entry(link_chain_id)
+                .or_default()
+                .ingress_stages
+                .insert((stage, family), prog);
         }
-        self.rebuild(link_chain_id, ChainDir::WanIngress)?;
-        self.rebuild(link_chain_id, ChainDir::WanEgress)?;
-        Ok(())
+        self.rebuild(link_chain_id, ChainDir::WanIngress)
+    }
+
+    /// Register one family of a stage on the from-LAN chain (WAN egress
+    /// direction) of `link_chain_id` (see [`inject_from_wan`]).
+    pub fn inject_from_lan(
+        &self,
+        link_chain_id: u16,
+        stage: FromLanStageType,
+        family: StageFamily,
+        prog: FamilyProg,
+    ) -> LdEbpfResult<()> {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .chains
+                .entry(link_chain_id)
+                .or_default()
+                .egress_stages
+                .insert((stage, family), prog);
+        }
+        self.rebuild(link_chain_id, ChainDir::WanEgress)
     }
 
     /// Tear down the WAN link chain identified by `link_chain_id`: drop both
@@ -440,10 +412,12 @@ impl TcChainManager {
     pub fn remove_roots(&self, link_chain_id: u16) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(state) = inner.chains.remove(&link_chain_id) {
-            if !state.stages.is_empty() {
+            if !state.ingress_stages.is_empty() || !state.egress_stages.is_empty() {
                 tracing::warn!(
-                    "removing tc roots for link_chain_id={link_chain_id} with stages still registered ({})",
-                    state.stages.len()
+                    "removing tc roots for link_chain_id={link_chain_id} with stage slots still \
+                     registered (ingress={}, egress={})",
+                    state.ingress_stages.len(),
+                    state.egress_stages.len()
                 );
             }
         } else {
@@ -459,20 +433,45 @@ impl TcChainManager {
         }
     }
 
-    /// Remove one stage from both direction chains of `link_chain_id`.  The roots
-    /// stay registered for the link's lifetime (the hub tears them down
-    /// when the link goes away).
-    pub fn remove(&self, link_chain_id: u16, stage: StageType) -> LdEbpfResult<()> {
-        let has_state;
-        {
+    /// Unregister one family of a stage from the from-WAN chain (WAN
+    /// ingress direction) of `link_chain_id`.  The roots stay registered
+    /// for the link's lifetime (the hub tears them down when the link
+    /// goes away).
+    pub fn remove_from_wan(
+        &self,
+        link_chain_id: u16,
+        stage: FromWanStageType,
+        family: StageFamily,
+    ) -> LdEbpfResult<()> {
+        let removed = {
             let mut inner = self.inner.lock().unwrap();
-            has_state = inner
+            inner
                 .chains
                 .get_mut(&link_chain_id)
-                .is_some_and(|state| state.stages.remove(&stage).is_some());
-        }
-        if has_state {
+                .is_some_and(|state| state.ingress_stages.remove(&(stage, family)).is_some())
+        };
+        if removed {
             self.rebuild(link_chain_id, ChainDir::WanIngress)?;
+        }
+        Ok(())
+    }
+
+    /// Unregister one family of a stage from the from-LAN chain (WAN
+    /// egress direction) of `link_chain_id` (see [`remove_from_wan`]).
+    pub fn remove_from_lan(
+        &self,
+        link_chain_id: u16,
+        stage: FromLanStageType,
+        family: StageFamily,
+    ) -> LdEbpfResult<()> {
+        let removed = {
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .chains
+                .get_mut(&link_chain_id)
+                .is_some_and(|state| state.egress_stages.remove(&(stage, family)).is_some())
+        };
+        if removed {
             self.rebuild(link_chain_id, ChainDir::WanEgress)?;
         }
         Ok(())
@@ -485,59 +484,30 @@ impl TcChainManager {
             inner.chains.get(&link_chain_id).map(|s| s.has_eth_header).unwrap_or(false);
         self.ensure_roots_locked(&mut inner, link_chain_id, has_eth_header)?;
 
-        let state = inner.chains.get_mut(&link_chain_id).unwrap();
-        let root_next_stage_fd = match dir {
-            ChainDir::WanIngress => state.ingress_root.as_ref().unwrap().next_stage_fd,
-            ChainDir::WanEgress => state.egress_root.as_ref().unwrap().next_stage_fd,
-        };
-
-        for entry in state.stages.values() {
-            let next_fd = match dir {
-                ChainDir::WanIngress => entry.wan_ingress_next_stage_fd,
-                ChainDir::WanEgress => entry.wan_egress_next_stage_fd,
-            };
-            if next_fd != 0 {
-                delete_prog_array_fd(next_fd, TC_SLOT_V4);
-                delete_prog_array_fd(next_fd, TC_SLOT_V6);
+        let state = inner.chains.get_mut(&link_chain_id).ok_or_else(|| {
+            crate::bpf_error::LandscapeEbpfError::Context {
+                context: format!("no tc chain state for link_chain_id={link_chain_id}"),
+                source: libbpf_rs::Error::from_raw_os_error(libc::ENOENT),
             }
+        })?;
+
+        match dir {
+            ChainDir::WanIngress => relink_family_stages(
+                state.ingress_root.as_ref().unwrap().next_stage_fd,
+                &state.ingress_stages,
+                TC_SLOT_V4,
+                TC_SLOT_V6,
+                TC_SLOT_V4,
+                TC_SLOT_V6,
+            ),
+            ChainDir::WanEgress => relink_family_stages(
+                state.egress_root.as_ref().unwrap().next_stage_fd,
+                &state.egress_stages,
+                TC_SLOT_V4,
+                TC_SLOT_V6,
+                TC_SLOT_V4,
+                TC_SLOT_V6,
+            ),
         }
-        delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V4);
-        delete_prog_array_fd(root_next_stage_fd, TC_SLOT_V6);
-
-        let sorted_v4: Vec<&StageEntry> = state
-            .stages
-            .values()
-            .filter(|v| match dir {
-                ChainDir::WanIngress => v.wan_ingress_prog_v4_fd != 0,
-                ChainDir::WanEgress => v.wan_egress_prog_v4_fd != 0,
-            })
-            .collect();
-        let sorted_v6: Vec<&StageEntry> = state
-            .stages
-            .values()
-            .filter(|v| match dir {
-                ChainDir::WanIngress => v.wan_ingress_prog_v6_fd != 0,
-                ChainDir::WanEgress => v.wan_egress_prog_v6_fd != 0,
-            })
-            .collect();
-
-        type ProgFdFn = fn(&StageEntry) -> i32;
-        let (prog_v4_fd, prog_v6_fd, next_stage_fd): (ProgFdFn, ProgFdFn, ProgFdFn) = match dir {
-            ChainDir::WanIngress => (
-                |e: &StageEntry| e.wan_ingress_prog_v4_fd,
-                |e: &StageEntry| e.wan_ingress_prog_v6_fd,
-                |e: &StageEntry| e.wan_ingress_next_stage_fd,
-            ),
-            ChainDir::WanEgress => (
-                |e: &StageEntry| e.wan_egress_prog_v4_fd,
-                |e: &StageEntry| e.wan_egress_prog_v6_fd,
-                |e: &StageEntry| e.wan_egress_next_stage_fd,
-            ),
-        };
-
-        link_family_chain(root_next_stage_fd, TC_SLOT_V4, &sorted_v4, prog_v4_fd, next_stage_fd)?;
-        link_family_chain(root_next_stage_fd, TC_SLOT_V6, &sorted_v6, prog_v6_fd, next_stage_fd)?;
-
-        Ok(())
     }
 }
