@@ -15,8 +15,9 @@
 //!     and flow-verdict short returns leave the mark untouched;
 //!   * the docker slot branch returns early and never sets the
 //!     TC_CHAIN_CB_FORWARDED_OFFSET cb flag;
-//!   * a cache hit with ifindex != 0 redirects without learning or setting cb,
-//!     a cache hit with ifindex == 0 goes through pick_wan (cb set);
+//!   * a cache hit with ifindex != 0 redirects without learning but still
+//!     stamps the cb forwarded flag (route4_redirect_by_cached_target);
+//!     a cache hit with ifindex == 0 goes through pick_wan (cb set there too);
 //!   * a WAN-cache hit rewrites the full 14-byte header from the ip_mac value
 //!     (dst mac, dev mac, proto) and does NOT update the flow mark value.
 //!

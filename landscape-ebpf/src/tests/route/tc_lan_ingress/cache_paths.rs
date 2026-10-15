@@ -27,7 +27,7 @@ fn lan_ingress_lan_cache_hit_short_circuits_without_learning() {
 
     assert_eq!(ret, RET_REDIRECT, "cache hit must redirect straight away");
     assert_eq!(mark, 0x0200_0305, "mark must come from the cache mark value");
-    assert_eq!(forwarded, 0, "cache-hit redirect bypasses pick_wan (no cb flag)");
+    assert_eq!(forwarded, 1, "route4_redirect_by_cached_target stamps the cb forwarded flag");
     assert!(
         lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none(),
         "learning must not run on the cache fast path"
@@ -54,7 +54,7 @@ fn lan_ingress_lan_cache_hit_with_zero_ifindex_falls_back_to_pick_wan() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert_eq!(mark, 0x0200_0305);
-    assert_eq!(forwarded, 0, "cache-hit pick_wan bypasses the tc wrapper, so no cb flag is set");
+    assert_eq!(forwarded, 1, "the legacy pick_wan stamps the cb forwarded flag itself");
 
     let cache = lookup_rt4_cache_value(
         &skel.maps.rt4_cache_map,
@@ -326,7 +326,7 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     assert_eq!(&out[6..12], &dev_mac.octets());
     assert_eq!(&out[12..14], &[0x08, 0x00]);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "the WAN-cache branch stamps the cb forwarded flag");
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn lan_ingress_wan_cache_no_mac_entry_redirects_directly() {
     assert_eq!(ret, RET_REDIRECT, "mac-less WAN-cache entry redirects directly");
     assert_eq!(out, pkt);
     assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
-    assert_eq!(forwarded, 0);
+    assert_eq!(forwarded, 1, "the WAN-cache branch stamps the cb forwarded flag");
 }
 
 #[test]
