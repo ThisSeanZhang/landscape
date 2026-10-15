@@ -38,10 +38,12 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
-            ld_bpf_log("DROP default flow v4, no target for: %pI4", &context->saddr);
+            ld_bpf_log("DROP default flow v4, no target for: %pI4 -> %pI4 slot %u", &context->saddr,
+                       &context->daddr, slot_key.slot);
             return TC_ACT_SHOT;
         }
-        ld_bpf_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
+        ld_bpf_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4 slot %u", resolved_flow_id,
+                   &context->saddr, &context->daddr, slot_key.slot);
         return TC_ACT_SHOT;
     }
 

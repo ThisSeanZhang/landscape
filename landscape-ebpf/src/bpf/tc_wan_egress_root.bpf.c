@@ -30,6 +30,7 @@ int tc_wan_egress_root(struct __sk_buff *skb) {
         }
     }
 
+    ld_bpf_log("ROOT next-stage tail FAILED (l3 %u) -> exit", l3_protocol);
     TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
 #undef BPF_LOG_TOPIC

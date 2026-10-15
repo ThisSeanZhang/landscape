@@ -80,6 +80,9 @@ struct xdp_docker_handoff_payload {
 struct xdp_tc_redirect_handoff_payload {
     u32 mark;
     u32 target_ifindex;
+    // chain the target's tc egress entry (tc_wan_egress_route) must tail into;
+    // TC stamps it into skb->cb because xdp_md has no cb of its own.
+    u16 link_chain_id;
 };
 
 union xdp_handoff_payload {
@@ -112,10 +115,12 @@ static __always_inline int xdp_set_docker_meta(struct xdp_md *ctx, u32 mark, u32
 }
 
 static __always_inline int xdp_set_tc_redirect_meta(struct xdp_md *ctx, u32 mark,
-                                                    u32 target_ifindex) {
+                                                    u32 target_ifindex, u16 link_chain_id) {
     struct xdp_handoff_meta ho = {
         .magic = XDP_HANDOFF_TC_REDIRECT_MAGIC,
-        .payload.tc_redirect = {.mark = mark, .target_ifindex = target_ifindex},
+        .payload.tc_redirect = {.mark = mark,
+                                .target_ifindex = target_ifindex,
+                                .link_chain_id = link_chain_id},
     };
     return xdp_set_handoff_meta(ctx, &ho);
 }

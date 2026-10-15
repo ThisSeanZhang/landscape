@@ -375,6 +375,7 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     // chain directly, the decision (and its chain id) travels in cb.
     if (skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET]) {
         bpf_tail_call(skb, &tc_wan_egress_roots, skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
+        ld_bpf_log("WAN-E ROOT-TAIL-FAILED chain %u", skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
         return TC_ACT_SHOT;
     }
 

@@ -2,6 +2,7 @@
 #define __LD_TC_HANDOFF_H_
 
 #include "chain/xdp_meta.h"
+#include "chain/tc_cb.h"
 #include "route/route_common.h"
 
 const volatile bool xdp_handoff_enabled = false;
@@ -23,6 +24,11 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_la
         }
         if (ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC) {
             skb->mark = ho->payload.tc_redirect.mark;
+            // Stamp cb like pick_wan does: the target's tc egress entry enters the
+            // link chain through these flags. Without them the skb carries stale cb
+            // from recycled sk_buffs and dies at the egress root tail call.
+            skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+            skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = ho->payload.tc_redirect.link_chain_id;
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }

@@ -84,7 +84,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *c
     }
 
     if (!lan_info->has_mac) {
-        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
     }
 
     mac_key.addr = lan_info->route_type == ROUTE_TYPE_NEXTHOP ? lan_info->addr : context->daddr;
@@ -96,7 +96,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *c
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
         __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
     }
 
     // fib_lookup to fill MAC when neighbor cache missed
@@ -124,10 +124,10 @@ static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *c
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, fib.dmac, 6);
         __builtin_memcpy(eth->h_source, fib.smac, 6);
-        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta->mark, 0);
     }
 
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
 #undef BPF_LOG_TOPIC
 }
 
@@ -159,7 +159,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
     }
 
     if (!lan_info->has_mac) {
-        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
     }
 
     struct mac_key_v6 hop_key = {};
@@ -174,7 +174,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
         __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
     }
 
     // fib_lookup to fill MAC when neighbor cache missed
@@ -201,10 +201,10 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
         if ((void *)(eth + 1) > data_end) return XDP_PASS;
         __builtin_memcpy(eth->h_dest, fib.dmac, 6);
         __builtin_memcpy(eth->h_source, fib.smac, 6);
-        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta->mark);
+        return xdp_redirect_or_tc_handoff(ctx, fib.ifindex, meta->mark, 0);
     }
 
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
 }
 
 // ── main XDP wan_route ingress ──

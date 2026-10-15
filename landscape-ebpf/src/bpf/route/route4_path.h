@@ -15,6 +15,7 @@
 #include "route/route_common.h"
 
 #include "chain/redirect_able.h"
+#include "chain/tc_cb.h"
 #include "route/flow_match.h"
 #include "neigh/neigh_ip4.h"
 
@@ -422,6 +423,12 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
         return TC_ACT_UNSPEC;
     }
 
+    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
+    // chain through these flags; without them the skb carries stale cb from
+    // recycled sk_buffs and dies at the WAN egress root tail call.
+    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target_info->link_chain_id;
+
     if (current_l3_offset == 0 && target_info->has_mac) {
         if (prepend_dummy_mac(skb) != 0) {
             ld_bpf_log("add dummy_mac fail");
@@ -496,9 +503,16 @@ static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
 static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route4_cache_value *target) {
+#define BPF_LOG_TOPIC "route4_redirect_by_cached_target"
     if (target->ifindex == skb->ifindex) {
         return TC_ACT_UNSPEC;
     }
+
+    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
+    // chain through these flags; without them the skb carries stale cb from
+    // recycled sk_buffs and dies at the WAN egress root tail call.
+    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target->link_chain_id;
 
     if (current_l3_offset == 0 && target->has_mac) {
         if (prepend_dummy_mac(skb) != 0) {
@@ -527,10 +541,12 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
         }
     }
 
+    ld_bpf_log("CACHED-TGT neigh fallback: if %u gate %pI4", target->ifindex, &target->gate_addr);
     struct bpf_redir_neigh param;
     param.nh_family = AF_INET;
     param.ipv6_nh[0] = target->gate_addr;
     return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
+#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
@@ -558,6 +574,8 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                 bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
             if (wan_ip_info != NULL) {
                 bool target_has_mac = target->has_mac;
+                skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
+                skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target->link_chain_id;
 
                 if (!target_has_mac) {
                     return bpf_redirect(target->ifindex, 0);

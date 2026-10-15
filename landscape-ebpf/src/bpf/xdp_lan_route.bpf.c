@@ -279,7 +279,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
         return XDP_PASS;
     }
     if (!xdp_redirect_target_able(info->ifindex)) {
-        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex);
+        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex, info->link_chain_id);
         if (ret) return XDP_DROP;
         return XDP_PASS;
     }
@@ -374,7 +374,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
         return XDP_PASS;
     }
     if (!xdp_redirect_target_able(info->ifindex)) {
-        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex);
+        int ret = xdp_set_tc_redirect_meta(ctx, flow_id, info->ifindex, info->link_chain_id);
         if (ret) return XDP_DROP;
         return XDP_PASS;
     }
@@ -422,7 +422,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            ret = xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            ret = xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
             // ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr,
             //            &context->daddr, lan_info->ifindex, ret);
             return ret;
@@ -451,13 +451,13 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
             // ld_bpf_log("bpf_redirect 2");
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
         return 0;
     }
 
     // ld_bpf_log("bpf_redirect 3");
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
 #undef BPF_LOG_TOPIC
 }
 
@@ -493,7 +493,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
 
         struct bpf_fib_lookup fib = {};
@@ -518,12 +518,12 @@ static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+            return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
         return 0;
     }
 
-    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0);
+    return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
 }
 
 // ── search_cache_in_lan: cache lookup → tailcall to LAN→WAN chain ──
@@ -563,7 +563,8 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 }
             }
             if (!target->xdp_redirect_able) {
-                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                   target->link_chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
@@ -607,7 +608,8 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                     }
                 }
                 if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                       target->link_chain_id);
                     if (ret) return XDP_DROP;
                     return XDP_PASS;
                 }
@@ -673,7 +675,8 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 }
             }
             if (!target->xdp_redirect_able) {
-                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                   target->link_chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
@@ -716,7 +719,8 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                     }
                 }
                 if (!target->xdp_redirect_able) {
-                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex);
+                    int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
+                                                       target->link_chain_id);
                     if (ret) return XDP_DROP;
                     return XDP_PASS;
                 }
