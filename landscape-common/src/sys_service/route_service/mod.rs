@@ -39,7 +39,85 @@ pub struct RouteTargetInfo {
 }
 
 impl RouteTargetInfo {
-    pub fn docker_new(ifindex: u32, iface_name: &str) -> (Self, Self) {
+    pub fn new_gateway_v4(
+        ifindex: u32,
+        iface_name: &str,
+        mac: Option<MacAddr>,
+        iface_ip: Ipv4Addr,
+        gateway_ip: Ipv4Addr,
+        default_route: bool,
+    ) -> Self {
+        RouteTargetInfo {
+            weight: 1,
+            ifindex,
+            mac,
+            default_route,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: IpAddr::V4(iface_ip),
+            gateway_ip: IpAddr::V4(gateway_ip),
+            dev_only_nexthop: false,
+        }
+    }
+
+    pub fn new_gateway_v6(
+        ifindex: u32,
+        iface_name: &str,
+        mac: Option<MacAddr>,
+        iface_ip: Ipv6Addr,
+        gateway_ip: Ipv6Addr,
+        default_route: bool,
+    ) -> Self {
+        RouteTargetInfo {
+            weight: 1,
+            ifindex,
+            mac,
+            default_route,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: IpAddr::V6(iface_ip),
+            gateway_ip: IpAddr::V6(gateway_ip),
+            dev_only_nexthop: false,
+        }
+    }
+
+    /// Point-to-point (pppd): peer as gateway, `dev`-only nexthop, no MAC.
+    pub fn new_p2p_v4(
+        ifindex: u32,
+        iface_name: &str,
+        local: Ipv4Addr,
+        peer: Ipv4Addr,
+        default_route: bool,
+    ) -> Self {
+        RouteTargetInfo {
+            weight: 1,
+            ifindex,
+            mac: None,
+            default_route,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: IpAddr::V4(local),
+            gateway_ip: IpAddr::V4(peer),
+            dev_only_nexthop: true,
+        }
+    }
+
+    /// Test-support only.
+    pub fn dummy(ifindex: u32, iface_name: &str, ip: IpAddr) -> Self {
+        RouteTargetInfo {
+            weight: 0,
+            ifindex,
+            mac: None,
+            default_route: false,
+            is_docker: false,
+            iface_name: iface_name.to_string(),
+            iface_ip: ip,
+            gateway_ip: ip,
+            dev_only_nexthop: false,
+        }
+    }
+
+    pub fn new_docker(ifindex: u32, iface_name: &str) -> (Self, Self) {
         (
             RouteTargetInfo {
                 weight: 0,
@@ -69,16 +147,27 @@ impl RouteTargetInfo {
 
 /// A WAN route target paired with the owning link's eBPF chain slot.
 ///
-/// `chain` is the `link_chain_id` of the WAN link that registered the
+/// `link_chain_id` is the chain slot of the WAN link that registered the
 /// route; the flow-target join passes it into the eBPF WAN slot maps so
 /// the dataplane can enter the link's chain without re-resolving its
 /// identity. `0` means "no chain": docker/netns targets and links whose
-/// dataplane chain is not anchored. Construction stays explicit (no
-/// `From<RouteTargetInfo>`) so callers cannot silently drop the chain.
+/// dataplane chain is not anchored. Use the [`WanRouteTarget::link`] and
+/// [`WanRouteTarget::netns`] constructors: there is no
+/// `From<RouteTargetInfo>` so callers cannot silently drop the chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WanRouteTarget {
     pub info: RouteTargetInfo,
-    pub chain: u16,
+    pub link_chain_id: u16,
+}
+
+impl WanRouteTarget {
+    pub fn link(link_chain_id: u16, info: RouteTargetInfo) -> Self {
+        WanRouteTarget { info, link_chain_id }
+    }
+
+    pub fn netns(info: RouteTargetInfo) -> Self {
+        WanRouteTarget { info, link_chain_id: 0 }
+    }
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Default, Clone, Serialize, Deserialize)]

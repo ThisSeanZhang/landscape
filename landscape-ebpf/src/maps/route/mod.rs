@@ -34,18 +34,8 @@ mod tests {
     use super::types::{Route6SlotKey, Route6TargetInfo};
     use super::*;
 
-    fn dummy_v6_route_target(ifindex: u32) -> RouteTargetInfo {
-        RouteTargetInfo {
-            weight: 0,
-            ifindex,
-            mac: None,
-            default_route: false,
-            is_docker: false,
-            iface_name: String::new(),
-            iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            dev_only_nexthop: false,
-        }
+    fn dummy_v6(ifindex: u32) -> RouteTargetInfo {
+        RouteTargetInfo::dummy(ifindex, "", IpAddr::V6(Ipv6Addr::UNSPECIFIED))
     }
 
     fn create_test_slot_map_v6() -> MapHandle {
@@ -97,7 +87,7 @@ mod tests {
         assert!(lookup_v6_slot(&map, 5, 1));
 
         // Call replace with all-zero weights
-        let zero_weight_target = (WanRouteTarget { info: dummy_v6_route_target(11), chain: 0 }, 0);
+        let zero_weight_target = (WanRouteTarget::link(0, dummy_v6(11)), 0);
         replace_wan_route_slots_v6_with_map(&map, 5, &[zero_weight_target]);
 
         // Slots should be cleared
@@ -109,7 +99,7 @@ mod tests {
     fn replace_slots_store_chain_in_values() {
         let map = create_test_slot_map_v6();
 
-        let target = (WanRouteTarget { info: dummy_v6_route_target(11), chain: 7 }, 3);
+        let target = (WanRouteTarget::link(7, dummy_v6(11)), 3);
         replace_wan_route_slots_v6_with_map(&map, 5, &[target]);
 
         // Every slot of flow 5 carries the target's chain for the WAN

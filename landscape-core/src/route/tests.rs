@@ -19,37 +19,31 @@ use super::wan::{WanRouteEvent, WanRouteEventKind};
 use super::*;
 
 fn ipv4_wan_route(iface_name: &str, iface_ip: Ipv4Addr) -> WanRouteTarget {
-    WanRouteTarget {
-        chain: 0,
-        info: RouteTargetInfo {
-            weight: 1,
-            ifindex: 1,
-            mac: None,
-            default_route: true,
-            is_docker: false,
-            iface_name: iface_name.to_string(),
-            iface_ip: IpAddr::V4(iface_ip),
-            gateway_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-            dev_only_nexthop: false,
-        },
-    }
+    WanRouteTarget::link(
+        0,
+        RouteTargetInfo::new_gateway_v4(
+            1,
+            iface_name,
+            None,
+            iface_ip,
+            Ipv4Addr::new(192, 0, 2, 1),
+            true,
+        ),
+    )
 }
 
 fn ipv6_wan_default_route(iface_name: &str) -> WanRouteTarget {
-    WanRouteTarget {
-        chain: 0,
-        info: RouteTargetInfo {
-            weight: 1,
-            ifindex: 2,
-            mac: None,
-            default_route: true,
-            is_docker: false,
-            iface_name: iface_name.to_string(),
-            iface_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-            gateway_ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-            dev_only_nexthop: false,
-        },
-    }
+    WanRouteTarget::link(
+        0,
+        RouteTargetInfo::new_gateway_v6(
+            2,
+            iface_name,
+            None,
+            Ipv6Addr::LOCALHOST,
+            Ipv6Addr::LOCALHOST,
+            true,
+        ),
+    )
 }
 
 fn ipv4_lan_route(
@@ -139,7 +133,7 @@ fn wan_route_events_fire_on_chain_change() {
         // so subscribers (the flow-target join) must re-run and rewrite the
         // eBPF slot values with the new chain.
         let mut reanchored = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 10));
-        reanchored.chain = 3;
+        reanchored.link_chain_id = 3;
         service.insert_ipv4_wan_route(&owner, reanchored.clone()).await;
         assert_eq!(
             events.recv().await.unwrap(),
@@ -666,7 +660,7 @@ fn collect_refresh_enabled_flow_with_matching_targets() {
 fn collect_refresh_carries_chain_id() {
     let mut wan_infos = WanRoutesByOwner::new();
     let mut anchored = ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1));
-    anchored.chain = 7;
+    anchored.link_chain_id = 7;
     wan_infos.insert(link_owner("wan0"), anchored);
 
     let configs = vec![flow_config(5, true, vec![iface_target("wan0", 1)])];
@@ -675,7 +669,7 @@ fn collect_refresh_carries_chain_id() {
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].0.chain, 7, "the join must pass the chain into the slot targets");
+    assert_eq!(targets[0].0.link_chain_id, 7, "the join must pass the chain into the slot targets");
 }
 
 #[test]

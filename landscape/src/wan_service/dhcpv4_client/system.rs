@@ -99,20 +99,17 @@ pub(crate) async fn apply_lease(
             .route_service
             .insert_ipv4_link_route(
                 config.link_id,
-                WanRouteTarget {
-                    info: RouteTargetInfo {
-                        ifindex: config.ifindex,
-                        weight: 1,
-                        mac: Some(config.mac_addr),
-                        is_docker: false,
-                        default_route: config.default_router,
-                        iface_name: config.iface_name.clone(),
-                        iface_ip: IpAddr::V4(params.yiaddr),
-                        gateway_ip: IpAddr::V4(router_ip),
-                        dev_only_nexthop: false,
-                    },
-                    chain: config.chain_id,
-                },
+                WanRouteTarget::link(
+                    config.chain_id,
+                    RouteTargetInfo::new_gateway_v4(
+                        config.ifindex,
+                        &config.iface_name,
+                        Some(config.mac_addr),
+                        params.yiaddr,
+                        router_ip,
+                        config.default_router,
+                    ),
+                ),
             )
             .await;
     }

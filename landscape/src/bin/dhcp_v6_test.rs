@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -52,17 +52,14 @@ async fn main() {
     let prefix_sender = IAPrefixEventSender::new(prefix_tx);
     drop(_prefix_rx); // test binary: no event consumer, events are silently discarded
     tokio::spawn(async move {
-        let route_info = RouteTargetInfo {
-            ifindex: 6,
-            weight: 1,
-            mac: iface.mac,
-            is_docker: false,
-            iface_name: "test".to_string(),
-            iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            default_route: true,
-            gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            dev_only_nexthop: false,
-        };
+        let route_info = RouteTargetInfo::new_gateway_v6(
+            6,
+            "test",
+            iface.mac,
+            Ipv6Addr::UNSPECIFIED,
+            Ipv6Addr::UNSPECIFIED,
+            true,
+        );
         dhcp_v6_pd_client(
             uuid::Uuid::new_v4(),
             1,

@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -31,17 +31,14 @@ pub(super) async fn run(
     pd_runtime: Arc<ArcSwap<PdRuntime>>,
     link_state: LinkStateHandle,
 ) {
-    let wan_route_info = RouteTargetInfo {
-        ifindex: iface.ifindex,
-        weight: 1,
-        mac: iface.mac,
-        is_docker: false,
-        iface_name: iface.iface_name.clone(),
-        iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-        default_route: true,
-        gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-        dev_only_nexthop: false,
-    };
+    let wan_route_info = RouteTargetInfo::new_gateway_v6(
+        iface.ifindex,
+        &iface.iface_name,
+        iface.mac,
+        Ipv6Addr::UNSPECIFIED,
+        Ipv6Addr::UNSPECIFIED,
+        true,
+    );
 
     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
         link_id,

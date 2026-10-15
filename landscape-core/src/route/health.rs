@@ -75,7 +75,10 @@ impl IpRouteService {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use landscape_common::wan_link::{TargetHealthStat, WanLinkHealthState};
+    use landscape_common::{
+        sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
+        wan_link::{TargetHealthStat, WanLinkHealthState},
+    };
 
     use super::*;
 
@@ -170,20 +173,17 @@ mod tests {
         service
             .insert_ipv4_link_route(
                 link,
-                landscape_common::sys_service::route_service::WanRouteTarget {
-                    chain: 0,
-                    info: landscape_common::sys_service::route_service::RouteTargetInfo {
-                        weight: 1,
-                        ifindex: 1,
-                        mac: None,
-                        default_route: false,
-                        is_docker: false,
-                        iface_name: "eth0".to_string(),
-                        iface_ip: std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 2)),
-                        gateway_ip: std::net::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-                        dev_only_nexthop: false,
-                    },
-                },
+                WanRouteTarget::link(
+                    0,
+                    RouteTargetInfo::new_gateway_v4(
+                        1,
+                        "eth0",
+                        None,
+                        Ipv4Addr::new(192, 0, 2, 2),
+                        Ipv4Addr::new(192, 0, 2, 1),
+                        false,
+                    ),
+                ),
             )
             .await;
         service.update_link_health(info(link, WanLinkHealthState::Healthy)).await;

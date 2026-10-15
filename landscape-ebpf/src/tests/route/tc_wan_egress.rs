@@ -170,23 +170,11 @@ fn seed_wan_slots(
     mac: Option<MacAddr>,
     chain: u16,
 ) {
-    let targets = [(
-        WanRouteTarget {
-            info: RouteTargetInfo {
-                weight: 0,
-                ifindex,
-                mac,
-                default_route: false,
-                is_docker,
-                iface_name: "test-wan".to_string(),
-                iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                gateway_ip: IpAddr::V4(wan_gateway()),
-                dev_only_nexthop: false,
-            },
-            chain,
-        },
-        1,
-    )];
+    let mut info = RouteTargetInfo::dummy(ifindex, "test-wan", IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    info.mac = mac;
+    info.is_docker = is_docker;
+    info.gateway_ip = IpAddr::V4(wan_gateway());
+    let targets = [(WanRouteTarget::link(chain, info), 1)];
     replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &targets);
 }
 

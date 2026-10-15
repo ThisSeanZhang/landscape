@@ -999,7 +999,7 @@ async fn handle_packet(
                             route_service
                                 .insert_ipv6_link_route(
                                     link_id,
-                                    WanRouteTarget { info, chain: chain_id },
+                                    WanRouteTarget::link(chain_id, info),
                                 )
                                 .await;
                             replace_ip_route(

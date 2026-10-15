@@ -229,19 +229,21 @@ async fn run_static_v4(
             tracing::info!("setting default route: {:?}", default_router_ip);
         }
 
-        let info = RouteTargetInfo {
-            ifindex: iface.index,
-            weight: 1,
-            mac: iface.mac,
-            is_docker: false,
-            iface_name: iface_name.clone(),
-            iface_ip: IpAddr::V4(ipv4),
-            default_route: default_router,
-            gateway_ip: IpAddr::V4(default_router_ip),
-            dev_only_nexthop: false,
-        };
         route_service
-            .insert_ipv4_link_route(link_id, WanRouteTarget { info, chain: chain_id })
+            .insert_ipv4_link_route(
+                link_id,
+                WanRouteTarget::link(
+                    chain_id,
+                    RouteTargetInfo::new_gateway_v4(
+                        iface.index,
+                        &iface_name,
+                        iface.mac,
+                        ipv4,
+                        default_router_ip,
+                        default_router,
+                    ),
+                ),
+            )
             .await;
     }
 

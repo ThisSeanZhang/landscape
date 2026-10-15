@@ -38,9 +38,9 @@ fn reconcile_wan_route(
     target: WanRouteTarget,
 ) -> WanRouteUpdate {
     match routes.get(owner) {
-        // The whole entry (info + chain) participates in the comparison:
-        // a chain change must re-trigger the flow-target join so the
-        // eBPF slot values pick up the new chain.
+        // The whole entry (info + link_chain_id) participates in the
+        // comparison: a chain change must re-trigger the flow-target join
+        // so the eBPF slot values pick up the new chain.
         Some(old) if old == &target => WanRouteUpdate::Noop,
         _ => {
             let mut refresh_default_router = target.info.default_route;

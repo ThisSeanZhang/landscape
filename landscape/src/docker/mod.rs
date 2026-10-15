@@ -443,17 +443,11 @@ pub async fn accept_docker_info(
             }
             tracing::info!("container_name: {container_name:?}");
 
-            let (ipv4, ipv6) = RouteTargetInfo::docker_new(ifindex, &container_name);
+            let (ipv4, ipv6) = RouteTargetInfo::new_docker(ifindex, &container_name);
             let owner = RouteOwner::Netns(container_name);
 
-            // Docker targets never own a WAN chain: chain 0 keeps their
-            // traffic out of the WAN egress chain dispatch.
-            ip_route_service
-                .insert_ipv4_wan_route(&owner, WanRouteTarget { info: ipv4, chain: 0 })
-                .await;
-            ip_route_service
-                .insert_ipv6_wan_route(&owner, WanRouteTarget { info: ipv6, chain: 0 })
-                .await;
+            ip_route_service.insert_ipv4_wan_route(&owner, WanRouteTarget::netns(ipv4)).await;
+            ip_route_service.insert_ipv6_wan_route(&owner, WanRouteTarget::netns(ipv6)).await;
             ip_route_service.print_wan_ifaces().await;
         }
         Ok(Err(e)) => {

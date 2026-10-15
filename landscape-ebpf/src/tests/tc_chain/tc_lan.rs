@@ -76,20 +76,10 @@ mod tests {
 
         // Route target: flow_id=5 → ifindex=11
         let targets = [(
-            WanRouteTarget {
-                info: RouteTargetInfo {
-                    weight: 0,
-                    ifindex: 11,
-                    mac: None,
-                    default_route: false,
-                    is_docker: false,
-                    iface_name: "test-wan".to_string(),
-                    iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                    gateway_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                    dev_only_nexthop: false,
-                },
-                chain: 0,
-            },
+            WanRouteTarget::link(
+                0,
+                RouteTargetInfo::dummy(11, "test-wan", IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
+            ),
             1,
         )];
         replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, 5, &targets);
@@ -152,20 +142,10 @@ mod tests {
         create_inner_flow_match_map_v4(&skel.maps.flow4_ip_map, 0, &rules).unwrap();
 
         let targets = [(
-            WanRouteTarget {
-                info: RouteTargetInfo {
-                    weight: 0,
-                    ifindex: 11,
-                    mac: None,
-                    default_route: false,
-                    is_docker: false,
-                    iface_name: "test-wan".to_string(),
-                    iface_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    gateway_ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    dev_only_nexthop: false,
-                },
-                chain: 0,
-            },
+            WanRouteTarget::link(
+                0,
+                RouteTargetInfo::dummy(11, "test-wan", IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            ),
             1,
         )];
         replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, 5, &targets);

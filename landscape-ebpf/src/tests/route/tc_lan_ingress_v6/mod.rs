@@ -133,23 +133,11 @@ fn seed_wan_slots(
     is_docker: bool,
     mac: Option<MacAddr>,
 ) {
-    let targets = [(
-        WanRouteTarget {
-            info: RouteTargetInfo {
-                weight: 0,
-                ifindex,
-                mac,
-                default_route: false,
-                is_docker,
-                iface_name: "test-wan".to_string(),
-                iface_ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-                gateway_ip: IpAddr::V6(gateway_addr()),
-                dev_only_nexthop: false,
-            },
-            chain: 0,
-        },
-        1,
-    )];
+    let mut info = RouteTargetInfo::dummy(ifindex, "test-wan", IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+    info.mac = mac;
+    info.is_docker = is_docker;
+    info.gateway_ip = IpAddr::V6(gateway_addr());
+    let targets = [(WanRouteTarget::link(0, info), 1)];
     replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, flow_id, &targets);
 }
 

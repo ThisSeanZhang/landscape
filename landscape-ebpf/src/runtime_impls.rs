@@ -388,24 +388,24 @@ impl MacBindingDataplane for EbpfMacBindingDataplane {
 mod kernel_default_tests {
     use super::*;
     use landscape_common::sys_service::route_service::RouteTargetInfo;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::Ipv4Addr;
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
 
     fn target(iface: &str, gateway: &str, weight: u32, dev_only: bool) -> RouteTargetInfo {
-        RouteTargetInfo {
-            weight,
-            ifindex: 1,
-            mac: None,
-            default_route: true,
-            is_docker: false,
-            iface_name: iface.to_string(),
-            iface_ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)),
-            gateway_ip: IpAddr::V4(gateway.parse().unwrap()),
-            dev_only_nexthop: dev_only,
-        }
+        let mut info = RouteTargetInfo::new_gateway_v4(
+            1,
+            iface,
+            None,
+            Ipv4Addr::new(192, 0, 2, 10),
+            gateway.parse().unwrap(),
+            true,
+        );
+        info.weight = weight;
+        info.dev_only_nexthop = dev_only;
+        info
     }
 
     #[test]

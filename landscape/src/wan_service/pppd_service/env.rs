@@ -134,7 +134,7 @@ impl PppRouteSink for SystemRouteSink {
 
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
         self.route_service
-            .insert_ipv4_link_route(self.link_id, WanRouteTarget { info, chain: self.chain_id })
+            .insert_ipv4_link_route(self.link_id, WanRouteTarget::link(self.chain_id, info))
             .await;
     }
 
@@ -235,17 +235,7 @@ impl PppdEnv for SystemPppdEnv {
         self.sink
             .insert_wan_route(
                 iface,
-                RouteTargetInfo {
-                    ifindex: *ifindex,
-                    weight: 1,
-                    mac: None,
-                    is_docker: false,
-                    iface_name: iface.to_string(),
-                    iface_ip: IpAddr::V4(*local),
-                    default_route: as_router,
-                    gateway_ip: IpAddr::V4(*peer),
-                    dev_only_nexthop: true,
-                },
+                RouteTargetInfo::new_p2p_v4(*ifindex, iface, *local, *peer, as_router),
             )
             .await;
 
