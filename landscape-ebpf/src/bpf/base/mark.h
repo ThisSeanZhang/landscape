@@ -42,6 +42,25 @@ static __always_inline u32 set_flow_allow_reuse_port(u32 original, bool allow) {
     return original;
 }
 
+/* Read/write skb->mark through opaque asm (same idea as the ctx pointer
+ * accessors in chain/xdp_meta.h): every call is exactly one load / one store
+ * at the call site, so the compiler can neither reuse a stale mark value nor
+ * elide or move a store.  Unlike a positional barrier_var(), the guarantee
+ * travels with each use site. */
+static __always_inline u32 skb_mark(const struct __sk_buff *skb) {
+    u32 v;
+    __asm__ __volatile__("%0 = *(u32 *)(%1 + %2)"
+                         : "=r"(v)
+                         : "r"(skb), "i"(__builtin_offsetof(struct __sk_buff, mark)));
+    return v;
+}
+
+static __always_inline void skb_set_mark(struct __sk_buff *skb, u32 v) {
+    __asm__ __volatile__("*(u32 *)(%0 + %2) = %1"
+                         :
+                         : "r"(skb), "r"(v), "i"(__builtin_offsetof(struct __sk_buff, mark)));
+}
+
 // 替换 FLOW_SOURCE_MASK 对应的 24~31 位
 static __always_inline u32 replace_flow_source(u32 original, u8 new_source) {
     original &= ~FLOW_SOURCE_MASK;               // 清除原来的 Source 部分

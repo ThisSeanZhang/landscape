@@ -172,7 +172,7 @@ SEC("tc/ingress")
 int tc_route4_lan_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route4_lan_ingress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
 
@@ -195,7 +195,7 @@ int tc_route4_lan_ingress(struct __sk_buff *skb) {
 
     ret = route4_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
-        skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+        skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
         return ret;
     }
 
@@ -210,9 +210,7 @@ int tc_route4_lan_ingress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-
-    barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
 
     ret = tc_route4_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 
@@ -227,7 +225,7 @@ SEC("tc/ingress")
 int tc_route6_lan_ingress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route6_lan_ingress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
 
@@ -250,7 +248,7 @@ int tc_route6_lan_ingress(struct __sk_buff *skb) {
 
     ret = route6_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
-        skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+        skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
         return ret;
     }
 
@@ -265,9 +263,7 @@ int tc_route6_lan_ingress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-
-    barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_LAN);
+    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
 
     ret = tc_route6_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 

@@ -196,7 +196,7 @@ SEC("tc/egress")
 int tc_route4_wan_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route4_wan_egress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
 
@@ -226,9 +226,7 @@ int tc_route4_wan_egress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-
-    barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_WAN);
+    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_WAN));
 
     ret = tc_route4_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
@@ -240,7 +238,7 @@ SEC("tc/egress")
 int tc_route4_wan_direct_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route4_wan_direct_egress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
 
@@ -276,7 +274,7 @@ SEC("tc/egress")
 int tc_route6_wan_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route6_wan_egress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
 
@@ -306,9 +304,7 @@ int tc_route6_wan_egress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-
-    barrier_var(flow_mark);
-    skb->mark = replace_flow_source(flow_mark, FLOW_FROM_WAN);
+    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_WAN));
 
     ret = tc_route6_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
@@ -320,7 +316,7 @@ SEC("tc/egress")
 int tc_route6_wan_direct_egress(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_route6_wan_direct_egress"
     int ret = 0;
-    u32 flow_mark = skb->mark;
+    u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
 
