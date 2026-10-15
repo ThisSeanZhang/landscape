@@ -31,16 +31,16 @@ static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root
     ld_bpf_log("wan_intro tail call failed, root_index=%u", root_index);
 }
 
-/* Primary key hit -> its chain root; miss -> XDP_PASS.  The trie is the
- * only dispatch authority: every WAN link publishes its v4/v6/PPP keys
- * (with its chain id as value) before this program can see its traffic.
- */
+/* Primary key hit -> its chain root; miss -> XDP_DROP (default-deny).
+ * The trie is the only dispatch authority: every WAN link publishes its
+ * v4/v6/PPP keys (with its chain id as value) before this program can
+ * see its traffic. */
 static __always_inline int wan_intro_dispatch(struct xdp_md *ctx, u64 key) {
     u32 root = wan_trie_resolve(&wan_trie_tbl, key);
     if (root) {
         wan_intro_tailcall_root(ctx, root);
     }
-    return XDP_PASS;
+    return XDP_DROP;
 }
 
 SEC("xdp")
@@ -69,7 +69,7 @@ int xdp_wan_intro(struct xdp_md *ctx) {
     //   ├─ resolves the WAN dispatch trie (one arena trie, namespaced keys:
     //   │     IPv6 prefix64 / IPv4 daddr / PPPoE (ifindex, session); values
     //   │     are chain ids published by the WAN link hub)
-    //   │     ├─ miss  → XDP_PASS
+    //   │     ├─ miss  → XDP_DROP (default-deny)
     //   │     └─ hit   → bpf_tail_call(&xdp_pipe_root_progs, chain)
     //   │                    │
     //   │                    ▼  chain root (linked-list head)

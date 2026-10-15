@@ -2,7 +2,8 @@
 //! BPF_PROG_TEST_RUN:
 //!
 //!   A raw IP      — trie hit on the v4/v6 daddr → chain root;
-//!                   miss / bcast / multicast → untouched XDP_PASS
+//!                   miss → XDP_DROP (default-deny);
+//!                   bcast / multicast / link-local → untouched XDP_PASS
 //!   B native PPPoE— own session (published under (ingress ifindex,
 //!                   session)) → decap (len−8, eth rewritten) → chain
 //!                   root; inner bcast/multicast → stripped XDP_PASS
@@ -45,6 +46,7 @@ use crate::tests::test_wan_trie_probe_skel::TestWanTrieProbeSkelBuilder;
 use crate::tests::wan_intro_skel::{XdpWanIntroSkel, XdpWanIntroSkelBuilder};
 
 const XDP_PASS: u32 = 2;
+const XDP_DROP: u32 = 1;
 
 /// Chain-root slot holding `test_xdp_sink_a` (flips packet byte 0).
 const CHAIN_A: u32 = 5;
@@ -131,7 +133,7 @@ fn wan_intro_dispatch_matrix() {
     {
         let pkt = simple_ipv4_tcp(Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(198, 51, 100, 9));
         let (rv, out) = run(&intro, &pkt);
-        assert_eq!(rv, XDP_PASS);
+        assert_eq!(rv, XDP_DROP, "raw v4 miss: default-deny");
         assert_untouched("raw v4 miss", &pkt, &out);
     }
     {
@@ -163,7 +165,7 @@ fn wan_intro_dispatch_matrix() {
             Ipv6Addr::from_str("fd99::1").unwrap(),
         );
         let (rv, out) = run(&intro, &pkt);
-        assert_eq!(rv, XDP_PASS);
+        assert_eq!(rv, XDP_DROP, "raw v6 miss: default-deny");
         assert_untouched("raw v6 miss", &pkt, &out);
     }
     {
@@ -174,6 +176,16 @@ fn wan_intro_dispatch_matrix() {
         let (rv, out) = run(&intro, &pkt);
         assert_eq!(rv, XDP_PASS);
         assert_untouched("raw v6 multicast", &pkt, &out);
+    }
+    {
+        // unicast link-local (ND/SLAAC) stays exempt from default-deny
+        let pkt = simple_ipv6_tcp_syn(
+            Ipv6Addr::from_str("fe80::1").unwrap(),
+            Ipv6Addr::from_str("fe80::42:1").unwrap(),
+        );
+        let (rv, out) = run(&intro, &pkt);
+        assert_eq!(rv, XDP_PASS);
+        assert_untouched("raw v6 link-local", &pkt, &out);
     }
 
     // ── 3. type B: our native session, IPv4 payload ──

@@ -206,6 +206,8 @@ pub struct XdpChainManager {
     // Per-iface interest count of native PPPoE links sharing the SKB
     // fallback program (attach on first, detach on last release).
     pppoe_fallback_refs: Mutex<HashMap<u32, usize>>,
+    // Session map of each interface's live fallback instance.
+    pppoe_fallback_maps: Mutex<HashMap<u32, libbpf_rs::MapHandle>>,
 }
 
 // Landscape owns route interfaces, so native XDP attach intentionally replaces
@@ -551,6 +553,7 @@ impl XdpChainManager {
             skb_bundles: Mutex::new(HashMap::new()),
             skb_pending: Mutex::new(HashMap::new()),
             pppoe_fallback_refs: Mutex::new(HashMap::new()),
+            pppoe_fallback_maps: Mutex::new(HashMap::new()),
         })
     }
 
@@ -764,24 +767,73 @@ impl XdpChainManager {
     /// Register one native PPPoE link's interest in the shared per-iface
     /// SKB fallback program.  The first link prepares and parks (or, in
     /// TC-only mode, attaches) a single fallback; further links only bump
-    /// the count, so they neither replace nor duplicate it.
+    /// the count and add their session.
     pub(crate) fn acquire_pppoe_skb_fallback(
         &self,
         ifindex: u32,
-        make: impl FnOnce() -> LdEbpfResult<SkbPending>,
+        session: u16,
+        chain: u16,
+        make: impl FnOnce() -> LdEbpfResult<(SkbPending, libbpf_rs::MapHandle)>,
     ) -> LdEbpfResult<()> {
         let first = {
             let mut refs = self.pppoe_fallback_refs.lock().unwrap();
             acquire_fallback_interest(&mut refs, ifindex)
         };
+
         if !first {
-            return Ok(());
+            // Instance already alive: just publish this link's session.
+            let result = {
+                let maps = self.pppoe_fallback_maps.lock().unwrap();
+                match maps.get(&ifindex) {
+                    Some(map) => map
+                        .update(
+                            &session.to_ne_bytes(),
+                            &(chain as u32).to_ne_bytes(),
+                            MapFlags::ANY,
+                        )
+                        .map_err(|e| crate::bpf_error::LandscapeEbpfError::Context {
+                            context: format!(
+                                "pppoe fallback session publish failed (ifindex={ifindex})"
+                            ),
+                            source: e,
+                        }),
+                    None => Err(crate::bpf_error::LandscapeEbpfError::Context {
+                        context: format!(
+                            "pppoe fallback refs/maps out of sync (ifindex={ifindex})"
+                        ),
+                        source: libbpf_rs::Error::from_raw_os_error(libc::ENOENT),
+                    }),
+                }
+            };
+            if result.is_err() {
+                // Roll the just-created interest back on failure.
+                let mut refs = self.pppoe_fallback_refs.lock().unwrap();
+                let _ = release_fallback_interest(&mut refs, ifindex);
+            }
+            return result;
         }
 
         match make() {
-            Ok(pending) => {
-                self.set_skb_pending(ifindex, pending);
-                Ok(())
+            Ok((pending, map)) => {
+                let publish = map.update(
+                    &session.to_ne_bytes(),
+                    &(chain as u32).to_ne_bytes(),
+                    MapFlags::ANY,
+                );
+                match publish {
+                    Ok(()) => {
+                        self.set_skb_pending(ifindex, pending);
+                        self.pppoe_fallback_maps.lock().unwrap().insert(ifindex, map);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // Drop the fresh instance and roll the interest back.
+                        drop(pending);
+                        let mut refs = self.pppoe_fallback_refs.lock().unwrap();
+                        let _ = release_fallback_interest(&mut refs, ifindex);
+                        Err(e.into())
+                    }
+                }
             }
             Err(e) => {
                 // Roll the just-created interest back on failure.
@@ -792,9 +844,12 @@ impl XdpChainManager {
         }
     }
 
-    /// Drop one link's interest; the last one out detaches (if attached)
-    /// and forgets the shared fallback program.
-    pub(crate) fn release_pppoe_skb_fallback(&self, ifindex: u32) {
+    /// Drop one link's interest (and its session); the last one out
+    /// detaches (if attached) and forgets the shared fallback program.
+    pub(crate) fn release_pppoe_skb_fallback(&self, ifindex: u32, session: u16) {
+        if let Some(map) = self.pppoe_fallback_maps.lock().unwrap().get(&ifindex) {
+            let _ = map.delete(&session.to_ne_bytes());
+        }
         let last = {
             let mut refs = self.pppoe_fallback_refs.lock().unwrap();
             release_fallback_interest(&mut refs, ifindex)
@@ -802,6 +857,7 @@ impl XdpChainManager {
         if last {
             self.take_skb_bundle(ifindex);
             let _ = self.take_skb_pending(ifindex);
+            self.pppoe_fallback_maps.lock().unwrap().remove(&ifindex);
         }
     }
 

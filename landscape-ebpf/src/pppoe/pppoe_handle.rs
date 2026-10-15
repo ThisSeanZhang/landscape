@@ -1,7 +1,10 @@
 use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 
-use libbpf_rs::skel::{OpenSkel, SkelBuilder};
+use libbpf_rs::{
+    MapCore,
+    skel::{OpenSkel, SkelBuilder},
+};
 
 use crate::{
     bpf_error::LdEbpfResult,
@@ -42,6 +45,7 @@ pub struct PppoeHandle {
     _tc: TcPppoeStage,
     _xdp: XdpPppoeHandle,
     _ifindex: u32,
+    session_id: u16,
 }
 
 unsafe impl Send for PppoeHandle {}
@@ -49,9 +53,9 @@ unsafe impl Sync for PppoeHandle {}
 
 impl Drop for PppoeHandle {
     fn drop(&mut self) {
-        // Last native PPPoE link out detaches and forgets the shared
-        // per-iface SKB fallback program.
-        self.runtime.xdp.release_pppoe_skb_fallback(self._ifindex);
+        // Remove this link's session; the last link out also detaches
+        // and forgets the shared SKB fallback program.
+        self.runtime.xdp.release_pppoe_skb_fallback(self._ifindex, self.session_id);
     }
 }
 
@@ -66,13 +70,19 @@ pub fn create_pppoe_handle(
 
     let tc = attach_tc_pppoe(&rt, link_chain_id, tmpl)?;
     let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, link_chain_id, session_id)?;
-    rt.xdp.acquire_pppoe_skb_fallback(ifindex, prepare_pppoe_skb_pending)?;
+    rt.xdp.acquire_pppoe_skb_fallback(
+        ifindex,
+        session_id,
+        link_chain_id,
+        prepare_pppoe_skb_fallback,
+    )?;
 
     Ok(PppoeHandle {
         runtime: rt.clone(),
         _tc: tc,
         _xdp: xdp,
         _ifindex: ifindex,
+        session_id,
     })
 }
 
@@ -121,17 +131,26 @@ fn attach_tc_pppoe(
     })
 }
 
-/// The shared per-iface SKB fallback decap program.  One instance serves
-/// every native PPPoE link on the interface, so the session filter is
-/// wildcarded (`session_id = 0` matches all sessions in the BPF program).
-fn prepare_pppoe_skb_pending() -> LdEbpfResult<SkbPending> {
+/// The shared per-iface SKB fallback decap program; each link publishes
+/// its own session into the instance's `pppoe_sessions` map.
+fn prepare_pppoe_skb_fallback() -> LdEbpfResult<(SkbPending, libbpf_rs::MapHandle)> {
     let builder = pppoe_skb_fallback_skel::PppoeSkbFallbackSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
-    let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open pppoe_skb_fallback skeleton")?;
-    if let Some(rodata) = open_skel.maps.rodata_data.as_deref_mut() {
-        rodata.session_id = 0;
-    }
+    let open_skel = crate::bpf_ctx!(builder.open(obj), "open pppoe_skb_fallback skeleton")?;
     let skel = crate::bpf_ctx!(open_skel.load(), "load pppoe_skb_fallback skeleton")?;
 
-    Ok(SkbPending::new(backing, skel))
+    let info = skel.maps.pppoe_sessions.info().map_err(|e| {
+        crate::bpf_error::LandscapeEbpfError::Context {
+            context: "pppoe_sessions map info failed".to_string(),
+            source: e,
+        }
+    })?;
+    let map = libbpf_rs::MapHandle::from_map_id(info.info.id).map_err(|e| {
+        crate::bpf_error::LandscapeEbpfError::Context {
+            context: "pppoe_sessions map handle from id failed".to_string(),
+            source: e,
+        }
+    })?;
+
+    Ok((SkbPending::new(backing, skel), map))
 }

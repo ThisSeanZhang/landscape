@@ -6,10 +6,21 @@
 #include "base/landscape.h"
 #include "base/pppoe_def.h"
 
-const volatile __be16 session_id = 0;
+/* Sessions owned by the native PPPoE links on THIS interface
+ * (host-order session id -> owning link's chain id, observability only;
+ * key has no ifindex because the instance is per-iface). */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 64);
+    __type(key, __u16);
+    __type(value, __u32);
+} pppoe_sessions SEC(".maps");
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* SKB-mode PPPoE decap fallback for interfaces where native XDP is
+ * unavailable: decaps frames of our sessions so the TC ingress intro
+ * can dispatch them; everything else passes untouched. */
 SEC("xdp")
 int pppoe_skb_fallback(struct xdp_md *ctx) {
 #define BPF_LOG_TOPIC "pppoe_skb_fallback"
@@ -33,8 +44,10 @@ int pppoe_skb_fallback(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    if (session_id != 0 && pppoe->session_id != session_id) {
-        ld_bpf_log("session_id mismatch: %x, session_id: %x", pppoe->session_id, session_id);
+    u16 session = bpf_ntohs(pppoe->session_id);
+    u32 *own = bpf_map_lookup_elem(&pppoe_sessions, &session);
+    if (!own) {
+        ld_bpf_log("session %x is not ours; passing untouched", session);
         return XDP_PASS;
     }
 

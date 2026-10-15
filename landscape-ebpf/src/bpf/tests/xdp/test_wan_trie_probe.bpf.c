@@ -14,15 +14,15 @@
 // Returns the resolved dispatch root (0 = miss), or 0xFFFFFFFF when the
 // request itself is malformed (short packet / unknown mode).
 //
-// Also hosts the sink pair used by the xdp_wan_intro dispatch tests:
-// terminal absorber programs that flip one packet byte and pass, leaving
-// observable evidence which chain-root slot a tail call landed in.
+// Also hosts the sink pairs used by the xdp_wan_intro /
+// tc_wan_ingress_intro dispatch tests.
 
 #include <vmlinux.h>
 
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "base/landscape.h"
 #include "map/wan_trie.h"
 
 #define PROBE_BAD_KEY 0xFFFFFFFFu
@@ -87,6 +87,28 @@ int test_xdp_sink_b(struct xdp_md *ctx) {
     }
     *(u8 *)(data + 1) ^= 0xff;
     return XDP_PASS;
+}
+
+SEC("tc/ingress")
+int test_tc_sink_a(struct __sk_buff *skb) {
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    if ((void *)(data + 1) > data_end) {
+        return TC_ACT_SHOT;
+    }
+    *(u8 *)data ^= 0xff;
+    return TC_ACT_OK;
+}
+
+SEC("tc/ingress")
+int test_tc_sink_b(struct __sk_buff *skb) {
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    if ((void *)(data + 2) > data_end) {
+        return TC_ACT_SHOT;
+    }
+    *(u8 *)(data + 1) ^= 0xff;
+    return TC_ACT_OK;
 }
 
 char LICENSE[] SEC("license") = "GPL";
