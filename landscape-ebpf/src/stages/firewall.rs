@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::runtime::EbpfRuntime;
+use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
 // TC firewall
@@ -19,33 +19,23 @@ pub struct FirewallHandle {
 }
 
 pub struct TcFirewallHandle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: tc_firewall_skel::TcFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 impl Drop for TcFirewallHandle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
         for family in StageFamily::ALL {
-            let _ = self.runtime.tc.remove_from_wan(
-                self.link_chain_id,
-                FromWanStageType::Firewall,
-                family,
-            );
-            let _ = self.runtime.tc.remove_from_lan(
-                self.link_chain_id,
-                FromLanStageType::Firewall,
-                family,
-            );
+            self.dp.tc().remove_from_wan(FromWanStageType::Firewall, family);
+            self.dp.tc().remove_from_lan(FromLanStageType::Firewall, family);
         }
     }
 }
 
 pub fn attach_tc_firewall(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     has_eth_header: bool,
 ) -> LdEbpfResult<TcFirewallHandle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
@@ -53,7 +43,7 @@ pub fn attach_tc_firewall(
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
 
     let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -86,8 +76,7 @@ pub fn attach_tc_firewall(
         (StageFamily::V4, skel.progs.tc_firewall_wan_ingress_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.tc_firewall_wan_ingress_v6.as_fd().as_raw_fd()),
     ] {
-        rt.tc.inject_from_wan(
-            link_chain_id,
+        dp.tc().inject_from_wan(
             FromWanStageType::Firewall,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_ingress_fd },
@@ -97,20 +86,14 @@ pub fn attach_tc_firewall(
         (StageFamily::V4, skel.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.tc_firewall_wan_egress_v6.as_fd().as_raw_fd()),
     ] {
-        rt.tc.inject_from_lan(
-            link_chain_id,
+        dp.tc().inject_from_lan(
             FromLanStageType::Firewall,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_egress_fd },
         )?;
     }
 
-    Ok(TcFirewallHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        link_chain_id,
-    })
+    Ok(TcFirewallHandle { dp: dp.clone(), _skel: skel, _backing: backing })
 }
 
 // ========================================================================
@@ -122,10 +105,9 @@ pub(crate) mod xdp_firewall_skel {
 }
 
 pub struct XdpFirewallHandle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: xdp_firewall_skel::XdpFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpFirewallHandle {}
@@ -135,24 +117,13 @@ impl Drop for XdpFirewallHandle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
         for family in StageFamily::ALL {
-            let _ = self.runtime.xdp.remove_from_wan(
-                self.link_chain_id,
-                FromWanStageType::Firewall,
-                family,
-            );
-            let _ = self.runtime.xdp.remove_from_lan(
-                self.link_chain_id,
-                FromLanStageType::Firewall,
-                family,
-            );
+            self.dp.xdp().remove_from_wan(FromWanStageType::Firewall, family);
+            self.dp.xdp().remove_from_lan(FromLanStageType::Firewall, family);
         }
     }
 }
 
-pub fn init_xdp_firewall(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
-) -> LdEbpfResult<XdpFirewallHandle> {
+pub fn init_xdp_firewall(dp: &Arc<WanLinkDataplane>) -> LdEbpfResult<XdpFirewallHandle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -160,7 +131,7 @@ pub fn init_xdp_firewall(
 
     use xdp_firewall_skel::XdpFirewallSkelBuilder;
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
     let builder = XdpFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_firewall skeleton")?;
@@ -211,8 +182,7 @@ pub fn init_xdp_firewall(
         (StageFamily::V4, skel.progs.xdp_firewall_wan_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.xdp_firewall_wan_v6.as_fd().as_raw_fd()),
     ] {
-        rt.xdp.inject_from_wan(
-            link_chain_id,
+        dp.xdp().inject_from_wan(
             FromWanStageType::Firewall,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
@@ -222,20 +192,14 @@ pub fn init_xdp_firewall(
         (StageFamily::V4, skel.progs.xdp_firewall_lan_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.xdp_firewall_lan_v6.as_fd().as_raw_fd()),
     ] {
-        rt.xdp.inject_from_lan(
-            link_chain_id,
+        dp.xdp().inject_from_lan(
             FromLanStageType::Firewall,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
         )?;
     }
 
-    Ok(XdpFirewallHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        link_chain_id,
-    })
+    Ok(XdpFirewallHandle { dp: dp.clone(), _skel: skel, _backing: backing })
 }
 
 // ========================================================================
@@ -243,12 +207,11 @@ pub fn init_xdp_firewall(
 // ========================================================================
 
 pub fn init_firewall(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     has_eth_header: bool,
 ) -> LdEbpfResult<FirewallHandle> {
     Ok(FirewallHandle {
-        tc: Some(attach_tc_firewall(rt, link_chain_id, has_eth_header)?),
-        xdp: Some(init_xdp_firewall(rt, link_chain_id)?),
+        tc: Some(attach_tc_firewall(dp, has_eth_header)?),
+        xdp: Some(init_xdp_firewall(dp)?),
     })
 }

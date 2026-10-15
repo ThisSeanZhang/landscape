@@ -27,7 +27,7 @@ mod tests {
     use crate::maps::Inet6Bytes;
     // The NAT objects no longer carry `wan_ip_binding` (they bake rodata
     // instead); the WAN ingress route object anchors the shared layout.
-    use crate::chain::tc_manager::tc_wan_ingress_route_skel::types as share;
+    use crate::route_backbone::tc_wan_ingress_route_skel::types as share;
 
     #[test]
     fn wan_ip_layouts_match_skel() {

@@ -141,7 +141,7 @@ fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
     let mut root_object = MaybeUninit::uninit();
     let root = root_builder.open(&mut root_object).unwrap().load().unwrap();
 
-    // Wire the root's v4 fork slot to the stage, like TcChainManager::rebuild.
+    // Wire the root's v4 fork slot to the stage, like the chain's tc relink.
     let stage_v4_fd = stage.progs.tc_pppoe_wan_egress_v4.as_fd().as_raw_fd();
     root.maps
         .wan_egress_root_next_stage

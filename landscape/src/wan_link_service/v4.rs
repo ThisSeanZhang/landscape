@@ -14,7 +14,7 @@ use landscape_common::wan_link::{
     WanLinkV4Model, WanV4Lease, swap_if_changed,
 };
 use landscape_common::wan_service::pppd::PPPDConfig;
-use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
+use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
@@ -28,7 +28,7 @@ pub(super) async fn run(
     runtime: RuntimeWanLinkConfig,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
@@ -185,7 +185,7 @@ async fn run_static_v4(
     default_router_ip: Option<Ipv4Addr>,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
@@ -201,14 +201,7 @@ async fn run_static_v4(
     let _ = std::process::Command::new("ip")
         .args(["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
         .output();
-    chain_dataplane.bind_wan_ipv4(
-        chain_id,
-        iface.index,
-        ipv4,
-        default_router_ip,
-        ipv4_mask,
-        iface.mac,
-    );
+    chain_dataplane.bind_wan_ipv4(iface.index, ipv4, default_router_ip, ipv4_mask, iface.mac);
 
     let lan_info = LanRouteInfo {
         ifindex: iface.index,
@@ -268,7 +261,7 @@ async fn run_static_v4(
 
     route_service.remove_ipv4_link_route(link_id).await;
     route_service.remove_ipv4_lan_route(&iface_name).await;
-    chain_dataplane.unbind_wan_ipv4(chain_id);
+    chain_dataplane.unbind_wan_ipv4();
     swap_if_changed(&v4_runtime, V4Runtime::Stopped);
     service_status.just_change_status(ServiceStatus::Stop);
 }
@@ -282,7 +275,7 @@ async fn run_dhcp_v4(
     default_router: bool,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
@@ -325,7 +318,7 @@ async fn run_pppoe_native(
     default_router: bool,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {

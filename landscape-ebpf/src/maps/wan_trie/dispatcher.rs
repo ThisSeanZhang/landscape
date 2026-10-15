@@ -257,7 +257,7 @@ impl<S> TrieTarget<S> {
     /// ```ignore
     /// let t = TrieTarget::new(skel, |s| {
     ///     let data = s.maps.wan_trie_arena_data.as_mut().expect("...");
-    ///     rt.wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))
+    ///     rt.backbone().trie().register(cast_arena_tbl(&mut data.wan_trie_tbl))
     /// })?;
     /// ```
     pub(crate) fn new<E>(

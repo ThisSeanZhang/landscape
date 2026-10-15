@@ -11,8 +11,8 @@ use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::wan_link::{
     LinkStateHandle, PdRuntime, RuntimeWanLinkPdConfig, SessionIface,
 };
-use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
 use landscape_core::pd_prefix::IAPrefixMap;
+use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
@@ -24,7 +24,7 @@ pub(super) async fn run(
     config: RuntimeWanLinkPdConfig,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     prefix_map: IAPrefixMap,
     shared_wan_iid: Arc<u64>,
     prefix_sender: IAPrefixEventSender,

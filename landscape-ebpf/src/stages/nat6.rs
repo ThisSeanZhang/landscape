@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::runtime::EbpfRuntime;
+use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
 // v6 NAT stage — TC (timer-map owner) + XDP (FD borrower)
@@ -38,33 +38,23 @@ pub struct Nat6Handle {
 }
 
 pub struct TcNat6Handle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: tc_nat6_skel::TcNat6Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 impl Drop for TcNat6Handle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
-        let _ = self.runtime.tc.remove_from_wan(
-            self.link_chain_id,
-            FromWanStageType::Nat,
-            StageFamily::V6,
-        );
-        let _ = self.runtime.tc.remove_from_lan(
-            self.link_chain_id,
-            FromLanStageType::Nat,
-            StageFamily::V6,
-        );
+        self.dp.tc().remove_from_wan(FromWanStageType::Nat, StageFamily::V6);
+        self.dp.tc().remove_from_lan(FromLanStageType::Nat, StageFamily::V6);
     }
 }
 
 pub struct XdpNat6Handle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: xdp_nat6_skel::XdpNat6Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpNat6Handle {}
@@ -73,16 +63,8 @@ unsafe impl Sync for XdpNat6Handle {}
 impl Drop for XdpNat6Handle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
-        let _ = self.runtime.xdp.remove_from_wan(
-            self.link_chain_id,
-            FromWanStageType::Nat,
-            StageFamily::V6,
-        );
-        let _ = self.runtime.xdp.remove_from_lan(
-            self.link_chain_id,
-            FromLanStageType::Nat,
-            StageFamily::V6,
-        );
+        self.dp.xdp().remove_from_wan(FromWanStageType::Nat, StageFamily::V6);
+        self.dp.xdp().remove_from_lan(FromLanStageType::Nat, StageFamily::V6);
     }
 }
 
@@ -91,8 +73,7 @@ impl Drop for XdpNat6Handle {
 // ========================================================================
 
 pub fn attach_nat6(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     ifindex: u32,
     has_eth_header: bool,
     prefix: Option<(Ipv6Addr, u8)>,
@@ -102,7 +83,7 @@ pub fn attach_nat6(
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
 
     // Bake the WAN prefix into rodata; `None` bakes the all-zero
     // "unconfigured" prefix, which the dataplane treats as drop (the
@@ -189,10 +170,9 @@ pub fn attach_nat6(
 
     let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat6 skeleton")?;
 
-    // ── 3. Inject into link_chain_id managers ──
+    // ── 3. Inject into the link's chain ──
 
-    rt.tc.inject_from_wan(
-        link_chain_id,
+    dp.tc().inject_from_wan(
         FromWanStageType::Nat,
         StageFamily::V6,
         FamilyProg {
@@ -200,8 +180,7 @@ pub fn attach_nat6(
             next_stage_map_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         },
     )?;
-    rt.tc.inject_from_lan(
-        link_chain_id,
+    dp.tc().inject_from_lan(
         FromLanStageType::Nat,
         StageFamily::V6,
         FamilyProg {
@@ -211,8 +190,7 @@ pub fn attach_nat6(
     )?;
 
     let next_stage_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
-    rt.xdp.inject_from_wan(
-        link_chain_id,
+    dp.xdp().inject_from_wan(
         FromWanStageType::Nat,
         StageFamily::V6,
         FamilyProg {
@@ -220,8 +198,7 @@ pub fn attach_nat6(
             next_stage_map_fd: next_stage_fd,
         },
     )?;
-    rt.xdp.inject_from_lan(
-        link_chain_id,
+    dp.xdp().inject_from_lan(
         FromLanStageType::Nat,
         StageFamily::V6,
         FamilyProg {
@@ -232,16 +209,14 @@ pub fn attach_nat6(
 
     Ok(Nat6Handle {
         tc: TcNat6Handle {
-            runtime: rt.clone(),
+            dp: dp.clone(),
             _skel: tc_skel,
             _backing: tc_backing,
-            link_chain_id,
         },
         xdp: XdpNat6Handle {
-            runtime: rt.clone(),
+            dp: dp.clone(),
             _skel: xdp_skel,
             _backing: xdp_backing,
-            link_chain_id,
         },
     })
 }

@@ -21,7 +21,15 @@ pub async fn main() {
     let rt = Arc::new(EbpfRuntime::init("firewall_test", None).expect("init ebpf maps"));
     let firewall = if let Some(iface) = get_iface_by_name(&args.iface_name).await {
         println!("Starting firewall on ifindex: {:?}", iface.index);
-        match rt.wan_chain().attach_firewall(1, iface.index, iface.mac.is_some()) {
+        let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
+            rt.backbone().clone(),
+            rt.xdp_attach().clone(),
+            1,
+            Some(iface.index),
+            iface.mac.is_some(),
+        )
+        .expect("stand up wan link dataplane");
+        match dp.attach_firewall(iface.index, iface.mac.is_some()) {
             Ok(handle) => Some(handle),
             Err(err) => {
                 tracing::debug!("error: {err:?}");

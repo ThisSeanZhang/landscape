@@ -9,10 +9,12 @@ pub mod landscape;
 pub mod maps;
 pub mod metric;
 pub mod pppoe;
+pub mod route_backbone;
 pub mod runtime;
 mod runtime_impls;
 pub mod stages;
 pub mod tproxy;
+pub mod xdp_attach;
 
 #[cfg(test)]
 mod test_support;
@@ -133,7 +135,7 @@ impl LandscapeMapPath {
     }
 
     /// TC chain pin directory (`<root>/tc_chain`), seeded by
-    /// [`crate::runtime::EbpfRuntime::init`] via `TcChainManager::new`.
+    /// [`crate::runtime::EbpfRuntime::init`] via `RouteBackbone::new`.
     pub fn tc_chain_base(&self) -> PathBuf {
         self.root.join("tc_chain")
     }

@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::xdp_manager::NativeXdpLink;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
+use crate::xdp_attach::NativeXdpLink;
 
 pub(crate) mod xdp_lan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_route.skel.rs"));
@@ -139,7 +139,7 @@ pub fn init_xdp_lan_route(
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_route skeleton")?;
 
-    let link = NativeXdpLink::attach(rt.clone(), &skel.progs.xdp_lan_route, ifindex)?;
+    let link = rt.xdp_attach().attach_native(&skel.progs.xdp_lan_route, ifindex)?;
 
     // LAN ifaces carry no chains of their own: xdp_lan_route is attached
     // directly and reaches the WAN link chains through the tail-call

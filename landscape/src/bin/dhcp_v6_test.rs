@@ -72,7 +72,14 @@ async fn main() {
             status,
             route_info,
             ip_route,
-            rt.wan_chain(),
+            landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
+                rt.backbone().clone(),
+                rt.xdp_attach().clone(),
+                1,
+                Some(iface.index),
+                iface.mac.is_some(),
+            )
+            .expect("stand up wan link dataplane"),
             prefix_map,
             std::sync::Arc::new(2),
             prefix_sender,

@@ -68,7 +68,7 @@ pub fn init_tc_wan_route(
     // table that would silently miss every dispatch.
     let intro_trie = crate::maps::wan_trie::dispatcher::TrieTarget::new(intro_skel, |s| {
         let data = s.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-        rt.wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))
+        rt.backbone().trie().register(cast_arena_tbl(&mut data.wan_trie_tbl))
     })?;
     let mut ingress_hook = TcHookProxy::new(
         &intro_trie.skel.progs.tc_wan_ingress_intro,

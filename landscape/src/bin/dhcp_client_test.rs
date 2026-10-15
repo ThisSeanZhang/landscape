@@ -43,7 +43,14 @@ async fn main() {
             };
             let services = landscape::wan_service::dhcpv4_client::DhcpV4ClientServices {
                 route_service: IpRouteService::new(rt.clone().route_table()),
-                chain_dataplane: rt.wan_chain(),
+                chain_dataplane: landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
+                    rt.backbone().clone(),
+                    rt.xdp_attach().clone(),
+                    1,
+                    Some(iface.index),
+                    iface.mac.is_some(),
+                )
+                .expect("stand up wan link dataplane"),
                 session: None,
                 runtime: Arc::new(arc_swap::ArcSwap::from_pointee(
                     landscape_common::wan_link::V4Runtime::Idle,

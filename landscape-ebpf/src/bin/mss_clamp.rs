@@ -11,9 +11,18 @@ pub async fn main() {
     );
     let ifindex = 2;
     println!("Starting mss clamp on ifindex: {:?}", ifindex);
-    let mss_clamp = landscape_ebpf::stages::mss::init_mss(&rt, ifindex, 1492, true).unwrap();
+    let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
+        rt.backbone().clone(),
+        rt.xdp_attach().clone(),
+        1,
+        Some(ifindex),
+        true,
+    )
+    .unwrap();
+    let mss_clamp = landscape_ebpf::stages::mss::init_mss(&dp, 1492, true).unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
 
     drop(mss_clamp);
+    dp.close();
 }

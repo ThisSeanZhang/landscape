@@ -107,7 +107,14 @@ pub(super) fn start_client(
                 cfg,
                 status_for_task,
                 route_service,
-                ebpf_rt.wan_chain(),
+                landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
+                    ebpf_rt.backbone().clone(),
+                    ebpf_rt.xdp_attach().clone(),
+                    1,
+                    None,
+                    false,
+                )
+                .expect("wan link dataplane in client ns"),
                 None,
                 std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
                     landscape_common::wan_link::V4Runtime::Idle,

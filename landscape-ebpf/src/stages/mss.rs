@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::runtime::EbpfRuntime;
+use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
 // TC MSS clamp
@@ -18,27 +18,23 @@ pub struct MssHandle {
 }
 
 pub struct TcMssHandle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: tc_mss_skel::TcMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 impl Drop for TcMssHandle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
         for family in StageFamily::ALL {
-            let _ =
-                self.runtime.tc.remove_from_wan(self.link_chain_id, FromWanStageType::Mss, family);
-            let _ =
-                self.runtime.tc.remove_from_lan(self.link_chain_id, FromLanStageType::Mss, family);
+            self.dp.tc().remove_from_wan(FromWanStageType::Mss, family);
+            self.dp.tc().remove_from_lan(FromLanStageType::Mss, family);
         }
     }
 }
 
 pub fn attach_tc_mss(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     mtu: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<TcMssHandle> {
@@ -47,7 +43,7 @@ pub fn attach_tc_mss(
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
 
     let builder = tc_mss_skel::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -74,8 +70,7 @@ pub fn attach_tc_mss(
         (StageFamily::V4, skel.progs.tc_mss_wan_ingress_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.tc_mss_wan_ingress_v6.as_fd().as_raw_fd()),
     ] {
-        rt.tc.inject_from_wan(
-            link_chain_id,
+        dp.tc().inject_from_wan(
             FromWanStageType::Mss,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_ingress_fd },
@@ -85,20 +80,14 @@ pub fn attach_tc_mss(
         (StageFamily::V4, skel.progs.tc_mss_wan_egress_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.tc_mss_wan_egress_v6.as_fd().as_raw_fd()),
     ] {
-        rt.tc.inject_from_lan(
-            link_chain_id,
+        dp.tc().inject_from_lan(
             FromLanStageType::Mss,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_egress_fd },
         )?;
     }
 
-    Ok(TcMssHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        link_chain_id,
-    })
+    Ok(TcMssHandle { dp: dp.clone(), _skel: skel, _backing: backing })
 }
 
 // ========================================================================
@@ -110,10 +99,9 @@ pub(crate) mod xdp_mss_skel {
 }
 
 pub struct XdpMssHandle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: xdp_mss_skel::XdpMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpMssHandle {}
@@ -123,19 +111,13 @@ impl Drop for XdpMssHandle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
         for family in StageFamily::ALL {
-            let _ =
-                self.runtime.xdp.remove_from_wan(self.link_chain_id, FromWanStageType::Mss, family);
-            let _ =
-                self.runtime.xdp.remove_from_lan(self.link_chain_id, FromLanStageType::Mss, family);
+            self.dp.xdp().remove_from_wan(FromWanStageType::Mss, family);
+            self.dp.xdp().remove_from_lan(FromLanStageType::Mss, family);
         }
     }
 }
 
-pub fn init_xdp_mss(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
-    mtu_size: u16,
-) -> LdEbpfResult<XdpMssHandle> {
+pub fn init_xdp_mss(dp: &Arc<WanLinkDataplane>, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -143,7 +125,7 @@ pub fn init_xdp_mss(
 
     use xdp_mss_skel::XdpMssSkelBuilder;
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
     let builder = XdpMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_mss skeleton")?;
@@ -184,8 +166,7 @@ pub fn init_xdp_mss(
         (StageFamily::V4, skel.progs.xdp_mss_wan_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.xdp_mss_wan_v6.as_fd().as_raw_fd()),
     ] {
-        rt.xdp.inject_from_wan(
-            link_chain_id,
+        dp.xdp().inject_from_wan(
             FromWanStageType::Mss,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
@@ -195,20 +176,14 @@ pub fn init_xdp_mss(
         (StageFamily::V4, skel.progs.xdp_mss_lan_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.xdp_mss_lan_v6.as_fd().as_raw_fd()),
     ] {
-        rt.xdp.inject_from_lan(
-            link_chain_id,
+        dp.xdp().inject_from_lan(
             FromLanStageType::Mss,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_stage_fd },
         )?;
     }
 
-    Ok(XdpMssHandle {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        link_chain_id,
-    })
+    Ok(XdpMssHandle { dp: dp.clone(), _skel: skel, _backing: backing })
 }
 
 // ========================================================================
@@ -216,13 +191,12 @@ pub fn init_xdp_mss(
 // ========================================================================
 
 pub fn init_mss(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     mtu: u16,
     has_eth_header: bool,
 ) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
-        tc: Some(attach_tc_mss(rt, link_chain_id, mtu, has_eth_header)?),
-        xdp: Some(init_xdp_mss(rt, link_chain_id, mtu)?),
+        tc: Some(attach_tc_mss(dp, mtu, has_eth_header)?),
+        xdp: Some(init_xdp_mss(dp, mtu)?),
     })
 }

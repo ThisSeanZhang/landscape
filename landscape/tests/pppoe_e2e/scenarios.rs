@@ -16,10 +16,10 @@ fn spec_from(cfg: &EnvConfig) -> ClientSpec {
 
 /// Poll the scenario's pinned `tc_wan_egress_roots` prog array until the
 /// client iface's entry (`key = ifindex`) reaches `want_present`.  The entry
-/// is created by `TcChainManager::ensure_roots` when the PPPoE stage attaches
-/// and removed by `remove_roots` when the last stage detaches — the
-/// chain-injected successor of the old standalone `tc_pppoe_wan_egress`
-/// TC filter's attach/detach lifecycle.
+/// is created by `WanLinkDataplane::new` when the link's service starts
+/// and removed by its `close()` teardown — the chain-injected successor
+/// of the old standalone `tc_pppoe_wan_egress` TC filter's
+/// attach/detach lifecycle.
 fn wait_for_egress_root_entry(
     scenario: &str,
     ifindex: u32,

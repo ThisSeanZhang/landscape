@@ -5,10 +5,10 @@ use libbpf_rs::{TC_EGRESS, TC_INGRESS};
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::xdp_manager::NativeXdpLink;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::runtime::EbpfRuntime;
+use crate::xdp_attach::NativeXdpLink;
 
 pub(crate) mod xdp_wan_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
@@ -60,13 +60,13 @@ pub fn init_xdp_wan_route(
 
     // ── XDP wan route ──
     //
-    // The WAN route/exit program is loaded once as a manager-lifetime
-    // singleton (XdpChainManager::new) and pinned into the shared
+    // The WAN route/exit program is loaded once as a backbone-lifetime
+    // singleton (RouteBackbone::new) and pinned into the shared
     // `xdp_pipe_exits_wan` slot, so this handle only attaches the intro
-    // dispatcher; the chain roots themselves are owned by the WAN link
-    // hub, which (idempotently) ensures them on link observation.
+    // dispatcher; the chain roots themselves are owned by the per-link
+    // `WanLinkDataplane`, which loads them at construction.
 
-    let link = NativeXdpLink::attach(rt.clone(), rt.xdp.wan_intro_prog(), ifindex)?;
+    let link = rt.xdp_attach().attach_native(rt.backbone().wan_intro_prog(), ifindex)?;
 
     // ── TC ingress intro (XDP handoff + normal TC processing) ──
 
@@ -90,7 +90,7 @@ pub fn init_xdp_wan_route(
     // table that would silently miss every dispatch.
     let intro_trie = crate::maps::wan_trie::dispatcher::TrieTarget::new(intro_skel, |s| {
         let data = s.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-        rt.wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))
+        rt.backbone().trie().register(cast_arena_tbl(&mut data.wan_trie_tbl))
     })?;
 
     let mut ingress_hook = TcHookProxy::new(

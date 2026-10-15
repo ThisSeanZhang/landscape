@@ -10,7 +10,7 @@ use landscape_common::sys_service::route_service::LanRouteInfo;
 use landscape_common::sys_service::route_service::LanRouteMode;
 use landscape_common::sys_service::route_service::RouteTargetInfo;
 use landscape_common::sys_service::route_service::WanRouteTarget;
-use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
+use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
@@ -95,7 +95,7 @@ pub(crate) trait PppdEnv: Send + Sync {
 /// Side-effect boundary for IPv4 binding and route management.
 ///
 /// Abstracted so [`SystemPppdEnv`]'s decision logic can be tested without
-/// touching the real `IpRouteService` or `WanChainDataplane`. The kernel
+/// touching the real `IpRouteService` or `WanLinkDataplane`. The kernel
 /// default route is derived from the WAN route state (`default_route` +
 /// `dev_only_nexthop` on the inserted [`RouteTargetInfo`]), so the sink
 /// needs no separate default-route methods.
@@ -110,7 +110,7 @@ pub(crate) trait PppRouteSink: Send + Sync {
 
 pub(crate) struct SystemRouteSink {
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     link_id: Uuid,
     chain_id: u16,
 }
@@ -118,7 +118,7 @@ pub(crate) struct SystemRouteSink {
 impl SystemRouteSink {
     pub(crate) fn new(
         route_service: IpRouteService,
-        chain_dataplane: Arc<dyn WanChainDataplane>,
+        chain_dataplane: Arc<WanLinkDataplane>,
         link_id: Uuid,
         chain_id: u16,
     ) -> Self {
@@ -129,7 +129,7 @@ impl SystemRouteSink {
 #[async_trait::async_trait]
 impl PppRouteSink for SystemRouteSink {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
-        self.chain_dataplane.bind_wan_ipv4(self.chain_id, ifindex, local, Some(peer), mask, None);
+        self.chain_dataplane.bind_wan_ipv4(ifindex, local, Some(peer), mask, None);
     }
 
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {
@@ -158,7 +158,7 @@ pub(crate) struct SystemPppdEnv {
 impl SystemPppdEnv {
     pub(crate) fn new(
         route_service: IpRouteService,
-        chain_dataplane: Arc<dyn WanChainDataplane>,
+        chain_dataplane: Arc<WanLinkDataplane>,
         link_id: Uuid,
         chain_id: u16,
     ) -> Self {

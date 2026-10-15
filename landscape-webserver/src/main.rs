@@ -460,7 +460,7 @@ async fn run_system(
         db_store_provider.clone(),
         event_handle.subscribe_iface(),
         route_service.clone(),
-        ebpf_rt.clone().wan_chain(),
+        ebpf_rt.clone(),
         Arc::new(IcmpV4Probe),
         prefix_map.clone(),
         ipv6_prefix_sender.clone(),

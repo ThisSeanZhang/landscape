@@ -37,7 +37,7 @@ pub fn init_wan_ip_binding_map(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::tc_manager::tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
+    use crate::route_backbone::tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

@@ -6,7 +6,7 @@ use landscape_common::wan_service::nat::config::NatConfig;
 
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
-use crate::runtime::EbpfRuntime;
+use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
 // v4 NAT stage — TC (map owner) + XDP (FD borrower)
@@ -37,33 +37,23 @@ pub struct Nat4Handle {
 }
 
 pub struct TcNat4Handle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: tc_nat4_skel::TcNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 impl Drop for TcNat4Handle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
-        let _ = self.runtime.tc.remove_from_wan(
-            self.link_chain_id,
-            FromWanStageType::Nat,
-            StageFamily::V4,
-        );
-        let _ = self.runtime.tc.remove_from_lan(
-            self.link_chain_id,
-            FromLanStageType::Nat,
-            StageFamily::V4,
-        );
+        self.dp.tc().remove_from_wan(FromWanStageType::Nat, StageFamily::V4);
+        self.dp.tc().remove_from_lan(FromLanStageType::Nat, StageFamily::V4);
     }
 }
 
 pub struct XdpNat4Handle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: xdp_nat4_skel::XdpNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 unsafe impl Send for XdpNat4Handle {}
@@ -72,16 +62,8 @@ unsafe impl Sync for XdpNat4Handle {}
 impl Drop for XdpNat4Handle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
-        let _ = self.runtime.xdp.remove_from_wan(
-            self.link_chain_id,
-            FromWanStageType::Nat,
-            StageFamily::V4,
-        );
-        let _ = self.runtime.xdp.remove_from_lan(
-            self.link_chain_id,
-            FromLanStageType::Nat,
-            StageFamily::V4,
-        );
+        self.dp.xdp().remove_from_wan(FromWanStageType::Nat, StageFamily::V4);
+        self.dp.xdp().remove_from_lan(FromLanStageType::Nat, StageFamily::V4);
     }
 }
 
@@ -129,8 +111,7 @@ fn seed_runtime_queues<M1, M2, M3>(
 // ========================================================================
 
 pub fn attach_nat4(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     ifindex: u32,
     has_eth_header: bool,
     config: &NatConfig,
@@ -141,7 +122,7 @@ pub fn attach_nat4(
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
 
     // ── 1. Load TC nat4 first (ingress + egress, for runtime map sharing with XDP) ──
 
@@ -258,10 +239,9 @@ pub fn attach_nat4(
 
     let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat4 skeleton")?;
 
-    // ── 3. Inject into link_chain_id managers ──
+    // ── 3. Inject into the link's chain ──
 
-    rt.tc.inject_from_wan(
-        link_chain_id,
+    dp.tc().inject_from_wan(
         FromWanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
@@ -269,8 +249,7 @@ pub fn attach_nat4(
             next_stage_map_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         },
     )?;
-    rt.tc.inject_from_lan(
-        link_chain_id,
+    dp.tc().inject_from_lan(
         FromLanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
@@ -280,8 +259,7 @@ pub fn attach_nat4(
     )?;
 
     let next_stage_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
-    rt.xdp.inject_from_wan(
-        link_chain_id,
+    dp.xdp().inject_from_wan(
         FromWanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
@@ -289,8 +267,7 @@ pub fn attach_nat4(
             next_stage_map_fd: next_stage_fd,
         },
     )?;
-    rt.xdp.inject_from_lan(
-        link_chain_id,
+    dp.xdp().inject_from_lan(
         FromLanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
@@ -301,16 +278,14 @@ pub fn attach_nat4(
 
     Ok(Nat4Handle {
         tc: TcNat4Handle {
-            runtime: rt.clone(),
+            dp: dp.clone(),
             _skel: tc_skel,
             _backing: tc_backing,
-            link_chain_id,
         },
         xdp: XdpNat4Handle {
-            runtime: rt.clone(),
+            dp: dp.clone(),
             _skel: xdp_skel,
             _backing: xdp_backing,
-            link_chain_id,
         },
     })
 }

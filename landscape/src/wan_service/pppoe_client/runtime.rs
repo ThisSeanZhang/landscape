@@ -8,7 +8,7 @@ use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{
     LinkStateHandle, PppoeRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
 };
-use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
+use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 
 use super::PPPoEClientConfig;
 use crate::sys_service::route::IpRouteService;
@@ -24,7 +24,7 @@ use super::{
 async fn shutdown_session(
     session_handle: &mut Option<SessionHandle>,
     route_service: &IpRouteService,
-    dataplane: &dyn WanChainDataplane,
+    dataplane: &Arc<WanLinkDataplane>,
     session: Option<&LinkStateHandle>,
 ) {
     if let Some(handle) = session_handle.take() {
@@ -39,7 +39,7 @@ pub async fn run(
     config: PPPoEClientConfig,
     status_rx: ServiceHandle,
     route_service: IpRouteService,
-    dataplane: Arc<dyn WanChainDataplane>,
+    dataplane: Arc<WanLinkDataplane>,
     session: Option<LinkStateHandle>,
     v4_runtime: Arc<ArcSwap<V4Runtime>>,
 ) {
@@ -83,7 +83,7 @@ pub async fn run(
             tokio::select! {
                 _ = sleep(delay) => {},
                 _ = stop_token.cancelled() => {
-                    shutdown_session(&mut session_handle, &route_service, dataplane.as_ref(), session.as_ref()).await;
+                    shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref()).await;
                     status_rx.just_change_status(ServiceStatus::Stop);
                     break;
                 }
@@ -125,24 +125,14 @@ pub async fn run(
                     error = %e,
                     "LCP phase fatal error, exiting"
                 );
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 status_rx.just_change_status(ServiceStatus::Failed);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -152,13 +142,8 @@ pub async fn run(
                     error = %e,
                     "LCP phase error, retrying"
                 );
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 // Same peer-teardown rule as the negotiation phase below:
                 // a PADT closing a not-yet-negotiated session is not a
                 // line failure either.
@@ -194,7 +179,7 @@ pub async fn run(
                     shutdown_session(
                         &mut session_handle,
                         &route_service,
-                        dataplane.as_ref(),
+                        &dataplane,
                         session.as_ref(),
                     )
                     .await;
@@ -206,7 +191,7 @@ pub async fn run(
                     shutdown_session(
                         &mut session_handle,
                         &route_service,
-                        dataplane.as_ref(),
+                        &dataplane,
                         session.as_ref(),
                     )
                     .await;
@@ -236,7 +221,7 @@ pub async fn run(
                     shutdown_session(
                         &mut session_handle,
                         &route_service,
-                        dataplane.as_ref(),
+                        &dataplane,
                         session.as_ref(),
                     )
                     .await;
@@ -261,15 +246,14 @@ pub async fn run(
             "PPPoE session established, negotiation phase completed"
         );
 
-        shutdown_session(&mut session_handle, &route_service, dataplane.as_ref(), session.as_ref())
-            .await;
+        shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref()).await;
 
         match super::system::create_session(
             &config,
             &lcp_result,
             &nego_result,
             &route_service,
-            dataplane.as_ref(),
+            &dataplane,
         )
         .await
         {
@@ -321,24 +305,14 @@ pub async fn run(
             .await
         {
             Ok(()) => {
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
             Err(PppoeError::ServiceStopped) => {
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 status_rx.just_change_status(ServiceStatus::Stop);
                 break;
             }
@@ -360,13 +334,8 @@ pub async fn run(
                     )
                     .await;
                 }
-                shutdown_session(
-                    &mut session_handle,
-                    &route_service,
-                    dataplane.as_ref(),
-                    session.as_ref(),
-                )
-                .await;
+                shutdown_session(&mut session_handle, &route_service, &dataplane, session.as_ref())
+                    .await;
                 // An established session lost to echo failure / peer hangup
                 // / PADT redials immediately (see redial_immediately_after);
                 // other keepalive errors (channel loss) keep the existing

@@ -15,11 +15,11 @@ use std::sync::Arc;
 
 use crate::LandscapeMapPath;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::tc_manager::TcChainManager;
-use crate::chain::xdp_manager::XdpChainManager;
 use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::metric::EbpfMetricSourceFactory;
+use crate::route_backbone::RouteBackbone;
+use crate::xdp_attach::XdpAttach;
 use crate::{dns_result_sink::EbpfDnsResultSink, flow_socket_registrar::EbpfFlowSocketRegistrar};
 
 /// bpffs root directory for `space`.
@@ -55,11 +55,12 @@ pub fn init_map_paths(space: &str) -> LdEbpfResult<Arc<LandscapeMapPath>> {
 #[derive(Clone)]
 pub struct EbpfRuntime {
     pub(crate) paths: Arc<LandscapeMapPath>,
-    pub(crate) tc: Arc<TcChainManager>,
-    pub(crate) xdp: Arc<XdpChainManager>,
-    /// The one global WAN dispatch-trie controller: owns the authoritative
-    /// entry set and publishes to every registered program arena.
-    pub(crate) wan_trie: Arc<WanTrieDispatcher>,
+    /// Shared route dispatch substrate (trie, intro seed, exits, root
+    /// prog-array shells) consumed by the LAN/WAN route services and
+    /// every WAN link chain.
+    pub(crate) backbone: Arc<RouteBackbone>,
+    /// Per-iface XDP slot arbitration (native vs SKB fallback).
+    pub(crate) xdp_attach: Arc<XdpAttach>,
     pub(crate) try_native_xdp: Option<Vec<i32>>,
 }
 
@@ -86,24 +87,24 @@ impl EbpfRuntime {
         }
         let paths = init_map_paths(space)?;
         let wan_trie = Arc::new(WanTrieDispatcher::new());
-        let tc = Arc::new(TcChainManager::new(paths.clone())?);
-        let xdp = Arc::new(XdpChainManager::new(paths.clone(), wan_trie.clone())?);
-        Ok(Self { paths, tc, xdp, wan_trie, try_native_xdp })
+        let backbone = Arc::new(RouteBackbone::new(paths.clone(), wan_trie)?);
+        let xdp_attach = Arc::new(XdpAttach::new(paths.clone(), try_native_xdp.clone()));
+        Ok(Self { paths, backbone, xdp_attach, try_native_xdp })
+    }
+
+    /// The shared route dispatch substrate.
+    pub fn backbone(&self) -> &Arc<RouteBackbone> {
+        &self.backbone
+    }
+
+    /// The per-iface XDP slot coordinator.
+    pub fn xdp_attach(&self) -> &Arc<XdpAttach> {
+        &self.xdp_attach
     }
 
     /// Shared map pin paths.
     pub fn paths(&self) -> &Arc<LandscapeMapPath> {
         &self.paths
-    }
-
-    /// TC chain manager.
-    pub fn tc(&self) -> &TcChainManager {
-        &self.tc
-    }
-
-    /// XDP chain manager.
-    pub fn xdp(&self) -> &XdpChainManager {
-        &self.xdp
     }
 
     /// Native XDP attach configuration this runtime was built with.
@@ -137,14 +138,6 @@ impl EbpfRuntime {
     // because the returned capability keeps the runtime alive for its
     // lifetime (guards detach chain state on drop).
     // ─────────────────────────────────────────────────────────────────
-
-    /// WAN chain capability: wan-link owned stages and address bindings,
-    /// keyed by the link's immutable chain id.
-    pub fn wan_chain(
-        self: Arc<Self>,
-    ) -> Arc<dyn landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane> {
-        Arc::new(crate::chain::hub::EbpfWanChainDataplane::new(self))
-    }
 
     /// Firewall capability (blacklist sync).
     pub fn firewall(

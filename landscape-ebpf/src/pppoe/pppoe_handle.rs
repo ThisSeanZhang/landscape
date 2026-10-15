@@ -10,10 +10,10 @@ use crate::{
     bpf_error::LdEbpfResult,
     bpf_rs_shared::pppoe_skb_fallback_skel,
     chain::stage::{FamilyProg, FromLanStageType, StageFamily},
-    chain::xdp_manager::SkbPending,
+    chain::wan_link::WanLinkDataplane,
     landscape::{OwnedOpenObject, pin_and_reuse_map},
-    runtime::EbpfRuntime,
     stages::pppoe::XdpPppoeHandle,
+    xdp_attach::SkbPending,
 };
 
 mod tc_pppoe_skel {
@@ -28,26 +28,21 @@ pub use tc_pppoe_skel::types::pppoe_egress_tmpl as PppoeEgressTmpl;
 /// traversed this chain (multi-link-per-iface safe once the chains
 /// are chain-keyed).
 struct TcPppoeStage {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _skel: tc_pppoe_skel::TcPppoeSkel<'static>,
     _backing: OwnedOpenObject,
-    link_chain_id: u16,
 }
 
 impl Drop for TcPppoeStage {
     fn drop(&mut self) {
         for family in StageFamily::ALL {
-            let _ = self.runtime.tc.remove_from_lan(
-                self.link_chain_id,
-                FromLanStageType::Pppoe,
-                family,
-            );
+            self.dp.tc().remove_from_lan(FromLanStageType::Pppoe, family);
         }
     }
 }
 
 pub struct PppoeHandle {
-    runtime: Arc<EbpfRuntime>,
+    dp: Arc<WanLinkDataplane>,
     _tc: TcPppoeStage,
     _xdp: XdpPppoeHandle,
     _ifindex: u32,
@@ -61,30 +56,29 @@ impl Drop for PppoeHandle {
     fn drop(&mut self) {
         // Remove this link's session; the last link out also detaches
         // and forgets the shared SKB fallback program.
-        self.runtime.xdp.release_pppoe_skb_fallback(self._ifindex, self.session_id);
+        self.dp.attach().release_pppoe_skb_fallback(self._ifindex, self.session_id);
     }
 }
 
 pub fn create_pppoe_handle(
-    rt: Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: Arc<WanLinkDataplane>,
     ifindex: u32,
     tmpl: PppoeEgressTmpl,
     _mtu: u16,
 ) -> LdEbpfResult<PppoeHandle> {
     let session_id = u16::from_be(tmpl.session_id);
 
-    let tc = attach_tc_pppoe(&rt, link_chain_id, tmpl)?;
-    let xdp = crate::stages::pppoe::init_xdp_pppoe(&rt, link_chain_id, session_id)?;
-    rt.xdp.acquire_pppoe_skb_fallback(
+    let tc = attach_tc_pppoe(&dp, tmpl)?;
+    let xdp = crate::stages::pppoe::init_xdp_pppoe(&dp, session_id)?;
+    dp.attach().acquire_pppoe_skb_fallback(
         ifindex,
         session_id,
-        link_chain_id,
+        dp.id(),
         prepare_pppoe_skb_fallback,
     )?;
 
     Ok(PppoeHandle {
-        runtime: rt.clone(),
+        dp: dp.clone(),
         _tc: tc,
         _xdp: xdp,
         _ifindex: ifindex,
@@ -93,11 +87,10 @@ pub fn create_pppoe_handle(
 }
 
 fn attach_tc_pppoe(
-    rt: &Arc<EbpfRuntime>,
-    link_chain_id: u16,
+    dp: &Arc<WanLinkDataplane>,
     tmpl: PppoeEgressTmpl,
 ) -> LdEbpfResult<TcPppoeStage> {
-    let paths = &rt.paths;
+    let paths = dp.backbone().paths();
 
     let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
@@ -122,20 +115,14 @@ fn attach_tc_pppoe(
         (StageFamily::V4, skel.progs.tc_pppoe_wan_egress_v4.as_fd().as_raw_fd()),
         (StageFamily::V6, skel.progs.tc_pppoe_wan_egress_v6.as_fd().as_raw_fd()),
     ] {
-        rt.tc.inject_from_lan(
-            link_chain_id,
+        dp.tc().inject_from_lan(
             FromLanStageType::Pppoe,
             family,
             FamilyProg { prog_fd, next_stage_map_fd: next_egress_fd },
         )?;
     }
 
-    Ok(TcPppoeStage {
-        runtime: rt.clone(),
-        _skel: skel,
-        _backing: backing,
-        link_chain_id,
-    })
+    Ok(TcPppoeStage { dp: dp.clone(), _skel: skel, _backing: backing })
 }
 
 /// The shared per-iface SKB fallback decap program; each link publishes

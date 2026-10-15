@@ -10,7 +10,7 @@ use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
 use landscape_common::wan_link::{LinkStateHandle, V4Runtime, swap_if_changed};
 use landscape_common::wan_service::pppd::PPPDConfig;
-use landscape_common::wan_service::wan_chain::dataplane::WanChainDataplane;
+use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 
 use crate::sys_service::route::IpRouteService;
 
@@ -98,7 +98,7 @@ pub(crate) async fn run_pppd_for_link(
     pppd_config: PPPDConfig,
     service_status: ServiceHandle,
     route_service: IpRouteService,
-    chain_dataplane: Arc<dyn WanChainDataplane>,
+    chain_dataplane: Arc<WanLinkDataplane>,
     link_id: uuid::Uuid,
     chain_id: u16,
     session: Option<LinkStateHandle>,
