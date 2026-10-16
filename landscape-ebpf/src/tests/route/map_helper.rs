@@ -33,6 +33,12 @@ pub(crate) fn normal_mark(action: FlowMarkAction, flow_id: u8, allow_reuse_port:
     ))
 }
 
+/// HostDirect-layout mark: the host control plane's direct chain
+/// assignment (SO_MARK on e.g. the DHCPv6-PD socket).
+pub(crate) fn host_direct_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0))
+}
+
 pub(crate) fn local_addr() -> Ipv6Addr {
     Ipv6Addr::from_str("fd00::10").unwrap()
 }

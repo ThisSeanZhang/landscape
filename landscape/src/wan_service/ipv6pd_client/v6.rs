@@ -21,6 +21,7 @@ use crate::{
     netlink::ipv6::{del_iface_ip, set_iface_ip},
     sys_service::route::IpRouteService,
 };
+use landscape_common::flow::mark::{MarkType, SocketMark};
 
 use landscape_common::{
     LANDSCAPE_DEFAULE_DHCP_V6_SERVER_PORT,
@@ -210,7 +211,8 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
 }
 
 /// Re-bind the session's IPv6CP link-local if anything (iface reset,
-/// DAD conflict, an external manager) removed it; verified by read-back.
+/// DAD conflict, an external manager) removed it; without it the socket
+/// has no source address and the sends fail. Verified by read-back.
 fn ensure_session_linklocal(iface_name: &str, session_ll: Option<Ipv6Addr>) -> bool {
     let Some(ll) = session_ll else { return true };
     if get_existing_linklocal(iface_name).as_ref() == Some(&ll) {
@@ -234,7 +236,11 @@ fn ensure_session_linklocal(iface_name: &str, session_ll: Option<Ipv6Addr>) -> b
     }
 }
 
-fn create_pd_socket(socket_addr: &SocketAddr, iface_name: &[u8]) -> std::io::Result<UdpSocket> {
+fn create_pd_socket(
+    socket_addr: &SocketAddr,
+    iface_name: &[u8],
+    chain_id: u16,
+) -> std::io::Result<UdpSocket> {
     let socket = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_only_v6(true)?;
     socket.set_reuse_address(true)?;
@@ -244,6 +250,11 @@ fn create_pd_socket(socket_addr: &SocketAddr, iface_name: &[u8]) -> std::io::Res
     socket.bind(&(*socket_addr).into())?;
     socket.set_nonblocking(true)?;
     socket.bind_device(Some(iface_name))?;
+    // All sends (Solicit / Renew / Release) carry the session's chain in
+    // the HostDirect mark: the WAN egress entry hands the packet to the
+    // link's chain root directly and every policy stage self-skips on
+    // this mark, so the control plane rides the PPP terminal unfiltered.
+    socket.set_mark(u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0)))?;
     UdpSocket::from_std(socket.into())
 }
 
@@ -294,8 +305,9 @@ pub async fn dhcp_v6_pd_client(
     chain_id: u16,
     iface_name: String,
     ifindex: u32,
-    // session's IPv6CP link-local (SessionIface::v6_linklocal); the
-    // DHCPv6 source must stay on it or the egress classifier passes raw
+    // session's IPv6CP link-local (SessionIface::v6_linklocal); kept
+    // bound on the iface as a stable DHCPv6 source (chain steering is
+    // the HostDirect SO_MARK above, not the address)
     session_ll: Option<Ipv6Addr>,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,
@@ -324,10 +336,10 @@ pub async fn dhcp_v6_pd_client(
     // }
 
     tracing::info!("DHCP V6 Client Staring");
-    // landscape_ebpf::maps::add_expose_port(client_port);
+
     let socket_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), client_port);
 
-    let socket = match create_pd_socket(&socket_addr, iface_name.as_bytes()) {
+    let socket = match create_pd_socket(&socket_addr, iface_name.as_bytes(), chain_id) {
         Ok(socket) => socket,
         Err(e) => {
             tracing::error!("failed to create DHCPv6 PD socket on {}: {e:?}", iface_name);

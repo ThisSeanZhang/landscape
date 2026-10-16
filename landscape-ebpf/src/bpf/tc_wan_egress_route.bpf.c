@@ -12,7 +12,6 @@
 #include "route/route6_context.h"
 
 #include "chain/tc_cb.h"
-#include "map/wan_v6_ll_chain.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -365,35 +364,6 @@ struct {
         },
 };
 
-// Broadcast-mac frames pass through untouched on an ethernet WAN; on an
-// L3 (native PPPoE) WAN the v6 control plane (multicast / link-local dst)
-// must ride the PPP session.  Keyed by source: the kernel sources this
-// traffic from the iface's IPv6CP link-local.
-static __always_inline int ll_v6_session_chain_enter(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "ll_v6_session_chain_enter"
-    if (current_l3_offset == 0) return TC_ACT_UNSPEC;
-
-    bool is_ipv4;
-    if (current_pkg_type(skb, current_l3_offset, &is_ipv4) != TC_ACT_OK) return TC_ACT_UNSPEC;
-    if (is_ipv4) return TC_ACT_UNSPEC;
-
-    void *data = (void *)(long)skb->data;
-    void *data_end = (void *)(long)skb->data_end;
-    struct ipv6hdr *ip6 = (void *)(data + current_l3_offset);
-    if ((void *)(ip6 + 1) > data_end) return TC_ACT_UNSPEC;
-
-    // control plane only; unicast v6 keeps the routed path
-    if (!is_broadcast_ip6((const u8 *)&ip6->daddr)) return TC_ACT_UNSPEC;
-
-    u32 *chain = bpf_map_lookup_elem(&wan_v6_ll_chain, &ip6->saddr);
-    if (chain == NULL) return TC_ACT_UNSPEC;
-
-    bpf_tail_call(skb, &tc_wan_egress_roots, *chain);
-    ld_bpf_log("ll-v6 session chain %u root tail failed; passing", *chain);
-    return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
-}
-
 SEC("tc/egress")
 int tc_wan_egress_route(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "tc_wan_egress_route <<<"
@@ -408,10 +378,23 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     bool is_ipv4;
     int ret;
 
+    // Host-originated control plane with a direct chain assignment:
+    // SO_MARK in the HostDirect layout (bits 0-15 = chain id), e.g. the
+    // DHCPv6-PD socket of a native PPPoE link.  The policy stages
+    // self-skip on this mark (base/mark.h), so the packet rides the
+    // chain's terminal (PPP encapsulation) and exits untouched.
+    u32 mark = skb_mark(skb);
+    if (unlikely(is_host_direct(mark))) {
+        u32 chain = get_host_direct_chain_id(mark);
+        bpf_tail_call(skb, &tc_wan_egress_roots, chain);
+        ld_bpf_log("host-direct root tail failed chain %u; passing", chain);
+        return TC_ACT_UNSPEC;
+    }
+
     if (likely(current_l3_offset > 0)) {
         ret = is_broadcast_mac(skb);
         if (unlikely(ret != TC_ACT_OK)) {
-            return ll_v6_session_chain_enter(skb);
+            return TC_ACT_UNSPEC;
         }
     }
 

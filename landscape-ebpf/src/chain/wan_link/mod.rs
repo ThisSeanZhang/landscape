@@ -29,7 +29,6 @@ use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use libbpf_rs::MapCore;
 
-use crate::LandscapeMapPath;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::stage::StageTable;
 use crate::maps;
@@ -252,15 +251,11 @@ impl WanLinkDataplane {
             .map_err(|e| e.to_string())
     }
 
-    /// `v6_linklocal`: the session's IPv6CP link-local, used by the WAN
-    /// egress classifier to send the session's v6 control plane into
-    /// this chain for PPP encapsulation.
     pub fn attach_pppoe_session(
         self: &Arc<Self>,
         ifindex: u32,
         tmpl: PppoeEgressTmpl,
         mtu: u16,
-        v6_linklocal: Option<Ipv6Addr>,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         self.observe(ifindex, true);
         let handle = crate::pppoe::pppoe_handle::create_pppoe_handle(
@@ -273,13 +268,8 @@ impl WanLinkDataplane {
         // The trie is keyed by the numeric (host-order) session id;
         // `tmpl.session_id` is network byte order like every wire field.
         let session = tmpl.session_id_host();
-        let mut published_ll = None;
         if self.id != 0 {
             self.backbone.trie().set_ppp_session(ifindex, session, self.id as u32);
-            if let Some(addr) = v6_linklocal {
-                maps::wan::set_v6_session_linklocal(self.backbone.paths(), addr, self.id);
-                published_ll = Some(addr);
-            }
         } else {
             tracing::warn!(ifindex, "pppoe session with unassigned chain 0; trie publish skipped");
         }
@@ -288,8 +278,6 @@ impl WanLinkDataplane {
             wan_trie: self.backbone.trie().clone(),
             ifindex,
             session,
-            paths: self.backbone.paths().clone(),
-            v6_linklocal: published_ll,
         }))
     }
 
@@ -455,8 +443,6 @@ struct PppTrieGuard {
     wan_trie: Arc<WanTrieDispatcher>,
     ifindex: u32,
     session: u16,
-    paths: Arc<LandscapeMapPath>,
-    v6_linklocal: Option<Ipv6Addr>,
 }
 
 impl DataplaneGuard for PppTrieGuard {}
@@ -464,9 +450,6 @@ impl DataplaneGuard for PppTrieGuard {}
 impl Drop for PppTrieGuard {
     fn drop(&mut self) {
         self.wan_trie.del_ppp_session(self.ifindex, self.session);
-        if let Some(addr) = self.v6_linklocal.take() {
-            maps::wan::del_v6_session_linklocal(&self.paths, addr);
-        }
     }
 }
 

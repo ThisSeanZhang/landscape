@@ -91,10 +91,6 @@ pub fn init_tc_wan_route(
         "tc_wan_egress pin flow_match_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.wan_v6_ll_chain, &paths.wan_v6_ll_chain),
-        "tc_wan_egress pin wan_v6_ll_chain"
-    )?;
-    crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
         "tc_wan_egress pin wan_ip_binding"
     )?;

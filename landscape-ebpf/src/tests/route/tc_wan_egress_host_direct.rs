@@ -1,17 +1,13 @@
-//! Behavioral coverage for the WAN egress classifier's v6 control-plane
-//! handoff (`ll_v6_session_chain_enter` in tc_wan_egress_route.bpf.c).
+//! WAN egress entry's HostDirect lane: packets whose mark uses the
+//! HostDirect layout (SO_MARK, chain id in bits 0-15) are host-originated
+//! control plane (e.g. a native PPPoE link's DHCPv6-PD socket) — they enter
+//! `tc_wan_egress_roots[chain]` directly, and every policy stage
+//! (mss/firewall/nat) self-skips on that mark, so the packet rides the
+//! chain's PPPoE terminal and exits.
 //!
-//! An L3 (native PPPoE) WAN has no raw multicast: the session's v6
-//! control plane (DHCPv6-PD renewals to ff02::1:2, MLD, ...) must ride
-//! the PPP session.  The broadcast-mac pass-through therefore first
-//! consults `wan_v6_ll_chain[src]` — keyed by the packet source, the
-//! link-local composed from the session's IPv6CP interface-id — and
-//! tail-calls into `tc_wan_egress_roots[chain]`.
-//!
-//! Witness: instead of a marker verdict, the REAL chain terminal is
-//! registered — the `tc_pppoe` v6 stage — so a handed-off packet is
-//! proven by its bytes growing the 8-byte PPPoE+PPP header and the
-//! ethertype flipping to 0x8864 (mirrors tests/tc_chain/pppoe.rs).
+//! Witness: the real chain terminal (the `tc_pppoe` v6 stage) is registered
+//! as the egress root, so a handed-off packet is proven by its +8-byte
+//! PPPoE header.  Unmarked multicast keeps the historic pass-through.
 
 use std::{
     mem::MaybeUninit,
@@ -27,6 +23,7 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::tests::TestSkb;
+use crate::tests::route::map_helper::host_direct_mark;
 
 mod tc_wan_egress_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
@@ -123,21 +120,14 @@ fn load(pin: &str) -> Fixture {
     Fixture { entry, _stage: stage }
 }
 
-fn seed_session_ll(f: &Fixture, addr: Ipv6Addr, chain: u32) {
-    f.entry
-        .maps
-        .wan_v6_ll_chain
-        .update(&addr.octets(), &chain.to_ne_bytes(), MapFlags::ANY)
-        .unwrap();
-}
-
 /// Runs the entry classifier; returns (ret, data_out).
-fn run_entry(f: &Fixture, pkt: &[u8]) -> (i32, Vec<u8>) {
+fn run_entry(f: &Fixture, pkt: &[u8], mark: u32) -> (i32, Vec<u8>) {
     // Room for the +8 encap when the packet is handed off.
     let mut out = vec![0u8; pkt.len() + 8];
     let mut ctx = TestSkb {
         ifindex: 2,
         ingress_ifindex: 0,
+        mark,
         ..Default::default()
     };
     let ret = f
@@ -155,16 +145,15 @@ fn run_entry(f: &Fixture, pkt: &[u8]) -> (i32, Vec<u8>) {
     (ret, out)
 }
 
-/// Registered src → the packet enters the chain and leaves with the
-/// PPPoE session frame (bytes, not verdict: the stage's exit falls
-/// back to TC_ACT_UNSPEC either way).
+/// HostDirect-marked DHCPv6-PD enters the chain and leaves with the
+/// PPPoE session frame (bytes, not verdict: the stage's exit falls back
+/// to TC_ACT_UNSPEC either way).
 #[test]
-fn ll_v6_session_traffic_enters_chain_and_is_encapped() {
-    let f = load("ll-v6-hit");
-    seed_session_ll(&f, SESSION_LL, CHAIN);
+fn host_direct_marked_pd_enters_chain_and_is_encapped() {
+    let f = load("host-direct-hit");
 
     let pkt = build_dhcpv6_multicast(SESSION_LL);
-    let (ret, out) = run_entry(&f, &pkt);
+    let (ret, out) = run_entry(&f, &pkt, host_direct_mark(CHAIN as u16));
 
     assert_eq!(ret, -1, "stage exit fallback is TC_ACT_UNSPEC; the bytes are the witness");
     assert_eq!(out[12], 0x88, "ethertype hi");
@@ -177,15 +166,15 @@ fn ll_v6_session_traffic_enters_chain_and_is_encapped() {
     assert_eq!(&out[22..pkt.len() + 8], &pkt[14..], "L3 payload preserved");
 }
 
-/// Unregistered src → the historic pass-through: verdict UNSPEC and
-/// the packet leaves untouched.
+/// Unmarked multicast (mark 0 / Normal layout) keeps the historic
+/// broadcast pass-through: the packet leaves untouched.
 #[test]
-fn ll_v6_unknown_source_passes_raw() {
-    let f = load("ll-v6-miss");
+fn unmarked_multicast_passes_raw() {
+    let f = load("host-direct-miss");
 
     let pkt =
         build_dhcpv6_multicast(Ipv6Addr::new(0xfe80, 0x1111, 0x1111, 0x1111, 0x1111, 0, 0, 0));
-    let (ret, out) = run_entry(&f, &pkt);
+    let (ret, out) = run_entry(&f, &pkt, 0);
 
     assert_eq!(ret, -1);
     assert!(out[..pkt.len()].iter().zip(pkt.iter()).all(|(a, b)| a == b), "untouched");
@@ -194,11 +183,10 @@ fn ll_v6_unknown_source_passes_raw() {
 /// v4 broadcast keeps the classic behavior: pass, no chain.
 #[test]
 fn broadcast_v4_passes_raw() {
-    let f = load("ll-v6-v4-ctrl");
-    seed_session_ll(&f, SESSION_LL, CHAIN);
+    let f = load("host-direct-v4-ctrl");
 
     let pkt = build_ipv4_broadcast();
-    let (ret, out) = run_entry(&f, &pkt);
+    let (ret, out) = run_entry(&f, &pkt, 0);
 
     assert_eq!(ret, -1);
     assert!(out[..pkt.len()].iter().zip(pkt.iter()).all(|(a, b)| a == b), "untouched");

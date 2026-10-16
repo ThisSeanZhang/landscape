@@ -16,8 +16,8 @@ pub struct SessionIface {
     pub ifindex: u32,
     pub iface_name: String,
     pub mac: Option<MacAddr>,
-    /// IPv6CP link-local (native PPPoE): the session's v6 control-plane
-    /// identity for the WAN egress classifier (`wan_v6_ll_chain`).
+    /// IPv6CP link-local (native PPPoE): the session's stable DHCPv6
+    /// source address (chain steering is the HostDirect SO_MARK).
     /// `None` without IPv6CP (ethernet WAN, pppd).
     pub v6_linklocal: Option<Ipv6Addr>,
 }

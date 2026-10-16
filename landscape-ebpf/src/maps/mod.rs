@@ -538,7 +538,6 @@ pub fn reuse_pinned_map_or_recreate(map: &mut OpenMapMut, path: &(impl AsRef<Pat
 pub(crate) fn init_path(paths: &LandscapeMapPath) {
     // WAN
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("init wan_ip_binding failed");
-    wan::init_wan_v6_ll_chain_map(&paths.wan_v6_ll_chain).expect("init wan_v6_ll_chain failed");
     // NAT
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("init nat6_static_map failed");
     nat::init_nat4_static_map(&paths.nat4_static_map).expect("init nat4_static_map failed");
@@ -1081,7 +1080,6 @@ mod tests {
             init_path(&paths);
             for name in [
                 wan::WAN_IP_BINDING_PIN,
-                wan::WAN_V6_LL_CHAIN_PIN,
                 nat::NAT4_STATIC_MAP_PIN,
                 nat::NAT6_STATIC_MAP_PIN,
                 firewall::FIREWALL_BLOCK_IP4_MAP_PIN,

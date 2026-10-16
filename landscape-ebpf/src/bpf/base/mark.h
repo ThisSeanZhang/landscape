@@ -77,10 +77,13 @@ static __always_inline bool get_flow_allow_reuse_port(u32 original) {
 // Get the mark layout type (bits 24-31)
 static __always_inline u8 get_mark_type(u32 original) { return (original & MARK_TYPE_MASK) >> 24; }
 
-// Whether the mark does NOT use the HostDirect layout
-static __always_inline bool not_host_direct(u32 original) {
-    return get_mark_type(original) != MARK_TYPE_HOST_DIRECT;
+// Whether the mark uses the HostDirect layout
+static __always_inline bool is_host_direct(u32 original) {
+    return get_mark_type(original) == MARK_TYPE_HOST_DIRECT;
 }
+
+// Whether the mark does NOT use the HostDirect layout
+static __always_inline bool not_host_direct(u32 original) { return !is_host_direct(original); }
 
 // chain_id of the HostDirect layout (bits 0-15)
 static __always_inline u16 get_host_direct_chain_id(u32 original) {
