@@ -20,7 +20,7 @@
 //! each program loops `BENCH_ITERS` times in one invocation and we report
 //! `(variant - baseline) / BENCH_ITERS` per lookup.
 //!
-//! Run with: `cargo test -p landscape-ebpf --lib bench:: -- --ignored --nocapture`
+//! Run with: `cargo test -p landscape-ebpf --lib --features bpf-test bench:: -- --ignored --nocapture`
 
 use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr};

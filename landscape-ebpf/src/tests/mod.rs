@@ -87,8 +87,8 @@ mod mss;
 mod nat;
 mod net_utils;
 
-pub(crate) mod route; // pub(crate): benchmark packet builders are reused by src/bench
-mod scanner;
+pub(crate) mod route;
+pub(crate) mod scanner;
 mod tc_chain;
 mod time;
 mod tproxy;

@@ -63,12 +63,11 @@ static __always_inline int skb_read_ipv4_info(struct __sk_buff *skb, u32 l3_offs
         pair->dst_port = ports[0];
         pair->src_port = ports[1];
     } else if (l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph;
-        if (VALIDATE_READ_DATA(skb, &tcph, l4_offset, sizeof(*tcph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->src_port = tcph->source;
-        pair->dst_port = tcph->dest;
+        __builtin_memcpy(&pair->src_port, ports, sizeof(__be16) * 2);
     } else if (idx->icmp_error_l4_protocol == IPPROTO_UDP) {
         struct udphdr *udph;
         if (VALIDATE_READ_DATA(skb, &udph, idx->icmp_error_inner_l4_offset, sizeof(*udph))) {
@@ -77,12 +76,11 @@ static __always_inline int skb_read_ipv4_info(struct __sk_buff *skb, u32 l3_offs
         pair->dst_port = udph->source;
         pair->src_port = udph->dest;
     } else if (l4_protocol == IPPROTO_UDP) {
-        struct udphdr *udph;
-        if (VALIDATE_READ_DATA(skb, &udph, l4_offset, sizeof(*udph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->src_port = udph->source;
-        pair->dst_port = udph->dest;
+        __builtin_memcpy(&pair->src_port, ports, sizeof(__be16) * 2);
     } else if (l4_protocol == IPPROTO_ICMP) {
         u32 offset = l4_offset;
         if (idx->icmp_error_inner_l4_offset > 0) {
@@ -124,33 +122,31 @@ static __always_inline int skb_read_ipv6_info(struct __sk_buff *skb, u32 l3_offs
     u16 l4_offset = idx->l4_offset;
 
     if (idx->icmp_error_l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph;
-        if (VALIDATE_READ_DATA(skb, &tcph, idx->icmp_error_inner_l4_offset, sizeof(*tcph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, idx->icmp_error_inner_l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->dst_port = tcph->source;
-        pair->src_port = tcph->dest;
+        pair->dst_port = ports[0];
+        pair->src_port = ports[1];
     } else if (l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph;
-        if (VALIDATE_READ_DATA(skb, &tcph, l4_offset, sizeof(*tcph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->src_port = tcph->source;
-        pair->dst_port = tcph->dest;
+        __builtin_memcpy(&pair->src_port, ports, sizeof(__be16) * 2);
     } else if (idx->icmp_error_l4_protocol == IPPROTO_UDP) {
-        struct udphdr *udph;
-        if (VALIDATE_READ_DATA(skb, &udph, idx->icmp_error_inner_l4_offset, sizeof(*udph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, idx->icmp_error_inner_l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->dst_port = udph->source;
-        pair->src_port = udph->dest;
+        pair->dst_port = ports[0];
+        pair->src_port = ports[1];
     } else if (l4_protocol == IPPROTO_UDP) {
-        struct udphdr *udph;
-        if (VALIDATE_READ_DATA(skb, &udph, l4_offset, sizeof(*udph))) {
+        __be16 *ports;
+        if (VALIDATE_READ_DATA(skb, &ports, l4_offset, sizeof(__be16) * 2)) {
             return TC_ACT_SHOT;
         }
-        pair->src_port = udph->source;
-        pair->dst_port = udph->dest;
+        __builtin_memcpy(&pair->src_port, ports, sizeof(__be16) * 2);
     } else if (l4_protocol == IPPROTO_ICMPV6) {
         u32 offset = l4_offset;
         if (idx->icmp_error_inner_l4_offset > 0) {

@@ -48,7 +48,8 @@
 #define MAX_OFFSET 20480
 
 static __always_inline int _validate_read(struct __sk_buff *skb, void **hdr_, u32 offset, u32 len) {
-    if (unlikely(offset > MAX_OFFSET || len > 256 || offset + len > MAX_OFFSET)) return 1;
+    /* one 64-bit bound: the add cannot overflow, len is always sizeof()-small */
+    if (unlikely((u64)offset + len > MAX_OFFSET)) return 1;
 
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
