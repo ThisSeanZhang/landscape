@@ -265,8 +265,11 @@ impl WanLinkDataplane {
             mtu,
         )
         .map_err(|e| e.to_string())?;
+        // The trie is keyed by the numeric (host-order) session id;
+        // `tmpl.session_id` is network byte order like every wire field.
+        let session = tmpl.session_id_host();
         if self.id != 0 {
-            self.backbone.trie().set_ppp_session(ifindex, tmpl.session_id, self.id as u32);
+            self.backbone.trie().set_ppp_session(ifindex, session, self.id as u32);
         } else {
             tracing::warn!(ifindex, "pppoe session with unassigned chain 0; trie publish skipped");
         }
@@ -274,7 +277,7 @@ impl WanLinkDataplane {
             _inner: Box::new(handle),
             wan_trie: self.backbone.trie().clone(),
             ifindex,
-            session: tmpl.session_id,
+            session,
         }))
     }
 

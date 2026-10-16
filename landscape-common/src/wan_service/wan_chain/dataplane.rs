@@ -20,3 +20,13 @@ pub struct PppoeEgressTmpl {
     pub length: u16,
     pub protocol: u16,
 }
+
+impl PppoeEgressTmpl {
+    /// Session id as a host-order number, for dataplane tables keyed by
+    /// the numeric session value (`wan_trie` PPP entries, the SKB
+    /// fallback `pppoe_sessions` map).  `session_id` itself stays network
+    /// byte order like every other multi-byte field of this wire template.
+    pub fn session_id_host(&self) -> u16 {
+        u16::from_be(self.session_id)
+    }
+}

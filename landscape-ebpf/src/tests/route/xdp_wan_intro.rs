@@ -32,6 +32,7 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel as _, SkelBuilder as _},
 };
+use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 use crate::maps::wan_trie::builder::{
@@ -215,6 +216,35 @@ fn wan_intro_dispatch_matrix() {
         assert_eq!(out.len(), pkt.len() - 8, "ppp v4 bcast: stripped");
         assert_eq!(&out[12..14], &ETH_P_IPV4_BE);
         assert_eq!(out[0], 0x02, "ppp v4 bcast: sink must not run");
+    }
+
+    // ── 3b. production byte-order contract (regression) ──
+    // Live sessions are published through `PppoeEgressTmpl::session_id_host()`
+    // because `session_id` is network byte order like every wire field;
+    // publishing the raw BE field would byte-swap the trie key and the
+    // frame would silently miss into an untouched XDP_PASS.  0x000a is the
+    // byte-asymmetric id a real BRAS assigned when this regressed.
+    {
+        const SESS_REAL: u16 = 0x000a;
+        let tmpl =
+            PppoeEgressTmpl { session_id: SESS_REAL.to_be(), ..Default::default() };
+        publish(
+            &mut intro,
+            &[
+                ppp_entry(LO_IFINDEX, SESS, CHAIN_A),
+                ppp_entry(LO_IFINDEX, tmpl.session_id_host(), CHAIN_A),
+            ],
+        );
+        let pkt =
+            simple_pppoe_ipv4(SESS_REAL, Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(203, 0, 113, 7));
+        let (rv, out) = run(&intro, &pkt);
+        assert_eq!(rv, XDP_PASS);
+        assert_eq!(
+            out.len(),
+            pkt.len() - 8,
+            "wire-order session published via session_id_host(): decapped"
+        );
+        assert_flip0_only("wire-order session hit", &out);
     }
 
     // ── 4. type B: our native session, IPv6 payload ──
