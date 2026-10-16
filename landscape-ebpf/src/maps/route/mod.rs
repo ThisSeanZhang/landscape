@@ -105,9 +105,7 @@ mod tests {
         // Every slot of flow 5 carries the target's chain for the WAN
         // egress chain dispatch.
         for slot in 0..16u32 {
-            let mut key = Route6SlotKey::default();
-            key.flow_id = 5;
-            key.slot = slot;
+            let key = Route6SlotKey { flow_id: 5, slot };
             let bytes = map
                 .lookup(key.as_bytes(), MapFlags::ANY)
                 .expect("lookup slot")

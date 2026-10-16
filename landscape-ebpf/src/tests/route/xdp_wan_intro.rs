@@ -96,7 +96,7 @@ fn assert_flip0_only(label: &str, frame: &[u8]) {
 
 fn assert_flip1_only(label: &str, frame: &[u8]) {
     assert_eq!(frame[0], 0x02, "{label}: byte 0 must stay intact");
-    assert_eq!(frame[1], 0x00 ^ 0xff, "{label}: sink B must flip byte 1");
+    assert_eq!(frame[1], 0xff, "{label}: sink B must flip byte 1");
 }
 
 #[test]
