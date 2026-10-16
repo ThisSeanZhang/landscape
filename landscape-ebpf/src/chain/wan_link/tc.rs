@@ -106,6 +106,9 @@ impl WanLinkDataplane {
         let mut ingress_open_skel =
             bpf_ctx!(ingress_builder.open(ingress_obj), "open tc_wan_ingress_root")?;
 
+        // cb ferry hard limits: l3 lives in 8 bits, chain id in 16.
+        assert!(l3_offset <= u8::MAX as u32, "l3 offset {l3_offset} exceeds cb slot");
+
         ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
         ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_chain =
             link_chain_id as u32;
@@ -143,6 +146,9 @@ impl WanLinkDataplane {
         let (egress_back, egress_obj) = OwnedOpenObject::new();
         let mut egress_open_skel =
             bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
+
+        // cb ferry hard limit: l3 lives in 8 bits.
+        assert!(l3_offset <= u8::MAX as u32, "l3 offset {l3_offset} exceeds cb slot");
 
         egress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
 

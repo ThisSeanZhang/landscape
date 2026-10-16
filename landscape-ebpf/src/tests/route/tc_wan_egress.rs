@@ -148,7 +148,7 @@ fn run_wan_egress(
     // TestSkb is packed: copy the asserted fields out explicitly.
     let mark = ctx_out.mark;
     let forwarded = ctx_out.cb[0];
-    let chain_id = ctx_out.cb[2];
+    let chain_id = ctx_out.cb[1] >> 16;
     (ret, out, mark, forwarded, chain_id)
 }
 
@@ -324,7 +324,7 @@ fn run_wan_egress_entry(
         .return_value as i32;
     let mark = ctx_out.mark;
     let forwarded = ctx_out.cb[0];
-    let chain_id = ctx_out.cb[2];
+    let chain_id = ctx_out.cb[1] >> 16;
     (ret, out, mark, forwarded, chain_id)
 }
 
@@ -349,7 +349,7 @@ fn wan_egress_entry_forwarded_tailcalls_target_chain_root() {
 
     let mut ctx = TestSkb {
         ifindex: LOOPBACK_IFINDEX,
-        cb: [1, 0, 9, 0, 0],
+        cb: [1, 9 << 16, 0, 0, 0],
         ..Default::default()
     };
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
@@ -371,7 +371,7 @@ fn wan_egress_entry_forwarded_with_empty_chain_shots() {
 
     let mut ctx = TestSkb {
         ifindex: LOOPBACK_IFINDEX,
-        cb: [1, 0, 9, 0, 0],
+        cb: [1, 9 << 16, 0, 0, 0],
         ..Default::default()
     };
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());

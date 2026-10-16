@@ -63,6 +63,7 @@ found_l4:
         if (VALIDATE_READ_DATA(skb, &frag_hdr, frag_hdr_off, sizeof(*frag_hdr))) {
             return LD_SCAN_ERR;
         }
+        scanner_ctx->frag_hdr_present = 1;
         scanner_ctx->fragment_id = bpf_ntohl(frag_hdr->identification);
 
         u16 raw_off = bpf_ntohs(frag_hdr->frag_off);
@@ -99,6 +100,7 @@ static __always_inline enum land_scan_result scan_ipv6_full(struct __sk_buff *sk
     idx->fragment_off = ctx.fragment_off;
     idx->fragment_id = ctx.fragment_id;
     idx->fragment_type = ctx.fragment_type;
+    idx->frag_hdr_present = ctx.frag_hdr_present;
     idx->l4_protocol = ctx.l4_protocol;
     idx->l4_offset = ctx.l4_offset;
     idx->pkt_type = PKT_CONNLESS_V2;
@@ -194,6 +196,7 @@ scan_ipv6_into_idx(struct __sk_buff *skb, u32 l3_offset, struct scan_ipv6_idx *i
     idx->fragment_off = ctx.fragment_off;
     idx->fragment_id = ctx.fragment_id;
     idx->fragment_type = ctx.fragment_type;
+    idx->frag_hdr_present = ctx.frag_hdr_present;
     idx->l4_protocol = ctx.l4_protocol;
     idx->l4_offset = ctx.l4_offset;
     idx->pkt_type = PKT_CONNLESS_V2;

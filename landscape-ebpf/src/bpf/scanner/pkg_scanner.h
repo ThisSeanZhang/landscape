@@ -231,7 +231,11 @@ static __always_inline int scan_packet_outer_l4(struct __sk_buff *skb, u32 curre
         }
     }
 
-    __builtin_memcpy(&offset_info->l4_protocol, &ctx, sizeof(struct ip_scanner_ctx));
+    offset_info->l4_protocol = ctx.l4_protocol;
+    offset_info->fragment_type = ctx.fragment_type;
+    offset_info->fragment_off = ctx.fragment_off;
+    offset_info->fragment_id = ctx.fragment_id;
+    offset_info->l4_offset = ctx.l4_offset;
 
     if (offset_info->fragment_type >= FRAG_MIDDLE) {
         // 不是第一个数据包， 整个都是 payload

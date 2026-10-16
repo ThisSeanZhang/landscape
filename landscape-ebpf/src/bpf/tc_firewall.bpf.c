@@ -4,7 +4,9 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
+#include "base/proto_def.h"
 #include "chain/tc_stage.h"
+#include "chain/tc_cb.h"
 #include "chain/tc_wan_exit_maps.h"
 #include "firewall/firewall_share.h"
 #include "scanner/skb_scanner4.h"
@@ -18,6 +20,25 @@ const volatile u32 current_l3_offset = 14;
 
 static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< fw_do_egress_v4 <<<"
+    if (tc_cb_ferry_valid(skb)) {
+        struct iphdr *iph;
+        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
+        __be32 daddr = iph->daddr;
+
+        if (!tc_cb_icmp_inner_l4(skb) && !tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
+            return TC_ACT_SHOT;
+        }
+
+        struct ipv4_lpm_key block_search_key = {
+            .prefixlen = 32,
+            .addr = daddr,
+        };
+        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
+            return TC_ACT_SHOT;
+
+        return TC_ACT_OK;
+    }
+
     struct scan_ipv4_idx idx = {};
     if (scan_ipv4_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
 
@@ -57,6 +78,24 @@ static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
 static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< fw_do_egress_v6 <<<"
 
+    if (tc_cb_ferry_valid(skb)) {
+        struct ipv6hdr *ip6h;
+        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
+
+        if (!tc_cb_icmp_inner_l4(skb) && !tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
+            return TC_ACT_SHOT;
+        }
+
+        struct ipv6_lpm_key block_search_key = {
+            .prefixlen = 128,
+        };
+        __builtin_memcpy(&block_search_key.addr, &ip6h->daddr, sizeof(block_search_key.addr));
+        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
+            return TC_ACT_SHOT;
+
+        return TC_ACT_OK;
+    }
+
     struct scan_ipv6_idx idx = {};
     if (scan_ipv6_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
 
@@ -95,6 +134,31 @@ static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
 
 static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< fw_do_ingress_v4 <<<"
+    if (tc_cb_ferry_valid(skb)) {
+        struct iphdr *iph;
+        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
+        __be32 saddr = iph->saddr;
+
+        if (tc_cb_icmp_inner_l4(skb)) {
+            struct iphdr *inner_ip;
+            if (VALIDATE_READ_DATA(skb, &inner_ip, tc_cb_l4_offset(skb) + ICMP_HDR_LEN,
+                                   sizeof(*inner_ip)))
+                return TC_ACT_OK;
+            saddr = inner_ip->daddr;
+        } else if (!tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
+            return TC_ACT_SHOT;
+        }
+
+        struct ipv4_lpm_key block_search_key = {
+            .prefixlen = 32,
+            .addr = saddr,
+        };
+        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
+            return TC_ACT_SHOT;
+
+        return TC_ACT_OK;
+    }
+
     struct scan_ipv4_idx idx = {};
     if (scan_ipv4_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
 
@@ -133,6 +197,31 @@ static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
 
 static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< fw_do_ingress_v6 <<<"
+
+    if (tc_cb_ferry_valid(skb)) {
+        struct ipv6hdr *ip6h;
+        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
+        struct in6_addr saddr = ip6h->saddr;
+
+        if (tc_cb_icmp_inner_l4(skb)) {
+            struct ipv6hdr *inner_ip6;
+            if (VALIDATE_READ_DATA(skb, &inner_ip6, tc_cb_l4_offset(skb) + ICMP6_HDR_LEN,
+                                   sizeof(*inner_ip6)))
+                return TC_ACT_OK;
+            saddr = inner_ip6->daddr;
+        } else if (!tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
+            return TC_ACT_SHOT;
+        }
+
+        struct ipv6_lpm_key block_search_key = {
+            .prefixlen = 128,
+        };
+        __builtin_memcpy(&block_search_key.addr, &saddr, sizeof(block_search_key.addr));
+        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
+            return TC_ACT_SHOT;
+
+        return TC_ACT_OK;
+    }
 
     struct scan_ipv6_idx idx = {};
     if (scan_ipv6_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;

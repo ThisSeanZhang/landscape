@@ -11,6 +11,7 @@
 #include "nat/tc_nat4.h"
 #include "scanner/skb_scanner4.h"
 #include "scanner/skb_read.h"
+#include "scanner/cb_ferry.h"
 #include "fragment/frag4.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -29,19 +30,25 @@ static __always_inline int tc_nat_v4_egress_do(struct __sk_buff *skb, u32 ifinde
     struct nat4_port_queue_value_v3 alloc_item = {0};
     int ret = 0;
 
-    if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-    if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) {
-        return TC_ACT_OK;
+    if (cb_ferry_load_v4(skb, current_l3_offset, &idx, &ip_pair)) {
+        if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) return TC_ACT_OK;
+        if (unlikely(is_broadcast_ip4_pair(&ip_pair))) return TC_ACT_OK;
+        if (unlikely(!tc_cb_ports_valid(skb))) return TC_ACT_SHOT;
+    } else {
+        if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+        if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) {
+            return TC_ACT_OK;
+        }
+        ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
+        if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
+        if (ret) return TC_ACT_OK;
+        if (unlikely(is_broadcast_ip4_pair(&ip_pair))) {
+            return TC_ACT_OK;
+        }
+        ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
+                          &ip_pair.dst_port);
+        if (ret != TC_ACT_OK) return TC_ACT_SHOT;
     }
-    ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    if (unlikely(is_broadcast_ip4_pair(&ip_pair))) {
-        return TC_ACT_OK;
-    }
-    ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
-                      &ip_pair.dst_port);
-    if (ret != TC_ACT_OK) return TC_ACT_SHOT;
 
     bool is_icmpx_error = idx.icmp_error_l3_offset > 0 && idx.icmp_error_inner_l4_offset > 0;
     u8 nat_l4_protocol = is_icmpx_error ? idx.icmp_error_l4_protocol : idx.l4_protocol;
@@ -110,19 +117,25 @@ static __always_inline int tc_nat_v4_ingress_do(struct __sk_buff *skb, u32 ifind
     struct nat4_action action = {0};
     int ret = 0;
 
-    if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-    if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) {
-        return TC_ACT_OK;
+    if (cb_ferry_load_v4(skb, current_l3_offset, &idx, &ip_pair)) {
+        if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) return TC_ACT_OK;
+        if (unlikely(is_broadcast_ip4_pair(&ip_pair))) return TC_ACT_OK;
+        if (unlikely(!tc_cb_ports_valid(skb))) return TC_ACT_SHOT;
+    } else {
+        if (scan_ipv4_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
+        if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) {
+            return TC_ACT_OK;
+        }
+        ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
+        if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
+        if (ret) return TC_ACT_OK;
+        if ((is_broadcast_ip4_pair(&ip_pair))) {
+            return TC_ACT_OK;
+        }
+        ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
+                          &ip_pair.dst_port);
+        if (ret != TC_ACT_OK) return TC_ACT_SHOT;
     }
-    ret = skb_read_ipv4_info(skb, current_l3_offset, &idx, &ip_pair);
-    if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
-    if (ret) return TC_ACT_OK;
-    if ((is_broadcast_ip4_pair(&ip_pair))) {
-        return TC_ACT_OK;
-    }
-    ret = frag4_track(&idx, ip_pair.src_addr.addr, ip_pair.dst_addr.addr, &ip_pair.src_port,
-                      &ip_pair.dst_port);
-    if (ret != TC_ACT_OK) return TC_ACT_SHOT;
 
     bool is_icmpx_error = idx.icmp_error_l3_offset > 0 && idx.icmp_error_inner_l4_offset > 0;
     u8 nat_l4_protocol = is_icmpx_error ? idx.icmp_error_l4_protocol : idx.l4_protocol;

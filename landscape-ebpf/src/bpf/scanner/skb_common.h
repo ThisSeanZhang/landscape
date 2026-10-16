@@ -25,6 +25,7 @@ enum packet_scan_depth {
 struct ip_scanner_ctx {
     u8 l4_protocol;
     u8 fragment_type;
+    u8 frag_hdr_present;
     u16 fragment_off;
     u16 fragment_id;
     u16 l4_offset;

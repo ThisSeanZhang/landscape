@@ -24,7 +24,7 @@ char LICENSE[] SEC("license") = "GPL";
 // "exit": the chain ends by deciding where the packet goes.
 
 static __always_inline u8 get_wan_ingress_l3_offset(struct __sk_buff *skb) {
-    return skb->cb[TC_CHAIN_CB_L3_OFFSET];
+    return tc_cb_l3_offset(skb);
 }
 
 #undef BPF_LOG_TOPIC
@@ -63,8 +63,7 @@ int tc_route4_wan_ingress(struct __sk_buff *skb) {
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route4_set_cache_in_wan(&context, l3, skb->ifindex,
-                                    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
+            route4_set_cache_in_wan(&context, l3, skb->ifindex, tc_cb_chain(skb));
         }
     }
 
@@ -104,8 +103,7 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
         if (mark == INGRESS_STATIC_MARK) {
-            route6_set_cache_in_wan(&context, l3, skb->ifindex,
-                                    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET]);
+            route6_set_cache_in_wan(&context, l3, skb->ifindex, tc_cb_chain(skb));
         }
     }
 

@@ -21,6 +21,7 @@ struct scan_ipv6_idx {
     u32 fragment_id;
     u8 l4_protocol;
     u8 fragment_type;
+    u8 frag_hdr_present;
     u8 pkt_type;
     u16 icmp_error_l3_offset;
     u16 icmp_error_inner_l4_offset;

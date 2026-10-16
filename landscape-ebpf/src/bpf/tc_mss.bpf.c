@@ -6,6 +6,7 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
+#include "chain/tc_cb.h"
 #include "chain/tc_wan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -133,6 +134,15 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
 }
 
 static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
+    if (tc_cb_ferry_valid(skb)) {
+        if (tc_cb_frag(skb) >= FRAG_MIDDLE) return;
+        if (tc_cb_l4_protocol(skb) != IPPROTO_TCP) return;
+        u32 l4_offset = tc_cb_l4_offset(skb);
+        u32 ip_hdr_len = l4_offset - current_l3_offset;
+        do_mss_clamp(skb, l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+        return;
+    }
+
     struct iphdr *iph;
     if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return;
     if (iph->protocol != IPPROTO_TCP) return;
@@ -142,6 +152,15 @@ static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_o
 }
 
 static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
+    if (tc_cb_ferry_valid(skb)) {
+        if (tc_cb_frag(skb) != FRAG_SINGLE) return;
+        if (tc_cb_l4_protocol(skb) != IPPROTO_TCP) return;
+        u32 l4_offset = tc_cb_l4_offset(skb);
+        u32 ip_hdr_len = l4_offset - current_l3_offset;
+        do_mss_clamp(skb, l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+        return;
+    }
+
     u32 ip_hdr_len;
     if (extract_ipv6_tcp_offset(skb, current_l3_offset, &ip_hdr_len) != TC_ACT_OK) return;
 

@@ -68,7 +68,7 @@ struct {
  *      └─ dispatch by daddr/prefix64/session_id
  *           └─ tc_pipe_root_progs[dispatch_idx]
  *                └─ tc_wan_ingress_root
- *                     ├─ skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset  (injected)
+ *                     ├─ tc_cb_ingress_stamp(skb, l3_offset, chain_id)
  *                     ├─ L3 protocol fork: slot0 (v4) / slot1 (v6)
  *                     │    └─ MSS_{v4,v6}
  *                     │         └─ TC_FROM_WAN_CHAIN_NEXT(skb, slot) → FW_{v4,v6}
@@ -90,7 +90,7 @@ struct {
  *
  *    tc_wan_egress_route  (Route logic, three entry paths)
  *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots,
- *      │    cb[TC_CHAIN_CB_CHAIN_ID_OFFSET])  (forwarded; routed by a
+ *      │    tc_cb_chain(skb))  (forwarded; routed by a
  *      │    landscape pick_wan earlier, its target chain id rides in cb)
  *      ├─ ingress_ifindex != 0 → DIRECT_{V4,V6}_SLOT of ls_wan_e_tails
  *      │    (LAN-originated forwarded handoff: the LAN side already ran

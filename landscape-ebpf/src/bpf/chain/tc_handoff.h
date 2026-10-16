@@ -27,8 +27,7 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_la
             // Stamp cb like pick_wan does: the target's tc egress entry enters the
             // link chain through these flags. Without them the skb carries stale cb
             // from recycled sk_buffs and dies at the egress root tail call.
-            skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-            skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = ho->payload.tc_redirect.link_chain_id;
+            tc_cb_mark_forwarded(skb, ho->payload.tc_redirect.link_chain_id);
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
     }

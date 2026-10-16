@@ -423,8 +423,7 @@ static __always_inline int route6_pick_wan_and_send_by_flow_id(struct __sk_buff 
     // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
     // chain through these flags; without them the skb carries stale cb from
     // recycled sk_buffs and dies at the WAN egress root tail call.
-    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target_info->link_chain_id;
+    tc_cb_mark_forwarded(skb, target_info->link_chain_id);
 
     if (current_l3_offset == 0 && target_info->has_mac) {
         if (prepend_dummy_mac_v6(skb) != 0) {
@@ -509,8 +508,7 @@ static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *sk
     // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
     // chain through these flags; without them the skb carries stale cb from
     // recycled sk_buffs and dies at the WAN egress root tail call.
-    skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target->link_chain_id;
+    tc_cb_mark_forwarded(skb, target->link_chain_id);
 
     if (current_l3_offset == 0 && target->has_mac) {
         if (prepend_dummy_mac_v6(skb) != 0) {
@@ -573,8 +571,7 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
                 bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
             if (wan_ip_info != NULL) {
                 bool target_has_mac = target->has_mac;
-                skb->cb[TC_CHAIN_CB_FORWARDED_OFFSET] = 1;
-                skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = target->link_chain_id;
+                tc_cb_mark_forwarded(skb, target->link_chain_id);
 
                 // struct mac_key_v6 search_mac_key = {0};
                 // COPY_ADDR_FROM(search_mac_key.addr.all, wan_ip_info->gateway.all);

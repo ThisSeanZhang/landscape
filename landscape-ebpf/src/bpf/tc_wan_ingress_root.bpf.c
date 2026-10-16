@@ -6,6 +6,7 @@
 
 #include "chain/tc_wan_exit_maps.h"
 #include "chain/tc_cb.h"
+#include "scanner/cb_ferry.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -25,14 +26,15 @@ const volatile u32 current_chain = 0;
 
 SEC("tc/ingress")
 int tc_wan_ingress_root(struct __sk_buff *skb) {
-    skb->cb[TC_CHAIN_CB_L3_OFFSET] = current_l3_offset;
-    skb->cb[TC_CHAIN_CB_CHAIN_ID_OFFSET] = current_chain;
+    tc_cb_ingress_stamp(skb, current_l3_offset, current_chain);
 
     u8 l3_protocol = 0;
     if (current_l3_protocol(skb, current_l3_offset, &l3_protocol) == TC_ACT_OK) {
         if (l3_protocol == LANDSCAPE_IPV6_TYPE) {
+            ferry_root_pack_v6(skb, current_l3_offset);
             bpf_tail_call_static(skb, &wan_ingress_root_next_stage, TC_SLOT_V6);
         } else {
+            ferry_root_pack_v4(skb, current_l3_offset);
             bpf_tail_call_static(skb, &wan_ingress_root_next_stage, TC_SLOT_V4);
         }
     }
