@@ -27,7 +27,7 @@ pub(crate) struct SessionHandle {
     server_ip: std::net::Ipv4Addr,
     server_mac: Vec<u8>,
     ipv6cp_server_id: Option<Vec<u8>>,
-    ipv6cp_client_linklocal: Option<std::net::Ipv6Addr>,
+    pub(crate) ipv6cp_client_linklocal: Option<std::net::Ipv6Addr>,
     prev_ipv6_linklocal: Option<std::net::Ipv6Addr>,
     iface_name: String,
 }
@@ -319,25 +319,30 @@ fn setup_linklocal(
             .args(["-6", "addr", "flush", "dev", iface_name, "scope", "link"])
             .output();
 
+        // `replace` (idempotent) + read-back: publish ⟺ the address is
+        // really on the iface — the kernel sources the v6 control plane
+        // from it.
         let result = std::process::Command::new("ip")
-            .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", iface_name])
+            .args(["-6", "addr", "replace", &format!("{}/64", addr), "dev", iface_name])
             .output();
-        match result {
-            Ok(output) if output.status.success() => {
+        if let Ok(output) = &result
+            && !output.status.success()
+        {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("replace IPv6 link-local {} on {}: {}", addr, iface_name, stderr.trim());
+        }
+        match get_existing_linklocal(iface_name) {
+            Some(current) if current == addr => {
                 tracing::info!(iface = %iface_name, linklocal = %addr, "IPv6 link-local address set from IPv6CP");
                 new = Some(addr);
             }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+            current => {
                 tracing::error!(
-                    "add IPv6 link-local {} on {}: {}",
-                    addr,
-                    iface_name,
-                    stderr.trim()
+                    iface = %iface_name,
+                    expected = %addr,
+                    found = ?current,
+                    "IPv6 link-local missing after replace; session control-plane identity not established"
                 );
-            }
-            Err(e) => {
-                tracing::error!("add IPv6 link-local error: {e:?}");
             }
         }
     }

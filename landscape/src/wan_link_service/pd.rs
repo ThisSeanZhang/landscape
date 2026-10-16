@@ -45,6 +45,7 @@ pub(super) async fn run(
         chain_id,
         iface.iface_name,
         iface.ifindex,
+        iface.v6_linklocal,
         iface.mac,
         config.mac,
         config.expected_pd_len,

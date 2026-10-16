@@ -16,6 +16,7 @@ use socket2::{Domain, Protocol, Type};
 use tokio::{net::UdpSocket, time::Instant};
 use uuid::Uuid;
 
+use crate::netlink::address::get_existing_linklocal;
 use crate::{
     netlink::ipv6::{del_iface_ip, set_iface_ip},
     sys_service::route::IpRouteService,
@@ -208,6 +209,31 @@ fn gen_client_id(config_mac: MacAddr) -> Vec<u8> {
     result
 }
 
+/// Re-bind the session's IPv6CP link-local if anything (iface reset,
+/// DAD conflict, an external manager) removed it; verified by read-back.
+fn ensure_session_linklocal(iface_name: &str, session_ll: Option<Ipv6Addr>) -> bool {
+    let Some(ll) = session_ll else { return true };
+    if get_existing_linklocal(iface_name).as_ref() == Some(&ll) {
+        return true;
+    }
+    tracing::warn!(iface = iface_name, linklocal = %ll, "session link-local missing; force re-binding");
+    let _ = std::process::Command::new("ip")
+        .args(["-6", "addr", "replace", &format!("{}/64", ll), "dev", iface_name])
+        .output();
+    match get_existing_linklocal(iface_name) {
+        Some(current) if current == ll => true,
+        current => {
+            tracing::error!(
+                iface = iface_name,
+                expected = %ll,
+                found = ?current,
+                "session link-local force-bind failed; DHCPv6 has no stable source"
+            );
+            false
+        }
+    }
+}
+
 fn create_pd_socket(socket_addr: &SocketAddr, iface_name: &[u8]) -> std::io::Result<UdpSocket> {
     let socket = socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_only_v6(true)?;
@@ -268,6 +294,9 @@ pub async fn dhcp_v6_pd_client(
     chain_id: u16,
     iface_name: String,
     ifindex: u32,
+    // session's IPv6CP link-local (SessionIface::v6_linklocal); the
+    // DHCPv6 source must stay on it or the egress classifier passes raw
+    session_ll: Option<Ipv6Addr>,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,
     // for pd request
@@ -365,6 +394,7 @@ pub async fn dhcp_v6_pd_client(
 
     let stop_token = service_status.stop_token();
     let mut cleaned_up = false;
+    ensure_session_linklocal(&iface_name, session_ll);
     loop {
         tokio::select! {
             // 超时激发重发
@@ -397,6 +427,7 @@ pub async fn dhcp_v6_pd_client(
                     }
                 }
 
+                ensure_session_linklocal(&iface_name, session_ll);
                 let send_outcome = send_current_status_packet(&client_id, &send_socket, &mut status).await;
                 if send_outcome.prefix_expired {
                     clear_active_pd_prefix(

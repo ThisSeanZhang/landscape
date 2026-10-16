@@ -16,6 +16,7 @@ mod tc_lan_ingress;
 mod tc_lan_ingress_v6;
 #[cfg(test)]
 mod tc_wan_egress;
+mod tc_wan_egress_ll_v6;
 #[cfg(test)]
 mod tc_wan_egress_v6;
 #[cfg(test)]

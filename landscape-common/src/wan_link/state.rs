@@ -16,11 +16,25 @@ pub struct SessionIface {
     pub ifindex: u32,
     pub iface_name: String,
     pub mac: Option<MacAddr>,
+    /// IPv6CP link-local (native PPPoE): the session's v6 control-plane
+    /// identity for the WAN egress classifier (`wan_v6_ll_chain`).
+    /// `None` without IPv6CP (ethernet WAN, pppd).
+    pub v6_linklocal: Option<Ipv6Addr>,
 }
 
 impl SessionIface {
     pub fn new(ifindex: u32, iface_name: impl Into<String>, mac: Option<MacAddr>) -> Self {
-        Self { ifindex, iface_name: iface_name.into(), mac }
+        Self {
+            ifindex,
+            iface_name: iface_name.into(),
+            mac,
+            v6_linklocal: None,
+        }
+    }
+
+    pub fn with_v6_linklocal(mut self, addr: Option<Ipv6Addr>) -> Self {
+        self.v6_linklocal = addr;
+        self
     }
 
     /// Whether packets on this session iface carry a 14-byte Ethernet

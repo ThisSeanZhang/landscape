@@ -34,7 +34,6 @@ pub struct LandscapeMapPath {
     /// (`/sys/fs/bpf/landscape/<map space>`).
     pub root: PathBuf,
     pub wan_ip: PathBuf,
-    /// IPv6CP link-local -> chain for L3 (native PPPoE) WAN sessions
     pub wan_v6_ll_chain: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,

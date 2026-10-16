@@ -99,10 +99,8 @@ struct {
  *      │    slots when the mark carries none)
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
- *           │    └─ broadcast/multicast MAC: pass-through, EXCEPT v6
- *           │         multicast/link-local sourced from a registered
- *           │         IPv6CP link-local (wan_v6_ll_chain) — the L3 session's
- *           │         control plane; enters the session's chain
+ *           │    └─ broadcast/multicast MAC: pass-through, except v6
+ *           │         multicast/ll with registered src (wan_v6_ll_chain)
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
  *           └─ tc_route4/6_pick_wan_in_wan_egress:
  *                ├─ same WAN → bpf_tail_call(&tc_wan_egress_roots, target chain)

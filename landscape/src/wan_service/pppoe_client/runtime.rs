@@ -273,6 +273,11 @@ pub async fn run(
                             config.index,
                             config.iface_name.clone(),
                             Some(config.iface_mac),
+                        )
+                        .with_v6_linklocal(
+                            session_handle
+                                .as_ref()
+                                .and_then(|handle| handle.ipv6cp_client_linklocal),
                         ),
                         Some(WanV4Lease::new(config.index, nego_result.client_ip)),
                     );

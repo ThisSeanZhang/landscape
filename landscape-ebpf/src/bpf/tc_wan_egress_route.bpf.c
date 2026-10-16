@@ -12,6 +12,7 @@
 #include "route/route6_context.h"
 
 #include "chain/tc_cb.h"
+#include "map/wan_v6_ll_chain.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -39,19 +40,6 @@ struct {
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(u32));
 } tc_wan_egress_roots SEC(".maps");
-
-// IPv6CP link-local of an L3 (native PPPoE) WAN session -> its chain id.
-// The egress classifier uses it to send the session's v6 control plane
-// (multicast / link-local, e.g. DHCPv6-PD renewals) into the session's
-// chain for PPP encapsulation — an L3 WAN has no raw multicast.
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct in6_addr);
-    __type(value, u32);
-    __uint(max_entries, 64);
-    __uint(map_flags, BPF_F_NO_PREALLOC);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} wan_v6_ll_chain SEC(".maps");
 
 // ── tc_pick_wan: adapted from pick_wan_and_send_by_flow_id, always tailcalls to target root ──
 
@@ -394,7 +382,7 @@ static __always_inline int ll_v6_session_chain_enter(struct __sk_buff *skb) {
     struct ipv6hdr *ip6 = (void *)(data + current_l3_offset);
     if ((void *)(ip6 + 1) > data_end) return TC_ACT_UNSPEC;
 
-    // multicast/link-local dst only; unicast v6 keeps the routed path
+    // control plane only; unicast v6 keeps the routed path
     if (!is_broadcast_ip6((const u8 *)&ip6->daddr)) return TC_ACT_UNSPEC;
 
     u32 *chain = bpf_map_lookup_elem(&wan_v6_ll_chain, &ip6->saddr);
