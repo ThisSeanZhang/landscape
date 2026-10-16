@@ -28,11 +28,11 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsFd as _, AsRawFd as _};
 use std::str::FromStr;
 
+use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel as _, SkelBuilder as _},
 };
-use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 use crate::maps::wan_trie::builder::{
@@ -226,8 +226,10 @@ fn wan_intro_dispatch_matrix() {
     // byte-asymmetric id a real BRAS assigned when this regressed.
     {
         const SESS_REAL: u16 = 0x000a;
-        let tmpl =
-            PppoeEgressTmpl { session_id: SESS_REAL.to_be(), ..Default::default() };
+        let tmpl = PppoeEgressTmpl {
+            session_id: SESS_REAL.to_be(),
+            ..Default::default()
+        };
         publish(
             &mut intro,
             &[
@@ -235,8 +237,11 @@ fn wan_intro_dispatch_matrix() {
                 ppp_entry(LO_IFINDEX, tmpl.session_id_host(), CHAIN_A),
             ],
         );
-        let pkt =
-            simple_pppoe_ipv4(SESS_REAL, Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(203, 0, 113, 7));
+        let pkt = simple_pppoe_ipv4(
+            SESS_REAL,
+            Ipv4Addr::new(192, 0, 2, 1),
+            Ipv4Addr::new(203, 0, 113, 7),
+        );
         let (rv, out) = run(&intro, &pkt);
         assert_eq!(rv, XDP_PASS);
         assert_eq!(

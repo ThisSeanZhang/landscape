@@ -14,7 +14,7 @@ mod tc_wan_ingress_intro_skel {
 }
 use tc_wan_ingress_intro_skel::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
-mod tc_wan_egress_route_skel {
+pub(crate) mod tc_wan_egress_route_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
 }
 use tc_wan_egress_route_skel::{TcWanEgressRouteSkel, TcWanEgressRouteSkelBuilder};
@@ -89,6 +89,10 @@ pub fn init_tc_wan_route(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
         "tc_wan_egress pin flow_match_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.wan_v6_ll_chain, &paths.wan_v6_ll_chain),
+        "tc_wan_egress pin wan_v6_ll_chain"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),

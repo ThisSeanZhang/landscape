@@ -34,6 +34,8 @@ pub struct LandscapeMapPath {
     /// (`/sys/fs/bpf/landscape/<map space>`).
     pub root: PathBuf,
     pub wan_ip: PathBuf,
+    /// IPv6CP link-local -> chain for L3 (native PPPoE) WAN sessions
+    pub wan_v6_ll_chain: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,
     pub nat4_static_map: PathBuf,
@@ -90,6 +92,7 @@ impl LandscapeMapPath {
         let root = root.to_path_buf();
         Self {
             wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
+            wan_v6_ll_chain: root.join(wan::WAN_V6_LL_CHAIN_PIN),
             // NAT
             nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
             nat4_static_map: root.join(nat::NAT4_STATIC_MAP_PIN),

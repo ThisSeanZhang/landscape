@@ -31,6 +31,31 @@ pub fn add_ipv6_wan_ip(
     add_wan_ip(&wan_ip_binding, ifindex, IpAddr::V6(addr), gateway.map(IpAddr::V6), mask, mac);
 }
 
+/// Publish a session's IPv6CP link-local -> chain mapping for the WAN
+/// egress classifier (v6 control plane -> PPP encapsulation).
+pub fn set_v6_session_linklocal(paths: &LandscapeMapPath, addr: Ipv6Addr, chain: u16) {
+    let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_v6_ll_chain) else {
+        tracing::error!(
+            "open pinned wan_v6_ll_chain ({:?}) failed, skip v6 session linklocal publish",
+            paths.wan_v6_ll_chain
+        );
+        return;
+    };
+    let chain: u32 = u32::from(chain);
+    match map.update(&addr.octets(), &chain.to_ne_bytes(), MapFlags::ANY) {
+        Ok(()) => tracing::info!(%addr, chain, "wan_v6_ll_chain published"),
+        Err(e) => tracing::error!(%addr, chain, error = %e, "wan_v6_ll_chain update failed"),
+    }
+}
+
+/// Remove a session's IPv6CP link-local mapping (session teardown).
+pub fn del_v6_session_linklocal(paths: &LandscapeMapPath, addr: Ipv6Addr) {
+    let Ok(map) = libbpf_rs::MapHandle::from_pinned_path(&paths.wan_v6_ll_chain) else {
+        return;
+    };
+    let _ = map.delete(&addr.octets());
+}
+
 pub fn add_ipv4_wan_ip(
     paths: &LandscapeMapPath,
     ifindex: u32,
