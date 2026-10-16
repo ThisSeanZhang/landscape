@@ -216,7 +216,9 @@ SEC("tc/egress")
 int tc_nat_wan_egress_v4(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC "<<< tc_nat_wan_egress_v4 <<<"
 
-    if (unlikely(tc_nat_egress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        if (unlikely(tc_nat_egress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_LAN_CHAIN_EXIT(skb);
@@ -228,7 +230,9 @@ SEC("tc/ingress")
 int tc_nat_wan_ingress_v4(struct __sk_buff *skb) {
 #define BPF_LOG_TOPIC ">>> tc_nat_wan_ingress_v4 >>>"
 
-    if (unlikely(tc_nat_ingress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        if (unlikely(tc_nat_ingress_v4_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
+    }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_WAN_CHAIN_EXIT(skb);

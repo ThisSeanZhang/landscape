@@ -36,7 +36,11 @@ use std::{
 };
 
 use landscape_common::{
-    flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
+    flow::{
+        FlowMarkInfo,
+        ip_mark::{IpConfig, IpMarkInfo},
+        mark::{FlowMark, FlowMarkAction, MarkType, SocketMark},
+    },
     net::MacAddr,
     sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
@@ -57,7 +61,7 @@ use crate::{
             map_helper::{
                 LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_ROUTE_TYPE,
                 create_route4_cache_inner_map, insert_ip_mac_v4, insert_route4_lan_entry,
-                lookup_rt4_cache_value, seed_flow_match_ip_v4, seed_flow_match_mac,
+                lookup_rt4_cache_value, normal_mark, seed_flow_match_ip_v4, seed_flow_match_mac,
             },
             packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
         },
@@ -155,7 +159,7 @@ fn seed_flow_rule(skel: &TcWanEgressRouteSkel<'_>, dst: Ipv4Addr, mark: u32) {
 /// Seed flow `flow_id`'s ip-trie with a single dst rule.
 fn seed_flow_rule_under(skel: &TcWanEgressRouteSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
-        mark: FlowMark::from(mark),
+        mark: FlowMark::from(mark as u16),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
         priority: 100,
     }];
@@ -217,7 +221,11 @@ fn wan_egress_default_flow_without_slot_target_drops() {
     let (ret, _out, mark, forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_SHOT, "default flow without slot target must drop");
-    assert_eq!(mark, 0x0400_0000, "mark must carry FLOW_FROM_WAN source only");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "mark stays a Normal-layout zero mark"
+    );
     assert_eq!(forwarded, 0);
 }
 
@@ -233,7 +241,7 @@ fn wan_egress_flow_redirect_sets_forwarded_cb() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert_eq!(out, pkt, "no mac rewrite expected for a mac-less slot target");
-    assert_eq!(mark, 0x0400_0305, "mark = flow mark + FLOW_FROM_WAN source");
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false), "mark = rule flow mark");
     assert_eq!(forwarded, 1, "pick_wan must set the forwarded cb flag");
     assert_eq!(chain_id, 9, "pick_wan must stash the target chain id in cb");
     assert_no_route_cache(&skel);
@@ -348,7 +356,7 @@ fn wan_egress_entry_forwarded_tailcalls_target_chain_root() {
     let (ret, _out, mark, forwarded, chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_REDIRECT, "entry → chain root → worker redirects");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
     assert_eq!(chain_id, 9, "chain id rides the cb untouched");
 }
@@ -433,7 +441,7 @@ fn wan_egress_entry_local_traffic_runs_verdict() {
         run_wan_egress_entry(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
     assert_eq!(chain_id, 9);
 }
@@ -503,7 +511,7 @@ fn wan_egress_wan_typed_entry_falls_through_to_pick_wan() {
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
     assert_eq!(ret, RET_SHOT);
-    assert_eq!(mark, 0x0400_0000, "mark must carry the WAN source bits");
+    assert_eq!(mark, normal_mark(FlowMarkAction::KeepGoing, 0, false), "mark keeps the zero mark");
 }
 
 #[test]
@@ -598,7 +606,11 @@ fn wan_egress_flow_redirect_without_slot_target_drops() {
 
     assert_eq!(ret, RET_SHOT, "matched flow without slots must drop");
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0400_0305, "mark is stamped before pick_wan drops");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::Redirect, 5, false),
+        "mark is stamped before pick_wan drops"
+    );
     assert_eq!(forwarded, 0);
 }
 
@@ -685,7 +697,7 @@ fn wan_egress_flow_direct_resets_flow_id_to_default() {
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, 0x0400_0100, "source WAN + DIRECT mark with reset id");
+    assert_eq!(mark, normal_mark(FlowMarkAction::Direct, 0, false), "DIRECT mark with reset id");
 }
 
 #[test]
@@ -709,7 +721,7 @@ fn wan_egress_dns_rule_redirects_when_no_ip_rule() {
     let (ret, _out, mark, forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "dns-only rule must drive the redirect");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
 }
 
@@ -755,7 +767,7 @@ fn wan_egress_dns_rule_higher_priority_loses_to_ip_rule() {
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "lower-priority dns rule must not override");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -772,7 +784,7 @@ fn wan_egress_flow_match_by_src_mac_selects_flow() {
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "mac-classified flow 5 must drive the redirect");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -790,29 +802,30 @@ fn wan_egress_flow_match_by_src_ip_selects_flow() {
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "ip-classified flow 5 must drive the redirect");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
-fn wan_egress_incoming_mark_source_replaced_by_wan() {
-    // A mark arriving with LAN source bits (e.g. traffic re-routed back into
-    // the wan pipe) must be re-stamped with FLOW_FROM_WAN after the verdict.
-    load_skel!("tc-wan-eg-flow-markseed", skel);
+fn wan_egress_preserves_mark_type_tag() {
+    // A host-direct tagged mark (MARK_TYPE_HOST_DIRECT tag, chain id in the
+    // low 16 bits) must pass the egress verdict untouched: with no rule
+    // matching, the verdict keeps the input mark and the tag bit survives.
+    load_skel!("tc-wan-eg-flow-tagkeep", skel);
     assert_no_route_cache(&skel);
-    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None, 0);
 
+    let tag_mark = u32::from(SocketMark::new(MarkType::HostDirect { chain_id: 0x1234 }, 0));
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
     let mut ctx = TestSkb {
         ifindex: LOOPBACK_IFINDEX,
         ingress_ifindex: 0,
-        mark: 0x0200_0000, // FLOW_FROM_LAN source, default flow id
+        mark: tag_mark,
         ..Default::default()
     };
     let (ret, _out, mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut ctx);
 
-    assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, 0x0400_0305, "the LAN source bits must be replaced by FLOW_FROM_WAN");
+    // verdict resolves flow id 0x1234 & 0xFF = 0x34, no slot seeded → drop
+    assert_eq!(ret, RET_SHOT);
+    assert_eq!(mark, tag_mark, "the mark-type tag must pass egress unchanged");
 }
 
 // ---------------------------------------------------------------------------
@@ -835,7 +848,7 @@ fn wan_egress_slot_with_mac_gateway_miss_falls_to_neigh() {
 
     assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
     assert_eq!(out, pkt, "no rewrite happened");
-    assert_eq!(mark, 0x0400_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
 }
 

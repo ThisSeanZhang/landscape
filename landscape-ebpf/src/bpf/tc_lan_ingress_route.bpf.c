@@ -195,7 +195,7 @@ int tc_route4_lan_ingress(struct __sk_buff *skb) {
 
     ret = route4_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
-        skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
+        skb_set_mark(skb, flow_mark);
         return ret;
     }
 
@@ -210,7 +210,7 @@ int tc_route4_lan_ingress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
+    skb_set_mark(skb, flow_mark);
 
     ret = tc_route4_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 
@@ -248,7 +248,7 @@ int tc_route6_lan_ingress(struct __sk_buff *skb) {
 
     ret = route6_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
     if (ret != TC_ACT_OK) {
-        skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
+        skb_set_mark(skb, flow_mark);
         return ret;
     }
 
@@ -263,7 +263,7 @@ int tc_route6_lan_ingress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_LAN));
+    skb_set_mark(skb, flow_mark);
 
     ret = tc_route6_pick_wan_in_lan(skb, current_l3_offset, &context, flow_mark);
 

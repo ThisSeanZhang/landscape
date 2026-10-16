@@ -9,12 +9,13 @@
 #define FLOW_REDIRECT 3
 #define FLOW_ALLOW_REUSE 4
 
-#define FLOW_FROM_UNKNOW 0
-#define FLOW_FROM_HOST 1
-#define FLOW_FROM_LAN 2
-#define FLOW_FROM_WAN 4
+// bits 24-31: mark layout-type tag (Normal layout = 0, HostDirect layout = 1)
+// bits 16-23: trace_mark (reserved for observability, carried by both
+//             layouts, always 0 for now)
+#define MARK_TYPE_NORMAL 0
+#define MARK_TYPE_HOST_DIRECT 1
 
-#define FLOW_SOURCE_MASK 0xFF000000
+#define MARK_TYPE_MASK 0xFF000000
 #define FLOW_ACTION_MASK 0x00007F00
 #define FLOW_ALLOW_REUSE_PORT_MASK 0x00008000
 #define FLOW_ID_MASK 0x000000FF
@@ -61,13 +62,6 @@ static __always_inline void skb_set_mark(struct __sk_buff *skb, u32 v) {
                          : "r"(skb), "r"(v), "i"(__builtin_offsetof(struct __sk_buff, mark)));
 }
 
-// 替换 FLOW_SOURCE_MASK 对应的 24~31 位
-static __always_inline u32 replace_flow_source(u32 original, u8 new_source) {
-    original &= ~FLOW_SOURCE_MASK;               // 清除原来的 Source 部分
-    original |= ((u32)new_source & 0xFF) << 24;  // 设置新的 Source 部分
-    return original;
-}
-
 static __always_inline u8 get_flow_id(u32 original) { return (original & FLOW_ID_MASK); }
 
 // 获取 action
@@ -80,8 +74,17 @@ static __always_inline bool get_flow_allow_reuse_port(u32 original) {
     return (original & FLOW_ALLOW_REUSE_PORT_MASK) != 0;
 }
 
-static __always_inline u8 get_flow_source(u32 original) {
-    return (original & FLOW_SOURCE_MASK) >> 24;
+// Get the mark layout type (bits 24-31)
+static __always_inline u8 get_mark_type(u32 original) { return (original & MARK_TYPE_MASK) >> 24; }
+
+// Whether the mark does NOT use the HostDirect layout
+static __always_inline bool not_host_direct(u32 original) {
+    return get_mark_type(original) != MARK_TYPE_HOST_DIRECT;
+}
+
+// chain_id of the HostDirect layout (bits 0-15)
+static __always_inline u16 get_host_direct_chain_id(u32 original) {
+    return (u16)(original & 0xFFFF);
 }
 
 // INGRESS MARK

@@ -1,5 +1,6 @@
 use crate::repository::{FlowFilterExpr, UpdateActiveModel};
 use landscape_common::flow::ip_mark::WanIpRuleConfig;
+use landscape_common::flow::mark::FlowMark;
 use migration::SimpleExpr;
 use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
@@ -52,7 +53,7 @@ impl From<Model> for WanIpRuleConfig {
             name: entity.name,
             index: entity.index,
             enable: entity.enable,
-            mark: entity.mark.into(),
+            mark: FlowMark::from(entity.mark as u16),
             source: serde_json::from_value(entity.source).unwrap(),
             remark: entity.remark,
             flow_id: entity.flow_id,

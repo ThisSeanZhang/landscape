@@ -1,4 +1,5 @@
 use crate::repository::UpdateActiveModel;
+use landscape_common::flow::mark::FlowMark;
 use landscape_common::wan_service::firewall::FirewallRuleConfig;
 use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
@@ -51,7 +52,7 @@ impl From<Model> for FirewallRuleConfig {
             enable: entity.enable,
             remark: entity.remark,
             items: serde_json::from_value(entity.items).unwrap(),
-            mark: entity.mark.into(),
+            mark: FlowMark::from(entity.mark as u16),
             update_at: entity.update_at,
         }
     }

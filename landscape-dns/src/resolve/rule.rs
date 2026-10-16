@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use landscape_common::dns::error::DnsResult;
 use landscape_common::dns::redirect::DnsRedirectAnswerMode;
-use landscape_common::flow::mark::FlowMark;
+use landscape_common::flow::mark::{FlowMark, SocketMark};
 use landscape_common::{
     dns::{config::DnsUpstreamConfig, rule::FilterResult},
     flow::DnsRuntimeMarkInfo,
@@ -154,7 +154,7 @@ impl DNSResolveRuntime {
         let _ = span.enter();
 
         let enable_ip_validation = upstream.enable_ip_validation.unwrap_or(false);
-        let dns_mark = mark_config.get_dns_mark(flow_id);
+        let dns_mark = SocketMark::get_dns_mark(mark_config, flow_id);
         let Some(resolver) = pool.get_or_create(flow_id, dns_mark, &upstream) else {
             tracing::warn!(rule_id = %rule_id, flow_id = flow_id, "skip DNS rule: failed to build resolver");
             return None;

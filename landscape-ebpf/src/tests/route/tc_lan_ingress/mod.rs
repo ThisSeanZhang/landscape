@@ -10,9 +10,9 @@
 //!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT, i.e. the TC
 //!     worker drops even default-flow traffic, unlike the XDP/legacy twin
 //!     which passes it (DROP default flow branch);
-//!   * the FLOW_FROM_LAN source bits are written to skb->mark only on two
-//!     paths: search-cache non-OK returns and after a OK verdict — lan_redirect
-//!     and flow-verdict short returns leave the mark untouched;
+//!   * skb->mark is written only on two paths: search-cache non-OK returns
+//!     and after a OK verdict — lan_redirect and flow-verdict short returns
+//!     leave the mark untouched;
 //!   * the docker slot branch returns early and never sets the
 //!     TC_CHAIN_CB_FORWARDED_OFFSET cb flag;
 //!   * a cache hit with ifindex != 0 redirects without learning but still
@@ -36,7 +36,11 @@ use std::{
 };
 
 use landscape_common::{
-    flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
+    flow::{
+        FlowMarkInfo,
+        ip_mark::{IpConfig, IpMarkInfo},
+        mark::{FlowMark, FlowMarkAction},
+    },
     net::MacAddr,
     sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
@@ -58,7 +62,7 @@ use crate::{
                 LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
                 WAN_IFINDEX, WAN_ROUTE_TYPE, as_bytes, create_route4_cache_inner_map,
                 insert_ip_mac_v4, insert_route4_lan_entry, lookup_ip_mac_v4,
-                lookup_rt4_cache_value, put_rt4_cache_full, put_rt4_cache_ifindex,
+                lookup_rt4_cache_value, normal_mark, put_rt4_cache_full, put_rt4_cache_ifindex,
                 put_rt4_cache_value, seed_flow_match_ip_v4, seed_flow_match_mac,
             },
             packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
@@ -151,7 +155,7 @@ fn run_lan_ingress(
 /// Seed flow id 0's ip-trie with a single dst rule.
 fn seed_flow_rule(skel: &TcLanIngressRouteSkel<'_>, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
-        mark: FlowMark::from(mark),
+        mark: FlowMark::from(mark as u16),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
         priority: 100,
     }];

@@ -1,5 +1,6 @@
 use crate::repository::{FlowFilterExpr, UpdateActiveModel};
 use landscape_common::dns::rule::DNSRuleConfig;
+use landscape_common::flow::mark::FlowMark;
 use migration::SimpleExpr;
 use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,7 @@ impl From<Model> for DNSRuleConfig {
             enable: entity.enable,
             filter: serde_json::from_value(entity.filter).unwrap(),
             upstream_id: entity.upstream_id,
-            mark: entity.mark.into(),
+            mark: FlowMark::from(entity.mark as u16),
             source: serde_json::from_str(&entity.source).unwrap(),
             flow_id: entity.flow_id,
             update_at: entity.update_at,

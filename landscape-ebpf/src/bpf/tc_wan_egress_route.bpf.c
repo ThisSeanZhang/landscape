@@ -227,7 +227,7 @@ int tc_route4_wan_egress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_WAN));
+    skb_set_mark(skb, flow_mark);
 
     ret = tc_route4_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
@@ -305,7 +305,7 @@ int tc_route6_wan_egress(struct __sk_buff *skb) {
     if (ret != TC_ACT_OK) {
         return ret;
     }
-    skb_set_mark(skb, replace_flow_source(flow_mark, FLOW_FROM_WAN));
+    skb_set_mark(skb, flow_mark);
 
     ret = tc_route6_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 

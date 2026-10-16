@@ -189,7 +189,7 @@ mod tests {
             redirect::{DNSRedirectRule, DnsRedirectAnswerMode},
             rule::{DNSRuleConfig, DomainConfig, DomainMatchType, RuleSource},
         },
-        flow::mark::FlowMark,
+        flow::mark::{FlowMark, SocketMark},
     };
     use landscape_core::geo_cache::{
         GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry, SiteRuleRow,
@@ -607,7 +607,7 @@ mod tests {
     #[tokio::test]
     async fn pool_key_matches_legacy_mark_computation() {
         // Every pooled resolver key must equal the per-rule mark the legacy
-        // code applied: `mark.get_dns_mark(flow_id)`. This pins the SO_MARK put
+        // code applied: `SocketMark::get_dns_mark(mark, flow_id)`. This pins the SO_MARK put
         // on shared upstream connections to exactly the old per-rule value.
         let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
@@ -632,9 +632,9 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                (FlowMark::from(0x0100).get_dns_mark(7), upstream_id), // direct: 0x8000
-                (FlowMark::default().get_dns_mark(5), upstream_id),    // keepgoing flow 5: 0x8005
-                (FlowMark::default().get_dns_mark(7), upstream_id),    // keepgoing flow 7: 0x8007
+                (SocketMark::get_dns_mark(FlowMark::from(0x0100), 7), upstream_id), // direct: 0x8000
+                (SocketMark::get_dns_mark(FlowMark::default(), 5), upstream_id), // keepgoing flow 5: 0x8005
+                (SocketMark::get_dns_mark(FlowMark::default(), 7), upstream_id), // keepgoing flow 7: 0x8007
             ],
         );
     }
@@ -663,7 +663,10 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec![(FlowMark::default().get_dns_mark(5), upstream_id), (0x8007, upstream_id)],
+            vec![
+                (SocketMark::get_dns_mark(FlowMark::default(), 5), upstream_id),
+                (0x8007, upstream_id)
+            ],
         );
     }
 

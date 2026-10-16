@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
+use landscape_common::flow::mark::{FlowMark, FlowMarkAction, MarkType, SocketMark};
 use landscape_common::net::MacAddr;
 use libbpf_rs::{MapCore, MapFlags, MapHandle};
 
@@ -19,6 +20,18 @@ pub(crate) const WAN_IFINDEX: u32 = 6;
 pub(crate) const LAN_ROUTE_TYPE: u8 = 0;
 pub(crate) const ROUTE_TYPE_NEXTHOP: u8 = 1;
 pub(crate) const WAN_ROUTE_TYPE: u8 = 2;
+
+/// Expected-value builder: standard-layout FlowMark -> full mark u32 (encoded
+/// via SocketMark, trace = 0). Behavioural assertions all go through domain
+/// values; the wire format is pinned by the hex-oracle tests in
+/// landscape-common's mark.rs, so this file stays untouched when the layout
+/// changes.
+pub(crate) fn normal_mark(action: FlowMarkAction, flow_id: u8, allow_reuse_port: bool) -> u32 {
+    u32::from(SocketMark::new(
+        MarkType::Normal(FlowMark::new(action, flow_id, allow_reuse_port)),
+        0,
+    ))
+}
 
 pub(crate) fn local_addr() -> Ipv6Addr {
     Ipv6Addr::from_str("fd00::10").unwrap()

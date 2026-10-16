@@ -150,7 +150,9 @@ static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_o
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
-    clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+    }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_WAN_CHAIN_EXIT(skb);
@@ -159,7 +161,9 @@ int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
-    clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+    }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_WAN_CHAIN_EXIT(skb);
@@ -168,7 +172,9 @@ int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
-    clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+    }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_LAN_CHAIN_EXIT(skb);
@@ -177,7 +183,9 @@ int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_mss_wan_egress_v6(struct __sk_buff *skb) {
-    clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+    if (likely(not_host_direct(skb_mark(skb)))) {
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+    }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_LAN_CHAIN_EXIT(skb);

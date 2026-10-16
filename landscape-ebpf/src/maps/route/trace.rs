@@ -263,7 +263,8 @@ fn trace_flow_verdict_single_v4(
         }
         let val = FlowIpTrieValueV4::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
-            mark: FlowMark::from(val.mark),
+            // The map value is a payload-only standard layout; decode the low 16 bits
+            mark: FlowMark::from(val.mark as u16),
             priority: val.priority,
         })
     })();
@@ -282,7 +283,8 @@ fn trace_flow_verdict_single_v4(
         }
         let val = FlowDnsMatchValueV4::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
-            mark: FlowMark::from(val.mark),
+            // The map value is a payload-only standard layout; decode the low 16 bits
+            mark: FlowMark::from(val.mark as u16),
             priority: val.priority,
         })
     })();
@@ -315,7 +317,8 @@ fn trace_flow_verdict_single_v6(
         }
         let val = FlowIpTrieValueV6::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
-            mark: FlowMark::from(val.mark),
+            // The map value is a payload-only standard layout; decode the low 16 bits
+            mark: FlowMark::from(val.mark as u16),
             priority: val.priority,
         })
     })();
@@ -334,7 +337,8 @@ fn trace_flow_verdict_single_v6(
         }
         let val = FlowDnsMatchValueV6::read_from_bytes(&val_bytes).ok()?;
         Some(FlowRuleMatchResult {
-            mark: FlowMark::from(val.mark),
+            // The map value is a payload-only standard layout; decode the low 16 bits
+            mark: FlowMark::from(val.mark as u16),
             priority: val.priority,
         })
     })();

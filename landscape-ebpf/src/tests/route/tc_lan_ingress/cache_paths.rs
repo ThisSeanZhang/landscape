@@ -26,7 +26,11 @@ fn lan_ingress_lan_cache_hit_short_circuits_without_learning() {
     let (ret, _out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "cache hit must redirect straight away");
-    assert_eq!(mark, 0x0200_0305, "mark must come from the cache mark value");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::Redirect, 5, false),
+        "mark must come from the cache mark value"
+    );
     assert_eq!(forwarded, 1, "route4_redirect_by_cached_target stamps the cb forwarded flag");
     assert!(
         lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none(),
@@ -53,7 +57,7 @@ fn lan_ingress_lan_cache_hit_with_zero_ifindex_falls_back_to_pick_wan() {
     let (ret, _out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1, "the legacy pick_wan stamps the cb forwarded flag itself");
 
     let cache = lookup_rt4_cache_value(
@@ -91,7 +95,7 @@ fn lan_ingress_lan_cache_same_ifindex_entry_hands_to_stack() {
 
     assert_eq!(ret, RET_UNSPEC, "cached target on the incoming device must pass");
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -124,7 +128,7 @@ fn lan_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
     assert_eq!(&out[0..6], &gw_mac.octets(), "dst = ip_mac[gate_addr].mac");
     assert_eq!(&out[6..12], &entry_mac, "src = cached entry mac");
     assert_eq!(&out[12..14], &[0x08, 0x00]);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -175,7 +179,7 @@ fn lan_ingress_lan_cache_docker_entry_pushes_vlan_and_redirects() {
     assert_eq!(ret, RET_REDIRECT);
     // bpf_skb_vlan_push only sets the hwaccel tag under PROG_TEST_RUN.
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -200,7 +204,7 @@ fn lan_ingress_lan_cache_zero_ifindex_same_device_slot_passes() {
 
     assert_eq!(ret, RET_UNSPEC, "slot on the incoming device must pass");
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -224,7 +228,7 @@ fn lan_ingress_lan_cache_zero_ifindex_without_slot_drops() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_SHOT, "non-zero cached flow without slots must drop");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -251,7 +255,11 @@ fn lan_ingress_lan_cache_zero_ifindex_default_flow_passes() {
 
     assert_eq!(ret, RET_UNSPEC, "legacy pick_wan passes default-flow traffic");
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0200_0000, "wrapper stamps the LAN source on the search-cache return");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "wrapper keeps the zero mark on the search-cache return"
+    );
 }
 
 #[test]
@@ -325,7 +333,11 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     assert_eq!(&out[0..6], &next_hop.octets());
     assert_eq!(&out[6..12], &dev_mac.octets());
     assert_eq!(&out[12..14], &[0x08, 0x00]);
-    assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "WAN-cache hit keeps the original mark value (0)"
+    );
     assert_eq!(forwarded, 1, "the WAN-cache branch stamps the cb forwarded flag");
 }
 
@@ -382,7 +394,11 @@ fn lan_ingress_wan_cache_no_mac_entry_redirects_directly() {
 
     assert_eq!(ret, RET_REDIRECT, "mac-less WAN-cache entry redirects directly");
     assert_eq!(out, pkt);
-    assert_eq!(mark, 0x0200_0000, "WAN-cache hit keeps the original mark value (0)");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "WAN-cache hit keeps the original mark value (0)"
+    );
     assert_eq!(forwarded, 1, "the WAN-cache branch stamps the cb forwarded flag");
 }
 
@@ -406,7 +422,7 @@ fn lan_ingress_wan_cache_hit_without_wan_binding_is_inert() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_SHOT, "no binding → WAN-cache entry is inert → default drop");
-    assert_eq!(mark, 0x0200_0000);
+    assert_eq!(mark, normal_mark(FlowMarkAction::KeepGoing, 0, false));
     assert!(
         lookup_rt4_cache_value(
             &skel.maps.rt4_cache_map,

@@ -112,7 +112,11 @@ fn lan_ingress_default_flow_without_slot_target_drops() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_SHOT, "default flow without slot target must drop");
-    assert_eq!(mark, 0x0200_0000, "mark must carry FLOW_FROM_LAN source only");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "mark stays a Normal-layout zero mark"
+    );
     assert!(
         lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_some(),
         "neighbour learning happens before the verdict/lookup"
@@ -140,7 +144,7 @@ fn lan_ingress_flow_redirect_populates_lan_cache() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert_eq!(out, pkt, "no mac rewrite expected for a mac-less slot target");
-    assert_eq!(mark, 0x0200_0305, "mark = flow mark + FLOW_FROM_LAN source");
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false), "mark = rule flow mark");
     assert_eq!(forwarded, 1, "pick_wan must set the forwarded cb flag");
 
     let cache = lookup_rt4_cache_value(
@@ -190,7 +194,7 @@ fn lan_ingress_flow_direct_resets_flow_id_to_default() {
     load_skel!("tc-lan-flow-direct", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     let rules = vec![IpMarkInfo {
-        mark: FlowMark::from(FLOW_DIRECT_MARK),
+        mark: FlowMark::from(FLOW_DIRECT_MARK as u16),
         cidr: IpConfig { ip: IpAddr::V4(remote_wan_addr()), prefix: 32 },
         priority: 100,
     }];
@@ -207,7 +211,7 @@ fn lan_ingress_flow_direct_resets_flow_id_to_default() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, 0x0200_0100, "source LAN + DIRECT mark with reset id");
+    assert_eq!(mark, normal_mark(FlowMarkAction::Direct, 0, false), "DIRECT mark with reset id");
 
     let cache = lookup_rt4_cache_value(
         &skel.maps.rt4_cache_map,
@@ -315,7 +319,7 @@ fn lan_ingress_flow_redirect_zero_flag_stays_disabled() {
 /// Seed flow `flow_id`'s ip-trie with a single dst rule.
 fn seed_flow_rule_under(skel: &TcLanIngressRouteSkel<'_>, flow_id: u32, dst: Ipv4Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
-        mark: FlowMark::from(mark),
+        mark: FlowMark::from(mark as u16),
         cidr: IpConfig { ip: IpAddr::V4(dst), prefix: 32 },
         priority: 100,
     }];
@@ -336,7 +340,7 @@ fn lan_ingress_flow_match_by_src_mac_selects_flow() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "mac-classified flow 5 must drive the redirect");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -352,7 +356,7 @@ fn lan_ingress_flow_match_by_src_ip_selects_flow() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "ip-classified flow 5 must drive the redirect");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
@@ -371,7 +375,10 @@ fn lan_ingress_flow_match_ip_entry_overrides_mac_entry() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_SHOT, "resolved flow 7 has no slots → drop");
-    assert_eq!(mark, 0x0200_0007, "mark must carry the ip-resolved flow id 7");
+    // verdict rewrites the flow id into the mark for KEEP_GOING (C-side
+    // replace_flow_id); the config FlowMark encoder deliberately does not
+    // express this (normalization), so the runtime value is asserted directly.
+    assert_eq!(mark, 7, "mark must carry the ip-resolved flow id 7");
 }
 
 #[test]
@@ -395,7 +402,7 @@ fn lan_ingress_dns_rule_redirects_when_no_ip_rule() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "dns-only rule must drive the redirect");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     let cache = lookup_rt4_cache_value(
         &skel.maps.rt4_cache_map,
         LAN_CACHE,
@@ -450,7 +457,7 @@ fn lan_ingress_dns_rule_higher_priority_loses_to_ip_rule() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT, "lower-priority dns rule must not override");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +509,11 @@ fn lan_ingress_lan_map_wan_typed_other_falls_to_verdict_drop() {
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_SHOT, "fall-through reaches the default-flow drop");
-    assert_eq!(mark, 0x0200_0000, "verdict path stamps the LAN source bits");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "verdict path keeps the zero mark"
+    );
 }
 
 #[test]
@@ -550,7 +561,7 @@ fn lan_ingress_flow_slot_with_mac_rewrites_header() {
     assert_eq!(&out[0..6], &gw_mac.octets());
     assert_eq!(&out[6..12], &target_mac.octets());
     assert_eq!(&out[12..14], &[0x08, 0x00]);
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
 }
 
@@ -569,7 +580,7 @@ fn lan_ingress_flow_slot_on_ingress_iface_sets_cb_and_redirects() {
 
     assert_eq!(ret, RET_REDIRECT, "same-ingress slot must still redirect");
     assert_eq!(out, pkt, "no rewrite expected for a mac-less slot target");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1, "the cb flag is stamped outside the rewrite block");
 
     let cache = lookup_rt4_cache_value(
@@ -599,7 +610,7 @@ fn lan_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
 
     assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
     assert_eq!(out, pkt, "no rewrite happened");
-    assert_eq!(mark, 0x0200_0305);
+    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
 
     let cache = lookup_rt4_cache_value(

@@ -12,7 +12,11 @@ use std::{
 };
 
 use landscape_common::{
-    flow::{FlowMarkInfo, ip_mark::IpConfig, ip_mark::IpMarkInfo, mark::FlowMark},
+    flow::{
+        FlowMarkInfo,
+        ip_mark::{IpConfig, IpMarkInfo},
+        mark::{FlowMark, FlowMarkAction},
+    },
     net::MacAddr,
     sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
 };
@@ -34,8 +38,8 @@ use crate::{
                 LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
                 WAN_IFINDEX, WAN_ROUTE_TYPE, as_bytes, create_route6_cache_inner_map, gateway_addr,
                 insert_ip_mac_v6, insert_route6_lan_entry, local_addr, lookup_ip_mac_v6,
-                lookup_rt6_cache_value, put_rt6_cache_full, put_rt6_cache_value, remote_addr,
-                seed_flow_match_mac,
+                lookup_rt6_cache_value, normal_mark, put_rt6_cache_full, put_rt6_cache_value,
+                remote_addr, seed_flow_match_mac,
             },
             packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
         },
@@ -119,7 +123,7 @@ fn run_lan6_ingress(
 
 fn seed_flow_rule_under(skel: &TcLanIngressRouteSkel<'_>, flow_id: u32, dst: Ipv6Addr, mark: u32) {
     let rules = vec![IpMarkInfo {
-        mark: FlowMark::from(mark),
+        mark: FlowMark::from(mark as u16),
         cidr: IpConfig { ip: IpAddr::V6(dst), prefix: 128 },
         priority: 100,
     }];
