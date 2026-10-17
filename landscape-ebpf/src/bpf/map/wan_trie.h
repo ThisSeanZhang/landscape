@@ -5,17 +5,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
-/* libbpf 1.7's bpf_helpers.h does not ship the __arena macro yet */
-#ifndef __arena
-#define __arena __attribute__((address_space(1)))
-#endif
-
-/* The pinned vmlinux.h predates BPF_MAP_TYPE_ARENA, so use its raw value;
- * libbpf-sys 1.7 only needs the number when parsing the ELF .maps section.
- */
-#ifndef BPF_MAP_TYPE_ARENA_V
-#define BPF_MAP_TYPE_ARENA_V 33
-#endif
+#include "map/arena.h"
 
 /* Node pool size per half. All programs (production and bench) use the
  * default 2048, i.e. a ~4.2MB arena per loaded program. To shrink it,

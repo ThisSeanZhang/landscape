@@ -37,14 +37,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-
-#ifndef __arena
-#define __arena __attribute__((address_space(1)))
-#endif
-
-#ifndef BPF_MAP_TYPE_ARENA_V
-#define BPF_MAP_TYPE_ARENA_V 33
-#endif
+#include "map/arena.h"
 
 #define BENCH_IDX_SLOTS 512 /* power of two */
 #define BENCH_IDX_MASK (BENCH_IDX_SLOTS - 1)
@@ -622,36 +615,12 @@ static __always_inline void bench_bitmap_clear(int port) {
     __sync_fetch_and_and(w, ~(1ULL << (port % 64)));
 }
 
-/* Hand-emitted BPF_ADDR_SPACE_CAST instruction (off=1, imm=1 → verifier
- * types the register PTR_TO_ARENA). The opaque volatile asm boundary is the
- * kernel selftests' own trick (BPF_ARENA_FORCE_ASM): LLVM cannot fold or
- * copy-propagate through it, which kills the "re-materialize arena
- * addressing without the addr_space_cast" miscompile under register
- * pressure (same clang quirk as arena_share.bpf.c). */
-#define BENCH_ADDR_SPACE_CAST 1
-#define BENCH_CAST_KERN(var)                                                  \
-    asm volatile(".byte 0xBF;     "                                            \
-                 ".ifc %[reg], r0; .byte 0x00; .endif; "                      \
-                 ".ifc %[reg], r1; .byte 0x11; .endif; "                      \
-                 ".ifc %[reg], r2; .byte 0x22; .endif; "                      \
-                 ".ifc %[reg], r3; .byte 0x33; .endif; "                      \
-                 ".ifc %[reg], r4; .byte 0x44; .endif; "                      \
-                 ".ifc %[reg], r5; .byte 0x55; .endif; "                      \
-                 ".ifc %[reg], r6; .byte 0x66; .endif; "                      \
-                 ".ifc %[reg], r7; .byte 0x77; .endif; "                      \
-                 ".ifc %[reg], r8; .byte 0x88; .endif; "                      \
-                 ".ifc %[reg], r9; .byte 0x99; .endif; "                      \
-                 ".short %[off]; "                                            \
-                 ".long %[as]"                                                \
-                 : [reg] "+r"(var)                                            \
-                 : [off] "i"(BENCH_ADDR_SPACE_CAST), [as] "i"(1))
-
 /* Session/endpoint init take the member address as a raw u64 and pin it
  * through the asm cast above: plain __arena GEPs get re-materialized by
  * clang under pressure, the asm pin cannot be. */
 static __noinline void bench_sess_init(u64 sess_addr, u64 sid_port, u64 addrs, u64 ports_ep, u64 now) {
     struct bench_session *sess = (struct bench_session *)sess_addr;
-    BENCH_CAST_KERN(sess);
+    ARENA_CAST_KERN(sess);
     u32 port = sid_port >> 32;
     sess->state_word = 0;
     sess->client_ip = (u32)addrs;
@@ -673,7 +642,7 @@ static __noinline void bench_sess_init(u64 sess_addr, u64 sid_port, u64 addrs, u
 
 static __noinline void bench_ep_init(u64 ep_addr, u32 daddr, u32 dport_nat) {
     struct bench_endpoint *e = (struct bench_endpoint *)ep_addr;
-    BENCH_CAST_KERN(e);
+    ARENA_CAST_KERN(e);
     e->state_ref = (1ULL << 56) | 1;
     e->trigger_ip = daddr;
     e->trigger_port = (u16)dport_nat;
@@ -771,19 +740,19 @@ int bench_static_hash(struct xdp_md *ctx) {
 /* asm-cast pins for the runtime-indexed static-section pointers. */
 static __always_inline struct bench_st_entry *bench_st_at(u32 i) {
     struct bench_st_entry *e = (struct bench_st_entry *)(u64)&bench_tbl.st_table[i];
-    BENCH_CAST_KERN(e);
+    ARENA_CAST_KERN(e);
     return e;
 }
 
 static __always_inline struct bench_st_idx_slot *bench_st_idx_at(u32 i) {
     struct bench_st_idx_slot *s = (struct bench_st_idx_slot *)(u64)&bench_tbl.st_idx[i];
-    BENCH_CAST_KERN(s);
+    ARENA_CAST_KERN(s);
     return s;
 }
 
 static __always_inline u64 bench_st_direct_at(u16 port) {
     u64 *p = (u64 *)(u64)&bench_tbl.st_direct[port];
-    BENCH_CAST_KERN(p);
+    ARENA_CAST_KERN(p);
     return *p;
 }
 
