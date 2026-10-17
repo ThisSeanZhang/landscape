@@ -9,12 +9,10 @@ use libbpf_rs::{
 };
 
 use crate::tests::{
-    route::packet_builder::{
-        simple_ipv4_tcp, simple_ipv4_udp, simple_ipv6_tcp_syn, simple_ipv6_udp,
-    },
-    scanner::package::{build_ipv6_frag_eth, build_ipv6_frag_nonfirst_eth},
+    helper::wire::RoutePacketTestResult,
+    pkt::{build_ipv6_frag_eth, build_ipv6_frag_nonfirst_eth},
+    pkt::{simple_ipv4_tcp, simple_ipv4_udp, simple_ipv6_tcp_syn, simple_ipv6_udp},
     test_route_packet::TestRoutePacketSkelBuilder,
-    wire::RoutePacketTestResult,
 };
 use zerocopy::FromBytes;
 

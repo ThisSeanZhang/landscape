@@ -6,12 +6,10 @@ use libbpf_rs::{
 };
 
 use crate::tests::{
+    helper::map::{local_addr, remote_addr},
     isolated_pin_root,
-    route::{
-        map_helper::{local_addr, remote_addr},
-        packet_builder::simple_ipv6_tcp_syn,
-        test_route::TestRouteSkelBuilder,
-    },
+    pkt::simple_ipv6_tcp_syn,
+    route::test_route::TestRouteSkelBuilder,
 };
 
 #[test]

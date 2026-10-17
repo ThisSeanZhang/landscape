@@ -23,7 +23,7 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::tests::TestSkb;
-use crate::tests::route::map_helper::host_direct_mark;
+use crate::tests::helper::map::host_direct_mark;
 
 use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
 

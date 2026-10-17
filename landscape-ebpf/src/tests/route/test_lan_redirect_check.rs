@@ -34,15 +34,13 @@ use libbpf_rs::{
 };
 
 use crate::tests::{
-    isolated_pin_root,
-    route::{
-        map_helper::{
-            LAN_ROUTE_TYPE, TARGET_IFINDEX, WAN_ROUTE_TYPE, insert_ip_mac_v6,
-            insert_route4_lan_entry, insert_route6_lan_entry,
-        },
-        packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
-        test_route::TestRouteSkelBuilder,
+    helper::map::{
+        LAN_ROUTE_TYPE, TARGET_IFINDEX, WAN_ROUTE_TYPE, insert_ip_mac_v6, insert_route4_lan_entry,
+        insert_route6_lan_entry,
     },
+    isolated_pin_root,
+    pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
+    route::test_route::TestRouteSkelBuilder,
 };
 
 /// Observed PROG_TEST_RUN return values (see module docs).

@@ -9,15 +9,13 @@ use libbpf_rs::{
 use crate::{
     maps::wan::add_wan_ip,
     tests::{
-        isolated_pin_root,
-        route::{
-            map_helper::{
-                TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr,
-                insert_ip_mac_v6, local_addr, put_rt6_cache_ifindex, remote_addr, wan_addr,
-            },
-            packet_builder::simple_ipv6_tcp_syn,
-            test_route::TestRouteSkelBuilder,
+        helper::map::{
+            TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr,
+            insert_ip_mac_v6, local_addr, put_rt6_cache_ifindex, remote_addr, wan_addr,
         },
+        isolated_pin_root,
+        pkt::simple_ipv6_tcp_syn,
+        route::test_route::TestRouteSkelBuilder,
     },
 };
 

@@ -14,15 +14,14 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::tests::{
-    TestSkb, isolated_pin_root,
-    route::{
-        map_helper::{
-            LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
-            WAN_ROUTE_TYPE, as_bytes, create_route6_cache_inner_map, insert_ip_mac_v6,
-            insert_route6_lan_entry, lookup_rt6_cache_value, put_rt6_cache_value,
-        },
-        packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
+    TestSkb,
+    helper::map::{
+        LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
+        WAN_ROUTE_TYPE, as_bytes, create_route6_cache_inner_map, insert_ip_mac_v6,
+        insert_route6_lan_entry, lookup_rt6_cache_value, put_rt6_cache_value,
     },
+    isolated_pin_root,
+    pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
 };
 
 use crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkel;

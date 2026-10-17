@@ -590,7 +590,8 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 /// expect under their `pin_root_path`). Integration tests use this to stand
 /// up the shared maps inside an isolated bpffs directory before loading the
 /// programs under test.
-#[cfg(all(test, feature = "bpf-test"))]
+#[cfg(all(test, feature = "test-support"))]
+#[cfg_attr(not(feature = "bpf-test"), allow(dead_code))]
 pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("test init wan_ip_binding");
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("test init nat6_static_map");

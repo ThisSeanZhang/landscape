@@ -7,10 +7,10 @@ use libbpf_rs::{
 
 use zerocopy::FromBytes;
 
+use crate::tests::helper::wire::SkbScanResult;
 use crate::tests::test_xdp_scanner_skel::TestXdpScannerSkelBuilder;
-use crate::tests::wire::SkbScanResult;
 
-use super::package::*;
+use crate::tests::pkt::*;
 
 const MAP_KEY: u32 = 0;
 

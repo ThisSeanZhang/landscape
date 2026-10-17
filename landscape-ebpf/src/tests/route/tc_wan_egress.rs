@@ -56,15 +56,14 @@ use crate::{
         route::replace_wan_route_slots_v4_with_map,
     },
     tests::{
-        TestSkb, isolated_pin_root,
-        route::{
-            map_helper::{
-                LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_ROUTE_TYPE,
-                create_route4_cache_inner_map, insert_ip_mac_v4, insert_route4_lan_entry,
-                lookup_rt4_cache_value, normal_mark, seed_flow_match_ip_v4, seed_flow_match_mac,
-            },
-            packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
+        TestSkb,
+        helper::map::{
+            LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_ROUTE_TYPE,
+            create_route4_cache_inner_map, insert_ip_mac_v4, insert_route4_lan_entry,
+            lookup_rt4_cache_value, normal_mark, seed_flow_match_ip_v4, seed_flow_match_mac,
         },
+        isolated_pin_root,
+        pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
     },
 };
 
@@ -181,10 +180,7 @@ fn seed_wan_slots(
 
 fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    create_route4_cache_inner_map(
-        &skel.maps.rt4_cache_map,
-        crate::tests::route::map_helper::WAN_CACHE,
-    );
+    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, crate::tests::helper::map::WAN_CACHE);
     assert!(
         lookup_rt4_cache_value(
             &skel.maps.rt4_cache_map,
@@ -197,7 +193,7 @@ fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {
     assert!(
         lookup_rt4_cache_value(
             &skel.maps.rt4_cache_map,
-            crate::tests::route::map_helper::WAN_CACHE,
+            crate::tests::helper::map::WAN_CACHE,
             local_addr(),
             remote_wan_addr()
         )
@@ -788,7 +784,7 @@ fn wan_egress_flow_match_by_src_mac_selects_flow() {
 fn wan_egress_flow_match_by_src_ip_selects_flow() {
     // match_flow_id_v4 IP row: same classification via the /32 src address.
     // The key mirrors the BPF construction (mac[4..6] union-tail leak, see
-    // map_helper::seed_flow_match_ip_v4).
+    // crate::tests::helper::map::seed_flow_match_ip_v4).
     load_skel!("tc-wan-eg-class-ip", skel);
     assert_no_route_cache(&skel);
     seed_flow_match_ip_v4(&skel.maps.flow_match_map, local_addr(), CLIENT_MAC, 5);

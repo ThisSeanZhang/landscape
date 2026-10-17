@@ -19,7 +19,7 @@ use libbpf_rs::{
 };
 use zerocopy::IntoBytes;
 
-use crate::tests::{TestSkb, isolated_pin_root, route::packet_builder::simple_ipv4_tcp};
+use crate::tests::{TestSkb, isolated_pin_root, pkt::simple_ipv4_tcp};
 
 pub(crate) mod test_mark_type {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_mark_type.skel.rs"));

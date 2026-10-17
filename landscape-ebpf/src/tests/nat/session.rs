@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use crate::tests::net_utils::{VethPair, send_raw_packet, settle, wait_for};
+use crate::tests::helper::net::{VethPair, send_raw_packet, settle, wait_for};
 use libbpf_rs::{
     MapCore, MapFlags,
     skel::{OpenSkel, SkelBuilder as _},

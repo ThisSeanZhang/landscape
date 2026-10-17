@@ -56,7 +56,7 @@ mod tests {
 
     /// Cross-check against the real generated skeleton types (the only
     /// consumer of the header today is the benchmark program).
-    #[cfg(all(test, feature = "bpf-test"))]
+    #[cfg(all(test, feature = "bench"))]
     #[test]
     fn wan_trie_layouts_match_bench_skel() {
         use crate::bench::bench_wan_dispatch::types as skel;

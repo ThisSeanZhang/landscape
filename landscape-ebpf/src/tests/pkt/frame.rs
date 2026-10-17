@@ -1,4 +1,3 @@
-// tests/gen_packets.rs  或 src/test_pkgs.rs
 use etherparse::{
     IcmpEchoHeader, Icmpv4Header, Icmpv4Type, IpFragOffset, IpHeaders, IpNumber, Ipv4Extensions,
     Ipv4Header, PacketBuilder, icmpv4::DestUnreachableHeader,
@@ -10,7 +9,7 @@ fn default_payload() -> Vec<u8> {
 }
 
 /// 1) IPv4 Ethernet + TCP (normal, not fragmented)
-pub fn build_ipv4_tcp_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_tcp_eth() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], // src mac
         [0x11, 0x22, 0x33, 0x44, 0x55, 0x66], // dst mac
@@ -25,7 +24,7 @@ pub fn build_ipv4_tcp_eth() -> Vec<u8> {
 }
 
 /// 2) IPv4 Ethernet + UDP (normal)
-pub fn build_ipv4_udp_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_udp_eth() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
         [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
@@ -42,7 +41,7 @@ pub fn build_ipv4_udp_eth() -> Vec<u8> {
 /// 3) IPv4 Ethernet + TCP — first fragment (MF = 1, fragment offset = 0)
 ///    Use PacketBuilder::ip with an explicit Ipv4Header where we set `more_fragments = true`.
 ///    IPv4 Ethernet + TCP — first fragment (MF = 1, fragment offset = 0)
-pub fn build_ipv4_frag_first_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_frag_first_eth() -> Vec<u8> {
     let l4_payload = default_payload();
 
     // 构造一个 IPv4 header 实例，注意这里 payload_len 暂时填 0，
@@ -67,7 +66,7 @@ pub fn build_ipv4_frag_first_eth() -> Vec<u8> {
 }
 
 /// 4) IPv4 Ethernet + payload-only fragment (non-first, offset != 0)
-pub fn build_ipv4_frag_nonfirst_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_frag_nonfirst_eth() -> Vec<u8> {
     let fragment_payload = vec![0xABu8; 32];
 
     let mut ipv4 =
@@ -92,7 +91,7 @@ pub fn build_ipv4_frag_nonfirst_eth() -> Vec<u8> {
 }
 
 /// 5) ICMP Echo Request (IPv4)
-pub fn build_icmpv4_echo_eth() -> Vec<u8> {
+pub(crate) fn build_icmpv4_echo_eth() -> Vec<u8> {
     let icmp = Icmpv4Header {
         icmp_type: Icmpv4Type::EchoRequest(IcmpEchoHeader { id: 0, seq: 0 }), // echo request
         checksum: 0,
@@ -118,7 +117,7 @@ pub fn build_icmpv4_echo_eth() -> Vec<u8> {
 
 /// 6) ICMPv4 Error (Destination Unreachable)
 ///    ICMPv4 Error (Destination Unreachable) — 外层 ICMP 包含内层 IP 头 + 8 字节内层 L4
-pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
+pub(crate) fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
     // 1) 构建内层报文（触发 ICMP error 的原始包）
     let inner_builder = PacketBuilder::ipv4(
         [10, 0, 0, 1], // 内层源 IP
@@ -172,7 +171,7 @@ pub fn build_icmpv4_error_with_inner_ipv4_eth() -> Vec<u8> {
 }
 
 /// ICMPv4 error containing an inner IPv4 header and the first 8 TCP bytes.
-pub fn build_icmpv4_error_with_inner_tcp_min_quote_eth() -> Vec<u8> {
+pub(crate) fn build_icmpv4_error_with_inner_tcp_min_quote_eth() -> Vec<u8> {
     let inner_builder =
         PacketBuilder::ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64).tcp(1234, 4321, 0x12345678, 4096);
     let mut inner_bytes = Vec::with_capacity(inner_builder.size(0));
@@ -193,7 +192,7 @@ pub fn build_icmpv4_error_with_inner_tcp_min_quote_eth() -> Vec<u8> {
 }
 
 /// ICMPv6 error with inner IPv6 UDP packet
-pub fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
+pub(crate) fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
     let inner_src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1];
     let inner_dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2];
     let inner_builder = PacketBuilder::ipv6(inner_src, inner_dst, 64).udp(1234, 4321);
@@ -219,7 +218,7 @@ pub fn build_icmpv6_error_with_inner_ipv6_eth() -> Vec<u8> {
     packet
 }
 
-pub fn build_ipv6_udp_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_udp_eth() -> Vec<u8> {
     let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let builder = PacketBuilder::ethernet2(
@@ -236,7 +235,7 @@ pub fn build_ipv6_udp_eth() -> Vec<u8> {
 }
 
 /// 7) IPv6 Ethernet + TCP
-pub fn build_ipv6_tcp_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_tcp_eth() -> Vec<u8> {
     let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
 
@@ -254,7 +253,7 @@ pub fn build_ipv6_tcp_eth() -> Vec<u8> {
 }
 
 /// 8) IPv6 Ethernet + TCP — 分片示例
-pub fn build_ipv6_frag_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_frag_eth() -> Vec<u8> {
     let bytes = [
         0x00, 0x0c, 0x29, 0x25, 0xcf, 0xa1, 0x00, 0x0c, 0x29, 0x23, 0x16, 0x87, 0x86, 0xdd, 0x60,
         0x0a, 0x89, 0xf8, 0x04, 0xe8, 0x2c, 0x40, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00,
@@ -348,7 +347,7 @@ pub fn build_ipv6_frag_eth() -> Vec<u8> {
     bytes.to_vec()
 }
 
-pub fn build_ipv6_frag_nonfirst_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_frag_nonfirst_eth() -> Vec<u8> {
     let bytes = [
         0x00, 0x0c, 0x29, 0x23, 0x16, 0x87, 0x00, 0x0c, 0x29, 0x25, 0xcf, 0xa1, 0x86, 0xdd, 0x60,
         0x06, 0xad, 0x33, 0x02, 0x38, 0x2c, 0x3d, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00,
@@ -397,7 +396,7 @@ pub fn build_ipv6_frag_nonfirst_eth() -> Vec<u8> {
 }
 
 /// IPv4 Ethernet + TCP SYN
-pub fn build_ipv4_tcp_syn_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_tcp_syn_eth() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
         [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
@@ -413,7 +412,7 @@ pub fn build_ipv4_tcp_syn_eth() -> Vec<u8> {
 }
 
 /// IPv4 Ethernet + TCP RST
-pub fn build_ipv4_tcp_rst_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_tcp_rst_eth() -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
         [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
@@ -429,7 +428,7 @@ pub fn build_ipv4_tcp_rst_eth() -> Vec<u8> {
 }
 
 /// IPv6 Ethernet + Hop-by-Hop ext header + UDP
-pub fn build_ipv6_hop_udp_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_hop_udp_eth() -> Vec<u8> {
     let src: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     let dst: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
     let payload = default_payload();
@@ -469,7 +468,7 @@ pub fn build_ipv6_hop_udp_eth() -> Vec<u8> {
 }
 
 /// IPv4 fragment non-first, offset=3 (8-byte off 24), no MF → FRAG_LAST
-pub fn build_ipv4_frag_nonfirst_offset3_eth() -> Vec<u8> {
+pub(crate) fn build_ipv4_frag_nonfirst_offset3_eth() -> Vec<u8> {
     let fragment_payload = vec![0xABu8; 32];
 
     let mut ipv4 =
@@ -492,7 +491,7 @@ pub fn build_ipv4_frag_nonfirst_offset3_eth() -> Vec<u8> {
 }
 
 /// IPv6 fragment non-first with offset=50 (0x0190, 50 << 3), MF=0 → FRAG_LAST
-pub fn build_ipv6_frag_nonfirst_offset50_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_frag_nonfirst_offset50_eth() -> Vec<u8> {
     let bytes = [
         0x00, 0x0c, 0x29, 0x23, 0x16, 0x87, 0x00, 0x0c, 0x29, 0x25, 0xcf, 0xa1, 0x86, 0xdd, 0x60,
         0x06, 0xad, 0x33, 0x02, 0x38, 0x2c, 0x3d, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00,
@@ -504,7 +503,7 @@ pub fn build_ipv6_frag_nonfirst_offset50_eth() -> Vec<u8> {
 }
 
 /// IPv6 fragment middle with offset=100 (0x0321, 100 << 3 | MF=1) → FRAG_MIDDLE
-pub fn build_ipv6_frag_middle_eth() -> Vec<u8> {
+pub(crate) fn build_ipv6_frag_middle_eth() -> Vec<u8> {
     let bytes = [
         0x00, 0x0c, 0x29, 0x23, 0x16, 0x87, 0x00, 0x0c, 0x29, 0x25, 0xcf, 0xa1, 0x86, 0xdd, 0x60,
         0x06, 0xad, 0x33, 0x02, 0x38, 0x2c, 0x3d, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00,
@@ -513,4 +512,31 @@ pub fn build_ipv6_frag_middle_eth() -> Vec<u8> {
         0x74, 0x95, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
     ];
     bytes.to_vec()
+}
+
+/// ICMPv4 dest-unreachable wrapping a minimal inner TCP header (20 bytes):
+/// used by tproxy port-reversal checks. Ex `tests/tproxy/mod.rs`.
+pub(crate) fn build_icmpv4_error_with_inner_tcp_eth() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+    bytes.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+    bytes.extend_from_slice(&[0x08, 0x00]);
+
+    let outer_total_len: u16 = 20 + 8 + 20 + 20;
+    bytes.extend_from_slice(&[0x45, 0, 0, 0]);
+    bytes[16..18].copy_from_slice(&outer_total_len.to_be_bytes());
+    bytes.extend_from_slice(&[0, 1, 0, 0, 64, 1, 0, 0]);
+    bytes.extend_from_slice(&[8, 8, 8, 8]);
+    bytes.extend_from_slice(&[10, 0, 0, 1]);
+
+    bytes.extend_from_slice(&[3, 1, 0, 0, 0, 0, 0, 0]);
+
+    bytes.extend_from_slice(&[0x45, 0, 0, 40]);
+    bytes.extend_from_slice(&[0, 2, 0, 0, 64, 6, 0, 0]);
+    bytes.extend_from_slice(&[10, 0, 0, 1]);
+    bytes.extend_from_slice(&[10, 0, 0, 2]);
+    bytes.extend_from_slice(&(1234_u16).to_be_bytes());
+    bytes.extend_from_slice(&(4321_u16).to_be_bytes());
+    bytes.extend_from_slice(&[0_u8; 16]);
+    bytes
 }

@@ -34,9 +34,7 @@ use crate::maps::wan_trie::builder::{
 };
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder;
-use crate::tests::route::packet_builder::{
-    simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4,
-};
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4};
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
 
 use crate::skel::tc_wan_ingress_intro::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};

@@ -184,7 +184,8 @@ pub(crate) struct RoutePacketTestResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::wire::*;
+    #[allow(unused_imports)]
+    use crate::tests::helper::wire::*;
 
     macro_rules! assert_size {
         ($mirror:ty, $skel:ty) => {
@@ -233,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "test-scanner")]
     fn scan_idx_layouts_match_skel() {
         use crate::tests::test_skb_scanner_skel::types as skel;
 
@@ -260,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "test-scanner")]
     fn scanner_result_layouts_match_skel() {
         use crate::tests::test_skb_scanner_skel::types as skb_skel;
         use crate::tests::test_xdp_scanner_skel::types as xdp_skel;
@@ -294,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "test-scanner")]
     fn skb_read_result_layouts_match_skel() {
         use crate::tests::test_skb_read_skel::types as skel;
 
@@ -341,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "test-route", feature = "test-misc"))]
     fn packet_offset_info_layouts_match_skel() {
         use crate::tests::test_route_packet::types as route_skel;
         use crate::tests::test_tproxy_packet::types as tproxy_skel;
@@ -364,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "test-route", feature = "test-misc"))]
     fn tproxy_and_route_result_layouts_match_skel() {
         use crate::tests::test_route_packet::types as route_skel;
         use crate::tests::test_tproxy_packet::types as tproxy_skel;

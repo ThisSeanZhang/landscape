@@ -316,12 +316,34 @@ fn main() {
         clang_args.push(OsStr::new("-DLAND_ARCH_RISCV"));
     }
 
+    /// Test/bench feature -> BPF source directories (relative to crate root).
+    /// `test-nat` also pulls `chain/` because the NAT session tests reuse the
+    /// chain helpers' `test_xdp_dummy` program. Directories may be requested
+    /// by several features; jobs are deduplicated below.
+    const FEATURE_TEST_DIRS: &[(&str, &[&str])] = &[
+        ("test-route", &["src/bpf/tests/route"]),
+        ("test-nat", &["src/bpf/tests/nat", "src/bpf/tests/chain"]),
+        ("test-scanner", &["src/bpf/tests/scanner"]),
+        ("test-chain", &["src/bpf/tests/chain"]),
+        ("test-metric", &["src/bpf/tests/metric"]),
+        ("test-misc", &["src/bpf/tests/misc"]),
+        ("bench", &["src/bpf/bench"]),
+    ];
+
     let mut jobs = Vec::new();
     collect_bpf_in_dir(Path::new("src/bpf/"), &project_root, &mut jobs);
-    if env::var_os("CARGO_FEATURE_BPF_TEST").is_some() {
-        collect_aux_bpf(Path::new("src/bpf/tests"), &project_root, &mut jobs);
-        collect_aux_bpf(Path::new("src/bpf/bench"), &project_root, &mut jobs);
+    for (feature, dirs) in FEATURE_TEST_DIRS {
+        let env_var = format!("CARGO_FEATURE_{}", feature.to_uppercase().replace('-', "_"));
+        if env::var_os(&env_var).is_some() {
+            for dir in *dirs {
+                collect_aux_bpf(Path::new(dir), &project_root, &mut jobs);
+            }
+        }
     }
+    // A feature set can request the same directory twice (e.g. test-nat +
+    // test-chain both pull src/bpf/tests/chain); keep one job per source.
+    jobs.sort_by(|a, b| a.source.cmp(&b.source));
+    jobs.dedup_by(|a, b| a.source == b.source);
 
     let env_key = environment_key(&target_arch, &clang_args, &vmlinux_path);
     let keyed: Vec<(BpfJob, u64)> = jobs

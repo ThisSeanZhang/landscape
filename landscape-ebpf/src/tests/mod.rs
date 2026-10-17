@@ -1,207 +1,90 @@
-use std::fmt::Debug;
-use std::net::Ipv6Addr;
-use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+//! Test facade: tiered module declarations plus single-inclusion points for
+//! test-only BPF skeletons.
+//!
+//! Layout (directory == feature tier):
+//!
+//! - [`helper`]: shared infrastructure, compiled under bare `test-support`
+//!   (packet/frame builders, map seeding, netns utils, wire mirror types).
+//! - [`stage`]: runtime-stage behaviour tests (production skeletons only).
+//! - [`route`] / [`nat`] / [`scanner`] / [`chain`] / [`metric`] / [`misc`]:
+//!   topic suites, each pulling its own test-only BPF objects.
+#![cfg_attr(not(feature = "bpf-test"), allow(dead_code, unused_imports))]
 
-use etherparse::PacketBuilder;
+pub(crate) mod helper;
+pub(crate) mod pkt;
 
-use zerocopy::FromBytes;
-use zerocopy::IntoBytes;
+// Curated re-exports so consumers can keep `crate::tests::<item>` paths.
+pub(crate) use helper::skb::TestSkb;
+pub(crate) use helper::{check_ifindex, init_shared_maps_for_test, isolated_pin_root, test_id};
 
-static TEST_ID: AtomicU32 = AtomicU32::new(0);
-
-pub(crate) fn test_id() -> u32 {
-    TEST_ID.fetch_add(1, Ordering::Relaxed)
-}
-
-pub(crate) use crate::test_support::isolated_pin_root;
-
-/// Stands up every shared map inside `root` via the production per-domain
-/// init code, then hands back pinned handles to the ones integration tests
-/// seed / assert on. Mirrors what the deleted `share_map` skeleton used to
-/// do for tests: maps are created before the programs under test load, so
-/// their `LIBBPF_PIN_BY_NAME` maps are reused from the same pin root.
-pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
-    let paths = crate::LandscapeMapPath::from_root(root);
-    crate::maps::init_maps_for_test(&paths);
-    TestSharedMaps::open(&paths)
-}
-
-/// Pinned handles to the shared maps integration tests read/write directly
-/// (previously exposed through the `share_map` skeleton's `maps` struct).
-#[derive(Debug)]
-#[allow(dead_code)] // pinned handles exist for map-layout parity; not every test reads each one
-pub(crate) struct TestSharedMaps {
-    pub wan_ip_binding: libbpf_rs::MapHandle,
-    pub nat4_static_map: libbpf_rs::MapHandle,
-    pub rt4_lan_map: libbpf_rs::MapHandle,
-    pub rt6_lan_map: libbpf_rs::MapHandle,
-    pub rt4_slot_map: libbpf_rs::MapHandle,
-    pub rt6_slot_map: libbpf_rs::MapHandle,
-    pub rt4_cache_map: libbpf_rs::MapHandle,
-    pub rt6_cache_map: libbpf_rs::MapHandle,
-}
-
-impl TestSharedMaps {
-    pub(crate) fn open(paths: &crate::LandscapeMapPath) -> Self {
-        let pin = |path: &Path| {
-            libbpf_rs::MapHandle::from_pinned_path(path)
-                .unwrap_or_else(|e| panic!("open test map at {}: {e}", path.display()))
-        };
-        Self {
-            wan_ip_binding: pin(&paths.wan_ip),
-            nat4_static_map: pin(&paths.nat4_static_map),
-            rt4_lan_map: pin(&paths.rt4_lan_map),
-            rt6_lan_map: pin(&paths.rt6_lan_map),
-            rt4_slot_map: pin(&paths.rt4_slot_map),
-            rt6_slot_map: pin(&paths.rt6_slot_map),
-            rt4_cache_map: pin(&paths.rt4_cache_map),
-            rt6_cache_map: pin(&paths.rt6_cache_map),
-        }
-    }
-}
-
-pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
-    const PIPELINE_COUNT: u32 = 1024;
-    if ifindex >= PIPELINE_COUNT {
-        eprintln!(
-            "WARNING: {} ifindex {} >= PIPELINE_COUNT ({}) — pipe_root_progs or dispatching map lookups may fail",
-            name, ifindex, PIPELINE_COUNT
-        );
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
-    let ifindex =
-        nix::net::if_::if_nametoindex(name).unwrap_or_else(|_| panic!("if_nametoindex({name})"));
-    check_ifindex(name, ifindex as u32);
-    ifindex as u32
-}
-
-mod cb_ferry;
+#[cfg(feature = "test-chain")]
 mod chain;
-mod check;
-mod mark_layout;
+#[cfg(feature = "test-metric")]
 mod metric;
-mod mss;
+#[cfg(feature = "test-misc")]
+mod misc;
+#[cfg(feature = "test-nat")]
 mod nat;
-mod net_utils;
-
+#[cfg(feature = "test-route")]
 pub(crate) mod route;
+#[cfg(feature = "test-scanner")]
 pub(crate) mod scanner;
-mod tc_chain;
-mod time;
-mod tproxy;
-mod wan_trie_probe;
-mod wire;
-mod xdp_csum_verify;
+mod stage;
 
+// Test-only skeleton single-inclusion points. Each gate is the union of its
+// consumers' feature gates; the BPF sources live under src/bpf/tests/<topic>/.
+#[cfg(feature = "test-route")]
 pub(crate) mod test_route_packet {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_route_packet.skel.rs"));
 }
 
+#[cfg(feature = "test-misc")]
 pub(crate) mod test_tproxy_packet {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tproxy_packet.skel.rs"));
 }
 
+#[cfg(feature = "test-chain")]
 pub(crate) mod test_xdp_root {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_root.skel.rs"));
 }
 
+#[cfg(feature = "test-chain")]
 pub(crate) mod test_xdp_chain_stage {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_chain_stage.skel.rs"));
 }
 
+// chain tests and the NAT session tests share this helper program.
+#[cfg(any(feature = "test-chain", feature = "test-nat"))]
 pub(crate) mod test_xdp_dummy {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_dummy.skel.rs"));
 }
 
+#[cfg(feature = "test-scanner")]
 pub(crate) mod test_xdp_scanner_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_scanner.skel.rs"));
 }
 
+#[cfg(feature = "test-scanner")]
 pub(crate) mod test_skb_scanner_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_scanner.skel.rs"));
 }
 
+#[cfg(feature = "test-scanner")]
 pub(crate) mod test_skb_read_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_read.skel.rs"));
 }
 
+#[cfg(feature = "test-nat")]
 pub(crate) mod test_xdp_nat4_modify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_nat4_modify.skel.rs"));
 }
 
+#[cfg(feature = "test-misc")]
 pub(crate) mod test_csum_verify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_csum_verify.skel.rs"));
 }
 
+#[cfg(feature = "test-misc")]
 pub(crate) mod test_wan_trie_probe_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_wan_trie_probe.skel.rs"));
-}
-
-#[repr(C, packed)]
-#[derive(IntoBytes, FromBytes, Debug, Clone, Copy, Default)]
-pub struct TestSkb {
-    pub len: u32,
-    pub pkt_type: u32,
-    pub mark: u32,
-    pub queue_mapping: u32,
-    pub protocol: u32,
-    pub vlan_present: u32,
-    pub vlan_tci: u32,
-    pub vlan_proto: u32,
-    pub priority: u32,
-    pub ingress_ifindex: u32,
-    pub ifindex: u32,
-    pub tc_index: u32,
-    pub cb: [u32; 5],
-    pub hash: u32,
-    pub tc_classid: u32,
-    pub data: u32,
-    pub data_end: u32,
-    pub napi_id: u32,
-    pub family: u32,
-    pub remote_ip4: u32,
-    pub local_ip4: u32,
-    pub remote_ip6: [u32; 4],
-    pub local_ip6: [u32; 4],
-    pub remote_port: u32,
-    pub local_port: u32,
-    pub data_meta: u32,
-    pub flow_keys: u64,
-    pub tstamp: u64,
-    pub wire_len: u32,
-    pub gso_segs: u32,
-    pub sk: u64,
-    pub gso_size: u32,
-    pub tstamp_type: u8,
-    pub _padding: [u8; 3],
-    pub hwtstamp: u64,
-}
-
-#[allow(dead_code)]
-fn dummpy_ipv6_tcp_pkg() -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF], //source mac
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    ) //destination mac
-    .ipv6(
-        Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xc00a, 0x2ff).octets(), //source ip
-        Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0xc00a, 0x2ff).octets(), //destination ip
-        64,                                                           //time to life
-    )
-    .tcp(
-        21, //source port
-        1234, 12345, // sequence number
-        4000,
-    );
-
-    let tcp_payload = [1, 2, 3, 4, 5, 6, 7, 8];
-
-    let mut payload = Vec::<u8>::with_capacity(builder.size(tcp_payload.len()));
-    builder.write(&mut payload, &tcp_payload).unwrap();
-
-    payload
 }

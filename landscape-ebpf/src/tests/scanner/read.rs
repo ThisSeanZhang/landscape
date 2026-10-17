@@ -6,10 +6,10 @@ use libbpf_rs::{
 };
 use zerocopy::FromBytes;
 
+use crate::tests::helper::wire::SkbReadTestResult;
 use crate::tests::test_skb_read_skel::TestSkbReadSkelBuilder;
-use crate::tests::wire::SkbReadTestResult;
 
-use super::package::*;
+use crate::tests::pkt::*;
 
 const MAP_KEY: u32 = 0;
 

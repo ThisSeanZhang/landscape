@@ -38,9 +38,7 @@ use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, v4_entry, wan_trie_publish as publish_prefix_entries,
 };
 use crate::maps::wan_trie::types::WanTrieTbl;
-use crate::tests::route::packet_builder::{
-    simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4,
-};
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4};
 
 const XDP_PASS: u32 = 2; // enum xdp_action: ABORTED=0, DROP=1, PASS=2
 

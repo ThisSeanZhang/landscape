@@ -6,7 +6,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::tests::net_utils::{VethPair, send_raw_packet, wait_for};
+use crate::tests::helper::net::{VethPair, send_raw_packet, wait_for};
 use crate::tests::test_xdp_chain_stage::TestXdpChainStageSkelBuilder;
 use crate::tests::test_xdp_root::TestXdpRootSkelBuilder;
 

@@ -131,7 +131,7 @@ impl ConnectMetricEventSource {
         self.tx_slot.store(Some(Arc::new(connect_msg_tx)));
     }
 
-    #[cfg(all(test, feature = "bpf-test"))]
+    #[cfg(all(test, feature = "test-metric"))]
     pub(crate) fn test_new(
         cancel: CancellationToken,
         handle: JoinHandle<()>,

@@ -18,7 +18,7 @@ use libbpf_rs::{
 };
 
 use crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder;
-use crate::tests::route::packet_builder::{simple_pppoe_ipv4, simple_pppoe_ipv6};
+use crate::tests::pkt::{simple_pppoe_ipv4, simple_pppoe_ipv6};
 
 const XDP_PASS: u32 = 2;
 

@@ -350,7 +350,7 @@ fn lan6_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
 // flow classification (match_flow_id_v6) + DNS rules
 // ---------------------------------------------------------------------------
 
-// The MAC-mode seeder is shared with the v4 tests (map_helper::
+// The MAC-mode seeder is shared with the v4 tests (crate::tests::helper::map::
 // seed_flow_match_mac); the v6 IP-mode key below has no v4-style union-tail
 // leak (COPY_ADDR_FROM overwrites the full 16 address bytes).
 

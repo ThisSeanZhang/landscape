@@ -7,7 +7,7 @@ use libbpf_rs::{
 };
 
 use crate::skel::xdp_mss::XdpMssSkelBuilder;
-use crate::tests::net_utils::{VethPair, send_raw_packet, settle, wait_for};
+use crate::tests::helper::net::{VethPair, send_raw_packet, settle, wait_for};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 
 fn build_syn_pkt(mss: u16) -> Vec<u8> {
@@ -117,8 +117,8 @@ fn dummy_reset_tcp_mss(map: &libbpf_rs::MapMut) {
     map.update(&0u32.to_ne_bytes(), &[0u8; 16], MapFlags::ANY).unwrap();
 }
 
-use crate::tests::net_utils::dummy_recv_count;
-use crate::tests::net_utils::dummy_reset;
+use crate::tests::helper::net::dummy_recv_count;
+use crate::tests::helper::net::dummy_reset;
 
 #[test]
 fn xdp_mss_verifier() {

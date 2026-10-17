@@ -14,7 +14,7 @@ use libbpf_rs::{
 };
 
 use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
-use crate::tests::net_utils::{
+use crate::tests::helper::net::{
     NetNsGuard, TCAttach, VethPair, build_tcp_pkt, dummy_recv_count, dummy_recv_other, dummy_reset,
     send_raw_packet, settle, wait_for,
 };

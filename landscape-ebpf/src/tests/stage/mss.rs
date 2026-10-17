@@ -1,8 +1,11 @@
+use crate::tests::pkt::{
+    ipv4_tcp_syn_with_mss, ipv4_tcp_syn_with_raw_options, ipv6_tcp_syn_with_mss,
+};
 use std::{mem::MaybeUninit, net::Ipv6Addr};
 
 use etherparse::{
-    Ethernet2Header, IpFragOffset, Ipv6FragmentHeader, Ipv6Header, PacketBuilder, PacketHeaders,
-    TcpHeader, TcpOptionElement, TransportHeader, ether_type, ip_number,
+    Ethernet2Header, IpFragOffset, Ipv6FragmentHeader, Ipv6Header, PacketHeaders, TcpHeader,
+    TcpOptionElement, TransportHeader, ether_type, ip_number,
 };
 use libbpf_rs::{
     ProgramInput,
@@ -58,48 +61,6 @@ fn tcp_mss(packet: &[u8]) -> Option<u16> {
         }
     }
     None
-}
-
-fn ipv4_tcp_syn_with_mss(mss: u16, syn: bool) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
-        .ipv4([192, 0, 2, 10], [198, 51, 100, 20], 64)
-        .tcp(12345, 443, 0x1020_3040, 4096)
-        .options(&[TcpOptionElement::MaximumSegmentSize(mss)])
-        .unwrap();
-
-    let builder = if syn { builder.syn() } else { builder.ack(1) };
-    let payload = [0x11_u8, 0x22, 0x33, 0x44];
-    let mut packet = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut packet, &payload).expect("build ipv4 tcp packet");
-    packet
-}
-
-fn ipv4_tcp_syn_with_raw_options(options: &[u8]) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
-        .ipv4([192, 0, 2, 10], [198, 51, 100, 20], 64)
-        .tcp(12345, 443, 0x1020_3040, 4096)
-        .syn()
-        .options_raw(options)
-        .unwrap();
-
-    let payload = [0x11_u8, 0x22, 0x33, 0x44];
-    let mut packet = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut packet, &payload).expect("build ipv4 tcp packet");
-    packet
-}
-
-fn ipv6_tcp_syn_with_mss(src: Ipv6Addr, dst: Ipv6Addr, mss: u16) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2([0x02, 0, 0, 0, 0, 1], [0x02, 0, 0, 0, 0, 2])
-        .ipv6(src.octets(), dst.octets(), 64)
-        .tcp(12345, 443, 0x1020_3040, 4096)
-        .syn()
-        .options(&[TcpOptionElement::MaximumSegmentSize(mss)])
-        .unwrap();
-
-    let payload = [0x11_u8, 0x22, 0x33, 0x44];
-    let mut packet = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut packet, &payload).expect("build ipv6 tcp packet");
-    packet
 }
 
 fn ipv6_fragmented_tcp_syn_with_mss(mss: u16) -> Vec<u8> {

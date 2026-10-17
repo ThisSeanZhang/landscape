@@ -69,10 +69,10 @@ use libbpf_rs::{
 };
 
 use super::bench_skb_read::BenchSkbReadSkelBuilder;
-use crate::tests::route::packet_builder::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
-use crate::tests::scanner::package::{
+use crate::tests::pkt::{
     build_icmpv4_error_with_inner_tcp_min_quote_eth, build_icmpv6_error_with_inner_ipv6_eth,
 };
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 
 const TC_ACT_OK: u32 = 0;
 

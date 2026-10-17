@@ -4,7 +4,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 
-use crate::tests::net_utils::{
+use crate::tests::helper::net::{
     NetNsGuard, VethPair, build_tcp_pkt, build_tcp6_pkt, dummy_recv_count, dummy_reset, route_slot,
     route_slot_v6, send_raw_packet, settle, wait_for,
 };

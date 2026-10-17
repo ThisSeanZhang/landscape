@@ -28,16 +28,14 @@ use crate::{
         route::replace_wan_route_slots_v6_with_map,
     },
     tests::{
-        TestSkb, isolated_pin_root,
-        route::{
-            map_helper::{
-                LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
-                WAN_ROUTE_TYPE, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
-                insert_route6_lan_entry, local_addr, lookup_rt6_cache_value, normal_mark,
-                remote_addr,
-            },
-            packet_builder::simple_ipv6_tcp_syn,
+        TestSkb,
+        helper::map::{
+            LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE,
+            WAN_ROUTE_TYPE, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
+            insert_route6_lan_entry, local_addr, lookup_rt6_cache_value, normal_mark, remote_addr,
         },
+        isolated_pin_root,
+        pkt::simple_ipv6_tcp_syn,
     },
 };
 

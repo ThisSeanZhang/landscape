@@ -19,7 +19,7 @@ use crate::skel::xdp_mss::XdpMssSkelBuilder;
 use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
 use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
 use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
-use crate::tests::net_utils::{
+use crate::tests::helper::net::{
     NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle,
     wait_for,
 };

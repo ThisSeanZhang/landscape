@@ -6,12 +6,10 @@ use libbpf_rs::{
 };
 
 use crate::tests::{
+    helper::map::as_bytes,
     isolated_pin_root,
-    route::{
-        map_helper::as_bytes,
-        packet_builder::simple_ipv6_tcp_syn,
-        test_route::{self, TestRouteSkelBuilder},
-    },
+    pkt::simple_ipv6_tcp_syn,
+    route::test_route::{self, TestRouteSkelBuilder},
 };
 
 fn put_rt6_target_slot(

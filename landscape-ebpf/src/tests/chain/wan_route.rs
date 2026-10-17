@@ -6,7 +6,7 @@ use libbpf_rs::{
 };
 
 use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
-use crate::tests::net_utils::{
+use crate::tests::helper::net::{
     NetNsGuard, VethPair, build_tcp_pkt, dummy_recv_count, dummy_reset, send_raw_packet, wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;

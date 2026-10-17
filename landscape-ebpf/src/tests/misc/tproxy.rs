@@ -10,13 +10,14 @@ use libbpf_rs::{
 };
 
 use crate::maps::Inet6Bytes;
+use crate::tests::pkt::{build_icmpv4_error_with_inner_tcp_eth, build_ipv6_udp_eth};
 use crate::tests::{
-    scanner::package::{
+    helper::wire::TproxyPacketTestResult,
+    pkt::{
         build_icmpv4_error_with_inner_ipv4_eth, build_ipv4_tcp_eth, build_ipv4_udp_eth,
         build_ipv6_tcp_eth,
     },
     test_tproxy_packet::TestTproxyPacketSkelBuilder,
-    wire::TproxyPacketTestResult,
 };
 use zerocopy::FromBytes;
 
@@ -40,24 +41,6 @@ fn run_tproxy_packet_test(payload: Vec<u8>) -> TproxyPacketTestResult {
         .unwrap()
         .unwrap();
     TproxyPacketTestResult::read_from_bytes(&result).unwrap()
-}
-
-fn build_ipv6_udp_eth() -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    )
-    .ipv6(
-        [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],
-        64,
-    )
-    .udp(5000, 6000);
-
-    let payload = [1_u8, 2, 3, 4, 5, 6, 7, 8];
-    let mut bytes = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut bytes, &payload).unwrap();
-    bytes
 }
 
 fn build_icmpv4_echo_with_id(id: u16) -> Vec<u8> {
@@ -127,31 +110,6 @@ fn build_icmpv6_echo_with_id(id: u16) -> Vec<u8> {
     bytes.extend_from_slice(&id.to_be_bytes());
     bytes.extend_from_slice(&(1_u16).to_be_bytes());
     bytes.extend_from_slice(&payload);
-    bytes
-}
-
-fn build_icmpv4_error_with_inner_tcp_eth() -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
-    bytes.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
-    bytes.extend_from_slice(&[0x08, 0x00]);
-
-    let outer_total_len: u16 = 20 + 8 + 20 + 20;
-    bytes.extend_from_slice(&[0x45, 0, 0, 0]);
-    bytes[16..18].copy_from_slice(&outer_total_len.to_be_bytes());
-    bytes.extend_from_slice(&[0, 1, 0, 0, 64, 1, 0, 0]);
-    bytes.extend_from_slice(&[8, 8, 8, 8]);
-    bytes.extend_from_slice(&[10, 0, 0, 1]);
-
-    bytes.extend_from_slice(&[3, 1, 0, 0, 0, 0, 0, 0]);
-
-    bytes.extend_from_slice(&[0x45, 0, 0, 40]);
-    bytes.extend_from_slice(&[0, 2, 0, 0, 64, 6, 0, 0]);
-    bytes.extend_from_slice(&[10, 0, 0, 1]);
-    bytes.extend_from_slice(&[10, 0, 0, 2]);
-    bytes.extend_from_slice(&(1234_u16).to_be_bytes());
-    bytes.extend_from_slice(&(4321_u16).to_be_bytes());
-    bytes.extend_from_slice(&[0_u8; 16]);
     bytes
 }
 

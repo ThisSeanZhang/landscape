@@ -24,14 +24,13 @@ mod tests {
             route::replace_wan_route_slots_v4_with_map, route::replace_wan_route_slots_v6_with_map,
         },
         tests::{
-            TestSkb, isolated_pin_root,
-            route::{
-                map_helper::{
-                    LAN_CACHE, as_bytes, create_route4_cache_inner_map,
-                    create_route6_cache_inner_map, lookup_rt4_cache_value, lookup_rt6_cache_value,
-                },
-                packet_builder::{simple_ipv4_tcp, simple_ipv6_ns_dad, simple_ipv6_tcp_syn},
+            TestSkb,
+            helper::map::{
+                LAN_CACHE, as_bytes, create_route4_cache_inner_map, create_route6_cache_inner_map,
+                lookup_rt4_cache_value, lookup_rt6_cache_value,
             },
+            isolated_pin_root,
+            pkt::{simple_ipv4_tcp, simple_ipv6_ns_dad, simple_ipv6_tcp_syn},
         },
     };
 

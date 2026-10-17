@@ -20,10 +20,10 @@ pub mod xdp_attach;
 #[cfg(test)]
 mod test_support;
 
-#[cfg(all(test, feature = "bpf-test"))]
+#[cfg(all(test, feature = "test-support"))]
 mod tests;
 
-#[cfg(all(test, feature = "bpf-test"))]
+#[cfg(all(test, feature = "bench"))]
 mod bench;
 
 pub mod chain;

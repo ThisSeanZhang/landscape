@@ -6,10 +6,10 @@ use libbpf_rs::{
 };
 use zerocopy::FromBytes;
 
+use crate::tests::helper::wire::{SkbIcmpTestResult, SkbScanResult};
 use crate::tests::test_skb_scanner_skel::TestSkbScannerSkelBuilder;
-use crate::tests::wire::{SkbIcmpTestResult, SkbScanResult};
 
-use super::package::*;
+use crate::tests::pkt::*;
 
 fn run_skb_scanner_icmp(payload: &mut [u8]) -> Option<SkbIcmpTestResult> {
     let builder = TestSkbScannerSkelBuilder::default();

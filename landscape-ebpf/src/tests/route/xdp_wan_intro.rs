@@ -40,8 +40,8 @@ use crate::maps::wan_trie::builder::{
 };
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::skel::xdp_wan_intro::{XdpWanIntroSkel, XdpWanIntroSkelBuilder};
-use crate::tests::net_utils::VethPair;
-use crate::tests::route::packet_builder::{
+use crate::tests::helper::net::VethPair;
+use crate::tests::pkt::{
     simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4, simple_pppoe_ipv6,
 };
 use crate::tests::test_wan_trie_probe_skel::TestWanTrieProbeSkelBuilder;

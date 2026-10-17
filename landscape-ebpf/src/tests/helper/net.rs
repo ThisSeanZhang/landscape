@@ -297,3 +297,23 @@ impl Drop for TCAttach {
         let _ = self.hook.destroy();
     }
 }
+
+// ---- ex tests/mod.rs: ifindex sanity checks ----
+
+pub(crate) fn check_ifindex(name: &str, ifindex: u32) {
+    const PIPELINE_COUNT: u32 = 1024;
+    if ifindex >= PIPELINE_COUNT {
+        eprintln!(
+            "WARNING: {} ifindex {} >= PIPELINE_COUNT ({}) — pipe_root_progs or dispatching map lookups may fail",
+            name, ifindex, PIPELINE_COUNT
+        );
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
+    let ifindex =
+        nix::net::if_::if_nametoindex(name).unwrap_or_else(|_| panic!("if_nametoindex({name})"));
+    check_ifindex(name, ifindex as u32);
+    ifindex as u32
+}
