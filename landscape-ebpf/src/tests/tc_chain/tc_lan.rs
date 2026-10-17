@@ -17,11 +17,11 @@ mod tests {
     };
     use zerocopy::IntoBytes;
 
+    use crate::skel::neigh_update::types::mac_key_v6;
     use crate::{
         maps::{
             flow_wanip::create_inner_flow_match_map_v4, flow_wanip::create_inner_flow_match_map_v6,
-            mac::neigh_update::types::mac_key_v6, route::replace_wan_route_slots_v4_with_map,
-            route::replace_wan_route_slots_v6_with_map,
+            route::replace_wan_route_slots_v4_with_map, route::replace_wan_route_slots_v6_with_map,
         },
         tests::{
             TestSkb, isolated_pin_root,
@@ -35,11 +35,7 @@ mod tests {
         },
     };
 
-    pub(crate) mod tc_lan_ingress_route {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
-    }
-
-    use tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
+    use crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
 
     fn local_addr() -> Ipv6Addr {
         Ipv6Addr::from_str("fd00::10").unwrap()
@@ -176,11 +172,7 @@ mod tests {
         assert_eq!(cache_value.mark_value, 0x0305);
     }
 
-    pub(crate) mod tc_lan_dao {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_dao.skel.rs"));
-    }
-
-    use tc_lan_dao::TcLanDaoSkelBuilder;
+    use crate::skel::tc_lan_dao::TcLanDaoSkelBuilder;
 
     const CLIENT_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     const TEST_IFINDEX: u32 = 6;
@@ -219,7 +211,8 @@ mod tests {
     }
 
     fn load_tc_lan_dao_skel()
-    -> (tc_lan_dao::TcLanDaoSkel<'static>, TestSkb, crate::landscape::OwnedOpenObject) {
+    -> (crate::skel::tc_lan_dao::TcLanDaoSkel<'static>, TestSkb, crate::landscape::OwnedOpenObject)
+    {
         let mut builder = TcLanDaoSkelBuilder::default();
         let pin_root = isolated_pin_root("tc-lan-dao-direct");
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -245,7 +238,7 @@ mod tests {
     }
 
     fn run_on_skel(
-        skel: &tc_lan_dao::TcLanDaoSkel<'static>,
+        skel: &crate::skel::tc_lan_dao::TcLanDaoSkel<'static>,
         ctx: &mut TestSkb,
         packet: &[u8],
     ) -> i32 {
@@ -266,8 +259,8 @@ mod tests {
     /// order required by the skel's ownership model.
     fn run_dao_case_with_setup(
         packet: &[u8],
-        setup: impl FnOnce(&mut tc_lan_dao::TcLanDaoSkel<'static>),
-        check: impl FnOnce(&tc_lan_dao::TcLanDaoSkel<'static>),
+        setup: impl FnOnce(&mut crate::skel::tc_lan_dao::TcLanDaoSkel<'static>),
+        check: impl FnOnce(&crate::skel::tc_lan_dao::TcLanDaoSkel<'static>),
     ) -> i32 {
         let (mut skel, mut ctx, backing) = load_tc_lan_dao_skel();
         setup(&mut skel);
@@ -283,7 +276,10 @@ mod tests {
     }
 
     /// Convenience wrapper without a pre-run setup.
-    fn run_dao_case(packet: &[u8], check: impl FnOnce(&tc_lan_dao::TcLanDaoSkel<'static>)) -> i32 {
+    fn run_dao_case(
+        packet: &[u8],
+        check: impl FnOnce(&crate::skel::tc_lan_dao::TcLanDaoSkel<'static>),
+    ) -> i32 {
         run_dao_case_with_setup(packet, |_| {}, check)
     }
 

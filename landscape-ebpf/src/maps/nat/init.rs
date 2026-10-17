@@ -80,8 +80,8 @@ pub fn init_nat_metric_events(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::nat4::xdp_nat4_skel::XdpNat4SkelBuilder;
-    use crate::stages::nat6::xdp_nat6_skel::XdpNat6SkelBuilder;
+    use crate::skel::xdp_nat4::XdpNat4SkelBuilder;
+    use crate::skel::xdp_nat6::XdpNat6SkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

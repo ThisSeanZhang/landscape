@@ -5,7 +5,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder;
+use crate::skel::tc_firewall::TcFirewallSkelBuilder;
 
 mod package;
 

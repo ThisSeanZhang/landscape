@@ -12,18 +12,18 @@ use std::net::Ipv4Addr;
 use crate::maps::wan_trie::builder::{v4_entry, wan_trie_publish};
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::maps::{Route4CacheKey, Route4CacheValue};
+use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
+use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
+use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
+use crate::skel::xdp_mss::XdpMssSkelBuilder;
+use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
+use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
+use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
 use crate::tests::net_utils::{
     NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle,
     wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
-use crate::tests::xdp_lan_exit_skel::XdpLanExitSkelBuilder;
-use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
-use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
-use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
-use crate::tests::xdp_wan_root_skel::XdpWanRootSkelBuilder;
-use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 
 fn build_ipv4_tcp_pkt(
     src_mac: [u8; 6],

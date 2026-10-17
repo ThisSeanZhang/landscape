@@ -200,7 +200,7 @@ pub fn init_route_lan_cache_inner_map(rt4_cache_path: &Path, rt6_cache_path: &Pa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::xdp_wan_route::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+    use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

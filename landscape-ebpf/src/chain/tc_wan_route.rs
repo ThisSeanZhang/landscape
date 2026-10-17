@@ -9,15 +9,9 @@ use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::runtime::EbpfRuntime;
 
-mod tc_wan_ingress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
-}
-use tc_wan_ingress_intro_skel::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
+use crate::skel::tc_wan_ingress_intro::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
-pub(crate) mod tc_wan_egress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
-}
-use tc_wan_egress_route_skel::{TcWanEgressRouteSkel, TcWanEgressRouteSkelBuilder};
+use crate::skel::tc_wan_egress_route::{TcWanEgressRouteSkel, TcWanEgressRouteSkelBuilder};
 
 pub struct TcWanRouteHandle {
     // TrieTarget: the guard field drops before the skeleton field, so the

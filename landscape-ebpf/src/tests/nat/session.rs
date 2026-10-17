@@ -8,11 +8,11 @@ use libbpf_rs::{
 };
 
 use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
+use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
+use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
+use crate::skel::xdp_nat4::XdpNat4SkelBuilder;
+use crate::skel::xdp_nat6::XdpNat6SkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
-use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
-use crate::tests::xdp_nat4_skel::XdpNat4SkelBuilder;
-use crate::tests::xdp_nat6_skel::XdpNat6SkelBuilder;
 use std::os::fd::{AsFd, AsRawFd};
 use zerocopy::{FromBytes, IntoBytes};
 

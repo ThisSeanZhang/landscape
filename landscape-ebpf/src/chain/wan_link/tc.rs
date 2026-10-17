@@ -25,15 +25,8 @@ use crate::route_backbone::pinned_map;
 
 use super::WanLinkDataplane;
 
-mod tc_wan_ingress_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_root.skel.rs"));
-}
-mod tc_wan_egress_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_root.skel.rs"));
-}
-
-use tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder;
-use tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder;
+use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
+use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
 
 // ── TC half ──
 
@@ -44,13 +37,13 @@ pub enum TcChainDir {
 }
 
 pub(super) struct IngressRoot {
-    _skel: tc_wan_ingress_root_skel::TcWanIngressRootSkel<'static>,
+    _skel: crate::skel::tc_wan_ingress_root::TcWanIngressRootSkel<'static>,
     _backing: OwnedOpenObject,
     next_stage_fd: i32,
 }
 
 pub(super) struct EgressRoot {
-    _skel: tc_wan_egress_root_skel::TcWanEgressRootSkel<'static>,
+    _skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
     _backing: OwnedOpenObject,
     next_stage_fd: i32,
 }

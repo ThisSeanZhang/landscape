@@ -12,10 +12,6 @@ use crate::chain::wan_link::WanLinkDataplane;
 // v4 NAT stage — TC (map owner) + XDP (FD borrower)
 // ========================================================================
 
-pub(crate) mod tc_nat4_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat4.skel.rs"));
-}
-
 /// Bake value for the `wan_ro_addr4` rodata field shared by the nat4 objects.
 ///
 /// The BPF side treats it as a network-order `__be32` (same convention as the
@@ -23,10 +19,6 @@ pub(crate) mod tc_nat4_skel {
 /// conversion; all loaders and tests go through it.
 pub(crate) fn wan_ro_addr4(wan_addr: Ipv4Addr) -> u32 {
     wan_addr.to_bits().to_be()
-}
-
-pub(crate) mod xdp_nat4_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat4.skel.rs"));
 }
 
 /// The v4 NAT stage: TC ingress/egress + XDP LAN/WAN with shared runtime
@@ -38,7 +30,7 @@ pub struct Nat4Handle {
 
 pub struct TcNat4Handle {
     dp: Arc<WanLinkDataplane>,
-    _skel: tc_nat4_skel::TcNat4Skel<'static>,
+    _skel: crate::skel::tc_nat4::TcNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -52,7 +44,7 @@ impl Drop for TcNat4Handle {
 
 pub struct XdpNat4Handle {
     dp: Arc<WanLinkDataplane>,
-    _skel: xdp_nat4_skel::XdpNat4Skel<'static>,
+    _skel: crate::skel::xdp_nat4::XdpNat4Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -73,7 +65,7 @@ where
 {
     let fd = map.as_fd().as_raw_fd();
     for port in start..=end {
-        let value = tc_nat4_skel::types::nat4_port_queue_value_v3 {
+        let value = crate::skel::tc_nat4::types::nat4_port_queue_value_v3 {
             port: port.to_be(),
             last_generation: 0,
         };
@@ -81,7 +73,9 @@ where
             libbpf_rs::libbpf_sys::bpf_map_update_elem(
                 fd,
                 std::ptr::null(),
-                (&value as *const tc_nat4_skel::types::nat4_port_queue_value_v3).cast_mut().cast(),
+                (&value as *const crate::skel::tc_nat4::types::nat4_port_queue_value_v3)
+                    .cast_mut()
+                    .cast(),
                 0,
             )
         };
@@ -126,7 +120,7 @@ pub fn attach_nat4(
 
     // ── 1. Load TC nat4 first (ingress + egress, for runtime map sharing with XDP) ──
 
-    let tc_builder = tc_nat4_skel::TcNat4SkelBuilder::default();
+    let tc_builder = crate::skel::tc_nat4::TcNat4SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
     let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat4 skeleton")?;
 
@@ -162,7 +156,7 @@ pub fn attach_nat4(
 
     // ── 2. Open XDP nat4, reuse TC's runtime map FDs ──
 
-    let xdp_builder = xdp_nat4_skel::XdpNat4SkelBuilder::default();
+    let xdp_builder = crate::skel::xdp_nat4::XdpNat4SkelBuilder::default();
     let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
     let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat4 skeleton")?;
 

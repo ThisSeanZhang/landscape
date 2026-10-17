@@ -25,10 +25,7 @@ use crate::tests::{
     },
 };
 
-pub(crate) mod tc_wan_ingress_route {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
-}
-use tc_wan_ingress_route::TcWanIngressRouteSkel;
+use crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -64,7 +61,8 @@ fn wan_ctx(mark: u32) -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default();
+        let mut builder =
+            crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();

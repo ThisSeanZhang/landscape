@@ -76,8 +76,8 @@ pub fn init_ip6_dao_events(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao_ns::tc_lan_dao_skel::TcLanDaoSkelBuilder;
-    use crate::maps::mac::neigh_update::NeighUpdateSkelBuilder;
+    use crate::skel::neigh_update::NeighUpdateSkelBuilder;
+    use crate::skel::tc_lan_dao::TcLanDaoSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

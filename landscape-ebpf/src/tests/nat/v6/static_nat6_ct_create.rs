@@ -10,7 +10,7 @@ use zerocopy::{FromBytes, IntoBytes};
 use crate::{
     maps::nat::StaticNatMappingV6Item,
     maps::{Nat6TimerKey, Nat6TimerValue},
-    stages::nat6::tc_nat6_skel::TcNat6SkelBuilder,
+    skel::tc_nat6::TcNat6SkelBuilder,
     tests::TestSkb,
 };
 

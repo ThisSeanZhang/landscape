@@ -38,7 +38,7 @@ pub fn init_flow_match_map(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::xdp_wan_route::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+    use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

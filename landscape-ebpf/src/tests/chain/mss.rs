@@ -6,9 +6,9 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
+use crate::skel::xdp_mss::XdpMssSkelBuilder;
 use crate::tests::net_utils::{VethPair, send_raw_packet, settle, wait_for};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
 
 fn build_syn_pkt(mss: u16) -> Vec<u8> {
     use etherparse::PacketBuilder;

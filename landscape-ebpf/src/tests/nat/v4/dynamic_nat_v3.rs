@@ -18,7 +18,7 @@ use crate::{
         NatMappingKeyV4,
         nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
     },
-    stages::nat4::tc_nat4_skel::TcNat4SkelBuilder,
+    skel::tc_nat4::TcNat4SkelBuilder,
     tests::TestSkb,
 };
 

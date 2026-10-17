@@ -19,17 +19,10 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::landscape::OwnedOpenObject;
-use crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder;
-use crate::stages::mss::tc_mss_skel::TcMssSkelBuilder;
-use crate::stages::nat4::tc_nat4_skel::TcNat4SkelBuilder;
+use crate::skel::tc_firewall::TcFirewallSkelBuilder;
+use crate::skel::tc_mss::TcMssSkelBuilder;
+use crate::skel::tc_nat4::TcNat4SkelBuilder;
 use crate::tests::TestSkb;
-
-mod tc_wan_ingress_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_root.skel.rs"));
-}
-mod tc_wan_egress_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_root.skel.rs"));
-}
 
 const TC_SLOT_V4: u32 = 0;
 const TC_SLOT_V6: u32 = 1;
@@ -47,28 +40,30 @@ const V6_DST: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
 // ── roots ──
 
 struct IngressRoot {
-    skel: tc_wan_ingress_root_skel::TcWanIngressRootSkel<'static>,
+    skel: crate::skel::tc_wan_ingress_root::TcWanIngressRootSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 fn load_ingress_root() -> IngressRoot {
     let (backing, object) = OwnedOpenObject::new();
-    let mut open =
-        tc_wan_ingress_root_skel::TcWanIngressRootSkelBuilder::default().open(object).unwrap();
+    let mut open = crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder::default()
+        .open(object)
+        .unwrap();
     open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = L3;
     open.maps.rodata_data.as_deref_mut().unwrap().current_chain = CHAIN;
     IngressRoot { skel: open.load().unwrap(), _backing: backing }
 }
 
 struct EgressRoot {
-    skel: tc_wan_egress_root_skel::TcWanEgressRootSkel<'static>,
+    skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 fn load_egress_root() -> EgressRoot {
     let (backing, object) = OwnedOpenObject::new();
-    let mut open =
-        tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder::default().open(object).unwrap();
+    let mut open = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default()
+        .open(object)
+        .unwrap();
     open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = L3;
     EgressRoot { skel: open.load().unwrap(), _backing: backing }
 }
@@ -290,7 +285,7 @@ const PKT_TCP_SYN_V2: u32 = 2;
 mod tests {
     use super::*;
 
-    fn mss_skel() -> crate::stages::mss::tc_mss_skel::TcMssSkel<'static> {
+    fn mss_skel() -> crate::skel::tc_mss::TcMssSkel<'static> {
         let (backing, object) = OwnedOpenObject::new();
         let mut open = TcMssSkelBuilder::default().open(object).unwrap();
         open.maps.rodata_data.as_deref_mut().unwrap().mtu_size = 1492;

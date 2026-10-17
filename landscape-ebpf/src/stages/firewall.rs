@@ -8,10 +8,6 @@ use crate::chain::wan_link::WanLinkDataplane;
 // TC firewall
 // ========================================================================
 
-pub(crate) mod tc_firewall_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_firewall.skel.rs"));
-}
-
 /// Result of loading both TC and XDP firewall for one interface.
 pub struct FirewallHandle {
     pub tc: Option<TcFirewallHandle>,
@@ -20,7 +16,7 @@ pub struct FirewallHandle {
 
 pub struct TcFirewallHandle {
     dp: Arc<WanLinkDataplane>,
-    _skel: tc_firewall_skel::TcFirewallSkel<'static>,
+    _skel: crate::skel::tc_firewall::TcFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -45,7 +41,7 @@ pub fn attach_tc_firewall(
 
     let paths = dp.backbone().paths();
 
-    let builder = tc_firewall_skel::TcFirewallSkelBuilder::default();
+    let builder = crate::skel::tc_firewall::TcFirewallSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_firewall skeleton")?;
 
@@ -100,13 +96,9 @@ pub fn attach_tc_firewall(
 // XDP firewall
 // ========================================================================
 
-pub(crate) mod xdp_firewall_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_firewall.skel.rs"));
-}
-
 pub struct XdpFirewallHandle {
     dp: Arc<WanLinkDataplane>,
-    _skel: xdp_firewall_skel::XdpFirewallSkel<'static>,
+    _skel: crate::skel::xdp_firewall::XdpFirewallSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -129,7 +121,7 @@ pub fn init_xdp_firewall(dp: &Arc<WanLinkDataplane>) -> LdEbpfResult<XdpFirewall
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    use xdp_firewall_skel::XdpFirewallSkelBuilder;
+    use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
 
     let paths = dp.backbone().paths();
     let builder = XdpFirewallSkelBuilder::default();

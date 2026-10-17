@@ -11,7 +11,7 @@ use crate::{
     NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
     maps::nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
     maps::{Nat4TimerKey, Nat4TimerValueV3},
-    stages::nat4::tc_nat4_skel::TcNat4SkelBuilder,
+    skel::tc_nat4::TcNat4SkelBuilder,
     tests::TestSkb,
 };
 

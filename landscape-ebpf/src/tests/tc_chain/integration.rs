@@ -13,23 +13,17 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
+use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
 use crate::tests::net_utils::{
     NetNsGuard, TCAttach, VethPair, build_tcp_pkt, dummy_recv_count, dummy_recv_other, dummy_reset,
     send_raw_packet, settle, wait_for,
 };
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
 
-pub(crate) mod tc_lan_ingress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
-}
-use tc_lan_ingress_route_skel::TcLanIngressRouteSkelBuilder;
+use crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
 
-pub(crate) mod tc_pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
-}
-use tc_pppoe_skel::TcPppoeSkelBuilder;
-use tc_pppoe_skel::types::pppoe_egress_tmpl;
+use crate::skel::tc_pppoe::TcPppoeSkelBuilder;
+use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
 
 /// Common two-veth-pair environment: an ingress pair crossing into a peer
 /// netns, plus an out pair kept entirely in the test netns (redirect target).
@@ -232,7 +226,7 @@ fn tc_firewall_wan_egress_ingress() {
     }
 
     let pin_root = crate::tests::isolated_pin_root("tc-fw");
-    let mut b = crate::stages::firewall::tc_firewall_skel::TcFirewallSkelBuilder::default();
+    let mut b = crate::skel::tc_firewall::TcFirewallSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = MaybeUninit::uninit();
     let skel = b.open(&mut obj).unwrap().load().unwrap();

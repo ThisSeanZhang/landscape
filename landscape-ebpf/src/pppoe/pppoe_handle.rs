@@ -8,7 +8,6 @@ use libbpf_rs::{
 
 use crate::{
     bpf_error::LdEbpfResult,
-    bpf_rs_shared::pppoe_skb_fallback_skel,
     chain::stage::{FamilyProg, FromLanStageType, StageFamily},
     chain::wan_link::WanLinkDataplane,
     landscape::{OwnedOpenObject, pin_and_reuse_map},
@@ -16,11 +15,7 @@ use crate::{
     xdp_attach::SkbPending,
 };
 
-mod tc_pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
-}
-
-pub use tc_pppoe_skel::types::pppoe_egress_tmpl as PppoeEgressTmpl;
+pub use crate::skel::tc_pppoe::types::pppoe_egress_tmpl as PppoeEgressTmpl;
 
 /// Per-link terminal TC egress stage: the encap program lives at the
 /// end of this link's WAN egress chain with the link's session
@@ -29,7 +24,7 @@ pub use tc_pppoe_skel::types::pppoe_egress_tmpl as PppoeEgressTmpl;
 /// are chain-keyed).
 struct TcPppoeStage {
     dp: Arc<WanLinkDataplane>,
-    _skel: tc_pppoe_skel::TcPppoeSkel<'static>,
+    _skel: crate::skel::tc_pppoe::TcPppoeSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
@@ -92,7 +87,7 @@ fn attach_tc_pppoe(
 ) -> LdEbpfResult<TcPppoeStage> {
     let paths = dp.backbone().paths();
 
-    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open tc_pppoe skeleton")?;
 
@@ -128,7 +123,7 @@ fn attach_tc_pppoe(
 /// The shared per-iface SKB fallback decap program; each link publishes
 /// its own session into the instance's `pppoe_sessions` map.
 fn prepare_pppoe_skb_fallback() -> LdEbpfResult<(SkbPending, libbpf_rs::MapHandle)> {
-    let builder = pppoe_skb_fallback_skel::PppoeSkbFallbackSkelBuilder::default();
+    let builder = crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let open_skel = crate::bpf_ctx!(builder.open(obj), "open pppoe_skb_fallback skeleton")?;
     let skel = crate::bpf_ctx!(open_skel.load(), "load pppoe_skb_fallback skeleton")?;

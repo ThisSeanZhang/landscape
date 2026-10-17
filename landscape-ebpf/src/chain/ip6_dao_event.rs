@@ -199,33 +199,29 @@ impl Drop for Ip6DaoEventSource {
 mod tests {
     use super::*;
 
-    mod tc_lan_dao_skel {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_dao.skel.rs"));
-    }
-
     #[test]
     fn wire_layout_matches_bpf_struct() {
         use std::mem::{offset_of, size_of};
         assert_eq!(
             size_of::<Ip6DaoEvent>(),
-            size_of::<tc_lan_dao_skel::types::ip6_dao_event>(),
+            size_of::<crate::skel::tc_lan_dao::types::ip6_dao_event>(),
             "wire size must match bpf ip6_dao_event"
         );
         assert_eq!(
             offset_of!(Ip6DaoEvent, ifindex),
-            offset_of!(tc_lan_dao_skel::types::ip6_dao_event, ifindex)
+            offset_of!(crate::skel::tc_lan_dao::types::ip6_dao_event, ifindex)
         );
         assert_eq!(
             offset_of!(Ip6DaoEvent, ip),
-            offset_of!(tc_lan_dao_skel::types::ip6_dao_event, ip)
+            offset_of!(crate::skel::tc_lan_dao::types::ip6_dao_event, ip)
         );
         assert_eq!(
             offset_of!(Ip6DaoEvent, mac),
-            offset_of!(tc_lan_dao_skel::types::ip6_dao_event, mac)
+            offset_of!(crate::skel::tc_lan_dao::types::ip6_dao_event, mac)
         );
         assert_eq!(
             offset_of!(Ip6DaoEvent, __pad),
-            offset_of!(tc_lan_dao_skel::types::ip6_dao_event, __pad)
+            offset_of!(crate::skel::tc_lan_dao::types::ip6_dao_event, __pad)
         );
     }
 

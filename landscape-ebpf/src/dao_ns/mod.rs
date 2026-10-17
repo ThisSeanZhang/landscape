@@ -7,16 +7,13 @@ use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
 
-pub(crate) mod tc_lan_dao_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_dao.skel.rs"));
-}
-use tc_lan_dao_skel::TcLanDaoSkelBuilder;
+use crate::skel::tc_lan_dao::TcLanDaoSkelBuilder;
 
 /// Standalone DAD-NS observer filter attached by the LAN IPv6 service;
 /// reuses the shared map space (`ip_mac_v6` / `rt6_lan_map` /
 /// `ip6_dao_events`).
 pub struct TcLanDaoHandle {
-    _dao_skel: tc_lan_dao_skel::TcLanDaoSkel<'static>,
+    _dao_skel: crate::skel::tc_lan_dao::TcLanDaoSkel<'static>,
     _dao_backing: OwnedOpenObject,
     dao_hook: Option<TcHookProxy>,
     _ifindex: u32,

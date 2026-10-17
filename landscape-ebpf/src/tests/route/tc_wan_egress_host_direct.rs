@@ -25,15 +25,7 @@ use zerocopy::IntoBytes;
 use crate::tests::TestSkb;
 use crate::tests::route::map_helper::host_direct_mark;
 
-mod tc_wan_egress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
-}
-
-mod tc_pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
-}
-
-use tc_pppoe_skel::types::pppoe_egress_tmpl;
+use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
 
 /// Synthetic example session identity: the link-local composed from the
 /// IPv6CP interface-id `aa:bb:cc:ff:fe:dd:ee:ff` of the synthetic
@@ -85,8 +77,8 @@ fn build_ipv4_broadcast() -> Vec<u8> {
 }
 
 struct Fixture {
-    entry: tc_wan_egress_route_skel::TcWanEgressRouteSkel<'static>,
-    _stage: tc_pppoe_skel::TcPppoeSkel<'static>,
+    entry: crate::skel::tc_wan_egress_route::TcWanEgressRouteSkel<'static>,
+    _stage: crate::skel::tc_pppoe::TcPppoeSkel<'static>,
 }
 
 fn load(pin: &str) -> Fixture {
@@ -95,7 +87,8 @@ fn load(pin: &str) -> Fixture {
     // The open objects must outlive the loaded skeletons; leak them for
     // the test's lifetime.
     let entry_object = Box::leak(Box::new(MaybeUninit::uninit()));
-    let mut entry_builder = tc_wan_egress_route_skel::TcWanEgressRouteSkelBuilder::default();
+    let mut entry_builder =
+        crate::skel::tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
     entry_builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut entry_open = entry_builder.open(entry_object).unwrap();
     // locally generated packets on an ethernet WAN: L3 starts after 14B
@@ -103,7 +96,7 @@ fn load(pin: &str) -> Fixture {
     let entry = entry_open.load().unwrap();
 
     let stage_object = Box::leak(Box::new(MaybeUninit::uninit()));
-    let stage_builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let stage_builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let mut stage_open = stage_builder.open(stage_object).unwrap();
     stage_open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(0xbeef);
     let stage = stage_open.load().unwrap();

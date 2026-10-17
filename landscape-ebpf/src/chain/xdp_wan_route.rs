@@ -10,31 +10,19 @@ use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::runtime::EbpfRuntime;
 use crate::xdp_attach::NativeXdpLink;
 
-pub(crate) mod xdp_wan_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_route.skel.rs"));
-}
-
-mod tc_wan_ingress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
-}
-
-mod tc_wan_egress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
-}
-
-use tc_wan_egress_route_skel::TcWanEgressRouteSkelBuilder;
-use tc_wan_ingress_intro_skel::TcWanIngressIntroSkelBuilder;
+use crate::skel::tc_wan_egress_route::TcWanEgressRouteSkelBuilder;
+use crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkelBuilder;
 
 pub struct XdpWanRouteHandle {
     _link: NativeXdpLink,
     // TrieTarget: the guard field drops before the skeleton field, so the
     // trie target is detached while the arena mmap is still alive.
     _intro_trie: crate::maps::wan_trie::dispatcher::TrieTarget<
-        tc_wan_ingress_intro_skel::TcWanIngressIntroSkel<'static>,
+        crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkel<'static>,
     >,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
-    _egress_route_skel: tc_wan_egress_route_skel::TcWanEgressRouteSkel<'static>,
+    _egress_route_skel: crate::skel::tc_wan_egress_route::TcWanEgressRouteSkel<'static>,
     _egress_route_backing: OwnedOpenObject,
     egress_hook: Option<TcHookProxy>,
     _ifindex: u32,

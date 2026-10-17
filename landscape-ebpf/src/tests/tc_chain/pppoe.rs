@@ -7,15 +7,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-mod tc_pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_pppoe.skel.rs"));
-}
-
-mod tc_wan_egress_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_root.skel.rs"));
-}
-
-use tc_pppoe_skel::types::pppoe_egress_tmpl;
+use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
 
 const SESSION_ID: u16 = 0x2233;
 
@@ -65,7 +57,7 @@ fn build_ipv6_packet() -> Vec<u8> {
 
 #[test]
 fn pppoe_egress_ipv4_adds_pppoe_header() {
-    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
     open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
@@ -96,7 +88,7 @@ fn pppoe_egress_ipv4_adds_pppoe_header() {
 
 #[test]
 fn pppoe_egress_ipv6_adds_pppoe_header() {
-    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
     open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
@@ -131,13 +123,13 @@ fn pppoe_egress_ipv6_adds_pppoe_header() {
 // (see tc_wan_egress_root.bpf.c / tc_stage.h).
 #[test]
 fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
-    let stage_builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let stage_builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let mut stage_object = MaybeUninit::uninit();
     let mut stage_open = stage_builder.open(&mut stage_object).unwrap();
     stage_open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
     let stage = stage_open.load().unwrap();
 
-    let root_builder = tc_wan_egress_root_skel::TcWanEgressRootSkelBuilder::default();
+    let root_builder = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default();
     let mut root_object = MaybeUninit::uninit();
     let root = root_builder.open(&mut root_object).unwrap().load().unwrap();
 
@@ -189,7 +181,7 @@ fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
 
 #[test]
 fn pppoe_session_id_is_set_in_rodata() {
-    let builder = tc_pppoe_skel::TcPppoeSkelBuilder::default();
+    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
     let rodata = open.maps.rodata_data.as_deref_mut().unwrap();

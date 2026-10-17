@@ -6,8 +6,8 @@ use std::{
     },
 };
 
+use crate::skel::pppoe_client::*;
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_pppoe_client::*;
 use libbpf_rs::skel::{OpenSkel, SkelBuilder};
 use libc::{
     AF_PACKET, SO_ATTACH_BPF, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_RAW, SOL_SOCKET, socket, socklen_t,
@@ -15,10 +15,6 @@ use libc::{
 use socket2::Socket;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
-
-mod landscape_pppoe_client {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/pppoe_client.skel.rs"));
-}
 
 pub mod pppoe_handle;
 

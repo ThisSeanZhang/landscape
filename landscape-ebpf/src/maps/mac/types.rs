@@ -38,7 +38,7 @@ pub(crate) struct MacValueV6 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maps::mac::neigh_update::types as neigh;
+    use crate::skel::neigh_update::types as neigh;
 
     #[test]
     fn mac_layouts_match_skel() {

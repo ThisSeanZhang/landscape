@@ -46,10 +46,7 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_lan_ingress_route {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
-}
-use tc_lan_ingress_route::TcLanIngressRouteSkel;
+use crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -81,14 +78,16 @@ fn lan_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
+        let mut builder =
+            crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
     };
     ($pin:expr, $skel:ident, $l3_offset:expr) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
+        let mut builder =
+            crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let mut open_skel = builder.open(&mut open_object).unwrap();

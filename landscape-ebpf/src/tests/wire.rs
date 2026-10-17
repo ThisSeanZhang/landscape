@@ -439,8 +439,8 @@ mod tests {
     #[test]
     fn nat_timer_layouts_match_xdp_skel() {
         use crate::maps::{Nat4TimerKey, Nat4TimerValueV3, Nat6TimerKey, Nat6TimerValue};
-        use crate::tests::xdp_nat4_skel::types as xdp4;
-        use crate::tests::xdp_nat6_skel::types as xdp6;
+        use crate::skel::xdp_nat4::types as xdp4;
+        use crate::skel::xdp_nat6::types as xdp6;
 
         assert_size!(Nat4TimerKey, xdp4::nat4_timer_key);
         assert_field!(Nat4TimerKey, xdp4::nat4_timer_key, l4proto);

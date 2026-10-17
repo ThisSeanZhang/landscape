@@ -68,10 +68,7 @@ use crate::{
     },
 };
 
-pub(crate) mod tc_wan_egress_route {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_route.skel.rs"));
-}
-use tc_wan_egress_route::TcWanEgressRouteSkel;
+use crate::skel::tc_wan_egress_route::TcWanEgressRouteSkel;
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -110,14 +107,14 @@ fn egress_ctx() -> TestSkb {
 macro_rules! load_skel {
     ($pin:expr, $skel:ident) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
+        let mut builder = crate::skel::tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let $skel = builder.open(&mut open_object).unwrap().load().unwrap();
     };
     ($pin:expr, $skel:ident, $l3_offset:expr) => {
         let pin_root = isolated_pin_root($pin);
-        let mut builder = tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
+        let mut builder = crate::skel::tc_wan_egress_route::TcWanEgressRouteSkelBuilder::default();
         builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
         let mut open_object = std::mem::MaybeUninit::uninit();
         let mut open_skel = builder.open(&mut open_object).unwrap();

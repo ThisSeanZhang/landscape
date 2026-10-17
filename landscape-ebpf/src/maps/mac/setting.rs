@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::landscape::OwnedOpenObject;
-use crate::maps::mac::neigh_update::*;
 use crate::maps::{LandscapeMapPath, MacKeyV4, MacKeyV6, MacValueV4, MacValueV6};
+use crate::skel::neigh_update::*;
 use crate::{bpf_error::LdEbpfResult, landscape::pin_and_reuse_map};
 
 const ARP_SYNC_INTERVAL_SECS: u64 = 10;

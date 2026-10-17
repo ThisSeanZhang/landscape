@@ -1010,7 +1010,7 @@ mod tests {
     fn spec_rejects_wrong_value_size() {
         use libbpf_rs::skel::SkelBuilder as _;
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open = crate::route_backbone::tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder::default()
+        let open = crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default()
             .open(&mut obj)
             .expect("open anchor skel");
         let spec = crate::maps::wan::WAN_IP_BINDING_SPEC;
@@ -1023,10 +1023,9 @@ mod tests {
     fn spec_rejects_inner_value_size_drift() {
         use libbpf_rs::skel::SkelBuilder as _;
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open =
-            crate::chain::xdp_wan_route::xdp_wan_route_skel::XdpWanRouteSkelBuilder::default()
-                .open(&mut obj)
-                .expect("open anchor skel");
+        let open = crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder::default()
+            .open(&mut obj)
+            .expect("open anchor skel");
         let spec = crate::maps::route::RT4_CACHE_MAP_SPEC;
         let inner = spec.inner.expect("cache outer has an inner template");
         let wrong = MapCreateSpec {
@@ -1041,10 +1040,9 @@ mod tests {
     fn spec_rejects_missing_inner_for_map_in_map() {
         use libbpf_rs::skel::SkelBuilder as _;
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open =
-            crate::chain::xdp_wan_route::xdp_wan_route_skel::XdpWanRouteSkelBuilder::default()
-                .open(&mut obj)
-                .expect("open anchor skel");
+        let open = crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder::default()
+            .open(&mut obj)
+            .expect("open anchor skel");
         let spec = crate::maps::route::RT4_CACHE_MAP_SPEC;
         let wrong = MapCreateSpec { inner: None, ..spec };
         crate::maps::assert_skel_map_matches(&open.maps.rt4_cache_map, &wrong);
@@ -1055,10 +1053,9 @@ mod tests {
     fn spec_rejects_wrong_map_type() {
         use libbpf_rs::skel::SkelBuilder as _;
         let mut obj = std::mem::MaybeUninit::uninit();
-        let open =
-            crate::chain::xdp_wan_route::xdp_wan_route_skel::XdpWanRouteSkelBuilder::default()
-                .open(&mut obj)
-                .expect("open anchor skel");
+        let open = crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder::default()
+            .open(&mut obj)
+            .expect("open anchor skel");
         let spec = crate::maps::route::RT4_LAN_MAP_SPEC;
         let wrong = MapCreateSpec { map_type: MapType::Hash, ..spec };
         crate::maps::assert_skel_map_matches(&open.maps.rt4_lan_map, &wrong);

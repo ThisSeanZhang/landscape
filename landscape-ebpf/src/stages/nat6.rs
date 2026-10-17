@@ -9,14 +9,6 @@ use crate::chain::wan_link::WanLinkDataplane;
 // v6 NAT stage — TC (timer-map owner) + XDP (FD borrower)
 // ========================================================================
 
-pub(crate) mod tc_nat6_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat6.skel.rs"));
-}
-
-pub(crate) mod xdp_nat6_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_nat6.skel.rs"));
-}
-
 /// Bake value for the `wan_ro_prefix6` rodata field shared by the nat6
 /// objects: the first 8 bytes (the /64-or-shorter span) of the WAN prefix,
 /// network order, written through the union's byte view. `None` bakes the
@@ -39,7 +31,7 @@ pub struct Nat6Handle {
 
 pub struct TcNat6Handle {
     dp: Arc<WanLinkDataplane>,
-    _skel: tc_nat6_skel::TcNat6Skel<'static>,
+    _skel: crate::skel::tc_nat6::TcNat6Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -53,7 +45,7 @@ impl Drop for TcNat6Handle {
 
 pub struct XdpNat6Handle {
     dp: Arc<WanLinkDataplane>,
-    _skel: xdp_nat6_skel::XdpNat6Skel<'static>,
+    _skel: crate::skel::xdp_nat6::XdpNat6Skel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -95,7 +87,7 @@ pub fn attach_nat6(
 
     // ── 1. Load TC nat6 first (ingress + egress, for timer map sharing with XDP) ──
 
-    let tc_builder = tc_nat6_skel::TcNat6SkelBuilder::default();
+    let tc_builder = crate::skel::tc_nat6::TcNat6SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
     let mut tc_open = bpf_ctx!(tc_builder.open(tc_obj), "open tc_nat6 skeleton")?;
 
@@ -119,7 +111,7 @@ pub fn attach_nat6(
 
     // ── 2. Open XDP nat6, reuse TC's timer map FD ──
 
-    let xdp_builder = xdp_nat6_skel::XdpNat6SkelBuilder::default();
+    let xdp_builder = crate::skel::xdp_nat6::XdpNat6SkelBuilder::default();
     let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
     let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat6 skeleton")?;
 

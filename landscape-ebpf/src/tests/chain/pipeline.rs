@@ -15,15 +15,15 @@ use libbpf_rs::{
 
 use crate::maps::wan_trie::builder::{v4_entry, v6_entry, wan_trie_publish};
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
+use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
+use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
+use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
+use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
+use crate::skel::xdp_mss::XdpMssSkelBuilder;
+use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
+use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
+use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
-use crate::tests::wan_intro_skel::XdpWanIntroSkelBuilder;
-use crate::tests::xdp_firewall_skel::XdpFirewallSkelBuilder;
-use crate::tests::xdp_lan_exit_skel::XdpLanExitSkelBuilder;
-use crate::tests::xdp_lan_root_skel::XdpLanRootSkelBuilder;
-use crate::tests::xdp_lan_route_skel::XdpLanRouteSkelBuilder;
-use crate::tests::xdp_mss_skel::XdpMssSkelBuilder;
-use crate::tests::xdp_wan_root_skel::XdpWanRootSkelBuilder;
-use crate::tests::xdp_wan_route_skel::XdpWanRouteSkelBuilder;
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_firewall_pipeline() {

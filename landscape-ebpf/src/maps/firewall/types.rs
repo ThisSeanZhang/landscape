@@ -26,7 +26,7 @@ pub(crate) struct FirewallAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::firewall::xdp_firewall_skel::types as share;
+    use crate::skel::xdp_firewall::types as share;
 
     #[test]
     fn firewall_layouts_match_skel() {

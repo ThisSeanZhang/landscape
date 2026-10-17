@@ -4,13 +4,9 @@ use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::wan_link::WanLinkDataplane;
 
-pub(crate) mod xdp_pppoe_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_pppoe.skel.rs"));
-}
-
 pub struct XdpPppoeHandle {
     dp: Arc<WanLinkDataplane>,
-    _skel: xdp_pppoe_skel::XdpPppoeSkel<'static>,
+    _skel: crate::skel::xdp_pppoe::XdpPppoeSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -32,7 +28,7 @@ pub fn init_xdp_pppoe(dp: &Arc<WanLinkDataplane>, session_id: u16) -> LdEbpfResu
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    use xdp_pppoe_skel::XdpPppoeSkelBuilder;
+    use crate::skel::xdp_pppoe::XdpPppoeSkelBuilder;
 
     let paths = dp.backbone().paths();
     let builder = XdpPppoeSkelBuilder::default();

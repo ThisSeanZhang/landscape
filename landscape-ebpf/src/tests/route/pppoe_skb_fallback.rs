@@ -17,7 +17,7 @@ use libbpf_rs::{
     skel::{OpenSkel as _, SkelBuilder as _},
 };
 
-use crate::bpf_rs_shared::pppoe_skb_fallback_skel::PppoeSkbFallbackSkelBuilder;
+use crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder;
 use crate::tests::route::packet_builder::{simple_pppoe_ipv4, simple_pppoe_ipv6};
 
 const XDP_PASS: u32 = 2;
@@ -29,7 +29,7 @@ const ETH_P_IPV4_BE: [u8; 2] = [0x08, 0x00];
 const ETH_P_IPV6_BE: [u8; 2] = [0x86, 0xDD];
 
 fn run(
-    skel: &crate::bpf_rs_shared::pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'_>,
+    skel: &crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkel<'_>,
     pkt: &[u8],
 ) -> (u32, Vec<u8>) {
     let mut out_buf = vec![0u8; pkt.len().max(64) + 32];

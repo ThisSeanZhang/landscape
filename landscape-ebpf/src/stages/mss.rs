@@ -8,10 +8,6 @@ use crate::chain::wan_link::WanLinkDataplane;
 // TC MSS clamp
 // ========================================================================
 
-pub(crate) mod tc_mss_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_mss.skel.rs"));
-}
-
 pub struct MssHandle {
     pub tc: Option<TcMssHandle>,
     pub xdp: Option<XdpMssHandle>,
@@ -19,7 +15,7 @@ pub struct MssHandle {
 
 pub struct TcMssHandle {
     dp: Arc<WanLinkDataplane>,
-    _skel: tc_mss_skel::TcMssSkel<'static>,
+    _skel: crate::skel::tc_mss::TcMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -45,7 +41,7 @@ pub fn attach_tc_mss(
 
     let paths = dp.backbone().paths();
 
-    let builder = tc_mss_skel::TcMssSkelBuilder::default();
+    let builder = crate::skel::tc_mss::TcMssSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_mss skeleton")?;
 
@@ -94,13 +90,9 @@ pub fn attach_tc_mss(
 // XDP MSS clamp
 // ========================================================================
 
-pub(crate) mod xdp_mss_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_mss.skel.rs"));
-}
-
 pub struct XdpMssHandle {
     dp: Arc<WanLinkDataplane>,
-    _skel: xdp_mss_skel::XdpMssSkel<'static>,
+    _skel: crate::skel::xdp_mss::XdpMssSkel<'static>,
     _backing: crate::landscape::OwnedOpenObject,
 }
 
@@ -123,7 +115,7 @@ pub fn init_xdp_mss(dp: &Arc<WanLinkDataplane>, mtu_size: u16) -> LdEbpfResult<X
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
     use std::os::fd::{AsFd, AsRawFd};
 
-    use xdp_mss_skel::XdpMssSkelBuilder;
+    use crate::skel::xdp_mss::XdpMssSkelBuilder;
 
     let paths = dp.backbone().paths();
     let builder = XdpMssSkelBuilder::default();

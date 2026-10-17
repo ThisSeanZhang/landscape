@@ -28,21 +28,18 @@ use libbpf_rs::{
     skel::{OpenSkel as _, SkelBuilder as _},
 };
 
-use crate::bpf_rs_shared::pppoe_skb_fallback_skel::PppoeSkbFallbackSkelBuilder;
 use crate::landscape::OwnedOpenObject;
 use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, v4_entry, v6_entry, wan_trie_publish,
 };
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
+use crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder;
 use crate::tests::route::packet_builder::{
     simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4,
 };
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
 
-pub(crate) mod tc_wan_ingress_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_intro.skel.rs"));
-}
-use tc_wan_ingress_intro_skel::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
+use crate::skel::tc_wan_ingress_intro::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;

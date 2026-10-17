@@ -9,7 +9,7 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::stages::mss::tc_mss_skel::TcMssSkelBuilder;
+use crate::skel::tc_mss::TcMssSkelBuilder;
 
 const MTU: u16 = 1492;
 const IPV4_TARGET_MSS: u16 = MTU - 20 - 20;

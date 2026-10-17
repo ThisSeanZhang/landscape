@@ -6,7 +6,8 @@ use libbpf_rs::{
 };
 use zerocopy::IntoBytes;
 
-use crate::{stages::nat4::tc_nat4_skel::TcNat4SkelBuilder, tests::TestSkb};
+use crate::skel::tc_nat4::TcNat4SkelBuilder;
+use crate::tests::TestSkb;
 
 /// https://www.cloudshark.org/captures/456a264486bf?filter=tcp
 /// 192.168.101.201:56186 -> 50.18.88.205:443

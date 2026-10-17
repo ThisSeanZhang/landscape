@@ -7,10 +7,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
 use crate::runtime::EbpfRuntime;
 
-mod tc_lan_ingress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_lan_ingress_route.skel.rs"));
-}
-use tc_lan_ingress_route_skel::{TcLanIngressRouteSkel, TcLanIngressRouteSkelBuilder};
+use crate::skel::tc_lan_ingress_route::{TcLanIngressRouteSkel, TcLanIngressRouteSkelBuilder};
 
 pub struct TcLanRouteHandle {
     _intro_skel: TcLanIngressRouteSkel<'static>,

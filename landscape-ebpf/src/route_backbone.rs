@@ -33,32 +33,18 @@ use crate::LandscapeMapPath;
 use crate::bpf_ctx;
 use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::xdp_wan_route::xdp_wan_route_skel;
 use crate::landscape::OwnedOpenObject;
 use crate::landscape::pin_and_reuse_map;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 
-pub(crate) mod xdp_wan_intro_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_intro.skel.rs"));
-}
-pub(crate) mod xdp_lan_exit_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_exit.skel.rs"));
-}
 /// Shared with `crate::maps` (wan binding writes go through this
 /// skeleton's pinned map types).
-pub(crate) mod tc_wan_ingress_route_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_ingress_route.skel.rs"));
-}
-mod tc_wan_egress_exit_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_wan_egress_exit.skel.rs"));
-}
-
-use tc_wan_egress_exit_skel::TcWanEgressExitSkelBuilder;
-use tc_wan_ingress_route_skel::TcWanIngressRouteSkelBuilder;
-use xdp_lan_exit_skel::XdpLanExitSkelBuilder;
-use xdp_wan_intro_skel::XdpWanIntroSkelBuilder;
-use xdp_wan_route_skel::XdpWanRouteSkelBuilder;
+use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder;
+use crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkelBuilder;
+use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
+use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
+use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
 
 // ── Pure Rust map creation (delete-if-exists then create + pin) ──
 
@@ -119,16 +105,17 @@ pub struct RouteBackbone {
     trie: Arc<WanTrieDispatcher>,
     // TrieTarget: the guard field drops before the skeleton field, so the
     // trie target is detached while the arena mmap is still alive.
-    _seed:
-        crate::maps::wan_trie::dispatcher::TrieTarget<xdp_wan_intro_skel::XdpWanIntroSkel<'static>>,
+    _seed: crate::maps::wan_trie::dispatcher::TrieTarget<
+        crate::skel::xdp_wan_intro::XdpWanIntroSkel<'static>,
+    >,
     _backing: OwnedOpenObject,
-    _exit_lan_skel: xdp_lan_exit_skel::XdpLanExitSkel<'static>,
+    _exit_lan_skel: crate::skel::xdp_lan_exit::XdpLanExitSkel<'static>,
     _exit_lan_backing: OwnedOpenObject,
-    _exit_wan_skel: xdp_wan_route_skel::XdpWanRouteSkel<'static>,
+    _exit_wan_skel: crate::skel::xdp_wan_route::XdpWanRouteSkel<'static>,
     _exit_wan_backing: OwnedOpenObject,
-    _route_wi: tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>,
+    _route_wi: crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkel<'static>,
     _back_wi: OwnedOpenObject,
-    _exit_we: tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>,
+    _exit_we: crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel<'static>,
     _back_we: OwnedOpenObject,
 }
 
@@ -245,8 +232,8 @@ impl RouteBackbone {
         })
     }
 
-    fn load_lan_exit() -> LdEbpfResult<(xdp_lan_exit_skel::XdpLanExitSkel<'static>, OwnedOpenObject)>
-    {
+    fn load_lan_exit()
+    -> LdEbpfResult<(crate::skel::xdp_lan_exit::XdpLanExitSkel<'static>, OwnedOpenObject)> {
         let builder = XdpLanExitSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_exit skeleton")?;
@@ -256,7 +243,7 @@ impl RouteBackbone {
 
     fn load_wan_exit(
         paths: &LandscapeMapPath,
-    ) -> LdEbpfResult<(xdp_wan_route_skel::XdpWanRouteSkel<'static>, OwnedOpenObject)> {
+    ) -> LdEbpfResult<(crate::skel::xdp_wan_route::XdpWanRouteSkel<'static>, OwnedOpenObject)> {
         let builder = XdpWanRouteSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_route skeleton")?;
@@ -299,8 +286,10 @@ impl RouteBackbone {
 
     fn init_wan_ingress_route(
         paths: &LandscapeMapPath,
-    ) -> LdEbpfResult<(tc_wan_ingress_route_skel::TcWanIngressRouteSkel<'static>, OwnedOpenObject)>
-    {
+    ) -> LdEbpfResult<(
+        crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkel<'static>,
+        OwnedOpenObject,
+    )> {
         let builder = TcWanIngressRouteSkelBuilder::default();
         let (back, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_ingress_route skeleton")?;
@@ -380,8 +369,10 @@ impl RouteBackbone {
 
     fn init_exit_wan_egress(
         paths: &LandscapeMapPath,
-    ) -> LdEbpfResult<(tc_wan_egress_exit_skel::TcWanEgressExitSkel<'static>, OwnedOpenObject)>
-    {
+    ) -> LdEbpfResult<(
+        crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel<'static>,
+        OwnedOpenObject,
+    )> {
         let builder = TcWanEgressExitSkelBuilder::default();
         let (back, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;

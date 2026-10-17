@@ -22,15 +22,8 @@ use crate::route_backbone::RouteBackbone;
 
 use super::WanLinkDataplane;
 
-mod xdp_wan_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_wan_root.skel.rs"));
-}
-mod xdp_lan_root_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/xdp_lan_root.skel.rs"));
-}
-
-use xdp_lan_root_skel::XdpLanRootSkelBuilder;
-use xdp_wan_root_skel::XdpWanRootSkelBuilder;
+use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
+use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
 
 // ── XDP half ──
 
@@ -71,12 +64,12 @@ const XDP_ROOT_SLOT_V6: u32 = 1;
 
 pub(super) enum ChainRoot {
     Wan {
-        _skel: xdp_wan_root_skel::XdpWanRootSkel<'static>,
+        _skel: crate::skel::xdp_wan_root::XdpWanRootSkel<'static>,
         _backing: OwnedOpenObject,
         root_next_stage_fd: i32,
     },
     Lan {
-        _skel: xdp_lan_root_skel::XdpLanRootSkel<'static>,
+        _skel: crate::skel::xdp_lan_root::XdpLanRootSkel<'static>,
         _backing: OwnedOpenObject,
         root_next_stage_fd: i32,
     },

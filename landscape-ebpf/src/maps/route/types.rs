@@ -123,7 +123,7 @@ pub(crate) struct Route6TargetInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::xdp_wan_route::xdp_wan_route_skel::types as share;
+    use crate::skel::xdp_wan_route::types as share;
 
     #[test]
     fn route_layouts_match_skel() {

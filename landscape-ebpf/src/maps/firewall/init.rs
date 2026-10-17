@@ -74,7 +74,7 @@ pub fn init_firewall_conn_metric_events(path: &Path) -> LdEbpfResult<MapHandle> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::firewall::xdp_firewall_skel::XdpFirewallSkelBuilder;
+    use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

@@ -34,7 +34,7 @@ pub fn init_dns_flow_socks(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dns_dispatcher::sk_dns_dispatcher::SkDnsDispatcherSkelBuilder;
+    use crate::skel::sk_dns_dispatcher::SkDnsDispatcherSkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]

@@ -160,8 +160,8 @@ pub(crate) struct Nat6TimerValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stages::nat4::xdp_nat4_skel::types as share4;
-    use crate::stages::nat6::xdp_nat6_skel::types as share6;
+    use crate::skel::xdp_nat4::types as share4;
+    use crate::skel::xdp_nat6::types as share6;
 
     #[test]
     fn nat_layouts_match_skel() {

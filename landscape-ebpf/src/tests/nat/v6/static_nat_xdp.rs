@@ -6,7 +6,8 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::{maps::nat::StaticNatMappingV6Item, tests::xdp_nat6_skel::XdpNat6SkelBuilder};
+use crate::maps::nat::StaticNatMappingV6Item;
+use crate::skel::xdp_nat6::XdpNat6SkelBuilder;
 
 const IFINDEX: u32 = 6;
 const XDP_PASS: u32 = 2;

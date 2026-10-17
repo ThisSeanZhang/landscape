@@ -30,7 +30,6 @@ use libbpf_rs::libbpf_sys;
 
 use crate::LandscapeMapPath;
 use crate::bpf_error::LdEbpfResult;
-use crate::bpf_rs_shared::pppoe_skb_fallback_skel;
 use crate::landscape::OwnedOpenObject;
 
 pub struct NativeXdpLink {
@@ -218,14 +217,14 @@ impl Drop for SkbXdpLink {
 /// The manager decides whether to attach it (as SKB fallback) or keep it
 /// for later, depending on native XDP availability.
 pub(crate) struct SkbPending {
-    _skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
+    _skel: crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 impl SkbPending {
     pub(crate) fn new(
         backing: OwnedOpenObject,
-        skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
+        skel: crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkel<'static>,
     ) -> Self {
         Self { _backing: backing, _skel: skel }
     }
@@ -238,14 +237,14 @@ impl SkbPending {
 /// finally the backing memory is freed.
 pub(crate) struct SkbXdpBundle {
     _link: SkbXdpLink,
-    _skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
+    _skel: crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkel<'static>,
     _backing: OwnedOpenObject,
 }
 
 impl SkbXdpBundle {
     pub(crate) fn new(
         backing: OwnedOpenObject,
-        skel: pppoe_skb_fallback_skel::PppoeSkbFallbackSkel<'static>,
+        skel: crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkel<'static>,
         link: SkbXdpLink,
     ) -> Self {
         Self { _backing: backing, _skel: skel, _link: link }

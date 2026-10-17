@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{self, BufRead, ErrorKind};
 
 use landscape_ebpf::landscape::TcHookProxy;
-use landscape_ebpf::tproxy::landscape_tproxy::*;
+use landscape_ebpf::skel::tproxy::*;
 use libbpf_rs::TC_INGRESS;
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;

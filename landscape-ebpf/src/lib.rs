@@ -12,6 +12,7 @@ pub mod pppoe;
 pub mod route_backbone;
 pub mod runtime;
 mod runtime_impls;
+pub mod skel;
 pub mod stages;
 pub mod tproxy;
 pub mod xdp_attach;
