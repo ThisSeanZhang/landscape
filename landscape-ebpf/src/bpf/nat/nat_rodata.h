@@ -3,37 +3,33 @@
 
 #include <vmlinux.h>
 
-// WAN-side address/prefix baked into the NAT objects' rodata at load
-// time by the stage loaders (stages/nat4.rs / stages/nat6.rs).  They
-// replace the runtime `wan_ip_binding` map lookups the NAT hot paths
-// used to perform: the WAN address of a link changes together with a
-// session rebuild, which reloads the objects anyway.
-//
-// Unconfigured objects keep the zero defaults; the lookups below treat
-// zero as "no WAN address bound" and drop, matching the old map-miss
-// semantics.
+// WAN-side address/prefix baked into the NAT objects at load time.
+// Zero means "unbound" and makes the lookup paths drop.
 
-// The WAN IPv4 address in network byte order; 0 = unconfigured.
+// WAN IPv4 address, network byte order; 0 = unbound.
 const volatile u32 wan_ro_addr4 = 0;
 
-// The first 8 bytes (the /64-or-shorter prefix span) of the WAN IPv6
-// prefix in network byte order.  A real WAN prefix (GUA 0x2x / ULA
-// 0xfd) never starts with a zero byte, so prefix6.b[0] == 0 doubles as
-// the unconfigured sentinel.
+// First 8 bytes of the WAN IPv6 prefix, network order. A real prefix never
+// starts with 0, so b[0] == 0 means unbound.
 //
-// The union gives a u64 view for the NPT blend; every member access on
-// the volatile object is a genuine volatile read, so the compiler
-// cannot constant-fold it.  Do NOT memcpy from &wan_ro_prefix6 — a
-// builtin byte copy is not a volatile access and folds to the initial
-// zeros.
+// The u64 view is used by the NPT blend. Do NOT memcpy from this object:
+// only volatile member access avoids compiler folding.
 union wan_prefix6 {
     u8 b[8];
     u64 q;
 };
 const volatile union wan_prefix6 wan_ro_prefix6 = {{0}};
 
-// NPT mask: bits preserved from the LAN-side address during prefix
-// translation (see compute_npt_mask on the loader side); 0 = /64+.
+// Complete WAN-side IPv6 /128 (prefix + shared IID), network order;
+// all-zero = unbound.
+union wan_addr6 {
+    u8 b[16];
+    u64 q[2];
+};
+const volatile union wan_addr6 wan_ro_addr6 = {{0}};
+
+// NPT mask: bits kept from the LAN address during prefix translation.
+// 0 means /64 or longer (see compute_npt_mask).
 const volatile u64 wan_ro_npt_mask = 0;
 
 #endif /* __NAT_RODATA_H__ */

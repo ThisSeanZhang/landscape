@@ -101,6 +101,11 @@ pub struct PdLease {
     pub prefix_len: u8,
     pub valid_secs: u32,
     pub preferred_secs: u32,
+    #[cfg_attr(
+        feature = "openapi",
+        schema(required = true, nullable = true, value_type = Option<String>)
+    )]
+    pub wan_ip: Option<Ipv6Addr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

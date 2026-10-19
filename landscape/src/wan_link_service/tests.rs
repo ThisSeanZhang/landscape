@@ -160,6 +160,10 @@ fn v6_prefix() -> landscape_common::wan_link::WanV6Prefix {
     }
 }
 
+fn v6_addr() -> std::net::Ipv6Addr {
+    std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0x8000, 0, 0, 0x1234)
+}
+
 fn counting_runner(starts: Arc<AtomicUsize>) -> SectionRunner {
     Arc::new(move |_iface, _cfg, run_status| {
         let starts = starts.clone();
@@ -324,7 +328,7 @@ async fn nat6_requires_a_v6_prefix() {
     assert_eq!(starts.load(Ordering::SeqCst), 0);
 
     // The pd section publishing a bound prefix starts nat6.
-    link_state.set_v6_prefix(v6_prefix());
+    link_state.set_v6_prefix(v6_prefix(), Some(v6_addr()));
     wait_until(|| starts.load(Ordering::SeqCst) == 1).await;
 
     // Prefix expiry keeps nat6 attached; the pd re-bind restores it in place.

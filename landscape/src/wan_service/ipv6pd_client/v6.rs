@@ -398,11 +398,11 @@ pub async fn dhcp_v6_pd_client(
 
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
 
+    let mut current_wan_addr: Option<Ipv6Addr> = None;
     let mut status = IpV6PdState::init_status();
-    swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
+    swap_if_changed(&pd_runtime, pd_runtime_projection(&status, current_wan_addr));
     #[cfg(debug_assertions)]
     let time = tokio::time::Instant::now();
-    let mut current_wan_addr: Option<Ipv6Addr> = None;
 
     let stop_token = service_status.stop_token();
     let mut cleaned_up = false;
@@ -458,7 +458,7 @@ pub async fn dhcp_v6_pd_client(
                     timeout_times = 0;
                 }
                 timeout_times = get_status_timeout_config(&status, timeout_times, active_send.as_mut());
-                swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
+                swap_if_changed(&pd_runtime, pd_runtime_projection(&status, current_wan_addr));
                 // active_send.as_mut().set(tokio::time::sleep(Duration::from_secs(current_timeout_time * timeout_times)));
                 // timeout_times += 1;
             },
@@ -494,7 +494,7 @@ pub async fn dhcp_v6_pd_client(
                             // current_timeout_time = t2;
 
                         }
-                        swap_if_changed(&pd_runtime, pd_runtime_projection(&status));
+                        swap_if_changed(&pd_runtime, pd_runtime_projection(&status, current_wan_addr));
                     }
                     // message_rx close
                     None => break
@@ -593,30 +593,31 @@ impl SendStatusOutcome {
     const PREFIX_EXPIRED: Self = Self { reset_timeout: true, prefix_expired: true };
 }
 
-fn lease_projection(iapd: &v6::IAPD) -> Option<PdLease> {
+fn lease_projection(iapd: &v6::IAPD, wan_addr: Option<Ipv6Addr>) -> Option<PdLease> {
     match iapd.opts.get(OptionCode::IAPrefix) {
         Some(DhcpOption::IAPrefix(p)) => Some(PdLease {
             prefix_ip: p.prefix_ip,
             prefix_len: p.prefix_len,
             valid_secs: p.valid_lifetime,
             preferred_secs: p.preferred_lifetime,
+            wan_ip: wan_addr,
         }),
         _ => None,
     }
 }
 
-fn pd_runtime_projection(status: &IpV6PdState) -> PdRuntime {
+fn pd_runtime_projection(status: &IpV6PdState, wan_addr: Option<Ipv6Addr>) -> PdRuntime {
     match status {
         IpV6PdState::Solicit { .. } | IpV6PdState::Confirm => PdRuntime::Soliciting,
         IpV6PdState::Request { .. } => PdRuntime::Requesting,
         IpV6PdState::Bound { iapd, .. } => {
-            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Bound)
+            lease_projection(iapd, wan_addr).map_or(PdRuntime::Soliciting, PdRuntime::Bound)
         }
         IpV6PdState::Renew { iapd, .. } | IpV6PdState::WaitToRebind { iapd, .. } => {
-            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Renewing)
+            lease_projection(iapd, wan_addr).map_or(PdRuntime::Soliciting, PdRuntime::Renewing)
         }
         IpV6PdState::Rebind { iapd, .. } => {
-            lease_projection(iapd).map_or(PdRuntime::Soliciting, PdRuntime::Rebinding)
+            lease_projection(iapd, wan_addr).map_or(PdRuntime::Soliciting, PdRuntime::Rebinding)
         }
         IpV6PdState::Release { .. } | IpV6PdState::Decline | IpV6PdState::Stop => {
             PdRuntime::Stopped
@@ -1016,9 +1017,9 @@ async fn handle_packet(
                                 last_update_time: get_f64_timestamp(),
                             };
 
+                            let wan_addr = derive_wan_pd_addr(&ia_prefix, *shared_wan_iid);
                             let mut info = wan_route_info.clone();
-                            if let Some(wan_addr) = derive_wan_pd_addr(&ia_prefix, *shared_wan_iid)
-                            {
+                            if let Some(wan_addr) = wan_addr {
                                 if current_wan_addr.as_ref() != Some(&wan_addr)
                                     && let Some(old_addr) = current_wan_addr.replace(wan_addr)
                                 {
@@ -1054,9 +1055,10 @@ async fn handle_packet(
                                 prefix_len: ia_prefix.prefix_len,
                             };
                             prefix_map.store(link_id, ia_prefix, expected_pd_len);
-                            // Publish the bound prefix so the nat6 section can
-                            // start; same-prefix renewals deduplicate.
-                            link_state.set_v6_prefix(wan_v6_prefix);
+                            // Publish the bound prefix and derived WAN /128 so
+                            // the nat6 section can start; unchanged renewals
+                            // deduplicate.
+                            link_state.set_v6_prefix(wan_v6_prefix, wan_addr);
                             let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
                             tracing::debug!("current status move to: {:#?}", current_status);
                             return true;
@@ -1255,8 +1257,9 @@ mod tests {
 
     #[test]
     fn pd_runtime_projection_maps_fsm_phases() {
+        let wan_ip: Ipv6Addr = "2001:db8:1200::8000:0:0:1234".parse().unwrap();
         assert!(matches!(
-            pd_runtime_projection(&IpV6PdState::init_status()),
+            pd_runtime_projection(&IpV6PdState::init_status(), None),
             PdRuntime::Soliciting
         ));
 
@@ -1268,7 +1271,7 @@ mod tests {
             server_unicast: None,
             send_times: 0,
         };
-        assert!(matches!(pd_runtime_projection(&request), PdRuntime::Requesting));
+        assert!(matches!(pd_runtime_projection(&request, None), PdRuntime::Requesting));
 
         let bound = IpV6PdState::Bound {
             xid: 1,
@@ -1278,12 +1281,13 @@ mod tests {
             bound_time: Instant::now(),
         };
         assert_eq!(
-            pd_runtime_projection(&bound),
+            pd_runtime_projection(&bound, Some(wan_ip)),
             PdRuntime::Bound(PdLease {
                 prefix_ip: "2001:db8:1200::".parse().unwrap(),
                 prefix_len: 56,
                 valid_secs: 30,
                 preferred_secs: 30,
+                wan_ip: Some(wan_ip),
             })
         );
 
@@ -1295,7 +1299,7 @@ mod tests {
             renew_time: Instant::now(),
             bound_time: Instant::now(),
         };
-        assert!(matches!(pd_runtime_projection(&renew), PdRuntime::Renewing(_)));
+        assert!(matches!(pd_runtime_projection(&renew, Some(wan_ip)), PdRuntime::Renewing(_)));
 
         let wait_to_rebind = IpV6PdState::WaitToRebind {
             xid: 1,
@@ -1304,7 +1308,10 @@ mod tests {
             server_unicast: None,
             bound_time: Instant::now(),
         };
-        assert!(matches!(pd_runtime_projection(&wait_to_rebind), PdRuntime::Renewing(_)));
+        assert!(matches!(
+            pd_runtime_projection(&wait_to_rebind, Some(wan_ip)),
+            PdRuntime::Renewing(_)
+        ));
 
         let rebind = IpV6PdState::Rebind {
             xid: 1,
@@ -1314,9 +1321,9 @@ mod tests {
             rebind_time: Instant::now(),
             bound_time: Instant::now(),
         };
-        assert!(matches!(pd_runtime_projection(&rebind), PdRuntime::Rebinding(_)));
+        assert!(matches!(pd_runtime_projection(&rebind, Some(wan_ip)), PdRuntime::Rebinding(_)));
 
-        assert!(matches!(pd_runtime_projection(&IpV6PdState::Stop), PdRuntime::Stopped));
+        assert!(matches!(pd_runtime_projection(&IpV6PdState::Stop, None), PdRuntime::Stopped));
     }
 
     #[test]

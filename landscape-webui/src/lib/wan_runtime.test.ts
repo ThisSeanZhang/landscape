@@ -61,7 +61,7 @@ describe("formatV4Runtime", () => {
         t,
       ),
     ).toEqual({
-      text: 'runtime_v4_dhcp_bound {"ip":"10.0.0.30","prefix":24,"lease":3600}',
+      text: 'runtime_v4_dhcp_bound {"ip":"10.0.0.30","prefix":24}',
       tone: "success",
     });
     expect(
@@ -184,7 +184,7 @@ describe("formatPdRuntime", () => {
 
   it("maps lease variants", () => {
     expect(formatPdRuntime({ bound: lease } as PdRuntime, t)).toEqual({
-      text: 'runtime_pd_bound {"prefix":"2001:db8:1200::","len":56,"valid":7200}',
+      text: 'runtime_pd_bound {"prefix":"2001:db8:1200::","len":56}',
       tone: "success",
     });
     expect(formatPdRuntime({ renewing: lease } as PdRuntime, t)).toEqual({

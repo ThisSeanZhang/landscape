@@ -1,6 +1,4 @@
-//! Per-link rendezvous between the v4 acquisition section and the dependent
-//! sections (nat / mss / firewall / pd): physical carrier + current session.
-//! The v4 section writes `session`; the link environment task writes `carrier`.
+//! Per-link carrier + session state shared by the link's sections.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -9,16 +7,13 @@ use tokio::sync::watch;
 use crate::dev::LandscapeInterface;
 use crate::net::MacAddr;
 
-/// The net interface a link's sections operate on: the attach iface for
-/// ethernet / native PPPoE, the ppp device for pppd.
+/// The interface a link's sections operate on: attach iface or ppp device.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionIface {
     pub ifindex: u32,
     pub iface_name: String,
     pub mac: Option<MacAddr>,
-    /// IPv6CP link-local (native PPPoE): the session's stable DHCPv6
-    /// source address (chain steering is the HostDirect SO_MARK).
-    /// `None` without IPv6CP (ethernet WAN, pppd).
+    /// IPv6CP link-local (native PPPoE); stable DHCPv6 source when present.
     pub v6_linklocal: Option<Ipv6Addr>,
 }
 
@@ -37,17 +32,13 @@ impl SessionIface {
         self
     }
 
-    /// Whether packets on this session iface carry a 14-byte Ethernet
-    /// header before the L3 payload.  PPP (pppd) session ifaces are L3-only
-    /// and therefore expose `mac == None`; ethernet / native-PPPoE anchors
-    /// own a MAC and are L2-framed.
+    /// Whether the L3 payload is preceded by a 14-byte Ethernet header.
     pub fn has_eth_header(&self) -> bool {
         self.mac.is_some()
     }
 }
 
-/// The v4 lease a session holds. NAT requires its presence and re-attaches when
-/// it changes.
+/// The v4 lease a session holds. NAT re-attaches when it changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WanV4Lease {
     pub ifindex: u32,
@@ -60,8 +51,7 @@ impl WanV4Lease {
     }
 }
 
-/// The delegated v6 prefix the PD section bound to the WAN side. nat6 keys
-/// its startup on its presence.
+/// The delegated v6 prefix bound on the WAN side; nat6 starts on its presence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WanV6Prefix {
     pub prefix_ip: Ipv6Addr,
@@ -72,7 +62,7 @@ pub struct WanV6Prefix {
 pub enum SessionPhase {
     #[default]
     Down,
-    /// `lease` is `Some` for v4 acquisition; a PPP / PD-only anchor is `None`.
+    /// `lease` is `Some` for v4 acquisition; PPP / PD-only anchors are `None`.
     Up { iface: SessionIface, lease: Option<WanV4Lease> },
 }
 
@@ -92,14 +82,11 @@ impl SessionPhase {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SessionState {
     pub phase: SessionPhase,
-    /// The WAN v6 prefix currently bound by the PD section. Tracked outside
-    /// `phase` on purpose: prefix bind / unbind must not bump `epoch`, or the
-    /// pd section itself would restart on every renewal. `session_up` /
-    /// `session_down` clear it so a stale prefix never survives a re-anchor.
+    /// Prefix bound by PD. Kept outside `phase` so renewals do not bump `epoch`.
     pub v6_prefix: Option<WanV6Prefix>,
-    /// Bumped only on anchor re-index (`Up(A)` → `Up(B)`); a change tells
-    /// anchor-keyed dependents (mss / firewall / pd / nat6) to re-attach.
-    /// Lease changes deliberately leave it alone — see `session_up`.
+    /// WAN-side /128 (prefix + shared IID); `None` when not derivable.
+    pub wan_v6_addr: Option<Ipv6Addr>,
+    /// Bumped only on re-anchor (`Up(A)` → `Up(B)`), not on lease changes.
     pub epoch: u64,
 }
 
@@ -118,6 +105,10 @@ impl SessionState {
 
     pub fn has_v6_prefix(&self) -> bool {
         self.v6_prefix.is_some()
+    }
+
+    pub fn wan_v6_addr(&self) -> Option<Ipv6Addr> {
+        self.wan_v6_addr
     }
 
     pub fn v4_ip(&self) -> Option<IpAddr> {
@@ -154,8 +145,7 @@ impl LinkStateHandle {
         self.tx.borrow().clone()
     }
 
-    /// Notifies only when the (name, ifindex) identity changes, so a reindex
-    /// (device reload / replug) propagates but a same-iface re-report is a no-op.
+    /// Notifies only when the carrier identity (name, ifindex) changes.
     pub fn set_carrier(&self, carrier: Option<LandscapeInterface>) {
         self.tx.send_if_modified(|state| {
             let changed = match (&state.carrier, &carrier) {
@@ -170,15 +160,8 @@ impl LinkStateHandle {
         });
     }
 
-    /// Publishes a session anchor. `epoch` is the anchor-identity
-    /// generation: it bumps only on a re-anchor — `Up(iface A)` becoming
-    /// `Up(iface B)` without passing `Down` (e.g. a ppp device swap) —
-    /// which is the only session change that survives no `Down` state.
-    /// Transitions through `Down` propagate via `!is_up()` instead, and a
-    /// lease-only change on the same anchor keeps both the generation and
-    /// the bound v6 prefix stable: lease-sensitive sections (nat4 / health
-    /// check) restart through their `SessionAndLease` scope, everything
-    /// else keeps running.
+    /// Publishes a session anchor. `epoch` bumps only on re-anchor; lease-only
+    /// changes restart just the `SessionAndLease` sections.
     pub fn session_up(&self, iface: SessionIface, lease: Option<WanV4Lease>) {
         self.tx.send_if_modified(|state| {
             let reanchor = match &state.session.phase {
@@ -192,9 +175,9 @@ impl LinkStateHandle {
             state.session.phase = new_phase;
             if reanchor {
                 state.session.epoch = state.session.epoch.wrapping_add(1);
-                // A new anchor invalidates any v6 prefix the pd section
-                // bound on the previous one; pd restarts and re-binds.
+                // A new anchor invalidates the previous PD lease.
                 state.session.v6_prefix = None;
+                state.session.wan_v6_addr = None;
             }
             true
         });
@@ -207,29 +190,31 @@ impl LinkStateHandle {
             }
             state.session.phase = SessionPhase::Down;
             state.session.v6_prefix = None;
+            state.session.wan_v6_addr = None;
             true
         });
     }
 
-    /// Publishes the WAN v6 prefix bound by the pd section. Does not bump
-    /// `epoch`: the pd section must not restart on its own bind, and a
-    /// same-prefix renewal is deduplicated into a no-op.
-    pub fn set_v6_prefix(&self, prefix: WanV6Prefix) {
+    /// Publishes the PD prefix and derived /128 without bumping `epoch`.
+    /// Unchanged updates are no-ops.
+    pub fn set_v6_prefix(&self, prefix: WanV6Prefix, wan_addr: Option<Ipv6Addr>) {
         self.tx.send_if_modified(|state| {
-            if state.session.v6_prefix == Some(prefix) {
+            if state.session.v6_prefix == Some(prefix) && state.session.wan_v6_addr == wan_addr {
                 return false;
             }
             state.session.v6_prefix = Some(prefix);
+            state.session.wan_v6_addr = wan_addr;
             true
         });
     }
 
     pub fn clear_v6_prefix(&self) {
         self.tx.send_if_modified(|state| {
-            if state.session.v6_prefix.is_none() {
+            if state.session.v6_prefix.is_none() && state.session.wan_v6_addr.is_none() {
                 return false;
             }
             state.session.v6_prefix = None;
+            state.session.wan_v6_addr = None;
             true
         });
     }
@@ -296,48 +281,70 @@ mod tests {
         }
     }
 
+    fn wan_addr(n: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 0, n, 0x8000, 0, 0, 0x1234)
+    }
+
     #[test]
     fn v6_prefix_updates_do_not_bump_epoch() {
         let (handle, rx) = LinkStateHandle::new(None);
         handle.session_up(iface(), None);
         let epoch = rx.borrow().session.epoch;
 
-        handle.set_v6_prefix(v6_prefix(1));
+        handle.set_v6_prefix(v6_prefix(1), Some(wan_addr(1)));
         assert!(rx.borrow().session.has_v6_prefix());
+        assert_eq!(rx.borrow().session.wan_v6_addr(), Some(wan_addr(1)));
         assert_eq!(rx.borrow().session.epoch, epoch);
 
         // Same-prefix renewal is a no-op (no watch notification).
-        handle.set_v6_prefix(v6_prefix(1));
+        handle.set_v6_prefix(v6_prefix(1), Some(wan_addr(1)));
         assert_eq!(rx.borrow().session.epoch, epoch);
 
-        handle.set_v6_prefix(v6_prefix(2));
+        handle.set_v6_prefix(v6_prefix(2), Some(wan_addr(2)));
         assert_eq!(rx.borrow().session.v6_prefix, Some(v6_prefix(2)));
+        assert_eq!(rx.borrow().session.wan_v6_addr(), Some(wan_addr(2)));
         assert_eq!(rx.borrow().session.epoch, epoch);
 
         handle.clear_v6_prefix();
         assert!(!rx.borrow().session.has_v6_prefix());
+        assert_eq!(rx.borrow().session.wan_v6_addr(), None);
         handle.clear_v6_prefix();
         assert_eq!(rx.borrow().session.epoch, epoch);
+    }
+
+    #[test]
+    fn wan_v6_addr_change_alone_notifies() {
+        let (handle, rx) = LinkStateHandle::new(None);
+        handle.session_up(iface(), None);
+        handle.set_v6_prefix(v6_prefix(1), Some(wan_addr(1)));
+
+        let changed = rx.clone();
+        handle.set_v6_prefix(v6_prefix(1), Some(wan_addr(2)));
+
+        assert!(changed.has_changed().unwrap());
+        assert_eq!(rx.borrow().session.wan_v6_addr(), Some(wan_addr(2)));
     }
 
     #[test]
     fn session_transitions_clear_v6_prefix() {
         let (handle, rx) = LinkStateHandle::new(None);
         handle.session_up(iface(), None);
-        handle.set_v6_prefix(v6_prefix(1));
+        handle.set_v6_prefix(v6_prefix(1), Some(wan_addr(1)));
 
-        // Lease-only change on the same anchor keeps the prefix: the pd
-        // section bound it on this anchor and keeps running.
+        // Lease-only change keeps the prefix bound to this anchor.
         handle.session_up(iface(), Some(lease([10, 0, 0, 2])));
         assert_eq!(rx.borrow().session.v6_prefix, Some(v6_prefix(1)));
+        assert_eq!(rx.borrow().session.wan_v6_addr(), Some(wan_addr(1)));
 
-        // Re-anchor (epoch bump) drops the stale prefix.
+        // Re-anchor (epoch bump) drops the stale lease.
         let other = SessionIface::new(7, "eth1", None);
         handle.session_up(other, None);
         assert!(!rx.borrow().session.has_v6_prefix());
+        assert_eq!(rx.borrow().session.wan_v6_addr(), None);
 
-        handle.set_v6_prefix(v6_prefix(2));
+        handle.set_v6_prefix(v6_prefix(2), Some(wan_addr(2)));
         handle.session_down();
         assert!(!rx.borrow().session.has_v6_prefix());
+        assert_eq!(rx.borrow().session.wan_v6_addr(), None);
     }
 }

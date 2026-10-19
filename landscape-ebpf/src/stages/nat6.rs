@@ -22,6 +22,12 @@ pub(crate) fn wan_ro_prefix6(prefix: Option<Ipv6Addr>) -> [u8; 8] {
     out
 }
 
+/// Bake value for the `wan_ro_addr6` rodata field: the complete WAN-side
+/// /128 (prefix + shared WAN IID), network order. `None` bakes all zeros.
+pub(crate) fn wan_ro_addr6(addr: Option<Ipv6Addr>) -> [u8; 16] {
+    addr.map(|addr| addr.octets()).unwrap_or([0u8; 16])
+}
+
 /// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with a shared
 /// conntrack timer map.
 pub struct Nat6Handle {
@@ -69,6 +75,7 @@ pub fn attach_nat6(
     ifindex: u32,
     has_eth_header: bool,
     prefix: Option<(Ipv6Addr, u8)>,
+    wan_addr: Option<Ipv6Addr>,
 ) -> LdEbpfResult<Nat6Handle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
@@ -94,6 +101,7 @@ pub fn attach_nat6(
     let tc_rodata = tc_open.maps.rodata_data.as_deref_mut().expect("`rodata` is not memory mapped");
     tc_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
     tc_rodata.wan_ro_prefix6.b = wan_ro_prefix6(prefix.map(|(addr, _)| addr));
+    tc_rodata.wan_ro_addr6.b = wan_ro_addr6(wan_addr);
     tc_rodata.wan_ro_npt_mask = npt_mask;
 
     pin_and_reuse_map(
@@ -157,6 +165,7 @@ pub fn attach_nat6(
             xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat6 rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
         xdp_rodata.wan_ro_prefix6.b = wan_ro_prefix6(prefix.map(|(addr, _)| addr));
+        xdp_rodata.wan_ro_addr6.b = wan_ro_addr6(wan_addr);
         xdp_rodata.wan_ro_npt_mask = npt_mask;
     }
 
@@ -211,4 +220,23 @@ pub fn attach_nat6(
             _backing: xdp_backing,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{wan_ro_addr6, wan_ro_prefix6};
+
+    #[test]
+    fn wan_ro_addr6_bakes_network_order_and_zero_default() {
+        let addr = "2001:db8:1::8000:0:0:1234".parse().unwrap();
+        assert_eq!(wan_ro_addr6(Some(addr)), addr.octets());
+        assert_eq!(wan_ro_addr6(None), [0u8; 16]);
+    }
+
+    #[test]
+    fn wan_ro_prefix6_keeps_the_first_eight_bytes() {
+        let addr = "2001:db8:1::8000:0:0:1234".parse().unwrap();
+        assert_eq!(wan_ro_prefix6(Some(addr)), addr.octets()[..8]);
+        assert_eq!(wan_ro_prefix6(None), [0u8; 8]);
+    }
 }

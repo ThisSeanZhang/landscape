@@ -37,6 +37,7 @@ async fn main() {
         ifindex,
         true,
         Some((std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 0), 56)),
+        Some(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0x8000, 0, 0, 0x1234)),
     )
     .expect("failed to start nat6 test");
 

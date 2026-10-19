@@ -20,20 +20,29 @@ pub(super) async fn run(
     dataplane: Arc<WanLinkDataplane>,
     runtime: Arc<ArcSwap<ServiceStatus>>,
 ) {
-    fn prefix_of(state: &LinkState) -> Option<(std::net::Ipv6Addr, u8)> {
-        state.session.v6_prefix.map(|WanV6Prefix { prefix_ip, prefix_len }| (prefix_ip, prefix_len))
+    fn lease_of(
+        state: &LinkState,
+    ) -> (Option<(std::net::Ipv6Addr, u8)>, Option<std::net::Ipv6Addr>) {
+        (
+            state
+                .session
+                .v6_prefix
+                .map(|WanV6Prefix { prefix_ip, prefix_len }| (prefix_ip, prefix_len)),
+            state.session.wan_v6_addr,
+        )
     }
 
-    let mut prefix = prefix_of(&state_rx.borrow_and_update());
-    let mut nat = match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix) {
-        Ok(handle) => handle,
-        Err(err) => {
-            tracing::error!("failed to start nat6 for {}: {err}", iface.iface_name);
-            service_status.just_change_status(ServiceStatus::Failed);
-            swap_if_changed(&runtime, ServiceStatus::Failed);
-            return;
-        }
-    };
+    let (mut prefix, mut wan_addr) = lease_of(&state_rx.borrow_and_update());
+    let mut nat =
+        match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix, wan_addr) {
+            Ok(handle) => handle,
+            Err(err) => {
+                tracing::error!("failed to start nat6 for {}: {err}", iface.iface_name);
+                service_status.just_change_status(ServiceStatus::Failed);
+                swap_if_changed(&runtime, ServiceStatus::Failed);
+                return;
+            }
+        };
 
     service_status.just_change_status(ServiceStatus::Running);
     swap_if_changed(&runtime, ServiceStatus::Running);
@@ -49,13 +58,14 @@ pub(super) async fn run(
             }
         }
 
-        let new_prefix = prefix_of(&state_rx.borrow_and_update());
-        if new_prefix == prefix {
+        let (new_prefix, new_wan_addr) = lease_of(&state_rx.borrow_and_update());
+        if new_prefix == prefix && new_wan_addr == wan_addr {
             continue;
         }
         prefix = new_prefix;
+        wan_addr = new_wan_addr;
         drop(nat);
-        nat = match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix) {
+        nat = match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix, wan_addr) {
             Ok(handle) => handle,
             Err(err) => {
                 tracing::error!("failed to re-attach nat6 for {}: {err}", iface.iface_name);

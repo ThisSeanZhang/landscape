@@ -74,7 +74,6 @@ function formatDhcpV4(
       text: t("topology.panel.runtime_v4_dhcp_bound", {
         ip: mask(rt.bound.ip),
         prefix: rt.bound.prefix,
-        lease: rt.bound.lease_secs,
       }),
       tone: "success",
     };
@@ -194,7 +193,6 @@ export function formatPdRuntime(
       text: t("topology.panel.runtime_pd_bound", {
         prefix: mask(rt.bound.prefix_ip),
         len: rt.bound.prefix_len,
-        valid: rt.bound.valid_secs,
       }),
       tone: "success",
     };

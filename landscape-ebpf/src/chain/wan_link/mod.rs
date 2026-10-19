@@ -233,9 +233,10 @@ impl WanLinkDataplane {
         ifindex: u32,
         has_eth_header: bool,
         prefix: Option<(Ipv6Addr, u8)>,
+        wan_addr: Option<Ipv6Addr>,
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         self.observe(ifindex, has_eth_header);
-        crate::stages::nat6::attach_nat6(self, ifindex, has_eth_header, prefix)
+        crate::stages::nat6::attach_nat6(self, ifindex, has_eth_header, prefix, wan_addr)
             .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
             .map_err(|e| e.to_string())
     }
