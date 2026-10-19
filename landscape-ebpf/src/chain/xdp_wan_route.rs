@@ -6,7 +6,6 @@ use libbpf_rs::{TC_EGRESS, TC_INGRESS};
 use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::{OwnedOpenObject, TcHookProxy, pin_and_reuse_map};
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::runtime::EbpfRuntime;
 use crate::xdp_attach::NativeXdpLink;
 
@@ -15,11 +14,7 @@ use crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkelBuilder;
 
 pub struct XdpWanRouteHandle {
     _link: NativeXdpLink,
-    // TrieTarget: the guard field drops before the skeleton field, so the
-    // trie target is detached while the arena mmap is still alive.
-    _intro_trie: crate::maps::wan_trie::dispatcher::TrieTarget<
-        crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkel<'static>,
-    >,
+    _intro_skel: crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkel<'static>,
     _intro_backing: OwnedOpenObject,
     ingress_hook: Option<TcHookProxy>,
     _egress_route_skel: crate::skel::tc_wan_egress_route::TcWanEgressRouteSkel<'static>,
@@ -70,23 +65,12 @@ pub fn init_xdp_wan_route(
         &paths.tc_pipe_root_progs_path(),
     );
 
+    rt.backbone().reuse_wan_trie_map(&mut intro_open_skel.maps.wan_trie_arena)?;
+
     let intro_skel = bpf_ctx!(intro_open_skel.load(), "load tc_wan_ingress_intro")?;
 
-    // Register the intro's dispatch-trie arena before attaching: the
-    // dispatcher publishes the current entry set over the ELF-zeroed table.
-    // A failure aborts the bring-up instead of attaching over a zeroed
-    // table that would silently miss every dispatch.
-    let intro_trie = crate::maps::wan_trie::dispatcher::TrieTarget::new(intro_skel, |s| {
-        let data = s.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-        rt.backbone().trie().register(cast_arena_tbl(&mut data.wan_trie_tbl))
-    })?;
-
-    let mut ingress_hook = TcHookProxy::new(
-        &intro_trie.skel.progs.tc_wan_ingress_intro,
-        ifindex as i32,
-        TC_INGRESS,
-        1,
-    );
+    let mut ingress_hook =
+        TcHookProxy::new(&intro_skel.progs.tc_wan_ingress_intro, ifindex as i32, TC_INGRESS, 1);
     ingress_hook.attach();
 
     // ── TC egress route (local outbound traffic) ──
@@ -179,7 +163,7 @@ pub fn init_xdp_wan_route(
 
     Ok(XdpWanRouteHandle {
         _link: link,
-        _intro_trie: intro_trie,
+        _intro_skel: intro_skel,
         _intro_backing: intro_backing,
         ingress_hook: Some(ingress_hook),
         _egress_route_skel: egress_route_skel,

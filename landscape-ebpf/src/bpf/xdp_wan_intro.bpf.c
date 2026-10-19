@@ -15,14 +15,10 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-/* WAN dispatch trie in this program's own arena. libbpf re-copies the
- * ELF-initial (zero) arena data on every load, so the table is never
- * shared: the runtime registers the arena with the global WanTrieDispatcher
- * right after skeleton load — which publishes the current entry set — and
- * only then attaches the program.
- *
- * Dispatch roots are prog-array slots, indexed by the owning WAN link's
- * chain id.
+/* WAN dispatch trie in the seed arena. This program owns the userspace
+ * mmap; the per-if TC intros reuse its fd at load time and read the same
+ * table. Dispatch roots are prog-array slots, indexed by the owning WAN
+ * link's chain id.
  */
 WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
 

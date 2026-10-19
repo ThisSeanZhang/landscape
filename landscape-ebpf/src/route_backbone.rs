@@ -24,6 +24,7 @@ use libbpf_rs::MapCore;
 use libbpf_rs::MapFlags;
 use libbpf_rs::MapHandle;
 use libbpf_rs::MapType;
+use libbpf_rs::OpenMapMut;
 use libbpf_rs::Program;
 use libbpf_rs::libbpf_sys;
 use libbpf_rs::skel::OpenSkel;
@@ -100,8 +101,8 @@ fn clear_map_entries(map: &libbpf_rs::MapMut<'_>) {
 pub struct RouteBackbone {
     paths: Arc<LandscapeMapPath>,
     /// The one global WAN dispatch-trie controller: owns the
-    /// authoritative entry set and publishes to every registered
-    /// program arena.
+    /// authoritative entry set and publishes through the seed arena that
+    /// every intro program shares.
     trie: Arc<WanTrieDispatcher>,
     // TrieTarget: the guard field drops before the skeleton field, so the
     // trie target is detached while the arena mmap is still alive.
@@ -229,6 +230,15 @@ impl RouteBackbone {
             _back_wi: back_wi,
             _exit_we: exit_we,
             _back_we: back_we,
+        })
+    }
+
+    /// Bind another program's `wan_trie_arena` to the seed's shared arena.
+    pub(crate) fn reuse_wan_trie_map(&self, map: &mut OpenMapMut<'_>) -> LdEbpfResult<()> {
+        let fd = self._seed.skel.maps.wan_trie_arena.as_fd();
+        map.reuse_fd(fd).map_err(|source| LandscapeEbpfError::Context {
+            context: "reuse shared wan_trie_arena fd failed".to_string(),
+            source,
         })
     }
 

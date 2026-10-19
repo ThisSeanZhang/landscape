@@ -3,10 +3,8 @@
 //! [`WanTrieDispatcher`] owns the authoritative entry set and every write
 //! to it: mutations go through [`WanTrieDispatcher::apply`] (or the sugar
 //! methods), which updates the entry set and republishes to all registered
-//! targets in one A/B flip. Targets are the mmap'd arena tables of the
-//! loaded intro programs (XDP and TC each carry their own arena, because
-//! libbpf re-copies the ELF-initial (zero) arena data on every program
-//! load, so a shared pinned arena would be clobbered).
+//! targets in one A/B flip. Production registers one target: the XDP seed's
+//! arena, whose fd every other intro program reuses at load time.
 //!
 //! Register a program's table right after skeleton load and BEFORE attaching
 //! the program: [`WanTrieDispatcher::register`] immediately publishes the
@@ -251,26 +249,7 @@ pub(crate) struct TrieTarget<S> {
 }
 
 impl<S> TrieTarget<S> {
-    /// Register `skel`'s arena table and wrap both. `register` receives
-    /// the skeleton so the caller can project its arena mmap out:
-    ///
-    /// ```ignore
-    /// let t = TrieTarget::new(skel, |s| {
-    ///     let data = s.maps.wan_trie_arena_data.as_mut().expect("...");
-    ///     rt.backbone().trie().register(cast_arena_tbl(&mut data.wan_trie_tbl))
-    /// })?;
-    /// ```
-    pub(crate) fn new<E>(
-        skel: S,
-        register: impl FnOnce(&mut S) -> Result<TargetGuard, E>,
-    ) -> Result<Self, E> {
-        let mut skel = skel;
-        let guard = register(&mut skel)?;
-        Ok(Self { guard, skel })
-    }
-
-    /// Late wrap for flows that keep using the skeleton between
-    /// registration and construction; the same field order applies.
+    /// Wrap a skeleton together with its target guard.
     pub(crate) fn from_parts(guard: TargetGuard, skel: S) -> Self {
         Self { guard, skel }
     }

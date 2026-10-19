@@ -20,11 +20,9 @@ struct {
     __uint(value_size, sizeof(u32));
 } tc_pipe_root_progs SEC(".maps");
 
-/* WAN dispatch trie in this program's own arena (libbpf re-copies the
- * ELF-initial zero arena data on every load, so tables are never shared;
- * the runtime registers the arena with the global WanTrieDispatcher after
- * skeleton load and before attach). Dispatch roots are tc_pipe_root_progs
- * slots, indexed by the owning WAN link's chain id.
+/* WAN dispatch trie shared with the XDP seed (reuse_fd before load).
+ * Dispatch roots are tc_pipe_root_progs slots, indexed by the owning WAN
+ * link's chain id.
  */
 WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
 
