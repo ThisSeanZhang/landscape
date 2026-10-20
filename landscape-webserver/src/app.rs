@@ -203,6 +203,12 @@ impl LandscapeApp {
         })
         .await;
 
+        run_shutdown_phase("static_nat6_mapping_service", || async {
+            self.static_nat6_mapping_service.stop();
+            tracing::info!("Static NAT v6 refresh worker stop signal sent");
+        })
+        .await;
+
         run_shutdown_phase("stop_service_managers", || async {
             tokio::join!(
                 self.wan_link_service.get_service().stop_all(),

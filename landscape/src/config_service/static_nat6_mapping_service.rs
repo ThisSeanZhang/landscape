@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::Ipv6Addr,
     sync::Arc,
+    time::Duration,
 };
 
 use landscape_common::LANDSCAPE_DEFAULE_DHCP_V6_CLIENT_PORT;
@@ -17,7 +18,9 @@ use landscape_common::wan_service::nat::dataplane::NatDataplane;
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use landscape_database::static_nat_mapping_v6::repository::StaticNatMappingV6Repository;
-use tokio::sync::Mutex;
+use tokio::sync::{Notify, watch};
+use tokio::time::{MissedTickBehavior, interval};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 type DeviceIpv6Cache = HashMap<Uuid, HashSet<Ipv6Addr>>;
@@ -27,8 +30,9 @@ pub struct StaticNat6MappingService {
     store: StaticNatMappingV6Repository,
     wan_iid: Arc<u64>,
     directory: Arc<LanDeviceDirectory>,
-    refresh_lock: Arc<Mutex<()>>,
     dataplane: Arc<dyn NatDataplane>,
+    refresh_notify: Arc<Notify>,
+    cancel: CancellationToken,
 }
 
 impl StaticNat6MappingService {
@@ -42,8 +46,9 @@ impl StaticNat6MappingService {
             store: store_provider.static_nat_mapping_v6_store(),
             wan_iid,
             directory,
-            refresh_lock: Arc::new(Mutex::new(())),
             dataplane,
+            refresh_notify: Arc::new(Notify::new()),
+            cancel: CancellationToken::new(),
         };
 
         let is_empty = service.store.list().await.is_ok_and(|l| l.is_empty());
@@ -51,30 +56,43 @@ impl StaticNat6MappingService {
             service.init_default_rules().await;
         }
 
-        // Subscribe before the initial refresh: any snapshot swap happening
-        // while the refresh reads would otherwise leave the ruleset stale
-        // until the next change. The refresh lock serializes the two paths.
-        service.spawn_directory_watch_loop();
-
-        service.refresh_runtime_rules().await;
+        let directory_watch = service.directory.subscribe_watch();
+        service.refresh_once().await;
+        service.spawn_refresh_worker(directory_watch);
 
         service
     }
 
-    /// Full-refresh consumer: the directory's coalesced dirty signal is the
-    /// natural trigger. The signal fires after the snapshot swap, so the
-    /// refresh below always reads a consistent post-change cut.
-    fn spawn_directory_watch_loop(&self) {
+    fn spawn_refresh_worker(&self, mut directory_watch: watch::Receiver<()>) {
         let this = self.clone();
-        let mut watch_rx = self.directory.subscribe_watch();
         spawn_task(task_label::task::NAT_STATIC_V6_OBSERVER, async move {
-            loop {
-                if watch_rx.changed().await.is_err() {
-                    break;
-                }
-                this.refresh_runtime_rules().await;
+            let cancel = this.cancel.clone();
+            if cancel.is_cancelled() {
+                return;
             }
-            tracing::info!("static NAT v6 directory watch loop stopped");
+
+            let mut ticker = interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            ticker.tick().await;
+
+            let mut directory_alive = true;
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    changed = directory_watch.changed(), if directory_alive => {
+                        if changed.is_err() {
+                            directory_alive = false;
+                            continue;
+                        }
+                    }
+                    _ = this.refresh_notify.notified() => {}
+                    _ = ticker.tick() => {}
+                }
+
+                this.refresh_once().await;
+            }
+
+            tracing::info!("static NAT v6 refresh worker stopped");
         });
     }
 
@@ -95,8 +113,15 @@ impl StaticNat6MappingService {
 
     // --- Runtime ---
 
-    pub async fn refresh_runtime_rules(&self) {
-        let _refresh_guard = self.refresh_lock.lock().await;
+    pub fn request_refresh(&self) {
+        self.refresh_notify.notify_one();
+    }
+
+    pub fn stop(&self) {
+        self.cancel.cancel();
+    }
+
+    async fn refresh_once(&self) {
         let device_ipv6_cache: DeviceIpv6Cache = self
             .directory
             .snapshot()
@@ -131,11 +156,11 @@ impl ConfigStoreController for StaticNat6MappingService {
     }
 
     async fn notify_changed(&self, _changes: Vec<Change<Self::Config>>) {
-        self.refresh_runtime_rules().await;
+        self.request_refresh();
     }
 
     async fn notify_deleted(&self, _old: Self::Config) {
-        self.refresh_runtime_rules().await;
+        self.request_refresh();
     }
 }
 

@@ -105,7 +105,7 @@ async fn handle_lan_ipv6(
     config.config.validate_with_pd_context(Some(&pd_contexts))?;
 
     state.lan_ipv6_service.save_config(config).await?;
-    state.static_nat6_mapping_service.refresh_runtime_rules().await;
+    state.static_nat6_mapping_service.request_refresh();
     LandscapeApiResp::success(())
 }
 
@@ -121,6 +121,6 @@ async fn delete_and_stop_lan_ipv6(
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
     let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await?;
-    state.static_nat6_mapping_service.refresh_runtime_rules().await;
+    state.static_nat6_mapping_service.request_refresh();
     LandscapeApiResp::success(result)
 }

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    net::Ipv6Addr,
+};
 
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
 use landscape_common::config_service::static_nat::config6::{
@@ -7,12 +10,6 @@ use landscape_common::config_service::static_nat::config6::{
 use landscape_common::config_service::static_nat::error::StaticNatError;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
-use landscape_common::lan_service::lan_ipv6::{
-    LanIPv6ServiceConfigV2, LanPrefixGroupConfig, PrefixParentSource,
-};
-use landscape_common::lan_service::lan_ipv6::{
-    checked_allocate_subnet, checked_combine_ipv6_prefix_suffix,
-};
 use sea_orm::DatabaseConnection;
 
 use super::entity::{
@@ -21,7 +18,6 @@ use super::entity::{
 };
 use crate::DBId;
 use crate::enrolled_device::repository::EnrolledDeviceRepository;
-use crate::lan_ipv6_v2::repository::LanIPv6V2ServiceRepository;
 
 #[derive(Clone)]
 pub struct StaticNatMappingV6Repository {
@@ -36,36 +32,15 @@ impl StaticNatMappingV6Repository {
     pub async fn list_runtime_configs_v6(
         &self,
         wan_iid: u64,
-        dynamic_device_ipv6s: &HashMap<DBId, HashSet<std::net::Ipv6Addr>>,
+        dynamic_device_ipv6s: &HashMap<DBId, HashSet<Ipv6Addr>>,
     ) -> Result<Vec<RuntimeStaticNatMappingV6Config>, DbError> {
         let configs: Vec<StaticNatMappingV6Config> = self.list().await?;
-        let devices = self.load_devices_for_configs(&configs).await?;
-
-        let has_device_target = configs.iter().any(|config| {
-            matches!(config.lan_target.as_ref(), Some(StaticNatV6Target::Device { .. }))
-        });
-        let lan_ipv6_configs = if has_device_target {
-            LanIPv6V2ServiceRepository::new(self.db.clone())
-                .list()
-                .await?
-                .into_iter()
-                .map(|config| (config.iface_name.clone(), config))
-                .collect()
-        } else {
-            HashMap::new()
-        };
 
         Ok(configs
             .into_iter()
             .filter(|config| config.enable)
             .flat_map(|config| {
-                resolve_static_nat_mapping_v6_configs(
-                    config,
-                    &devices,
-                    &lan_ipv6_configs,
-                    dynamic_device_ipv6s,
-                    wan_iid,
-                )
+                resolve_static_nat_mapping_v6_configs(config, dynamic_device_ipv6s, wan_iid)
             })
             .collect())
     }
@@ -111,18 +86,10 @@ impl StaticNatMappingV6Repository {
 
 fn resolve_static_nat_mapping_v6_configs(
     config: StaticNatMappingV6Config,
-    devices: &HashMap<DBId, EnrolledDevice>,
-    lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-    dynamic_device_ipv6s: &HashMap<DBId, HashSet<std::net::Ipv6Addr>>,
+    dynamic_device_ipv6s: &HashMap<DBId, HashSet<Ipv6Addr>>,
     wan_iid: u64,
 ) -> Vec<RuntimeStaticNatMappingV6Config> {
-    let lan_ipv6s = resolve_static_nat_v6_targets(
-        &config,
-        devices,
-        lan_ipv6_configs,
-        dynamic_device_ipv6s,
-        wan_iid,
-    );
+    let lan_ipv6s = resolve_static_nat_v6_targets(&config, dynamic_device_ipv6s, wan_iid);
     lan_ipv6s
         .into_iter()
         .map(|lan_ipv6| RuntimeStaticNatMappingV6Config {
@@ -135,111 +102,66 @@ fn resolve_static_nat_mapping_v6_configs(
 
 fn resolve_static_nat_v6_targets(
     config: &StaticNatMappingV6Config,
-    devices: &HashMap<DBId, EnrolledDevice>,
-    lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-    dynamic_device_ipv6s: &HashMap<DBId, HashSet<std::net::Ipv6Addr>>,
+    dynamic_device_ipv6s: &HashMap<DBId, HashSet<Ipv6Addr>>,
     wan_iid: u64,
-) -> Vec<std::net::Ipv6Addr> {
-    let local_address = std::net::Ipv6Addr::from(wan_iid as u128);
+) -> Vec<Ipv6Addr> {
+    let local_address = Ipv6Addr::from(wan_iid as u128);
     match config.lan_target.as_ref() {
         Some(StaticNatV6Target::Address { ipv6 }) if ipv6.is_unspecified() => vec![local_address],
-        Some(StaticNatV6Target::Address { ipv6 }) => vec![*ipv6],
+        Some(StaticNatV6Target::Address { ipv6 }) if ipv6.is_unique_local() => vec![*ipv6],
+        Some(StaticNatV6Target::Address { ipv6 }) => vec![suffix_only_addr(*ipv6)],
         Some(StaticNatV6Target::Local) => vec![local_address],
         Some(StaticNatV6Target::Device { device_ids }) => {
-            resolve_device_ipv6s(device_ids, devices, lan_ipv6_configs, dynamic_device_ipv6s)
+            resolve_device_ipv6s(device_ids, dynamic_device_ipv6s)
         }
         None => vec![],
     }
 }
 
-fn resolve_device_ipv6s(
-    device_ids: &[DBId],
-    devices: &HashMap<DBId, EnrolledDevice>,
-    lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-    dynamic_device_ipv6s: &HashMap<DBId, HashSet<std::net::Ipv6Addr>>,
-) -> Vec<std::net::Ipv6Addr> {
-    let mut targets_by_suffix = HashMap::<u64, std::net::Ipv6Addr>::new();
-
-    // Configured IA_NA targets come from the enrolled-device database and do
-    // not depend on the best-effort dynamic address cache. They are also
-    // authoritative when an observed address has the same suffix.
-    for device_id in device_ids {
-        let Some(device) = devices.get(device_id) else {
-            continue;
-        };
-        match resolve_device_ipv6(device, lan_ipv6_configs) {
-            Ok(ip) => {
-                targets_by_suffix.entry(ipv6_suffix(ip)).or_insert(ip);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "static NAT v6 device {} configured target unresolved: {}",
-                    device_id,
-                    error
-                );
-            }
-        }
-    }
-
-    // Merge observed RA/SLAAC addresses when available. Missing or delayed
-    // observations must not suppress the database-backed IA_NA targets above.
-    for device_id in device_ids {
-        if !devices.contains_key(device_id) {
-            continue;
-        }
-        let Some(dynamic_ips) = dynamic_device_ipv6s.get(device_id) else {
-            continue;
-        };
-        let mut dynamic_ips: Vec<_> = dynamic_ips.iter().copied().collect();
-        dynamic_ips.sort_unstable();
-        for ip in dynamic_ips {
-            targets_by_suffix.entry(ipv6_suffix(ip)).or_insert(ip);
-        }
-    }
-
-    let mut targets: Vec<_> = targets_by_suffix.into_iter().collect();
-    targets.sort_unstable_by_key(|(suffix, _)| *suffix);
-    targets.into_iter().map(|(_, ip)| ip).collect()
+#[derive(Default)]
+struct SuffixTargets {
+    ula: Option<Ipv6Addr>,
+    gua: Option<Ipv6Addr>,
 }
 
-fn ipv6_suffix(ip: std::net::Ipv6Addr) -> u64 {
+fn resolve_device_ipv6s(
+    device_ids: &[DBId],
+    dynamic_device_ipv6s: &HashMap<DBId, HashSet<Ipv6Addr>>,
+) -> Vec<Ipv6Addr> {
+    let mut targets_by_suffix = BTreeMap::<u64, SuffixTargets>::new();
+
+    for device_id in device_ids {
+        let Some(observed) = dynamic_device_ipv6s.get(device_id) else {
+            continue;
+        };
+        for ip in observed {
+            let targets = targets_by_suffix.entry(ipv6_suffix(*ip)).or_default();
+            if ip.is_unique_local() {
+                keep_min(&mut targets.ula, *ip);
+            } else {
+                keep_min(&mut targets.gua, *ip);
+            }
+        }
+    }
+
+    targets_by_suffix
+        .into_values()
+        .filter_map(|targets| targets.ula.or_else(|| targets.gua.map(suffix_only_addr)))
+        .collect()
+}
+
+fn keep_min(slot: &mut Option<Ipv6Addr>, candidate: Ipv6Addr) {
+    if slot.is_none_or(|current| candidate < current) {
+        *slot = Some(candidate);
+    }
+}
+
+fn ipv6_suffix(ip: Ipv6Addr) -> u64 {
     u128::from(ip) as u64
 }
 
-fn resolve_device_ipv6(
-    device: &EnrolledDevice,
-    lan_ipv6_configs: &HashMap<String, LanIPv6ServiceConfigV2>,
-) -> Result<std::net::Ipv6Addr, String> {
-    let device_ipv6 = device.ipv6.ok_or_else(|| "device has no IPv6 address".to_string())?;
-    let iface_name =
-        device.iface_name.as_ref().ok_or_else(|| "device has no interface name".to_string())?;
-    let config = lan_ipv6_configs
-        .get(iface_name)
-        .ok_or_else(|| format!("no LAN IPv6 service config for interface '{iface_name}'"))?;
-    let group = select_device_ipv6_group(&config.config.prefix_groups)
-        .ok_or_else(|| format!("no NA prefix group configured on interface '{iface_name}'"))?;
-    match &group.parent {
-        PrefixParentSource::Static { base_prefix, parent_prefix_len } => {
-            let pool_index = group.na.as_ref().map(|na| na.pool_index).ok_or_else(|| {
-                format!("NA prefix group missing pool_index on interface '{iface_name}'")
-            })?;
-            let (prefix, _) =
-                checked_allocate_subnet(*base_prefix, *parent_prefix_len, 64, pool_index as u128)
-                    .ok_or_else(|| {
-                    format!("failed to allocate subnet for NA pool on interface '{iface_name}'")
-                })?;
-            checked_combine_ipv6_prefix_suffix(prefix, 64, device_ipv6).ok_or_else(|| {
-                format!(
-                    "failed to combine IPv6 prefix/suffix for device on interface '{iface_name}'"
-                )
-            })
-        }
-        PrefixParentSource::Pd { .. } => Ok(device_ipv6),
-    }
-}
-
-fn select_device_ipv6_group(groups: &[LanPrefixGroupConfig]) -> Option<&LanPrefixGroupConfig> {
-    groups.iter().find(|group| group.na.is_some())
+fn suffix_only_addr(ip: Ipv6Addr) -> Ipv6Addr {
+    Ipv6Addr::from(ipv6_suffix(ip) as u128)
 }
 
 crate::impl_repository!(
@@ -282,10 +204,6 @@ impl landscape_common::database::validator::StoreValidator<StaticNatMappingV6Con
 mod tests {
     use super::*;
     use landscape_common::config_service::static_nat::config6::StaticNatV6PortConfig;
-    use landscape_common::lan_service::lan_ipv6::{
-        IPv6ServiceMode, LanIPv6ConfigV2, NaPrefixConfig, RouterFlags,
-    };
-    use landscape_common::net::MacAddr;
     use sea_orm::prelude::Uuid;
 
     fn config(target: StaticNatV6Target) -> StaticNatMappingV6Config {
@@ -303,24 +221,43 @@ mod tests {
         }
     }
 
+    fn addr(prefix: &str, suffix: u64) -> Ipv6Addr {
+        let base: Ipv6Addr = prefix.parse().expect("valid prefix");
+        Ipv6Addr::from((u128::from(base) & (!0u128 << 64)) | suffix as u128)
+    }
+
+    fn ula(suffix: u64) -> Ipv6Addr {
+        addr("fd00:1::", suffix)
+    }
+
+    fn gua(suffix: u64) -> Ipv6Addr {
+        addr("2001:db8:1::", suffix)
+    }
+
+    fn suffix_only(suffix: u64) -> Ipv6Addr {
+        Ipv6Addr::from(suffix as u128)
+    }
+
+    fn cache(entries: Vec<(Uuid, Vec<Ipv6Addr>)>) -> HashMap<DBId, HashSet<Ipv6Addr>> {
+        entries.into_iter().map(|(id, ips)| (id, ips.into_iter().collect())).collect()
+    }
+
+    fn resolve(
+        target: StaticNatV6Target,
+        cache: &HashMap<DBId, HashSet<Ipv6Addr>>,
+    ) -> Vec<Ipv6Addr> {
+        resolve_static_nat_v6_targets(&config(target), cache, 0)
+    }
+
     #[test]
     fn local_and_legacy_unspecified_address_resolve_to_wan_iid() {
         let wan_iid = 0x1234_5678_9abc_def0;
-        let expected = std::net::Ipv6Addr::from(wan_iid as u128);
-        let devices = HashMap::new();
-        let lan_configs = HashMap::new();
+        let expected = Ipv6Addr::from(wan_iid as u128);
 
-        for target in
-            [StaticNatV6Target::Local, StaticNatV6Target::address(std::net::Ipv6Addr::UNSPECIFIED)]
+        for target in [StaticNatV6Target::Local, StaticNatV6Target::address(Ipv6Addr::UNSPECIFIED)]
         {
             assert_eq!(
-                resolve_static_nat_v6_targets(
-                    &config(target),
-                    &devices,
-                    &lan_configs,
-                    &HashMap::new(),
-                    wan_iid,
-                ),
+                resolve_static_nat_v6_targets(&config(target), &HashMap::new(), wan_iid),
                 vec![expected]
             );
         }
@@ -329,171 +266,102 @@ mod tests {
     #[test]
     fn suffix_only_address_is_not_replaced_by_wan_iid() {
         let target = "::1234".parse().unwrap();
+        assert_eq!(resolve(StaticNatV6Target::address(target), &HashMap::new()), vec![target]);
+    }
+
+    #[test]
+    fn ula_address_target_keeps_its_prefix() {
+        let target = ula(0x1234);
+        assert_eq!(resolve(StaticNatV6Target::address(target), &HashMap::new()), vec![target]);
+    }
+
+    #[test]
+    fn gua_address_target_uses_zero_prefix() {
+        let target = gua(0x1234);
         assert_eq!(
-            resolve_static_nat_v6_targets(
-                &config(StaticNatV6Target::address(target)),
-                &HashMap::new(),
-                &HashMap::new(),
-                &HashMap::new(),
-                0x5678,
-            ),
-            vec![target]
+            resolve(StaticNatV6Target::address(target), &HashMap::new()),
+            vec![suffix_only(0x1234)]
         );
     }
 
     #[test]
-    fn explicit_wan_namespace_address_remains_a_valid_target() {
-        let target = "::8000:0:0:1234".parse().unwrap();
-        assert_eq!(
-            resolve_static_nat_v6_targets(
-                &config(StaticNatV6Target::address(target)),
-                &HashMap::new(),
-                &HashMap::new(),
-                &HashMap::new(),
-                0x8000_0000_0000_5678,
-            ),
-            vec![target]
-        );
-    }
-
-    #[test]
-    fn legacy_device_in_wan_namespace_remains_a_valid_target() {
+    fn device_target_prefers_ula_over_gua_for_the_same_suffix() {
         let device_id = Uuid::new_v4();
-        let target = "::8000:0:0:1234".parse().unwrap();
-        let device = EnrolledDevice {
-            id: device_id,
-            update_at: 0.0,
-            iface_name: Some("lan0".to_string()),
-            name: "legacy".to_string(),
-            fake_name: None,
-            remark: None,
-            hostname: None,
-            mac: MacAddr::from([0, 1, 2, 3, 4, 5]),
-            ipv4: None,
-            ipv6: Some(target),
-            tag: Vec::new(),
-            dhcp_custom_options: Vec::new(),
-            dhcp_filter_options: Vec::new(),
-        };
-        let lan_config = LanIPv6ServiceConfigV2 {
-            iface_name: "lan0".to_string(),
-            enable: true,
-            config: LanIPv6ConfigV2 {
-                mode: IPv6ServiceMode::Stateful,
-                ad_interval: 600,
-                lifetime: 300,
-                ra_flag: RouterFlags::from(0xc0),
-                prefix_groups: vec![LanPrefixGroupConfig {
-                    group_id: "na".to_string(),
-                    parent: PrefixParentSource::Pd {
-                        depend_iface: "wan0".to_string(),
-                        link_id: Uuid::nil(),
-                        expected_pd_len_snapshot: 56,
-                    },
-                    ra: None,
-                    na: Some(NaPrefixConfig { pool_index: 1 }),
-                    pd: None,
-                }],
-                dhcpv6: None,
-            },
-            update_at: 0.0,
-        };
+        let cache = cache(vec![(device_id, vec![gua(0x100), ula(0x100)])]);
 
         assert_eq!(
-            resolve_static_nat_v6_targets(
-                &config(StaticNatV6Target::Device { device_ids: vec![device_id] }),
-                &HashMap::from([(device_id, device)]),
-                &HashMap::from([("lan0".to_string(), lan_config)]),
-                &HashMap::new(),
-                0x8000_0000_0000_5678,
-            ),
-            vec![target]
+            resolve(StaticNatV6Target::Device { device_ids: vec![device_id] }, &cache),
+            vec![ula(0x100)]
         );
     }
 
     #[test]
-    fn device_target_merges_configured_na_and_dynamic_ra_suffixes() {
+    fn device_target_uses_zero_prefix_for_gua_only() {
         let device_id = Uuid::new_v4();
-        let configured = "::100".parse().unwrap();
-        let dynamic_a = "2001:db8:1::200".parse().unwrap();
-        let dynamic_b = "fd00:1::300".parse().unwrap();
-        let device = enrolled_device(device_id, configured);
-        let lan_config = pd_lan_config();
-        let dynamic = HashMap::from([(device_id, HashSet::from([dynamic_a, dynamic_b]))]);
-
-        let targets = resolve_static_nat_v6_targets(
-            &config(StaticNatV6Target::Device { device_ids: vec![device_id] }),
-            &HashMap::from([(device_id, device)]),
-            &HashMap::from([("lan0".to_string(), lan_config)]),
-            &dynamic,
-            0,
-        );
+        let cache = cache(vec![(device_id, vec![gua(0x100)])]);
 
         assert_eq!(
-            targets.into_iter().collect::<HashSet<_>>(),
-            HashSet::from([configured, dynamic_a, dynamic_b,])
+            resolve(StaticNatV6Target::Device { device_ids: vec![device_id] }, &cache),
+            vec![suffix_only(0x100)]
         );
     }
 
     #[test]
-    fn configured_na_wins_when_dynamic_address_has_the_same_suffix() {
+    fn device_target_keeps_distinct_suffixes() {
         let device_id = Uuid::new_v4();
-        let configured = "::100".parse().unwrap();
-        let dynamic_same_suffix = "2001:db8:1::100".parse().unwrap();
-        let dynamic = HashMap::from([(device_id, HashSet::from([dynamic_same_suffix]))]);
+        let cache = cache(vec![(device_id, vec![ula(0x100), gua(0x200)])]);
 
-        let targets = resolve_static_nat_v6_targets(
-            &config(StaticNatV6Target::Device { device_ids: vec![device_id] }),
-            &HashMap::from([(device_id, enrolled_device(device_id, configured))]),
-            &HashMap::from([("lan0".to_string(), pd_lan_config())]),
-            &dynamic,
-            0,
+        assert_eq!(
+            resolve(StaticNatV6Target::Device { device_ids: vec![device_id] }, &cache),
+            vec![ula(0x100), suffix_only(0x200)]
         );
-
-        assert_eq!(targets, vec![configured]);
     }
 
-    fn enrolled_device(device_id: Uuid, ipv6: std::net::Ipv6Addr) -> EnrolledDevice {
-        EnrolledDevice {
-            id: device_id,
-            update_at: 0.0,
-            iface_name: Some("lan0".to_string()),
-            name: "device".to_string(),
-            fake_name: None,
-            remark: None,
-            hostname: None,
-            mac: MacAddr::from([0, 1, 2, 3, 4, 5]),
-            ipv4: None,
-            ipv6: Some(ipv6),
-            tag: Vec::new(),
-            dhcp_custom_options: Vec::new(),
-            dhcp_filter_options: Vec::new(),
-        }
+    #[test]
+    fn device_target_picks_the_lowest_ula_for_a_suffix() {
+        let device_id = Uuid::new_v4();
+        let lower = addr("fd00:1::", 0x100);
+        let higher = addr("fd00:2::", 0x100);
+        let cache = cache(vec![(device_id, vec![higher, lower])]);
+
+        assert_eq!(
+            resolve(StaticNatV6Target::Device { device_ids: vec![device_id] }, &cache),
+            vec![lower]
+        );
     }
 
-    fn pd_lan_config() -> LanIPv6ServiceConfigV2 {
-        LanIPv6ServiceConfigV2 {
-            iface_name: "lan0".to_string(),
-            enable: true,
-            config: LanIPv6ConfigV2 {
-                mode: IPv6ServiceMode::Stateful,
-                ad_interval: 600,
-                lifetime: 300,
-                ra_flag: RouterFlags::from(0xc0),
-                prefix_groups: vec![LanPrefixGroupConfig {
-                    group_id: "na".to_string(),
-                    parent: PrefixParentSource::Pd {
-                        depend_iface: "wan0".to_string(),
-                        link_id: Uuid::nil(),
-                        expected_pd_len_snapshot: 56,
-                    },
-                    ra: None,
-                    na: Some(NaPrefixConfig { pool_index: 1 }),
-                    pd: None,
-                }],
-                dhcpv6: None,
-            },
-            update_at: 0.0,
-        }
+    #[test]
+    fn device_target_merges_multiple_device_ids_by_suffix() {
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let cache = cache(vec![(first, vec![ula(0x100)]), (second, vec![gua(0x100), gua(0x200)])]);
+
+        assert_eq!(
+            resolve(StaticNatV6Target::Device { device_ids: vec![first, second] }, &cache),
+            vec![ula(0x100), suffix_only(0x200)]
+        );
+    }
+
+    #[test]
+    fn device_target_without_observed_addresses_emits_nothing() {
+        let device_id = Uuid::new_v4();
+        let cache = cache(vec![]);
+
+        assert_eq!(
+            resolve(StaticNatV6Target::Device { device_ids: vec![device_id] }, &cache),
+            Vec::<Ipv6Addr>::new()
+        );
+    }
+
+    #[test]
+    fn device_target_ignores_unselected_devices() {
+        let selected = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let cache = cache(vec![(selected, vec![ula(0x100)]), (other, vec![ula(0x200)])]);
+
+        assert_eq!(
+            resolve(StaticNatV6Target::Device { device_ids: vec![selected] }, &cache),
+            vec![ula(0x100)]
+        );
     }
 }

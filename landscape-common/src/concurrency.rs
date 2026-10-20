@@ -151,7 +151,7 @@ pub mod task_label {
         pub const FIREWALL_BLACKLIST_OBSERVER: &str = "firewall.blacklist.observer";
         /// Static NAT v4 mapping listener reacting to device events.
         pub const NAT_STATIC_V4_OBSERVER: &str = "nat.static_v4.observer";
-        /// Static NAT v6 mapping listeners reacting to device/IPv6 events.
+        /// Static NAT v6 refresh worker for config, device/IPv6 and periodic triggers.
         pub const NAT_STATIC_V6_OBSERVER: &str = "nat.static_v6.observer";
         /// Flow rule listener reacting to DNS service events.
         pub const FLOW_RULE_OBSERVER: &str = "flow.rule.observer";
