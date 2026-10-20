@@ -664,6 +664,44 @@ mod tests {
         drop(backing);
     }
 
+    /// The subnet-router anycast address (IID all zero) is the subnet network
+    /// address, not a host address: a DAD NS for it must not be learned or
+    /// reported.
+    #[test]
+    fn tc_lan_dao_skips_subnet_router_anycast() {
+        use libbpf_rs::RingBufferBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        let target = Ipv6Addr::from_str("fd00::").unwrap();
+        let (skel, mut ctx, backing) = load_tc_lan_dao_skel();
+
+        let events: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+        let events_cb = events.clone();
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder
+            .add(&skel.maps.ip6_dao_events, move |_: &[u8]| {
+                *events_cb.lock().unwrap() += 1;
+                0
+            })
+            .expect("add ip6_dao_events ringbuf");
+        let ringbuf = rb_builder.build().expect("build ringbuf");
+
+        let ret = run_on_skel(&skel, &mut ctx, &simple_ipv6_ns_dad(CLIENT_MAC, target));
+        assert_eq!(ret, -1, "expected TC_ACT_UNSPEC");
+
+        ringbuf.poll(Duration::from_millis(100)).expect("poll ringbuf");
+        assert!(
+            lookup_mac_v6(&skel.maps.ip_mac_v6, target).is_none(),
+            "subnet-router anycast must not be learned"
+        );
+        assert_eq!(*events.lock().unwrap(), 0, "no event for subnet-router anycast");
+
+        drop(skel);
+        let _ = ctx;
+        drop(backing);
+    }
+
     /// A subnet served by a *different* interface (rt6_lan_map ifindex does
     /// not match the ingress) must not be learned from this interface.
     #[test]

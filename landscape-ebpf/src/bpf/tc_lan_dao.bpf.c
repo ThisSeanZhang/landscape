@@ -57,6 +57,17 @@ static __always_inline bool is_link_local_ip6(const u8 *bytes) {
 
 static __always_inline bool is_multicast_ip6(const u8 *bytes) { return bytes[0] == 0xff; }
 
+// LAN subnets are /64 (see compute_subnets), so an all-zero low 64-bit
+// interface ID is the subnet-router anycast/network address, not a host.
+static __always_inline bool is_zero_iid_ip6(const u8 *bytes) {
+    u8 zero = 0;
+#pragma unroll
+    for (int i = 8; i < 16; i++) {
+        zero |= bytes[i];
+    }
+    return zero == 0;
+}
+
 static __always_inline bool is_same_mac(const u8 *a, const u8 *b) {
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3] && a[4] == b[4] &&
            a[5] == b[5];
@@ -166,6 +177,11 @@ int tc_lan_dao(struct __sk_buff *skb) {
     if (is_unspecified_ip6(target) || is_multicast_ip6(target) || is_link_local_ip6(target)) {
         return TC_ACT_UNSPEC;
     }
+
+    // The subnet-router anycast address (IID all zero) is not a host address.
+    // Learning it would bind the anycast to the claimant's MAC and redirect
+    // traffic there.
+    if (is_zero_iid_ip6(target)) return TC_ACT_UNSPEC;
 
     // DAD NS must be sent to the solicited-node multicast of the target
     // itself (RFC 4861), not to a different solicited-node address.
