@@ -3160,7 +3160,11 @@ dependencies = [
  "landscape-common",
  "pb-rs",
  "quick-protobuf",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
+ "uuid",
  "walkdir",
 ]
 

@@ -1,13 +1,16 @@
-use std::collections::HashSet;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{
+    collections::{HashSet, VecDeque},
+    io::{BufRead, Cursor},
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use landscape_common::config_service::geo::{GeoError, GeoSiteFileConfig};
 use landscape_common::dns::rule::DomainMatchType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ParsedAdguardRule {
-    match_type: DomainMatchType,
-    value: String,
+pub struct AdguardRule {
+    pub match_type: DomainMatchType,
+    pub value: String,
 }
 
 fn adguard_modifier_name(modifier: &str) -> Option<String> {
@@ -160,7 +163,7 @@ fn extract_http_rule_host(line: &str) -> Option<&str> {
 
 /// Extract an approximate domain from negative rules (`@@` / `$badfilter`).
 /// Negative rules are used only to remove overlapping positive candidates.
-fn parse_adguard_negative_overlap_rule(line: &str) -> Option<ParsedAdguardRule> {
+fn parse_adguard_negative_overlap_rule(line: &str) -> Option<AdguardRule> {
     if let Some(line) = line.strip_prefix("||") {
         let domain_end = line
             .find(|c: char| {
@@ -169,7 +172,7 @@ fn parse_adguard_negative_overlap_rule(line: &str) -> Option<ParsedAdguardRule> 
             .unwrap_or(line.len());
         let domain = &line[..domain_end];
         if is_valid_dns_domain(domain) {
-            return Some(ParsedAdguardRule {
+            return Some(AdguardRule {
                 match_type: DomainMatchType::Domain,
                 value: domain.to_ascii_lowercase(),
             });
@@ -177,14 +180,14 @@ fn parse_adguard_negative_overlap_rule(line: &str) -> Option<ParsedAdguardRule> 
     }
 
     if let Some(domain) = parse_adguard_full_rule(line).or_else(|| extract_http_rule_host(line)) {
-        return Some(ParsedAdguardRule {
+        return Some(AdguardRule {
             match_type: DomainMatchType::Full,
             value: domain.to_ascii_lowercase(),
         });
     }
 
     if let Some(domain) = extract_leading_dns_domain(line) {
-        return Some(ParsedAdguardRule {
+        return Some(AdguardRule {
             match_type: DomainMatchType::Domain,
             value: domain.to_ascii_lowercase(),
         });
@@ -234,7 +237,7 @@ fn domain_is_equal_or_subdomain(domain: &str, base: &str) -> bool {
     domain == base || domain.strip_suffix(base).map(|prefix| prefix.ends_with('.')).unwrap_or(false)
 }
 
-fn adguard_rules_overlap(candidate: &ParsedAdguardRule, negative: &ParsedAdguardRule) -> bool {
+fn adguard_rules_overlap(candidate: &AdguardRule, negative: &AdguardRule) -> bool {
     match (&candidate.match_type, &negative.match_type) {
         (DomainMatchType::Full, DomainMatchType::Full) => candidate.value == negative.value,
         (DomainMatchType::Full, DomainMatchType::Domain) => {
@@ -271,108 +274,220 @@ pub fn parse_adguard_rules_with(
     contents: &[u8],
     should_stop: &dyn Fn() -> bool,
 ) -> Result<Vec<GeoSiteFileConfig>, GeoError> {
-    let text = String::from_utf8_lossy(contents);
-    let mut candidates = Vec::<ParsedAdguardRule>::new();
-    let mut negative_rules = Vec::<ParsedAdguardRule>::new();
+    let negative_rules = parse_adguard_negative_rules(Cursor::new(contents), should_stop)?;
+    stream_adguard_rules(Cursor::new(contents), negative_rules, should_stop).collect()
+}
 
-    for line in text.lines() {
+/// First pass for AdGuard input: collect only rules that can remove positive
+/// candidates (`@@` exceptions and `$badfilter` rules). This pass keeps at
+/// most the negative-rule set in memory, not the full candidate list.
+pub fn parse_adguard_negative_rules<R, F>(
+    mut reader: R,
+    should_stop: F,
+) -> Result<Vec<AdguardRule>, GeoError>
+where
+    R: BufRead,
+    F: Fn() -> bool,
+{
+    let mut line_bytes = Vec::new();
+    let mut negative_rules = Vec::new();
+    loop {
         if should_stop() {
             return Err(GeoError::TaskCancelled);
         }
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('!') || line.starts_with('#') {
-            continue;
+        line_bytes.clear();
+        let read = reader
+            .read_until(b'\n', &mut line_bytes)
+            .map_err(|error| GeoError::RawDatReadFailed(format!("adguard read failed: {error}")))?;
+        if read == 0 {
+            break;
         }
-
-        if line.len() < 4 {
+        trim_line_ending(&mut line_bytes);
+        let line = String::from_utf8_lossy(&line_bytes);
+        let Some(line) = preprocess_adguard_line(&line) else {
             continue;
-        }
-
-        if let Some(exception_rule) = line.strip_prefix("@@") {
-            if let Some(rule) = parse_adguard_negative_overlap_rule(exception_rule) {
-                negative_rules.push(rule);
-            }
-            continue;
-        }
-
-        if line_contains_badfilter(line) {
-            if let Some(rule) = parse_adguard_negative_overlap_rule(line) {
-                negative_rules.push(rule);
-            }
-            continue;
-        }
-
-        if line.contains("##") || line.contains("#@#") || line.contains("#?#") {
-            continue;
-        }
-
-        if line.starts_with('/') && line.ends_with('/') && line.len() > 2 {
-            continue;
-        }
-
-        let hosts_domains = parse_hosts_line_domains(line);
-        if !hosts_domains.is_empty() {
-            for domain in hosts_domains {
-                candidates.push(ParsedAdguardRule {
-                    match_type: DomainMatchType::Full,
-                    value: domain.to_ascii_lowercase(),
-                });
-            }
-            continue;
-        }
-
-        if let Some((domain, modifiers)) = parse_adguard_domain_rule(line) {
-            if let Some(mods) = modifiers
-                && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
-            {
-                continue;
-            }
-            candidates.push(ParsedAdguardRule {
-                match_type: DomainMatchType::Domain,
-                value: domain.to_ascii_lowercase(),
-            });
-            continue;
-        }
-
-        // Exact URL rules only match a specific URL, not every path on the host.
-        // DNS domain rules cannot preserve that safely.
-        if parse_adguard_full_rule(line).is_some() {
-            continue;
-        }
-
-        if let Some((domain, modifiers)) = parse_bare_domain_rule(line) {
-            if let Some(mods) = modifiers
-                && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
-            {
-                continue;
-            }
-            candidates.push(ParsedAdguardRule {
-                match_type: DomainMatchType::Domain,
-                value: domain.to_ascii_lowercase(),
-            });
+        };
+        if let Some(rule) = parse_adguard_negative_rule_line(line) {
+            negative_rules.push(rule);
         }
     }
+    Ok(negative_rules)
+}
 
-    let mut result = Vec::new();
-    let mut seen = HashSet::new();
-    for candidate in candidates {
-        if negative_rules.iter().any(|negative| adguard_rules_overlap(&candidate, negative)) {
-            continue;
+/// Second pass for AdGuard input. Positive rules are parsed and emitted one at
+/// a time while applying the negative-rule overlap filter and deduplication.
+/// Only the seen set and a single hosts line's candidates are retained.
+pub struct AdguardRuleStream<R, F> {
+    reader: R,
+    negative_rules: Vec<AdguardRule>,
+    seen: HashSet<(DomainMatchType, String)>,
+    pending: VecDeque<AdguardRule>,
+    should_stop: F,
+    line_bytes: Vec<u8>,
+    finished: bool,
+}
+
+pub fn stream_adguard_rules<R, F>(
+    reader: R,
+    negative_rules: Vec<AdguardRule>,
+    should_stop: F,
+) -> AdguardRuleStream<R, F>
+where
+    R: BufRead,
+    F: Fn() -> bool,
+{
+    AdguardRuleStream {
+        reader,
+        negative_rules,
+        seen: HashSet::new(),
+        pending: VecDeque::new(),
+        should_stop,
+        line_bytes: Vec::new(),
+        finished: false,
+    }
+}
+
+impl<R, F> Iterator for AdguardRuleStream<R, F>
+where
+    R: BufRead,
+    F: Fn() -> bool,
+{
+    type Item = Result<GeoSiteFileConfig, GeoError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if (self.should_stop)() {
+                self.finished = true;
+                return Some(Err(GeoError::TaskCancelled));
+            }
+
+            while let Some(candidate) = self.pending.pop_front() {
+                if self
+                    .negative_rules
+                    .iter()
+                    .any(|negative| adguard_rules_overlap(&candidate, negative))
+                {
+                    continue;
+                }
+                if !self.seen.insert((candidate.match_type.clone(), candidate.value.clone())) {
+                    continue;
+                }
+                return Some(Ok(GeoSiteFileConfig {
+                    match_type: candidate.match_type,
+                    value: candidate.value,
+                    attributes: HashSet::new(),
+                }));
+            }
+
+            if self.finished {
+                return None;
+            }
+
+            self.line_bytes.clear();
+            let read = match self.reader.read_until(b'\n', &mut self.line_bytes) {
+                Ok(read) => read,
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(GeoError::RawDatReadFailed(format!(
+                        "adguard read failed: {error}"
+                    ))));
+                }
+            };
+            if read == 0 {
+                self.finished = true;
+                return None;
+            }
+            trim_line_ending(&mut self.line_bytes);
+            let line = String::from_utf8_lossy(&self.line_bytes);
+            let Some(line) = preprocess_adguard_line(&line) else {
+                continue;
+            };
+            let candidates = parse_adguard_candidate_line(line);
+            self.pending.extend(candidates);
         }
+    }
+}
 
-        if !seen.insert((candidate.match_type.clone(), candidate.value.clone())) {
-            continue;
+fn trim_line_ending(line: &mut Vec<u8>) {
+    if line.last() == Some(&b'\n') {
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
         }
+    }
+}
 
-        result.push(GeoSiteFileConfig {
-            match_type: candidate.match_type,
-            value: candidate.value,
-            attributes: HashSet::new(),
-        });
+fn preprocess_adguard_line(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('!') || line.starts_with('#') || line.len() < 4 {
+        return None;
+    }
+    Some(line)
+}
+
+fn parse_adguard_negative_rule_line(line: &str) -> Option<AdguardRule> {
+    if let Some(exception_rule) = line.strip_prefix("@@") {
+        return parse_adguard_negative_overlap_rule(exception_rule);
+    }
+    if line_contains_badfilter(line) {
+        return parse_adguard_negative_overlap_rule(line);
+    }
+    None
+}
+
+fn parse_adguard_candidate_line(line: &str) -> Vec<AdguardRule> {
+    if line.starts_with("@@") || line_contains_badfilter(line) {
+        return Vec::new();
+    }
+    if line.contains("##") || line.contains("#@#") || line.contains("#?#") {
+        return Vec::new();
+    }
+    if line.starts_with('/') && line.ends_with('/') && line.len() > 2 {
+        return Vec::new();
     }
 
-    Ok(result)
+    let hosts_domains = parse_hosts_line_domains(line);
+    if !hosts_domains.is_empty() {
+        return hosts_domains
+            .into_iter()
+            .map(|domain| AdguardRule {
+                match_type: DomainMatchType::Full,
+                value: domain.to_ascii_lowercase(),
+            })
+            .collect();
+    }
+
+    if let Some((domain, modifiers)) = parse_adguard_domain_rule(line) {
+        if let Some(mods) = modifiers
+            && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
+        {
+            return Vec::new();
+        }
+        return vec![AdguardRule {
+            match_type: DomainMatchType::Domain,
+            value: domain.to_ascii_lowercase(),
+        }];
+    }
+
+    // Exact URL rules only match a specific URL, not every path on the host.
+    // DNS domain rules cannot preserve that safely.
+    if parse_adguard_full_rule(line).is_some() {
+        return Vec::new();
+    }
+
+    if let Some((domain, modifiers)) = parse_bare_domain_rule(line) {
+        if let Some(mods) = modifiers
+            && (modifiers_contain_badfilter(mods) || !modifiers_are_dns_safe(mods))
+        {
+            return Vec::new();
+        }
+        return vec![AdguardRule {
+            match_type: DomainMatchType::Domain,
+            value: domain.to_ascii_lowercase(),
+        }];
+    }
+
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -742,5 +857,31 @@ full.example.com
         let full_items: Vec<_> = result.iter().filter(|d| d.value == "full.example.com").collect();
         assert_eq!(full_items.len(), 1);
         assert!(full_items.iter().any(|d| d.match_type == DomainMatchType::Domain));
+    }
+    #[test]
+    fn streaming_rules_match_buffered_parser_semantics() {
+        let input = b"||ads.example.com^
+0.0.0.0 blocked.example tracker.example # hosts
+@@||allowed.example^
+bare.example.com
+bare.example.com
+! comment
+";
+        let expected = parse_adguard_rules(input);
+        let negatives =
+            super::parse_adguard_negative_rules(std::io::Cursor::new(input), || false).unwrap();
+        let actual: Vec<_> =
+            super::stream_adguard_rules(std::io::Cursor::new(input), negatives, || false)
+                .collect::<Result<_, _>>()
+                .unwrap();
+        let actual = actual
+            .into_iter()
+            .map(|rule| (rule.match_type, rule.value, rule.attributes))
+            .collect::<Vec<_>>();
+        let expected = expected
+            .into_iter()
+            .map(|rule| (rule.match_type, rule.value, rule.attributes))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }

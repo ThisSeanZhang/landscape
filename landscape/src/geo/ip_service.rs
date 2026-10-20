@@ -26,7 +26,6 @@ use landscape_core::geo_cache::{GeoCacheDatabase, IpCacheRepository, IpCidrRow};
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };
-use reqwest::Client;
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio::time::MissedTickBehavior;
@@ -34,11 +33,10 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
 
-use super::raw_file::{
-    SealedRawFile, StreamToTmpError, raw_dat_path, remove_raw_dat, stream_to_tmp,
-    sweep_orphan_raw_files, write_bytes_to_tmp,
-};
-use super::{GEO_PROGRESS_PUBLISH_INTERVAL, GeoTaskMode, GeoTaskRegistry, TaskGuard};
+use super::download::{GeoDownloadError, download_to_sealed};
+use super::raw_file::{raw_dat_path, remove_raw_dat, sweep_orphan_raw_files};
+use super::storage::write_bytes_to_sealed;
+use super::{GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
 const A_DAY: u64 = 60 * 60 * 24;
 
@@ -279,7 +277,7 @@ impl GeoIpService {
                 };
                 tracing::debug!("download file: {}", url);
                 let time = Instant::now();
-                match self.download_to_sealed(source_id, &url, &dat_path, cancel).await {
+                match download_to_sealed(source_id, &url, &dat_path, &self.tasks, cancel).await {
                     Ok(sealed) => {
                         tracing::debug!(
                             "download file done: {}, time: {}s",
@@ -288,12 +286,13 @@ impl GeoIpService {
                         );
                         Some(sealed)
                     }
-                    Err(GeoError::TaskCancelled) => {
+                    Err(GeoDownloadError::Cancelled) => {
                         tracing::info!("refresh geo ip source {} cancelled", config.name);
                         return;
                     }
-                    Err(e) => {
-                        tracing::error!("refresh geo ip source {} error: {}", config.name, e);
+                    Err(error) => {
+                        let error = GeoError::IpSourceRequestFailed(error.to_string());
+                        tracing::error!("refresh geo ip source {} error: {}", config.name, error);
                         return;
                     }
                 }
@@ -328,7 +327,7 @@ impl GeoIpService {
                     );
                     return;
                 }
-                match write_bytes_to_tmp(&dat_path, &file_bytes) {
+                match write_bytes_to_sealed(&dat_path, &file_bytes) {
                     Ok(sealed) => Some(sealed),
                     Err(e) => {
                         tracing::error!("persist raw geo ip file {:?} failed: {}", dat_path, e);
@@ -396,54 +395,6 @@ impl GeoIpService {
         self.notify_dst_ip_updated();
     }
 
-    async fn download_to_sealed(
-        &self,
-        source_id: Uuid,
-        url: &str,
-        dat_path: &std::path::Path,
-        cancel: &CancellationToken,
-    ) -> Result<SealedRawFile, GeoError> {
-        // Downloads run at most once a day per source, so connection reuse
-        // across tasks would not pay for a shared client.
-        let client = Client::new();
-        let response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| GeoError::IpSourceRequestFailed(e.to_string()))?;
-        if !response.status().is_success() {
-            return Err(GeoError::IpSourceRequestFailed(format!(
-                "{} returned HTTP {}",
-                url,
-                response.status()
-            )));
-        }
-        let bytes_total = response
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok());
-        let registry = self.tasks.clone();
-        let mut last_publish: Option<Instant> = None;
-        let should_stop = || cancel.is_cancelled();
-        stream_to_tmp(response.bytes_stream(), dat_path, &should_stop, &mut |written| {
-            let now = Instant::now();
-            let due = last_publish
-                .is_none_or(|last| now.duration_since(last) >= GEO_PROGRESS_PUBLISH_INTERVAL);
-            if due {
-                registry.update_download(source_id, written, bytes_total);
-                last_publish = Some(now);
-            }
-        })
-        .await
-        .map_err(|e| match e {
-            StreamToTmpError::Cancelled => GeoError::TaskCancelled,
-            StreamToTmpError::Io(e) => {
-                GeoError::IpSourceRequestFailed(format!("stream to {dat_path:?}: {e}"))
-            }
-        })
-    }
-
     async fn has_cached_name(&self, name: &str) -> bool {
         self.cache.has_name(name).await.unwrap_or_else(|e| {
             tracing::error!("query geo ip cache name '{name}' failed: {e}");
@@ -476,7 +427,6 @@ impl GeoIpService {
     }
 
     pub async fn refresh(&self, force: bool) {
-        // 读取当前规则
         let configs: Vec<GeoIpSourceConfig> = self.store.list().await.unwrap();
 
         let mut config_names = HashSet::new();
@@ -721,7 +671,6 @@ impl ConfigStoreController for GeoIpService {
     }
 
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
-        // Refresh Direct configs immediately when updated
         for change in changes {
             self.tasks.cancel_task(change.new.id);
             if let GeoIpSource::Direct { ref data } = change.new.source {

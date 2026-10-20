@@ -139,6 +139,8 @@ pub const LANDSCAPE_HOSTAPD_TMP_DIR: &str = "hostapd_tmp";
 pub const LANDSCAPE_GEO_CACHE_DIR: &str = "geo/cache";
 /// GEO raw source files (downloaded originals, format as configured) path
 pub const LANDSCAPE_GEO_RAW_DIR: &str = "geo/raw";
+/// Transformed geo snapshots used as durable rebuild sources.
+pub const LANDSCAPE_GEO_SNAPSHOT_DIR: &str = "geo/snapshots";
 
 /// Landscape default lan bridge name
 pub const LANDSCAPE_DEFAULT_LAN_NAME: &str = "br_lan";

@@ -28,6 +28,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(add_many_geo_sites))
         .routes(routes!(get_geo_rule, del_geo_site))
         .routes(routes!(download_geo_site_dat))
+        .routes(routes!(download_geo_site_snapshot))
         .routes(routes!(get_geo_site_cache, refresh_geo_site_cache))
         .routes(routes!(refresh_geo_site_config_by_name))
         .routes(routes!(search_geo_site_cache))
@@ -256,22 +257,45 @@ async fn del_geo_site(
     tag = "Geo Sites",
     params(("id" = Uuid, Path, description = "Geo site rule ID")),
     responses(
-        (status = 200, description = "Raw dat file bytes", content_type = "application/octet-stream"),
-        (status = 404, description = "Dat not found; background download started"),
-        (status = 409, description = "Download task already running")
+        (status = 200, description = "Legacy raw dat file bytes", content_type = "application/octet-stream"),
+        (status = 404, description = "Legacy raw dat file not found; use the snapshot endpoint")
     )
 )]
 async fn download_geo_site_dat(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> Result<Response, LandscapeApiError> {
-    match state.geo_site_service.get_raw_dat_or_start_download(id).await? {
+    let bytes = state.geo_site_service.get_legacy_raw_dat(id).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.raw\""))
+        .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
+    headers.insert(header::CONTENT_DISPOSITION, disposition);
+    Ok((headers, bytes).into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/sites/{id}/snapshot",
+    tag = "Geo Sites",
+    params(("id" = Uuid, Path, description = "Geo site source config ID")),
+    responses(
+        (status = 200, description = "Transformed geo site snapshot", content_type = "application/octet-stream"),
+        (status = 404, description = "Snapshot not found; background download started"),
+        (status = 409, description = "Download task already running")
+    )
+)]
+async fn download_geo_site_snapshot(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> Result<Response, LandscapeApiError> {
+    match state.geo_site_service.get_snapshot_or_start_download(id).await? {
         RawDatState::Ready(bytes) => {
             let mut headers = HeaderMap::new();
             headers
                 .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
             let disposition =
-                HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.raw\""))
+                HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.snap\""))
                     .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
             headers.insert(header::CONTENT_DISPOSITION, disposition);
             Ok((headers, bytes).into_response())

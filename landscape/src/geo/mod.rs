@@ -5,9 +5,13 @@ use landscape_common::config_service::geo::{GeoSourceKind, GeoTaskPhase, GeoTask
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+pub mod download;
 pub mod ip_service;
 pub mod raw_file;
 pub mod site_service;
+mod site_snapshot;
+mod site_values;
+pub mod storage;
 
 /// Minimum interval between two download-progress publishes for one task.
 pub(crate) const GEO_PROGRESS_PUBLISH_INTERVAL: Duration = Duration::from_millis(200);

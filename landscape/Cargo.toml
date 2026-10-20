@@ -71,7 +71,7 @@ chrono = { workspace = true }
 idna = { workspace = true }
 
 tokio = { workspace = true, features = ["full", "net", "io-util"] }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["io-util"] }
 rand = { workspace = true }
 
 clap = { workspace = true }

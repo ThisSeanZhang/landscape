@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use landscape_common::{
     config_service::geo::{GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig},
@@ -7,7 +7,8 @@ use landscape_common::{
     utils::time::get_f64_timestamp,
 };
 use regex::Regex;
-use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use tokio::sync::mpsc;
 
 use super::{CacheWriteOutcome, db_err};
 
@@ -33,6 +34,17 @@ impl SiteRuleRow {
             !matches!(match_type, DomainMatchType::Regex) || Regex::new(&domain).is_ok();
         Self { match_type, domain, attributes, pattern_valid }
     }
+}
+
+/// Events used to stream one `(name, geo_key)` replacement without holding a
+/// full rule list in memory. `Begin` opens the per-key transaction, `Rules`
+/// append bounded batches, and `End` commits it. Dropping the sender before
+/// `End` rolls the transaction back.
+#[derive(Debug)]
+pub enum SiteCacheStreamEvent {
+    Begin { key: String, content_hash: String },
+    Rules(Vec<SiteRuleRow>),
+    End,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +170,74 @@ impl SiteCacheRepository {
         insert_rules(&mut tx, entry_id, &rules).await?;
         tx.commit().await.map_err(db_err)?;
         Ok(CacheWriteOutcome::Updated)
+    }
+
+    /// Stream a sequence of per-key replacements. Each `Begin`/`Rules`/`End`
+    /// group is committed independently, matching `replace_by_name` semantics.
+    pub async fn replace_stream(
+        &self,
+        name: &str,
+        mut rx: mpsc::Receiver<SiteCacheStreamEvent>,
+    ) -> Result<HashMap<String, CacheWriteOutcome>, DbError> {
+        let mut outcomes = HashMap::new();
+        let mut current: Option<StreamWrite> = None;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                SiteCacheStreamEvent::Begin { key, content_hash } => {
+                    if current.is_some() {
+                        return Err(DbError::Internal(
+                            "geo site cache stream received Begin before End".to_string(),
+                        ));
+                    }
+                    current = Some(
+                        begin_stream_entry(self, name, key.to_ascii_uppercase(), content_hash)
+                            .await?,
+                    );
+                }
+                SiteCacheStreamEvent::Rules(rules) => {
+                    let Some(current) = current.as_mut() else {
+                        return Err(DbError::Internal(
+                            "geo site cache stream received Rules before Begin".to_string(),
+                        ));
+                    };
+                    if let Some((tx, entry_id, next_seq)) = current.write_state_mut() {
+                        insert_rule_chunk(tx, entry_id, *next_seq, &rules).await?;
+                        *next_seq = next_seq.checked_add(rules.len() as i64).ok_or_else(|| {
+                            DbError::Internal("geo site cache rule sequence overflow".to_string())
+                        })?;
+                    }
+                }
+                SiteCacheStreamEvent::End => {
+                    let Some(current) = current.take() else {
+                        return Err(DbError::Internal(
+                            "geo site cache stream received End before Begin".to_string(),
+                        ));
+                    };
+                    let (key, outcome) = current.finish().await?;
+                    outcomes.insert(key, outcome);
+                }
+            }
+        }
+
+        if current.is_some() {
+            return Err(DbError::Internal("geo site cache stream closed before End".to_string()));
+        }
+        Ok(outcomes)
+    }
+
+    /// Content hashes for every cached key under one source name.
+    pub async fn entry_hashes_for_name(
+        &self,
+        name: &str,
+    ) -> Result<HashMap<String, String>, DbError> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT geo_key, content_hash FROM geo_cache_entries WHERE name = ?")
+                .bind(name)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_err)?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Semantic match for one normalized lowercase domain across all
@@ -335,13 +415,128 @@ impl SiteCacheRepository {
     }
 }
 
+struct StreamWrite {
+    key: String,
+    inserted: bool,
+    state: StreamWriteState,
+}
+
+enum StreamWriteState {
+    Unchanged,
+    Writing { tx: Transaction<'static, Sqlite>, entry_id: i64, next_seq: i64 },
+}
+
+impl StreamWrite {
+    fn write_state_mut(&mut self) -> Option<(&mut SqliteConnection, i64, &mut i64)> {
+        match &mut self.state {
+            StreamWriteState::Unchanged => None,
+            StreamWriteState::Writing { tx, entry_id, next_seq } => {
+                Some((&mut **tx, *entry_id, next_seq))
+            }
+        }
+    }
+
+    async fn finish(self) -> Result<(String, CacheWriteOutcome), DbError> {
+        match self.state {
+            StreamWriteState::Unchanged => Ok((self.key, CacheWriteOutcome::Unchanged)),
+            StreamWriteState::Writing { tx, .. } => {
+                tx.commit().await.map_err(db_err)?;
+                let outcome = if self.inserted {
+                    CacheWriteOutcome::Inserted
+                } else {
+                    CacheWriteOutcome::Updated
+                };
+                Ok((self.key, outcome))
+            }
+        }
+    }
+}
+
+async fn begin_stream_entry(
+    repo: &SiteCacheRepository,
+    name: &str,
+    key: String,
+    content_hash: String,
+) -> Result<StreamWrite, DbError> {
+    let mut tx = repo.pool.begin().await.map_err(db_err)?;
+    let existing: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, content_hash FROM geo_cache_entries WHERE name = ? AND geo_key = ?",
+    )
+    .bind(name)
+    .bind(&key)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_err)?;
+
+    let Some((entry_id, old_hash)) = existing else {
+        sqlx::query(
+            "INSERT INTO geo_cache_entries (name, geo_key, content_hash, updated_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(&key)
+        .bind(&content_hash)
+        .bind(get_f64_timestamp())
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+        let entry_id: i64 =
+            sqlx::query_scalar("SELECT id FROM geo_cache_entries WHERE name = ? AND geo_key = ?")
+                .bind(name)
+                .bind(&key)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        return Ok(StreamWrite {
+            key,
+            inserted: true,
+            state: StreamWriteState::Writing { tx, entry_id, next_seq: 0 },
+        });
+    };
+
+    if old_hash == content_hash {
+        return Ok(StreamWrite {
+            key,
+            inserted: false,
+            state: StreamWriteState::Unchanged,
+        });
+    }
+
+    sqlx::query("UPDATE geo_cache_entries SET content_hash = ?, updated_at = ? WHERE id = ?")
+        .bind(&content_hash)
+        .bind(get_f64_timestamp())
+        .bind(entry_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    sqlx::query("DELETE FROM geo_site_rules WHERE entry_id = ?")
+        .bind(entry_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    Ok(StreamWrite {
+        key,
+        inserted: false,
+        state: StreamWriteState::Writing { tx, entry_id, next_seq: 0 },
+    })
+}
+
 async fn insert_rules(
     tx: &mut SqliteConnection,
     entry_id: i64,
     rules: &[SiteRuleRow],
 ) -> Result<(), DbError> {
+    insert_rule_chunk(tx, entry_id, 0, rules).await
+}
+
+async fn insert_rule_chunk(
+    tx: &mut SqliteConnection,
+    entry_id: i64,
+    seq_base: i64,
+    rules: &[SiteRuleRow],
+) -> Result<(), DbError> {
     for (chunk_index, chunk) in rules.chunks(INSERT_BATCH).enumerate() {
-        let base = (chunk_index * INSERT_BATCH) as i64;
+        let base = seq_base + (chunk_index * INSERT_BATCH) as i64;
         let mut builder: QueryBuilder<Sqlite> = QueryBuilder::new(
             "INSERT INTO geo_site_rules (entry_id, seq, match_type, domain, attributes, pattern_valid) ",
         );
