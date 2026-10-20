@@ -1,4 +1,13 @@
+use landscape_macro::LdApiError;
 use serde::Serialize;
+
+#[derive(thiserror::Error, Debug, LdApiError)]
+#[api_error(crate_path = "crate")]
+pub enum TimeSyncError {
+    #[error("Time sync service is not enabled")]
+    #[api_error(id = "time.sync_disabled", status = 409)]
+    SyncDisabled,
+}
 
 /// Where the current system time comes from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

@@ -23,6 +23,18 @@ pub async fn get_time_sync_status(
 }
 
 #[utoipa::path(
+    post,
+    path = "/time/sync_now",
+    tag = "System Config",
+    operation_id = "sync_time_now",
+    responses((status = 200, description = "Success"))
+)]
+pub async fn sync_time_now(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
+    state.time_service.sync_now()?;
+    LandscapeApiResp::success(())
+}
+
+#[utoipa::path(
     get,
     path = "/config/edit/time",
     tag = "System Config",

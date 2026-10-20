@@ -1,6 +1,7 @@
 use super::*;
 
 use std::collections::VecDeque;
+use std::sync::Mutex;
 
 #[test]
 fn backoff_grows_and_caps() {
@@ -307,5 +308,62 @@ async fn stop_cancels_and_no_further_queries_happen() {
     assert_eq!(service.status().last_action, TimeSyncAction::InitialStep);
 
     // Stopping again is a no-op.
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sync_now_disabled_returns_error() {
+    let ntp = FakeNtpClient::new(vec![]);
+    let clock = FakeClock::new(false);
+    let service = SyncTimeService::start_with(ntp.clone(), clock.clone(), disabled_config());
+
+    assert!(matches!(service.sync_now(), Err(TimeSyncError::SyncDisabled)));
+
+    service.update_config(test_config());
+    assert!(service.sync_now().is_ok());
+
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sync_now_triggers_immediate_query() {
+    let ntp = FakeNtpClient::new(vec![ntp_ok(5.0), ntp_ok(3.0)]);
+    let clock = FakeClock::new(false);
+    let service = start_service(ntp.clone(), clock.clone());
+
+    run_until(|| ntp.query_count() == 1).await;
+
+    // Manual trigger skips the 60s interval; only yields, no advance.
+    service.sync_now().unwrap();
+    for _ in 0..100 {
+        if ntp.query_count() == 2 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(ntp.query_count(), 2);
+
+    // Second success: offset below threshold -> refresh.
+    run_until(|| service.status().last_success_at.is_some()).await;
+    let status = service.status();
+    assert_eq!(status.last_action, TimeSyncAction::PeriodicRefresh);
+    assert_eq!(status.sync_stage, TimeSyncStage::Steady);
+
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn sync_now_clears_failure_backoff() {
+    let ntp = FakeNtpClient::new(vec![ntp_err(), ntp_ok(4.0)]);
+    let clock = FakeClock::new(false);
+    let service = start_service(ntp.clone(), clock.clone());
+
+    run_until(|| service.status().last_action == TimeSyncAction::FallbackSystem).await;
+
+    service.sync_now().unwrap();
+    run_until(|| service.status().last_success_at.is_some()).await;
+    assert_eq!(ntp.query_count(), 2);
+    assert_eq!(service.status().last_action, TimeSyncAction::InitialStep);
+
     service.stop().await;
 }

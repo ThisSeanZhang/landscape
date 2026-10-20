@@ -22,6 +22,7 @@ use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::sys_service::gateway::GatewayError;
 use landscape_common::sys_service::lan_hostname::LanHostnameError;
+use landscape_common::sys_service::time_sync::TimeSyncError;
 use landscape_common::wan_service::firewall::FirewallError;
 use landscape_common::wan_service::nat::error::NatServiceError;
 
@@ -76,6 +77,8 @@ pub enum LandscapeApiError {
     #[error(transparent)]
     LanHostname(#[from] LanHostnameError),
     #[error(transparent)]
+    TimeSync(#[from] TimeSyncError),
+    #[error(transparent)]
     InitConfig(#[from] InitConfigError),
     #[error("gateway is not supported on this target architecture")]
     GatewayUnsupportedTarget,
@@ -113,6 +116,7 @@ impl LandscapeApiError {
             Self::Docker(e) => e.error_id(),
             Self::Gateway(e) => e.error_id(),
             Self::LanHostname(e) => e.error_id(),
+            Self::TimeSync(e) => e.error_id(),
             Self::InitConfig(e) => e.error_id(),
             Self::Database(e) => e.error_id(),
             Self::GatewayUnsupportedTarget => "gateway.unsupported_target",
@@ -144,6 +148,7 @@ impl LandscapeApiError {
             Self::Docker(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Gateway(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::LanHostname(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::TimeSync(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::InitConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Database(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GatewayUnsupportedTarget => StatusCode::NOT_IMPLEMENTED,
@@ -175,6 +180,7 @@ impl LandscapeApiError {
             Self::Docker(e) => e.error_args(),
             Self::Gateway(e) => e.error_args(),
             Self::LanHostname(e) => e.error_args(),
+            Self::TimeSync(e) => e.error_args(),
             Self::InitConfig(e) => e.error_args(),
             Self::Database(e) => e.error_args(),
             Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
@@ -209,6 +215,7 @@ impl LandscapeApiError {
             Self::Docker(e) => e.to_public_message(),
             Self::Gateway(e) => e.to_public_message(),
             Self::LanHostname(e) => e.to_public_message(),
+            Self::TimeSync(e) => e.to_public_message(),
             Self::InitConfig(e) => e.to_public_message(),
             Self::Database(e) => e.to_public_message(),
             Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {

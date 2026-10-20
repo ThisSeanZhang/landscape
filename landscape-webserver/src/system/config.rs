@@ -84,6 +84,7 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(export_init_config))
         .merge(import_router)
         .routes(routes!(super::time_config::get_time_sync_status))
+        .routes(routes!(super::time_config::sync_time_now))
         .routes(routes!(super::time_config::get_time_config_fast))
         .routes(routes!(
             super::time_config::get_time_config,
