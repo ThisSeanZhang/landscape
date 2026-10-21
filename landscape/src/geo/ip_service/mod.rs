@@ -17,7 +17,9 @@ use std::{
 };
 
 use landscape_common::{args::LAND_HOME_PATH, event::dns::DstIpEvent};
-use landscape_core::geo_cache::{GeoCacheDatabase, IpCacheRepository, IpCidrRow};
+use landscape_core::geo_cache::{
+    CacheWriteOutcome, GeoCacheDatabase, IpCacheRepository, IpCidrRow,
+};
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };
@@ -30,7 +32,7 @@ use tracing::Instrument;
 use super::ip_values::geo_ip_content_hash;
 use super::raw_file::{raw_dat_path, remove_raw_dat, sweep_orphan_raw_files};
 use super::storage::{geo_snapshot_path, remove_geo_snapshot, sweep_orphan_geo_snapshots};
-use super::{GeoTaskMode, GeoTaskRegistry, TaskGuard};
+use super::{GeoCacheApplyResult, GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
 mod snapshot_pipeline;
 #[cfg(test)]
@@ -126,65 +128,62 @@ impl GeoIpService {
         self.tasks.cancel_task(id)
     }
 
-    pub async fn resolve_geo_key_to_ips(
+    pub async fn extend_geo_key_ips(
         &self,
         geo_key: &landscape_common::config_service::geo::GeoConfigKey,
-    ) -> Vec<landscape_common::flow::ip_mark::IpConfig> {
-        match self.cache.load_entry(&geo_key.name, &geo_key.key).await {
-            Ok(Some(geo_ip_config)) => geo_ip_config.values,
-            Ok(None) => vec![],
-            Err(e) => {
-                tracing::error!("load geo ip cache {}/{} failed: {}", geo_key.name, geo_key.key, e);
-                vec![]
-            }
+        output: &mut Vec<landscape_common::flow::ip_mark::IpConfig>,
+    ) {
+        if let Err(e) =
+            self.cache.extend_cidrs(&geo_key.name, &geo_key.key, output, |cidr| cidr).await
+        {
+            tracing::error!("load geo ip cache {}/{} failed: {}", geo_key.name, geo_key.key, e);
         }
     }
 
-    fn notify_dst_ip_updated(&self) {
-        let _ = self.dst_ip_events_tx.send(DstIpEvent::GeoIpUpdated);
+    fn notify_dst_ip_updated(&self, changed_keys: HashSet<GeoFileCacheKey>) {
+        if changed_keys.is_empty() {
+            return;
+        }
+        let _ = self.dst_ip_events_tx.send(DstIpEvent::GeoIpUpdated { changed_keys });
     }
 
     pub async fn convert_config_to_runtime_rule(
         &self,
         configs: Vec<WanIpRuleConfig>,
     ) -> Vec<IpMarkInfo> {
-        // Deduplicate by cidr (ip + prefix) — keep the first occurrence (highest priority).
-        // Configs are sorted by ascending index before calling, so the first seen = highest priority.
-        let mut seen = std::collections::HashSet::new();
-        let mut result = Vec::with_capacity(configs.len());
+        // Keep one `IpMarkInfo` per CIDR. Building the candidates first and
+        // deduplicating in place avoids a second full HashSet while large GEO
+        // entries are being converted.
+        let mut result = Vec::new();
         for config in configs.into_iter() {
             let priority = config.index as u16;
             let mark = config.mark;
             for each in config.source.into_iter() {
                 match each {
                     WanIPRuleSource::GeoKey(config_key) => {
-                        match self.cache.load_entry(&config_key.name, &config_key.key).await {
-                            Ok(Some(ips)) => {
-                                result.reserve(ips.values.len());
-                                for cidr in ips.values {
-                                    if seen.insert(cidr.clone()) {
-                                        result.push(IpMarkInfo { mark, cidr, priority });
-                                    }
-                                }
-                            }
-                            Ok(None) => {}
-                            Err(e) => tracing::error!(
+                        if let Err(e) = self
+                            .cache
+                            .extend_cidrs(&config_key.name, &config_key.key, &mut result, |cidr| {
+                                IpMarkInfo { mark, cidr, priority }
+                            })
+                            .await
+                        {
+                            tracing::error!(
                                 "load geo ip cache {}/{} failed: {}",
                                 config_key.name,
                                 config_key.key,
                                 e
-                            ),
+                            );
                         }
                     }
-                    WanIPRuleSource::Config(c) => {
-                        if seen.insert(c.clone()) {
-                            result.push(IpMarkInfo { mark, cidr: c, priority });
-                        }
+                    WanIPRuleSource::Config(cidr) => {
+                        result.push(IpMarkInfo { mark, cidr, priority });
                     }
                 }
             }
         }
-        result
+
+        finalize_runtime_rules(result)
     }
 
     fn spawn_geo_task(
@@ -302,8 +301,8 @@ impl GeoIpService {
                     }
                 }
                 GeoIpSource::Direct { data } => {
-                    self.write_direct_to_cache(&config.name, data).await;
-                    self.notify_dst_ip_updated();
+                    let result = self.write_direct_to_cache(&config.name, data).await;
+                    self.notify_dst_ip_updated(result.changed_keys);
                 }
             }
         }
@@ -353,12 +352,12 @@ impl GeoIpService {
                 }
             }
             GeoIpSource::Direct { data } => {
-                self.write_direct_to_cache(&config.name, data).await;
+                let result = self.write_direct_to_cache(&config.name, data).await;
                 self.store
                     .upsert(config.clone())
                     .await
                     .map_err(|e| GeoError::IpConfigStoreFailed(e.to_string()))?;
-                self.notify_dst_ip_updated();
+                self.notify_dst_ip_updated(result.changed_keys);
             }
         }
         Ok(())
@@ -368,23 +367,25 @@ impl GeoIpService {
         &self,
         name: &str,
         data: &[landscape_common::config_service::geo::GeoIpDirectItem],
-    ) {
+    ) -> GeoCacheApplyResult {
         let result: HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>> =
             data.iter().map(|item| (item.key.clone(), item.values.clone())).collect();
-        self.replace_cache_by_name(name, result).await;
+        self.replace_cache_by_name(name, result).await
     }
 
     async fn replace_cache_by_name(
         &self,
         name: &str,
         result: HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>>,
-    ) {
+    ) -> GeoCacheApplyResult {
+        let mut apply = GeoCacheApplyResult::default();
         let mut stale_keys: HashSet<GeoFileCacheKey> =
             self.cache.keys_for_name(name).await.unwrap_or_default().into_iter().collect();
 
         for (key, values) in result {
             let geo_key = key.to_ascii_uppercase();
-            stale_keys.remove(&GeoFileCacheKey { name: name.to_string(), key: geo_key.clone() });
+            let cache_key = GeoFileCacheKey { name: name.to_string(), key: geo_key.clone() };
+            stale_keys.remove(&cache_key);
 
             let content_hash = geo_ip_content_hash(&values);
             let cidrs: Vec<IpCidrRow> = values
@@ -395,17 +396,40 @@ impl GeoIpService {
                 })
                 .collect();
 
-            if let Err(e) = self.cache.replace_by_name(name, &geo_key, &content_hash, cidrs).await {
-                tracing::error!("write geo ip cache {}/{} failed: {}", name, geo_key, e);
+            match self.cache.replace_by_name(name, &geo_key, &content_hash, cidrs).await {
+                Ok(CacheWriteOutcome::Unchanged) => apply.unchanged_keys += 1,
+                Ok(CacheWriteOutcome::Inserted | CacheWriteOutcome::Updated) => {
+                    apply.changed_keys.insert(cache_key);
+                }
+                Err(e) => {
+                    tracing::error!("write geo ip cache {}/{} failed: {}", name, geo_key, e)
+                }
             }
         }
 
         for key in stale_keys {
-            if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
-                tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
+            match self.cache.delete_by_name(&key.name, &key.key).await {
+                Ok(true) => {
+                    apply.changed_keys.insert(key);
+                    apply.deleted_keys += 1;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e)
+                }
             }
         }
+        apply
     }
+}
+
+fn finalize_runtime_rules(mut result: Vec<IpMarkInfo>) -> Vec<IpMarkInfo> {
+    // Configs arrive sorted by ascending index, so for equal CIDRs the lowest
+    // priority number must win. Sorting by priority before dedup preserves
+    // that rule without a second hash-based copy.
+    result.sort_unstable_by_key(|info| (info.cidr.ip, info.cidr.prefix, info.priority));
+    result.dedup_by(|left, right| left.cidr == right.cidr);
+    result
 }
 
 impl GeoIpService {
@@ -484,8 +508,8 @@ impl ConfigStoreController for GeoIpService {
         for change in changes {
             self.tasks.cancel_task(change.new.id);
             if let GeoIpSource::Direct { ref data } = change.new.source {
-                self.write_direct_to_cache(&change.new.name, data).await;
-                self.notify_dst_ip_updated();
+                let result = self.write_direct_to_cache(&change.new.name, data).await;
+                self.notify_dst_ip_updated(result.changed_keys);
             }
         }
     }

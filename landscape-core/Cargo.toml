@@ -17,6 +17,7 @@ aho-corasick = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
+futures-util = { workspace = true, features = ["std"] }
 idna = { workspace = true }
 libc = { workspace = true }
 pem = { workspace = true }

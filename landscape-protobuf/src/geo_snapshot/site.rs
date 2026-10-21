@@ -1,6 +1,6 @@
 use std::{io::Read, path::PathBuf};
 
-use landscape_common::dns::{domain::normalize_domain_string, rule::DomainMatchType};
+use landscape_common::dns::{domain::normalize_domain_string_in_place, rule::DomainMatchType};
 
 use super::{
     GeoSnapshotError, GeoSnapshotIndex, GeoSnapshotMetadata, GeoSnapshotPayloadReader,
@@ -20,6 +20,9 @@ pub struct GeoSnapshotRule {
 
 pub struct SiteSnapshotWriter {
     inner: GeoSnapshotWriter,
+    value_buf: String,
+    attributes: Vec<String>,
+    item_buf: Vec<u8>,
 }
 
 impl SiteSnapshotWriter {
@@ -29,6 +32,9 @@ impl SiteSnapshotWriter {
     ) -> Result<Self, GeoSnapshotError> {
         Ok(Self {
             inner: GeoSnapshotWriter::create(final_path, GeoSnapshotSourceKind::Site, source_id)?,
+            value_buf: String::new(),
+            attributes: Vec::new(),
+            item_buf: Vec::new(),
         })
     }
 
@@ -54,36 +60,38 @@ impl SiteSnapshotWriter {
     where
         I: IntoIterator<Item = &'a str>,
     {
-        let value = match match_type {
-            DomainMatchType::Regex => value.to_string(),
-            _ => normalize_domain_string(value.to_string()),
-        };
-        if value.len() > MAX_RULE_VALUE_BYTES as usize {
+        self.value_buf.clear();
+        self.value_buf.push_str(value);
+        if match_type != DomainMatchType::Regex {
+            normalize_domain_string_in_place(&mut self.value_buf);
+        }
+        if self.value_buf.len() > MAX_RULE_VALUE_BYTES as usize {
             return Err(GeoSnapshotError::InvalidPayload("site rule value is too large"));
         }
 
-        let mut attributes: Vec<String> = attributes.into_iter().map(str::to_string).collect();
-        attributes.sort_unstable();
-        attributes.dedup();
-        if attributes.len() > MAX_ATTRIBUTES as usize {
+        self.attributes.clear();
+        self.attributes.extend(attributes.into_iter().map(str::to_string));
+        self.attributes.sort_unstable();
+        self.attributes.dedup();
+        if self.attributes.len() > MAX_ATTRIBUTES as usize {
             return Err(GeoSnapshotError::InvalidPayload("site rule has too many attributes"));
         }
-        for attribute in &attributes {
+        for attribute in &self.attributes {
             if attribute.len() > MAX_ATTRIBUTE_BYTES as usize {
                 return Err(GeoSnapshotError::InvalidPayload("site attribute is too large"));
             }
         }
 
-        let mut item = Vec::new();
-        item.push(match_type_tag(match_type));
-        push_u32(&mut item, value.len())?;
-        item.extend_from_slice(value.as_bytes());
-        push_u32(&mut item, attributes.len())?;
-        for attribute in &attributes {
-            push_u32(&mut item, attribute.len())?;
-            item.extend_from_slice(attribute.as_bytes());
+        self.item_buf.clear();
+        self.item_buf.push(match_type_tag(match_type));
+        push_u32(&mut self.item_buf, self.value_buf.len())?;
+        self.item_buf.extend_from_slice(self.value_buf.as_bytes());
+        push_u32(&mut self.item_buf, self.attributes.len())?;
+        for attribute in &self.attributes {
+            push_u32(&mut self.item_buf, attribute.len())?;
+            self.item_buf.extend_from_slice(attribute.as_bytes());
         }
-        self.inner.write_item(&item)
+        self.inner.write_item(&self.item_buf)
     }
 
     pub fn end_key(&mut self) -> Result<(), GeoSnapshotError> {

@@ -4,7 +4,8 @@ use landscape_common::{config_service::geo::GeoError, dns::rule::DomainMatchType
 use quick_protobuf::{BytesReader, MessageRead};
 
 use crate::protobuf_stream::{
-    read_counted_bytes, read_counted_u64, read_optional_varint, read_varint, skip_field,
+    read_counted_bytes, read_counted_bytes_into, read_counted_u64, read_optional_varint,
+    read_varint, skip_field,
 };
 use crate::protos::geo::Domain;
 
@@ -27,6 +28,7 @@ pub enum GeoSiteStreamEvent {
 pub struct GeoSiteStream<R: Read> {
     reader: BufReader<R>,
     state: StreamState,
+    message_buf: Vec<u8>,
     finished: bool,
 }
 
@@ -41,6 +43,7 @@ impl<R: Read> GeoSiteStream<R> {
         Self {
             reader: BufReader::new(reader),
             state: StreamState::TopLevel,
+            message_buf: Vec::new(),
             finished: false,
         }
     }
@@ -121,9 +124,14 @@ impl<R: Read> GeoSiteStream<R> {
                             if length > MAX_DOMAIN_MESSAGE_BYTES {
                                 return Err(GeoError::SiteDatDecodeError);
                             }
-                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)
-                                .map_err(stream_io_error)?;
-                            let domain = decode_domain(&bytes)?;
+                            read_counted_bytes_into(
+                                &mut self.reader,
+                                remaining,
+                                length,
+                                &mut self.message_buf,
+                            )
+                            .map_err(stream_io_error)?;
+                            let domain = decode_domain(&self.message_buf)?;
                             return Ok(Some(domain));
                         }
                         _ => {

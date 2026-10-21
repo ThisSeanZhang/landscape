@@ -5,7 +5,8 @@ use quick_protobuf::{BytesReader, MessageRead};
 
 use crate::ip_utils::mask_ip;
 use crate::protobuf_stream::{
-    read_counted_bytes, read_counted_u64, read_optional_varint, read_varint, skip_field,
+    read_counted_bytes, read_counted_bytes_into, read_counted_u64, read_optional_varint,
+    read_varint, skip_field,
 };
 use crate::protos::geo::CIDR;
 
@@ -26,6 +27,7 @@ pub enum GeoIpStreamEvent {
 pub struct GeoIpDatStream<R: Read> {
     reader: BufReader<R>,
     state: DatStreamState,
+    message_buf: Vec<u8>,
     finished: bool,
 }
 
@@ -40,6 +42,7 @@ impl<R: Read> GeoIpDatStream<R> {
         Self {
             reader: BufReader::new(reader),
             state: DatStreamState::TopLevel,
+            message_buf: Vec::new(),
             finished: false,
         }
     }
@@ -121,9 +124,14 @@ impl<R: Read> GeoIpDatStream<R> {
                             if length > MAX_CIDR_MESSAGE_BYTES {
                                 return Err(GeoError::IpDatDecodeError);
                             }
-                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)
-                                .map_err(dat_stream_io_error)?;
-                            if let Some(cidr) = decode_cidr(&bytes)? {
+                            read_counted_bytes_into(
+                                &mut self.reader,
+                                remaining,
+                                length,
+                                &mut self.message_buf,
+                            )
+                            .map_err(dat_stream_io_error)?;
+                            if let Some(cidr) = decode_cidr(&self.message_buf)? {
                                 return Ok(Some(GeoIpStreamEvent::Cidr(cidr)));
                             }
                         }

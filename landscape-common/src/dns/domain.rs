@@ -26,12 +26,17 @@ pub fn normalize_domain_text(domain: &str) -> Cow<'_, str> {
 /// Owned counterpart of `normalize_domain_text`: consumes `value` and rewrites
 /// it in place, always reusing its allocation.
 pub fn normalize_domain_string(mut value: String) -> String {
+    normalize_domain_string_in_place(&mut value);
+    value
+}
+
+/// Rewrites an existing `String` allocation in place.
+pub fn normalize_domain_string_in_place(value: &mut String) {
     let trimmed_len = value.trim_end_matches('.').len();
     if trimmed_len != value.len() {
         value.truncate(trimmed_len);
     }
     value.make_ascii_lowercase();
-    value
 }
 
 #[cfg(test)]

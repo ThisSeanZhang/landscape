@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
+    config_service::geo::GeoFileCacheKey,
     database::error::DbError,
     database::store::Change,
     event::dns::DstIpEvent,
-    flow::{dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
+    flow::{WanIPRuleSource, dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
     service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
@@ -39,9 +40,29 @@ impl DstIpRuleService {
         spawn_task(task_label::task::FLOW_DST_IP_OBSERVER, async move {
             while let Ok(event) = receiver.recv().await {
                 match event {
-                    DstIpEvent::GeoIpUpdated => {
-                        tracing::info!("refresh dst ip rule");
-                        dst_ip_rule_service_clone.apply_loaded_configs().await;
+                    DstIpEvent::GeoIpUpdated { changed_keys } => {
+                        tracing::info!(
+                            "refresh dst ip rules for {} changed geo key(s)",
+                            changed_keys.len()
+                        );
+                        let configs = match dst_ip_rule_service_clone.list().await {
+                            Ok(configs) => configs,
+                            Err(error) => {
+                                tracing::error!(
+                                    "failed to load dst ip rules for geo update: {error:?}"
+                                );
+                                continue;
+                            }
+                        };
+                        let affected_flows = affected_flow_ids(&configs, &changed_keys);
+                        if affected_flows.is_empty() {
+                            continue;
+                        }
+                        let affected_configs = configs
+                            .into_iter()
+                            .filter(|rule| affected_flows.contains(&rule.flow_id))
+                            .collect();
+                        dst_ip_rule_service_clone.apply_configs(affected_configs).await;
                     }
                 }
             }
@@ -132,6 +153,29 @@ impl ConfigStoreController for DstIpRuleService {
     }
 }
 
+fn affected_flow_ids(
+    configs: &[WanIpRuleConfig],
+    changed_keys: &HashSet<GeoFileCacheKey>,
+) -> HashSet<u32> {
+    configs
+        .iter()
+        .filter(|rule| rule.enable && rule_references_changed_geo(rule, changed_keys))
+        .map(|rule| rule.flow_id)
+        .collect()
+}
+
+fn rule_references_changed_geo(
+    rule: &WanIpRuleConfig,
+    changed_keys: &HashSet<GeoFileCacheKey>,
+) -> bool {
+    rule.source.iter().any(|source| match source {
+        WanIPRuleSource::GeoKey(key) => {
+            changed_keys.iter().any(|changed| key.matches_file_cache_key(changed))
+        }
+        WanIPRuleSource::Config(_) => false,
+    })
+}
+
 async fn update_flow_dst_ip_map(
     geo_ip_service: GeoIpService,
     dataplane: Arc<dyn FlowRuleDataplane>,
@@ -143,4 +187,62 @@ async fn update_flow_dst_ip_map(
     tracing::info!("[flow_id: {flow_id}] update dst ip rules: {rules:?}");
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
     dataplane.set_dst_ip_marks(flow_id, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use landscape_common::{
+        config_service::geo::{GeoConfigKey, GeoFileCacheKey},
+        flow::{IpConfig, WanIPRuleSource, mark::FlowMark},
+    };
+    use uuid::Uuid;
+
+    use super::{WanIpRuleConfig, affected_flow_ids};
+
+    fn geo_key(key: &str) -> GeoConfigKey {
+        GeoConfigKey {
+            name: "geoip".to_string(),
+            key: key.to_string(),
+            inverse: false,
+            attribute_key: None,
+        }
+    }
+
+    fn rule(flow_id: u32, enable: bool, source: Vec<WanIPRuleSource>) -> WanIpRuleConfig {
+        WanIpRuleConfig {
+            id: Uuid::new_v4(),
+            name: None,
+            index: 0,
+            enable,
+            mark: FlowMark::default(),
+            source,
+            remark: String::new(),
+            flow_id,
+            override_dns: false,
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn only_flows_referencing_changed_geo_keys_are_selected() {
+        let configs = vec![
+            rule(1, true, vec![WanIPRuleSource::GeoKey(geo_key("CN"))]),
+            rule(2, true, vec![WanIPRuleSource::GeoKey(geo_key("US"))]),
+            rule(
+                3,
+                true,
+                vec![WanIPRuleSource::Config(IpConfig {
+                    ip: "192.0.2.1".parse().unwrap(),
+                    prefix: 24,
+                })],
+            ),
+            rule(4, false, vec![WanIPRuleSource::GeoKey(geo_key("CN"))]),
+        ];
+        let changed =
+            HashSet::from([GeoFileCacheKey { name: "geoip".to_string(), key: "cn".to_string() }]);
+
+        assert_eq!(affected_flow_ids(&configs, &changed), HashSet::from([1]));
+    }
 }

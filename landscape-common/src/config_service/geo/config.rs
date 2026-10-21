@@ -145,6 +145,10 @@ impl GeoConfigKey {
     pub fn get_file_cache_key(&self) -> GeoFileCacheKey {
         GeoFileCacheKey { name: self.name.clone(), key: self.key.clone() }
     }
+
+    pub fn matches_file_cache_key(&self, cached: &GeoFileCacheKey) -> bool {
+        self.name == cached.name && self.key.eq_ignore_ascii_case(&cached.key)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -2990,6 +2990,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "dashmap 6.2.1",
+ "futures-util",
  "idna",
  "landscape-common",
  "libc",

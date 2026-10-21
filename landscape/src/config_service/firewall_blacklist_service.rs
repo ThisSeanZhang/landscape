@@ -53,12 +53,19 @@ impl FirewallBlacklistService {
         spawn_task(task_label::task::FIREWALL_BLACKLIST_OBSERVER, async move {
             while let Ok(event) = receiver.recv().await {
                 match event {
-                    DstIpEvent::GeoIpUpdated => {
-                        tracing::info!("refresh firewall blacklist due to GeoIP update");
+                    DstIpEvent::GeoIpUpdated { changed_keys } => {
+                        tracing::info!(
+                            "refresh firewall blacklist for {} changed geo key(s)",
+                            changed_keys.len()
+                        );
                         let configs = service_clone.list().await.unwrap_or_default();
+                        let affected = affected_blacklist_configs(configs, &changed_keys);
+                        if affected.is_empty() {
+                            continue;
+                        }
                         resolve_and_sync_blacklist(
                             &service_clone.geo_ip_service,
-                            configs,
+                            affected,
                             vec![],
                             service_clone.dataplane.as_ref(),
                         )
@@ -105,6 +112,26 @@ impl ConfigStoreController for FirewallBlacklistService {
     }
 }
 
+fn affected_blacklist_configs(
+    configs: Vec<FirewallBlacklistConfig>,
+    changed_keys: &std::collections::HashSet<
+        landscape_common::config_service::geo::GeoFileCacheKey,
+    >,
+) -> Vec<FirewallBlacklistConfig> {
+    configs
+        .into_iter()
+        .filter(|config| {
+            config.enable
+                && config.source.iter().any(|source| match source {
+                    FirewallBlacklistSource::GeoKey(key) => {
+                        changed_keys.iter().any(|changed| key.matches_file_cache_key(changed))
+                    }
+                    FirewallBlacklistSource::Config(_) => false,
+                })
+        })
+        .collect()
+}
+
 pub async fn resolve_and_sync_blacklist(
     geo_ip_service: &GeoIpService,
     new_configs: Vec<FirewallBlacklistConfig>,
@@ -132,12 +159,69 @@ async fn resolve_configs(
                     result.push(ip_config.clone());
                 }
                 FirewallBlacklistSource::GeoKey(geo_key) => {
-                    let ips = geo_ip_service.resolve_geo_key_to_ips(geo_key).await;
-                    result.extend(ips);
+                    geo_ip_service.extend_geo_key_ips(geo_key, &mut result).await;
                 }
             }
         }
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use landscape_common::{
+        config_service::geo::{GeoConfigKey, GeoFileCacheKey},
+        flow::IpConfig,
+    };
+    use uuid::Uuid;
+
+    use super::{FirewallBlacklistConfig, FirewallBlacklistSource, affected_blacklist_configs};
+
+    fn geo_key(key: &str) -> GeoConfigKey {
+        GeoConfigKey {
+            name: "geoip".to_string(),
+            key: key.to_string(),
+            inverse: false,
+            attribute_key: None,
+        }
+    }
+
+    fn config(enable: bool, source: Vec<FirewallBlacklistSource>) -> FirewallBlacklistConfig {
+        FirewallBlacklistConfig {
+            id: Uuid::new_v4(),
+            name: None,
+            enable,
+            source,
+            remark: String::new(),
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn only_blacklists_referencing_changed_geo_keys_are_selected() {
+        let configs = vec![
+            config(true, vec![FirewallBlacklistSource::GeoKey(geo_key("CN"))]),
+            config(true, vec![FirewallBlacklistSource::GeoKey(geo_key("US"))]),
+            config(
+                true,
+                vec![FirewallBlacklistSource::Config(IpConfig {
+                    ip: "192.0.2.1".parse().unwrap(),
+                    prefix: 24,
+                })],
+            ),
+            config(false, vec![FirewallBlacklistSource::GeoKey(geo_key("CN"))]),
+        ];
+        let changed =
+            HashSet::from([GeoFileCacheKey { name: "geoip".to_string(), key: "CN".to_string() }]);
+
+        let affected = affected_blacklist_configs(configs, &changed);
+        assert_eq!(affected.len(), 1);
+        assert!(matches!(
+            affected[0].source[0],
+            FirewallBlacklistSource::GeoKey(ref key) if key.key == "CN"
+        ));
+    }
 }

@@ -17,5 +17,5 @@ pub enum DnsEvent {
 
 #[derive(Clone, Debug)]
 pub enum DstIpEvent {
-    GeoIpUpdated,
+    GeoIpUpdated { changed_keys: HashSet<GeoFileCacheKey> },
 }

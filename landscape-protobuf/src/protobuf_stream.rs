@@ -39,15 +39,27 @@ pub(crate) fn read_counted_bytes<R: Read>(
     remaining: &mut u64,
     length: usize,
 ) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    read_counted_bytes_into(reader, remaining, length, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub(crate) fn read_counted_bytes_into<R: Read>(
+    reader: &mut R,
+    remaining: &mut u64,
+    length: usize,
+    buffer: &mut Vec<u8>,
+) -> io::Result<()> {
     let length_u64 =
         u64::try_from(length).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "length"))?;
     if *remaining < length_u64 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "entry underflow"));
     }
-    let mut bytes = vec![0u8; length];
-    reader.read_exact(&mut bytes)?;
+    buffer.clear();
+    buffer.resize(length, 0);
+    reader.read_exact(buffer)?;
     *remaining -= length_u64;
-    Ok(bytes)
+    Ok(())
 }
 
 pub(crate) fn skip_field<R: Read>(

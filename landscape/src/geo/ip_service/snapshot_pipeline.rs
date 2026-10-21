@@ -47,9 +47,7 @@ impl GeoIpService {
                         config.name,
                         snapshot_path
                     );
-                    if !result.changed_keys.is_empty() || result.deleted_keys > 0 {
-                        self.notify_dst_ip_updated();
-                    }
+                    self.notify_dst_ip_updated(result.changed_keys);
                 }
                 Err(GeoError::TaskCancelled) => {}
                 Err(error) => {
@@ -215,9 +213,7 @@ impl GeoIpService {
             apply_result.unchanged_keys,
             apply_result.deleted_keys,
         );
-        if !apply_result.changed_keys.is_empty() || apply_result.deleted_keys > 0 {
-            self.notify_dst_ip_updated();
-        }
+        self.notify_dst_ip_updated(apply_result.changed_keys);
     }
 
     async fn ensure_snapshot_from_legacy_raw(

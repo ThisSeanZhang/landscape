@@ -46,15 +46,23 @@ impl IpSnapshotWriter {
         }
 
         let ip = mask_ip(ip, prefix);
-        let bytes = match ip {
-            IpAddr::V4(addr) => addr.octets().to_vec(),
-            IpAddr::V6(addr) => addr.octets().to_vec(),
+        let mut item = [0u8; 21];
+        let ip_len = match ip {
+            IpAddr::V4(addr) => {
+                let octets = addr.octets();
+                item[0] = octets.len() as u8;
+                item[1..5].copy_from_slice(&octets);
+                1 + octets.len()
+            }
+            IpAddr::V6(addr) => {
+                let octets = addr.octets();
+                item[0] = octets.len() as u8;
+                item[1..17].copy_from_slice(&octets);
+                1 + octets.len()
+            }
         };
-        let mut item = Vec::with_capacity(1 + bytes.len() + 4);
-        item.push(bytes.len() as u8);
-        item.extend_from_slice(&bytes);
-        item.extend_from_slice(&prefix.to_le_bytes());
-        self.inner.write_item(&item)
+        item[ip_len..ip_len + 4].copy_from_slice(&prefix.to_le_bytes());
+        self.inner.write_item(&item[..ip_len + 4])
     }
 
     pub fn end_key(&mut self) -> Result<(), GeoSnapshotError> {
