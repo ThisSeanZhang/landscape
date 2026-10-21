@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies & generate types
+      - name: Install frontend dependencies and generate types
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @landscape-router/types generate

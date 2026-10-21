@@ -23,6 +23,8 @@
 
 请使用 [功能请求模板](https://github.com/ThisSeanZhang/landscape/issues/new?template=功能请求模板---feature-request-template.md)，说明使用场景以及现有功能为何不满足需求。
 
+假设想要贡献一个新功能，不妨先发起一个 Issue 说明一下思路。这样既能避免和其他贡献者重复劳动，也方便在投入较多时间之前一起讨论方案。
+
 ### 提议改进
 
 请使用 [功能请求模板](https://github.com/ThisSeanZhang/landscape/issues/new?template=功能请求模板---feature-request-template.md)，清楚说明动机和影响范围。
@@ -33,18 +35,7 @@
 
 ## 开发环境搭建
 
-完整开发指南见 [BUILD.zh.md](./BUILD.zh.md)。快速开始：
-
-```bash
-# 安装系统依赖
-sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
-
-# 安装 pnpm 及前端依赖
-pnpm install --frozen-lockfile
-
-# 生成 TypeScript API 绑定（前端开发前必须执行）
-./gen_ts_bindings.sh
-```
+系统依赖、pnpm 配置、初始化以及日常构建命令见 [BUILD.zh.md](./BUILD.zh.md)。
 
 ## PR 提交前必做
 
@@ -69,52 +60,6 @@ cargo test --workspace
 cargo test -p landscape-ebpf --features bpf-test   # eBPF 集成测试（需要 root）
 pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
-```
-
-### 重新生成 API 绑定
-
-如果你修改了后端 OpenAPI 路由或 schema，需要重新生成 TypeScript API 客户端：
-
-```bash
-./gen_ts_bindings.sh
-```
-
-这会导出 `openapi.json`
-
-## 日常开发
-
-### 后端（Rust + eBPF）
-
-```bash
-cargo build --workspace
-cargo test --workspace                                          # 单元测试，速度快
-cargo test -p landscape-ebpf --features bpf-test                # eBPF 集成测试（需要 root）
-```
-
-`cargo tt` 和 `cargo ttb` 是上述两条测试命令的别名。
-BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可用
-`BPF_BUILD_JOBS` 限制 clang 并行度。
-
-### 前端（TypeScript + Vue 3）
-
-```bash
-./web.sh
-```
-
-### 格式化代码
-
-格式化全部代码：
-
-```bash
-./fmt.sh
-```
-
-或只格式化单一语言：
-
-```bash
-./fmt.sh --rust      # 仅 Rust
-./fmt.sh --c         # 仅 C/eBPF
-./fmt.sh --frontend  # 仅前端
 ```
 
 ## 代码规范
@@ -177,6 +122,19 @@ BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可�
 | `landscape-protobuf/` | Protobuf 定义 |
 | `landscape-types/` | 自动生成的 TypeScript API 客户端 |
 | `landscape-webui/` | Vue 3 + Vite 前端 |
+
+## CI 构建与发布分支
+
+`build and release` workflow（`.github/workflows/build-and-release.yml`）会根据推送的 ref 选择构建范围：
+
+| Ref | 原生 x86_64 / aarch64 | 交叉编译 target | 发布 Release |
+| --- | --- | --- | --- |
+| `build` | 是 | 否 | 否 |
+| `build-all` | 是 | 全部 | 否 |
+| `v*` tag | 是 | 全部 | 是 |
+| 其他 tag | 是 | 否 | 否 |
+
+全量构建包含原生 target，以及 musl（`x86_64`、`aarch64`、`riscv64`、`loongarch64`）和 gnu（`riscv64`、`s390x`、`loongarch64`）交叉编译 target。
 
 ## 有疑问？
 

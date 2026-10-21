@@ -28,62 +28,27 @@ sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev 
 
 ## pnpm and Corepack
 
-This repository pins `pnpm` in [`package.json`](./package.json).
-
-If you already have `pnpm` installed globally, use it directly:
-
-```bash
-pnpm --version
-```
-
-If you do not want a global `pnpm`, use Corepack instead:
+This repository pins `pnpm` in [`package.json`](./package.json). If you do not have a global `pnpm`, enable Corepack:
 
 ```bash
 corepack enable
 corepack pnpm --version
 ```
 
-If you want the `pnpm` command itself to be available through Corepack, run:
-
-```bash
-corepack enable pnpm
-```
-
-Repository wrapper scripts such as `./web.sh`, `./gen_ts_bindings.sh`, and `bash ./build.sh` already resolve `pnpm` through `scripts/pnpm_cmd.sh`. When Corepack is available and usable, they prefer `corepack pnpm`; otherwise they fall back to a global `pnpm`.
-
-Reference: <https://pnpm.io/installation#using-corepack>
+Repository scripts such as `./web.sh`, `./gen_ts_bindings.sh`, and `bash ./build.sh` resolve `pnpm` through `scripts/pnpm_cmd.sh`, preferring `corepack pnpm` when available. See <https://pnpm.io/installation#using-corepack>.
 
 ## Initial setup
 
-Install workspace dependencies:
+Install workspace dependencies and generate the TypeScript client:
 
 ```bash
 pnpm install --frozen-lockfile
-```
-
-If you are using Corepack instead of a global `pnpm`, replace `pnpm` with `corepack pnpm`.
-
-The frontend imports generated code from `landscape-types`, so generate it before frontend work:
-
-```bash
 ./gen_ts_bindings.sh
 ```
 
-`./gen_ts_bindings.sh` exports `openapi.json` and regenerates the TypeScript client. Run it again whenever you change backend OpenAPI routes or schemas.
+If you use Corepack, replace `pnpm` with `corepack pnpm`.
 
-Directly running `./gen_ts_bindings.sh` always forces a fresh export and regeneration.
-
-`bash ./build.sh -t <arch>` is different: it calls `./gen_ts_bindings.sh --if-stale` internally so repeated full builds do not regenerate bindings once the generated files and lock file already exist.
-
-`./web.sh` also calls `./gen_ts_bindings.sh --if-stale` before starting the frontend dev server, so frontend development avoids paying the regeneration cost on every run.
-
-If you explicitly want the same lock-based skip behavior outside the full build flow, use:
-
-```bash
-./gen_ts_bindings.sh --if-stale
-```
-
-This skips regeneration only when `landscape-types/openapi.json`, `landscape-types/src/api/schemas/index.ts`, and `landscape-types/.bindings.lock` all exist.
+Run `./gen_ts_bindings.sh` again whenever backend OpenAPI routes or schemas change. `build.sh` and `./web.sh` call it with `--if-stale`, which skips regeneration only when `landscape-types/openapi.json`, `landscape-types/src/api/schemas/index.ts`, and `landscape-types/.bindings.lock` all exist.
 
 ## Daily development
 
@@ -94,6 +59,8 @@ cargo build --workspace
 cargo test --workspace                              # unit tests
 cargo test -p landscape-ebpf --features bpf-test    # eBPF integration tests (root required)
 ```
+
+`cargo tt` and `cargo ttb` are aliases for the two test commands above. BPF skeletons are compiled in parallel and cached by content hash; set `BPF_BUILD_JOBS` to cap clang parallelism on memory-constrained machines.
 
 ### Frontend
 
@@ -131,10 +98,4 @@ Use `sudo` only when running `landscape-webserver` on a real host, attaching eBP
 
 ## Before opening a PR
 
-```bash
-cargo fmt --all
-cargo test --workspace
-cargo test -p landscape-ebpf --features bpf-test
-pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
-pnpm --filter landscape-webui build
-```
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the formatting and test checklist.

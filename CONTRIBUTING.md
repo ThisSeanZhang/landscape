@@ -23,6 +23,8 @@ Use the [Bug Report template](https://github.com/ThisSeanZhang/landscape/issues/
 
 Use the [Feature Request template](https://github.com/ThisSeanZhang/landscape/issues/new?template=功能请求模板---feature-request-template.md). Describe the use case and why the current behavior is insufficient.
 
+If you are planning to implement a new feature yourself, we would gently suggest opening an issue first and sharing your idea. This helps avoid overlapping work with other contributors and gives us a chance to discuss the approach before you invest too much time.
+
 ### Suggesting Enhancements
 
 Use the [Feature Request template](https://github.com/ThisSeanZhang/landscape/issues/new?template=功能请求模板---feature-request-template.md). Provide clear motivation and impact.
@@ -33,18 +35,7 @@ Look for issues labeled `good first issue` or `help wanted`.
 
 ## Development Setup
 
-See [BUILD.md](./BUILD.md) for the full local development guide. Quick start:
-
-```bash
-# Install system dependencies
-sudo apt-get install -y cmake clang curl gcc llvm make pkg-config libelf-dev libclang-dev zlib1g-dev zstd
-
-# Install pnpm and frontend dependencies
-pnpm install --frozen-lockfile
-
-# Generate TypeScript API bindings (required before frontend work)
-./gen_ts_bindings.sh
-```
+See [BUILD.md](./BUILD.md) for system dependencies, pnpm setup, initial setup, and daily build commands.
 
 ## Before Submitting a PR
 
@@ -69,52 +60,6 @@ cargo test --workspace
 cargo test -p landscape-ebpf --features bpf-test   # eBPF integration tests (requires root)
 pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
-```
-
-### Regenerating API Bindings
-
-If you changed backend OpenAPI routes or schemas, regenerate the TypeScript API client:
-
-```bash
-./gen_ts_bindings.sh
-```
-
-This exports `openapi.json` locally.
-
-## Daily Workflow
-
-### Backend (Rust + eBPF)
-
-```bash
-cargo build --workspace
-cargo test --workspace                                          # unit tests, fast
-cargo test -p landscape-ebpf --features bpf-test                # eBPF integration tests (requires root)
-```
-
-`cargo tt` and `cargo ttb` are aliases for the two test commands above.
-BPF skeletons are compiled in parallel and cached by content hash; set
-`BPF_BUILD_JOBS` to cap clang parallelism on memory-constrained machines.
-
-### Frontend (TypeScript + Vue 3)
-
-```bash
-./web.sh
-```
-
-### Formatting
-
-Format all code:
-
-```bash
-./fmt.sh
-```
-
-Or format a single language:
-
-```bash
-./fmt.sh --rust      # Rust only
-./fmt.sh --c         # C/eBPF only
-./fmt.sh --frontend  # Frontend only
 ```
 
 ## Code Conventions
@@ -171,6 +116,19 @@ Examples: `ebpf: fix NAT4 rule leak on interface down`, `webui: add dark mode to
 | `landscape-protobuf/` | Protobuf definitions |
 | `landscape-types/` | Auto-generated TypeScript API client |
 | `landscape-webui/` | Vue 3 + Vite frontend |
+
+## CI Builds and Release Branches
+
+The `build and release` workflow (`.github/workflows/build-and-release.yml`) selects its scope from the pushed ref:
+
+| Ref | Native x86_64 / aarch64 | Cross targets | Release |
+| --- | --- | --- | --- |
+| `build` | yes | no | no |
+| `build-all` | yes | all | no |
+| `v*` tag | yes | all | yes |
+| other tags | yes | no | no |
+
+Full builds cover the native targets plus musl (`x86_64`, `aarch64`, `riscv64`, `loongarch64`) and gnu (`riscv64`, `s390x`, `loongarch64`) cross targets.
 
 ## Questions?
 

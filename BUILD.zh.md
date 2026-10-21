@@ -28,62 +28,27 @@ sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev 
 
 ## pnpm 与 Corepack
 
-仓库在 [`package.json`](./package.json) 里锁定了 `pnpm` 版本。
-
-如果你已经全局安装了 `pnpm`，直接使用：
-
-```bash
-pnpm --version
-```
-
-如果你不想全局安装 `pnpm`，可以改用 Corepack：
+仓库在 [`package.json`](./package.json) 里锁定了 `pnpm` 版本。如果你没有全局安装 `pnpm`，启用 Corepack：
 
 ```bash
 corepack enable
 corepack pnpm --version
 ```
 
-如果你希望本机可以直接输入 `pnpm`，还可以执行：
-
-```bash
-corepack enable pnpm
-```
-
-仓库里的包装脚本，例如 `./web.sh`、`./gen_ts_bindings.sh` 和 `bash ./build.sh`，都会通过 `scripts/pnpm_cmd.sh` 自动解析 `pnpm`。如果环境里有可用的 Corepack，会优先使用 `corepack pnpm`；否则再回退到全局 `pnpm`。
-
-参考：<https://pnpm.io/installation#using-corepack>
+仓库脚本（如 `./web.sh`、`./gen_ts_bindings.sh`、`bash ./build.sh`）通过 `scripts/pnpm_cmd.sh` 解析 `pnpm`，有可用 Corepack 时优先使用 `corepack pnpm`。参考：<https://pnpm.io/installation#using-corepack>。
 
 ## 初始化
 
-先安装工作区依赖：
+安装工作区依赖并生成 TypeScript client：
 
 ```bash
 pnpm install --frozen-lockfile
-```
-
-如果你选择的是 Corepack 方式，请把文档里的 `pnpm` 替换成 `corepack pnpm`。
-
-前端会直接引用 `landscape-types` 中的生成代码，因此在开始前端开发前，需要先生成一次：
-
-```bash
 ./gen_ts_bindings.sh
 ```
 
-`./gen_ts_bindings.sh` 会导出 `openapi.json` 并重新生成 TypeScript client。修改了后端 OpenAPI 路由或 schema 之后，需要重新执行一次。
+如果你使用 Corepack，请把 `pnpm` 替换成 `corepack pnpm`。
 
-直接执行 `./gen_ts_bindings.sh` 时，默认总是强制重新导出并重新生成。
-
-`bash ./build.sh -t <arch>` 不同：它内部会调用 `./gen_ts_bindings.sh --if-stale`，这样重复执行整仓构建时，只要生成产物和 lock 文件已经存在，就不会重复生成。
-
-`./web.sh` 也会在启动前端 dev server 前调用 `./gen_ts_bindings.sh --if-stale`，这样前端开发时也能避免每次启动都重复生成。
-
-如果你希望在完整构建流程之外也显式使用这种基于 lock 的跳过行为，可以用：
-
-```bash
-./gen_ts_bindings.sh --if-stale
-```
-
-只有当 `landscape-types/openapi.json`、`landscape-types/src/api/schemas/index.ts` 和 `landscape-types/.bindings.lock` 都存在时，它才会跳过；任意一个缺失都会重新生成。
+修改后端 OpenAPI 路由或 schema 后，需要重新执行 `./gen_ts_bindings.sh`。`build.sh` 和 `./web.sh` 会以 `--if-stale` 调用它：只有当 `landscape-types/openapi.json`、`landscape-types/src/api/schemas/index.ts` 和 `landscape-types/.bindings.lock` 都存在时才跳过生成。
 
 ## 日常开发
 
@@ -94,6 +59,8 @@ cargo build --workspace
 cargo test --workspace                              # 单元测试
 cargo test -p landscape-ebpf --features bpf-test    # eBPF 集成测试（需要 root）
 ```
+
+`cargo tt` 和 `cargo ttb` 是上述两条测试命令的别名。BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可用 `BPF_BUILD_JOBS` 限制 clang 并行度。
 
 ### 前端
 
@@ -131,10 +98,4 @@ bash ./build.sh -t x86_64
 
 ## 提交前检查
 
-```bash
-cargo fmt --all
-cargo test --workspace
-cargo test -p landscape-ebpf --features bpf-test
-pnpm --filter landscape-webui exec prettier --check "src/**/*.{vue,ts,js,json,css,scss}"
-pnpm --filter landscape-webui build
-```
+格式化与测试清单见 [CONTRIBUTING.zh.md](./CONTRIBUTING.zh.md)。

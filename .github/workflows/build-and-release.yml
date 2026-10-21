@@ -1,4 +1,4 @@
-name: build and release
+name: Build and Release
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - '*'
     branches:
       - 'build'
+      - 'build-all'
 
 env:
   sccache_version: 'v0.12.0'
@@ -35,31 +36,42 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+
+      - name: Configure sccache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Setup sccache
         run: |
           sccache_arch=${{ matrix.settings.architecture }}
           wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
-      - name: Setup rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.settings.toolchain }}
           targets: ${{ matrix.settings.target }}
           components: rustfmt
 
-      - name: Setup cache
+      - name: Cache cargo registry
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cache/sccache
-          key: ${{ runner.os }}-${{ matrix.settings.target }}-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ matrix.settings.target }}-
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Build binaries
         run: |
@@ -93,6 +105,10 @@ jobs:
           name: landscape-webserver-${{ matrix.settings.target }}
           path: output/*
 
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
   # 交叉编译（cargo-zigbuild + 发行版 sysroot，见 scripts/build_musl_static.sh
   # 与 scripts/build_gnu.sh）：
   #   - musl 目标：全静态单文件，无 so 依赖，产物 landscape-webserver-<arch>-static
@@ -112,7 +128,7 @@ jobs:
   #     (riscv64/s390x) and Debian sid (loong64), replacing the previous gcc
   #     cross toolchains and from-source zlib/elfutils builds
   linux-cross-build:
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/build'
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/build-all'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -152,27 +168,45 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y clang curl gcc make pkg-config python3-pip wget file libelf-dev zlib1g-dev libclang-dev
+
+      - name: Configure sccache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Setup sccache
         run: |
           wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-x86_64-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
-      - name: Setup rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
           targets: ${{ matrix.settings.target }}
 
-      - name: Setup cache
+      - name: Cache cargo registry
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cache/sccache
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup sysroots cache
+        uses: actions/cache@v5
+        with:
+          path: |
             ~/sysroots
           key: ${{ runner.os }}-cross-${{ matrix.settings.target }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cross-${{ matrix.settings.target }}-
@@ -204,6 +238,11 @@ jobs:
         with:
           name: landscape-webserver-${{ matrix.settings.target }}${{ contains(matrix.settings.target, 'musl') && '-static' || '' }}
           path: output/*
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
   build-front:
     needs: linux-build
     runs-on: ubuntu-latest
@@ -285,7 +324,7 @@ jobs:
           cd output
           sha256sum * > SHASUM256sum.txt
 
-      - name: Create GitHub Release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           name: Release ${{ github.ref_name }}

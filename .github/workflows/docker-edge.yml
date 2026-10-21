@@ -45,10 +45,10 @@ jobs:
       APPS_DIR: tmp/${{ matrix.arch }}/redirect_prog/apps
 
     steps:
-      - name: Checkout Source
+      - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev wget
@@ -59,13 +59,41 @@ jobs:
           toolchain: 1.98.0
           targets: ${{ matrix.target }}
 
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Configure sccache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || 'on');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Setup sccache
+        run: |
+          SCCACHE_ARCH=x86_64
+          if [ "${{ runner.arch }}" = "ARM64" ]; then
+            SCCACHE_ARCH=aarch64
+          fi
+          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-${SCCACHE_ARCH}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
+
       - name: Setup zig and cargo-zigbuild
         if: matrix.cross
         run: |
           sudo pip3 install --break-system-packages ziglang==0.16.0
           cargo install --locked cargo-zigbuild --version 0.23.4
 
-      - name: Rust Release Build
+      - name: Build Rust binaries
         run: |
           echo "Building for $TARGET_ARCH..."
           if [ "${{ matrix.cross }}" = "true" ]; then
@@ -78,7 +106,7 @@ jobs:
               --target "$TARGET_ARCH"
           fi
 
-      - name: Prepare Build Artifacts and Copy Dockerfile
+      - name: Prepare build artifacts
         run: |
           echo "Prepare $TMP_DIR..."
 
@@ -107,6 +135,10 @@ jobs:
           name: build-${{ matrix.arch }}
           path: ${{ env.TMP_DIR }}
 
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
+
   docker_build_and_push:
     runs-on: ubuntu-latest
     needs: build_rust
@@ -129,7 +161,7 @@ jobs:
       TMP_DIR: tmp/${{ matrix.arch }}/redirect_prog
 
     steps:
-      - name: Checkout Source
+      - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Download build artifacts
@@ -138,7 +170,7 @@ jobs:
           name: build-${{ matrix.arch }}
           path: ${{ env.TMP_DIR }}
 
-      - name: Check artifact download result
+      - name: Verify build artifacts
         run: |
           echo "=== TMP_DIR Tree ==="
           find $TMP_DIR
@@ -147,7 +179,7 @@ jobs:
           echo "=== apps/server Content ==="
           ls -l $TMP_DIR/apps/server || echo "apps/server not found!"
 
-      - name: Setup QEMU for Cross-Build
+      - name: Setup QEMU for cross-build
         uses: docker/setup-qemu-action@v4
 
       - name: Setup Docker Buildx
@@ -160,7 +192,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Docker Image (by digest)
+      - name: Build and push Docker image (by digest)
         run: |
           OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE_NAME="ghcr.io/${OWNER_LOWER}/landscape-edge"
