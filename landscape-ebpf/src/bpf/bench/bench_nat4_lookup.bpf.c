@@ -45,7 +45,7 @@
 #define BENCH_EPS 128
 #define BENCH_BITMAP_WORDS 2 /* 128 ports */
 #define BENCH_EPSILON 0x9E3779B97F4A7C15ULL
-#define BENCH_ST_N 8192 /* static entries (design §4.4 per half) */
+#define BENCH_ST_N 8192          /* static entries (design §4.4 per half) */
 #define BENCH_ST_IDX_SLOTS 16384 /* α = 0.5 for BENCH_ST_N */
 #define BENCH_ST_IDX_MASK (BENCH_ST_IDX_SLOTS - 1)
 
@@ -220,8 +220,8 @@ struct bench_st_entry { /* §4.4 range+proto storage format (16B) */
 };
 
 struct bench_st_idx_slot { /* 16B, same primitive as bench_idx_slot */
-    __u64 tag; /* hash >> 48; 0 = empty */
-    __u32 ent; /* index into st_table */
+    __u64 tag;             /* hash >> 48; 0 = empty */
+    __u32 ent;             /* index into st_table */
     __u32 _pad;
 };
 
@@ -253,14 +253,14 @@ struct {
     __uint(map_flags, BPF_F_MMAPABLE);
 } bench_arena SEC(".maps");
 
-struct bench_arena_tbl __arena bench_tbl;
+struct bench_arena_tbl __arena_global bench_tbl;
 
 char LICENSE[] SEC("license") = "GPL";
 
 /* ── shared helpers ──────────────────────────────────────────────────── */
 
 static __always_inline int bench_extract(struct xdp_md *ctx, __u32 *saddr, __u32 *daddr,
-                                          __u16 *sport, __u16 *dport) {
+                                         __u16 *sport, __u16 *dport) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -412,7 +412,8 @@ int bench_hash_ingress(struct xdp_md *ctx) {
     return XDP_PASS;
 }
 
-static int bench_timer_cb(void *map_, struct bench_timer_key *key, struct bench_timer_value *value) {
+static int bench_timer_cb(void *map_, struct bench_timer_key *key,
+                          struct bench_timer_value *value) {
     return 0;
 }
 
@@ -565,7 +566,8 @@ int bench_arena_ingress(struct xdp_md *ctx) {
 
 /* Lock-free freelist pop on an arena intrusive list (design §4.6). BPF
  * cmpxchg is 64-bit only, so heads are u64 (low 32 bits = index). */
-static __always_inline int bench_freelist_pop(__u64 __arena *head, __u32 __arena *nexts, __u32 limit) {
+static __always_inline int bench_freelist_pop(__u64 __arena *head, __u32 __arena *nexts,
+                                              __u32 limit) {
 #pragma unroll
     for (int i = 0; i < 8; i++) {
         __u64 old = *(volatile __u64 __arena *)head;
@@ -580,7 +582,8 @@ static __always_inline int bench_freelist_pop(__u64 __arena *head, __u32 __arena
     return -1;
 }
 
-static __always_inline void bench_freelist_push(__u64 __arena *head, __u32 __arena *nexts, __u32 idx) {
+static __always_inline void bench_freelist_push(__u64 __arena *head, __u32 __arena *nexts,
+                                                __u32 idx) {
 #pragma unroll
     for (int i = 0; i < 8; i++) {
         __u64 old = *(volatile __u64 __arena *)head;
@@ -618,7 +621,8 @@ static __always_inline void bench_bitmap_clear(int port) {
 /* Session/endpoint init take the member address as a raw u64 and pin it
  * through the asm cast above: plain __arena GEPs get re-materialized by
  * clang under pressure, the asm pin cannot be. */
-static __noinline void bench_sess_init(u64 sess_addr, u64 sid_port, u64 addrs, u64 ports_ep, u64 now) {
+static __noinline void bench_sess_init(u64 sess_addr, u64 sid_port, u64 addrs, u64 ports_ep,
+                                       u64 now) {
     struct bench_session *sess = (struct bench_session *)sess_addr;
     ARENA_CAST_KERN(sess);
     u32 port = sid_port >> 32;
@@ -685,8 +689,7 @@ int bench_arena_create(struct xdp_md *ctx) {
     struct bench_idx_slot __arena *s1 = &bench_tbl.idx_ingress[h2 & BENCH_IDX_MASK];
     u64 empty0 = *(volatile u64 __arena *)&s0->tag;
     u64 empty1 = *(volatile u64 __arena *)&s1->tag;
-    if (empty0 != 0 || empty1 != 0 ||
-        __sync_val_compare_and_swap(&s0->tag, 0, h >> 48) != 0 ||
+    if (empty0 != 0 || empty1 != 0 || __sync_val_compare_and_swap(&s0->tag, 0, h >> 48) != 0 ||
         __sync_val_compare_and_swap(&s1->tag, 0, h2 >> 48) != 0) {
         /* slot occupied from a previous run that failed teardown */
         acc += 22;
@@ -827,7 +830,7 @@ int bench_static_direct(struct xdp_md *ctx) {
     }
     u64 v = bench_st_direct_at(dport);
     u64 acc = 0;
-    if (v >> 63) { /* valid */
+    if (v >> 63) {                 /* valid */
         acc += (v >> 32) & 0xffff; /* lan_port */
     }
     bench_sink_add(acc);

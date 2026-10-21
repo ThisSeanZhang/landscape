@@ -141,6 +141,6 @@ static __always_inline u64 wan_trie_key_ppp(u32 ifindex, __be16 session) {
         __uint(max_entries, WAN_TRIE_ARENA_PAGES);                                                 \
         __uint(map_flags, BPF_F_MMAPABLE);                                                         \
     } map_name SEC(".maps");                                                                       \
-    struct wan_trie_tbl __arena var_name;
+    struct wan_trie_tbl __arena_global var_name;
 
 #endif /* __LD_MAP_WAN_TRIE_H__ */

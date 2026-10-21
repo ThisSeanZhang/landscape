@@ -78,8 +78,8 @@ struct {
     __uint(map_flags, BPF_F_MMAPABLE);
 } bench_arena SEC(".maps");
 
-struct bench_scan_tbl __arena bench_arena_tbl;
-struct wan_trie_tbl __arena bench_trie_tbl;
+struct bench_scan_tbl __arena_global bench_arena_tbl;
+struct wan_trie_tbl __arena_global bench_trie_tbl;
 
 char LICENSE[] SEC("license") = "GPL";
 
