@@ -53,6 +53,26 @@ DNS 平面决策。内核执行。
 
 **故障不扩散。** 每流独立 DNS 和分流策略。容器挂了？只有经过它的流量受影响。
 
+## 使用 lkit 安装
+
+[Landscape Kit](https://github.com/landscape-router/landscape-kit) 提供 `lkit` 控制台与 CLI，用于安装和管理 Landscape —— 首次部署、更新、版本切换、备份/恢复、修复以及网络接管。
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+# 或者：
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+然后启动控制台：
+
+```bash
+sudo lkit
+```
+
+`sudo lkit` 会打开交互式控制台。自动化场景请使用明确的子命令，例如 `sudo lkit --non-interactive install --password-file /root/lkit-password`。发布二进制支持基于 glibc 的 Linux `x86_64` 与 `aarch64`；不支持 Alpine 等 musl 发行版。
+
+如果你希望手动安装，仍可使用下面的步骤。
+
 ## 快速开始
 
 ### 前提条件

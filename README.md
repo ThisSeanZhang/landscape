@@ -53,6 +53,26 @@ DNS plane decides. Kernel enforces.
 
 **One failure, one victim.** Per-flow DNS and traffic policies. A container goes down? Only the traffic routed through it is affected.
 
+## Install with lkit
+
+[Landscape Kit](https://github.com/landscape-router/landscape-kit) provides the `lkit` console and CLI for installing and managing Landscape — first-time deployment, updates, version switching, backup/restore, repair, and network takeover.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+# Or:
+wget -qO- https://github.com/landscape-router/landscape-kit/releases/latest/download/install.sh | sudo sh
+```
+
+Then start the console:
+
+```bash
+sudo lkit
+```
+
+`sudo lkit` opens the interactive console. For automation, use an explicit subcommand, for example `sudo lkit --non-interactive install --password-file /root/lkit-password`. Release binaries support glibc-based Linux on `x86_64` and `aarch64`; musl distributions such as Alpine are not supported.
+
+The manual steps below remain available if you prefer to install by hand.
+
 ## Quick Start
 
 ### Prerequisites
