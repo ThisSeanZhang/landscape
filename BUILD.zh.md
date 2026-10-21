@@ -14,7 +14,7 @@
 
 ## 环境要求
 
-- Linux 内核 `6.9+`
+- Linux 内核 `6.12+`
 - 启用 BTF/BPF
 - Node.js `22+`
 - Rust 工具链（通过 [`rust-toolchain.toml`](./rust-toolchain.toml) 固定为 `1.98.0`）

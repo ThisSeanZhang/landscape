@@ -57,7 +57,7 @@ DNS plane decides. Kernel enforces.
 
 ### Prerequisites
 
-- Linux kernel ≥ 6.9 with BTF/BPF enabled, `root` privileges; non-Linux kernels (FreeBSD, macOS) are not supported
+- Linux kernel ≥ 6.12 with BTF/BPF enabled, `root` privileges; non-Linux kernels (FreeBSD, macOS) are not supported
 - Docker (optional, for container redirection)
 
 ### 1. Create the config directory

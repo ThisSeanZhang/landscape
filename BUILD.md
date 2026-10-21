@@ -14,7 +14,7 @@ Do not use `build.sh` for every edit. It rebuilds the frontend, ensures API bind
 
 ## Requirements
 
-- Linux kernel `6.9+`
+- Linux kernel `6.12+`
 - BTF/BPF enabled
 - Node.js `22+`
 - Rust toolchain (pinned to `1.98.0` via [`rust-toolchain.toml`](./rust-toolchain.toml))

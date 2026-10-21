@@ -2876,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "landscape"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2946,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-common"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2983,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-core"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "ahash 0.8.12",
  "aho-corasick",
@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-database"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "landscape-common",
@@ -3030,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-dns"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-ebpf"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3105,7 +3105,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-gateway"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-macro"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3136,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-metric"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-protobuf"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "landscape-common",
  "pb-rs",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "landscape-webserver"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "arc-swap",
  "axum",
@@ -3425,7 +3425,7 @@ dependencies = [
 
 [[package]]
 name = "migration"
-version = "0.26.3"
+version = "0.27.0"
 dependencies = [
  "sea-orm-migration",
  "serde_json",

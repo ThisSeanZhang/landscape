@@ -57,7 +57,7 @@ DNS 平面决策。内核执行。
 
 ### 前提条件
 
-- Linux 内核 ≥ 6.9，启用 BTF/BPF，需要 `root` 权限；不支持非 Linux 内核（FreeBSD、macOS）
+- Linux 内核 ≥ 6.12，启用 BTF/BPF，需要 `root` 权限；不支持非 Linux 内核（FreeBSD、macOS）
 - Docker（可选，用于容器导流）
 
 ### 1. 创建配置目录
