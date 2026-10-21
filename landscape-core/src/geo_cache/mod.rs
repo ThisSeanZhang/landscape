@@ -1,6 +1,6 @@
 //! Geo runtime cache in two standalone SQLite databases (`geo/cache/site.sqlite`
-//! and `ip.sqlite`). Content is fully derivable from the raw sources, so schema
-//! changes drop and rebuild instead of migrating.
+//! and `ip.sqlite`). Content is fully derivable from raw or snapshot sources,
+//! so schema changes drop and rebuild instead of migrating.
 
 mod db;
 mod ip;
@@ -12,7 +12,7 @@ mod site;
 mod tests;
 
 pub use db::GeoCacheDatabase;
-pub use ip::{IpCacheRepository, IpCidrHit, IpCidrRow};
+pub use ip::{IpCacheRepository, IpCacheStreamEvent, IpCidrHit, IpCidrRow};
 pub use matcher::DomainMatcher;
 pub use registry::{GeoMatcherCacheKey, SiteMatcherRegistry};
 pub use site::{SiteCacheRepository, SiteCacheStreamEvent, SiteRuleHit, SiteRuleRow};

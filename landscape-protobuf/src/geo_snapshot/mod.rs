@@ -1,4 +1,5 @@
 mod format;
+mod ip;
 mod reader;
 mod site;
 mod writer;
@@ -8,6 +9,7 @@ use std::{collections::HashMap, io};
 use uuid::Uuid;
 
 pub use format::geo_snapshot_hash_hex;
+pub use ip::{IpSnapshotCidr, IpSnapshotKeyReader, IpSnapshotReader, IpSnapshotWriter};
 pub use reader::{GeoSnapshotPayloadReader, GeoSnapshotReader};
 pub use site::{GeoSnapshotRule, SiteSnapshotKeyReader, SiteSnapshotReader, SiteSnapshotWriter};
 pub use writer::GeoSnapshotWriter;

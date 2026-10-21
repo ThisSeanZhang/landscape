@@ -1,12 +1,16 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
-use landscape_common::config_service::geo::{GeoSourceKind, GeoTaskPhase, GeoTaskProgress};
+use landscape_common::config_service::geo::{
+    GeoFileCacheKey, GeoSourceKind, GeoTaskPhase, GeoTaskProgress,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub mod download;
 pub mod ip_service;
+mod ip_snapshot;
+mod ip_values;
 pub mod raw_file;
 pub mod site_service;
 mod site_snapshot;
@@ -20,6 +24,13 @@ pub(crate) const GEO_PROGRESS_PUBLISH_INTERVAL: Duration = Duration::from_millis
 pub(crate) struct GeoTaskEntry {
     cancel: CancellationToken,
     progress: GeoTaskProgress,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct GeoCacheApplyResult {
+    pub changed_keys: std::collections::HashSet<GeoFileCacheKey>,
+    pub unchanged_keys: usize,
+    pub deleted_keys: usize,
 }
 
 #[derive(Clone, Default)]

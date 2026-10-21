@@ -9,7 +9,7 @@ use sqlx::{
 use super::db_err;
 
 /// Bump when the DDL below changes. A version mismatch drops and rebuilds the
-/// database; the cache is derivable from the raw sources, no migration needed.
+/// database; the cache is derivable from raw or snapshot sources, no migration needed.
 const SITE_CACHE_SCHEMA_VERSION: i64 = 2;
 const IP_CACHE_SCHEMA_VERSION: i64 = 1;
 
@@ -83,6 +83,11 @@ impl GeoCacheDatabase {
     /// Fresh in-memory site cache database (tests and standalone tooling).
     pub async fn site_mem() -> sqlx::SqlitePool {
         Self::mem(SITE_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, SITE_DDL]).await
+    }
+
+    /// Fresh in-memory IP cache database (tests and standalone tooling).
+    pub async fn ip_mem() -> sqlx::SqlitePool {
+        Self::mem(IP_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, IP_DDL]).await
     }
 
     async fn mem(schema_version: i64, ddl: &[&str]) -> sqlx::SqlitePool {
@@ -199,13 +204,6 @@ impl GeoCacheDatabase {
 
         tx.commit().await.map_err(db_err)?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-impl GeoCacheDatabase {
-    pub(crate) async fn ip_mem() -> sqlx::SqlitePool {
-        Self::mem(IP_CACHE_SCHEMA_VERSION, &[ENTRIES_DDL, IP_DDL]).await
     }
 }
 

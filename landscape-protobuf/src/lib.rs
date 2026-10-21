@@ -12,6 +12,9 @@ use protos::geo::{Domain, GeoIPListOwned, GeoSiteListOwned, mod_Domain::Type};
 
 pub mod adguard;
 pub mod geo_snapshot;
+pub mod ip_stream;
+mod ip_utils;
+mod protobuf_stream;
 mod protos;
 pub mod site_stream;
 pub use adguard::{
@@ -21,9 +24,11 @@ pub use adguard::{
 pub use geo_snapshot::{
     GeoSnapshotError, GeoSnapshotHash, GeoSnapshotIndex, GeoSnapshotIndexEntry,
     GeoSnapshotMetadata, GeoSnapshotPayloadReader, GeoSnapshotReader, GeoSnapshotRule,
-    GeoSnapshotSourceKind, GeoSnapshotWriter, SiteSnapshotKeyReader, SiteSnapshotReader,
+    GeoSnapshotSourceKind, GeoSnapshotWriter, IpSnapshotCidr, IpSnapshotKeyReader,
+    IpSnapshotReader, IpSnapshotWriter, SiteSnapshotKeyReader, SiteSnapshotReader,
     SiteSnapshotWriter, geo_snapshot_hash_hex,
 };
+pub use ip_stream::{GeoIpDatStream, GeoIpStreamEvent, GeoIpTxtStream};
 pub use site_stream::{GeoSiteStream, GeoSiteStreamEvent};
 
 pub const DEFAULT_TXT_GEO_KEY: &str = "DEFAULT";
@@ -168,7 +173,7 @@ pub fn convert_ipconfig_from_proto(value: &crate::protos::geo::CIDR) -> Option<I
     result.map(|ip| IpConfig { ip, prefix: value.prefix })
 }
 
-fn parse_txt_cidr_line(line: &str) -> Option<IpConfig> {
+pub(crate) fn parse_txt_cidr_line(line: &str) -> Option<IpConfig> {
     let (ip, prefix) = line.split_once('/')?;
     let ip: IpAddr = ip.trim().parse().ok()?;
     let prefix: u32 = prefix.trim().parse().ok()?;

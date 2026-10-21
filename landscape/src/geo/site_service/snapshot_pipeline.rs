@@ -12,8 +12,7 @@ use tokio_util::io::{StreamReader, SyncIoBridge};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{GeoCacheApplyResult, GeoSiteService};
-use crate::geo::GeoTaskMode;
+use super::GeoSiteService;
 use crate::geo::download::{DownloadProgressReader, GeoDownloadError, download_to_sealed};
 use crate::geo::raw_file::{raw_dat_path, remove_raw_dat};
 use crate::geo::site_snapshot::{
@@ -21,6 +20,7 @@ use crate::geo::site_snapshot::{
     build_dat_snapshot_reader,
 };
 use crate::geo::storage::{geo_snapshot_path, geo_snapshot_source_path};
+use crate::geo::{GeoCacheApplyResult, GeoTaskMode};
 
 const SNAPSHOT_CACHE_BATCH: usize = 500;
 const SNAPSHOT_CACHE_CHANNEL_SIZE: usize = 8;

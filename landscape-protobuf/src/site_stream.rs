@@ -3,6 +3,9 @@ use std::io::{self, BufReader, Read};
 use landscape_common::{config_service::geo::GeoError, dns::rule::DomainMatchType};
 use quick_protobuf::{BytesReader, MessageRead};
 
+use crate::protobuf_stream::{
+    read_counted_bytes, read_counted_u64, read_optional_varint, read_varint, skip_field,
+};
 use crate::protos::geo::Domain;
 
 pub const MAX_DOMAIN_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
@@ -80,7 +83,8 @@ impl<R: Read> GeoSiteStream<R> {
                         }));
                     }
 
-                    let tag = read_counted_u64(&mut self.reader, remaining)?;
+                    let tag =
+                        read_counted_u64(&mut self.reader, remaining).map_err(stream_io_error)?;
                     if tag == 0 {
                         return Err(GeoError::SiteDatDecodeError);
                     }
@@ -92,13 +96,15 @@ impl<R: Read> GeoSiteStream<R> {
                             if *country_code_seen {
                                 return Err(GeoError::SiteDatDecodeError);
                             }
-                            let length = read_counted_u64(&mut self.reader, remaining)?;
+                            let length = read_counted_u64(&mut self.reader, remaining)
+                                .map_err(stream_io_error)?;
                             let length = usize::try_from(length)
                                 .map_err(|_| GeoError::SiteDatDecodeError)?;
                             if length > MAX_COUNTRY_CODE_BYTES {
                                 return Err(GeoError::SiteDatDecodeError);
                             }
-                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)?;
+                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)
+                                .map_err(stream_io_error)?;
                             let country_code = String::from_utf8(bytes)
                                 .map_err(|_| GeoError::SiteDatDecodeError)?;
                             *country_code_seen = true;
@@ -108,13 +114,15 @@ impl<R: Read> GeoSiteStream<R> {
                             if !*country_code_seen {
                                 return Err(GeoError::SiteDatDecodeError);
                             }
-                            let length = read_counted_u64(&mut self.reader, remaining)?;
+                            let length = read_counted_u64(&mut self.reader, remaining)
+                                .map_err(stream_io_error)?;
                             let length = usize::try_from(length)
                                 .map_err(|_| GeoError::SiteDatDecodeError)?;
                             if length > MAX_DOMAIN_MESSAGE_BYTES {
                                 return Err(GeoError::SiteDatDecodeError);
                             }
-                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)?;
+                            let bytes = read_counted_bytes(&mut self.reader, remaining, length)
+                                .map_err(stream_io_error)?;
                             let domain = decode_domain(&bytes)?;
                             return Ok(Some(domain));
                         }
@@ -155,150 +163,6 @@ fn decode_domain(bytes: &[u8]) -> Result<GeoSiteStreamEvent, GeoError> {
     let value = domain.value.to_lowercase();
     let attributes = domain.attribute.iter().map(|attribute| attribute.key.to_string()).collect();
     Ok(GeoSiteStreamEvent::Domain { match_type, value, attributes })
-}
-
-fn read_optional_varint<R: Read>(reader: &mut R) -> io::Result<Option<u64>> {
-    let mut first = [0u8; 1];
-    if reader.read(&mut first)? == 0 {
-        return Ok(None);
-    }
-    let mut result = u64::from(first[0] & 0x7f);
-    let mut byte = first[0];
-    let mut shift = 7u32;
-    while byte & 0x80 != 0 {
-        if shift >= 64 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "varint overflow"));
-        }
-        reader.read_exact(&mut first)?;
-        byte = first[0];
-        result |= u64::from(byte & 0x7f) << shift;
-        shift += 7;
-    }
-    Ok(Some(result))
-}
-
-fn read_varint<R: Read>(reader: &mut R) -> io::Result<u64> {
-    read_optional_varint(reader)?
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "truncated varint"))
-}
-
-fn read_counted_u64<R: Read>(reader: &mut R, remaining: &mut u64) -> Result<u64, GeoError> {
-    let mut result = 0u64;
-    let mut shift = 0u32;
-    loop {
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte).map_err(stream_io_error)?;
-        *remaining = remaining.checked_sub(1).ok_or(GeoError::SiteDatDecodeError)?;
-        if shift >= 64 {
-            return Err(GeoError::SiteDatDecodeError);
-        }
-        result |= u64::from(byte[0] & 0x7f) << shift;
-        if byte[0] & 0x80 == 0 {
-            return Ok(result);
-        }
-        shift += 7;
-    }
-}
-
-fn read_counted_bytes<R: Read>(
-    reader: &mut R,
-    remaining: &mut u64,
-    length: usize,
-) -> Result<Vec<u8>, GeoError> {
-    let length_u64 = u64::try_from(length).map_err(|_| GeoError::SiteDatDecodeError)?;
-    if *remaining < length_u64 {
-        return Err(GeoError::SiteDatDecodeError);
-    }
-    let mut bytes = vec![0u8; length];
-    reader.read_exact(&mut bytes).map_err(stream_io_error)?;
-    *remaining -= length_u64;
-    Ok(bytes)
-}
-
-fn skip_field<R: Read>(
-    reader: &mut R,
-    wire_type: u8,
-    mut remaining: Option<&mut u64>,
-) -> io::Result<()> {
-    match wire_type {
-        0 => {
-            skip_varint(reader, remaining.as_deref_mut())?;
-        }
-        1 => {
-            skip_exact(reader, 8, remaining.as_deref_mut())?;
-        }
-        2 => {
-            let length = match remaining.as_deref_mut() {
-                Some(remaining) => read_counted_u64_io(reader, remaining)?,
-                None => read_varint(reader)?,
-            };
-            let length = usize::try_from(length)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "length too large"))?;
-            skip_exact(reader, length, remaining.as_deref_mut())?;
-        }
-        5 => {
-            skip_exact(reader, 4, remaining)?;
-        }
-        _ => {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported wire type"));
-        }
-    }
-    Ok(())
-}
-
-fn skip_varint<R: Read>(reader: &mut R, remaining: Option<&mut u64>) -> io::Result<()> {
-    let mut remaining = remaining;
-    loop {
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte)?;
-        if let Some(remaining) = remaining.as_deref_mut() {
-            *remaining = remaining
-                .checked_sub(1)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entry underflow"))?;
-        }
-        if byte[0] & 0x80 == 0 {
-            return Ok(());
-        }
-    }
-}
-
-fn skip_exact<R: Read>(
-    reader: &mut R,
-    mut length: usize,
-    mut remaining: Option<&mut u64>,
-) -> io::Result<()> {
-    let mut buffer = [0u8; 8192];
-    while length > 0 {
-        let chunk = length.min(buffer.len());
-        reader.read_exact(&mut buffer[..chunk])?;
-        length -= chunk;
-        if let Some(remaining) = remaining.as_deref_mut() {
-            *remaining = remaining
-                .checked_sub(chunk as u64)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entry underflow"))?;
-        }
-    }
-    Ok(())
-}
-
-fn read_counted_u64_io<R: Read>(reader: &mut R, remaining: &mut u64) -> io::Result<u64> {
-    let mut result = 0u64;
-    let mut shift = 0u32;
-    loop {
-        let mut byte = [0u8; 1];
-        reader.read_exact(&mut byte)?;
-        *remaining = remaining
-            .checked_sub(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "entry underflow"))?;
-        if shift >= 64 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "varint overflow"));
-        }
-        result |= u64::from(byte[0] & 0x7f) << shift;
-        if byte[0] & 0x80 == 0 {
-            return Ok(result);
-        }
-        shift += 7;
-    }
 }
 
 fn stream_io_error(error: io::Error) -> GeoError {

@@ -38,18 +38,11 @@ use tracing::Instrument;
 use super::raw_file::{raw_dat_path, remove_raw_dat, sweep_orphan_raw_files};
 use super::site_values::{geo_values_hash_hex, normalize_site_rule_value};
 use super::storage::{geo_snapshot_path, remove_geo_snapshot, sweep_orphan_geo_snapshots};
-use super::{GeoTaskMode, GeoTaskRegistry, TaskGuard};
+use super::{GeoCacheApplyResult, GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
 mod snapshot_pipeline;
 
 const A_DAY: u64 = 60 * 60 * 24;
-
-#[derive(Debug, Default)]
-struct GeoCacheApplyResult {
-    changed_keys: HashSet<GeoFileCacheKey>,
-    unchanged_keys: usize,
-    deleted_keys: usize,
-}
 
 #[derive(Clone)]
 pub struct GeoSiteService {

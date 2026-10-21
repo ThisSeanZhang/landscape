@@ -28,6 +28,7 @@ pub fn get_geo_ip_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(add_many_geo_ips))
         .routes(routes!(get_geo_ip_rule, del_geo_ip))
         .routes(routes!(download_geo_ip_dat))
+        .routes(routes!(download_geo_ip_snapshot))
         .routes(routes!(get_geo_ip_cache, refresh_geo_ip_cache))
         .routes(routes!(refresh_geo_ip_config_by_name))
         .routes(routes!(search_geo_ip_cache))
@@ -287,6 +288,37 @@ async fn download_geo_ip_dat(
                 .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
             let disposition =
                 HeaderValue::from_str(&format!("attachment; filename=\"ip-{id}.raw\""))
+                    .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
+            headers.insert(header::CONTENT_DISPOSITION, disposition);
+            Ok((headers, bytes).into_response())
+        }
+        RawDatState::Started => Err(GeoError::RawDatNotReady)?,
+        RawDatState::Running => Err(GeoError::RawDatDownloadRunning)?,
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/ips/{id}/snapshot",
+    tag = "Geo IPs",
+    params(("id" = Uuid, Path, description = "Geo IP source config ID")),
+    responses(
+        (status = 200, description = "Transformed geo IP snapshot", content_type = "application/octet-stream"),
+        (status = 404, description = "Snapshot not found; background download started"),
+        (status = 409, description = "Download task already running")
+    )
+)]
+async fn download_geo_ip_snapshot(
+    State(state): State<LandscapeApp>,
+    Path(id): Path<ConfigId>,
+) -> Result<Response, LandscapeApiError> {
+    match state.geo_ip_service.get_snapshot_or_start_download(id).await? {
+        RawDatState::Ready(bytes) => {
+            let mut headers = HeaderMap::new();
+            headers
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+            let disposition =
+                HeaderValue::from_str(&format!("attachment; filename=\"ip-{id}.snap\""))
                     .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
             headers.insert(header::CONTENT_DISPOSITION, disposition);
             Ok((headers, bytes).into_response())

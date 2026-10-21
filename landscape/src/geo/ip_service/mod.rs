@@ -13,12 +13,7 @@ use landscape_common::{
 use uuid::Uuid;
 
 use std::{
-    collections::HashMap,
-    collections::HashSet,
-    fs,
-    future::Future,
-    net::IpAddr,
-    time::{Duration, Instant},
+    collections::HashMap, collections::HashSet, fs, future::Future, net::IpAddr, time::Duration,
 };
 
 use landscape_common::{args::LAND_HOME_PATH, event::dns::DstIpEvent};
@@ -26,60 +21,22 @@ use landscape_core::geo_cache::{GeoCacheDatabase, IpCacheRepository, IpCidrRow};
 use landscape_database::{
     geo_ip::repository::GeoIpSourceConfigRepository, provider::LandscapeDBServiceProvider,
 };
-use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
 
-use super::download::{GeoDownloadError, download_to_sealed};
+use super::ip_values::geo_ip_content_hash;
 use super::raw_file::{raw_dat_path, remove_raw_dat, sweep_orphan_raw_files};
-use super::storage::write_bytes_to_sealed;
+use super::storage::{geo_snapshot_path, remove_geo_snapshot, sweep_orphan_geo_snapshots};
 use super::{GeoTaskMode, GeoTaskRegistry, TaskGuard};
 
+mod snapshot_pipeline;
+#[cfg(test)]
+mod tests;
+
 const A_DAY: u64 = 60 * 60 * 24;
-
-/// Content hash over the deduplicated, sorted, host-bit-masked CIDR set.
-fn geo_ip_content_hash(values: &[landscape_common::flow::ip_mark::IpConfig]) -> String {
-    fn masked(ip: IpAddr, prefix_len: u32) -> Vec<u8> {
-        match ip {
-            IpAddr::V4(addr) => {
-                let mask = if prefix_len == 0 { 0 } else { u32::MAX << (32 - prefix_len.min(32)) };
-                (u32::from(addr) & mask).to_be_bytes().to_vec()
-            }
-            IpAddr::V6(addr) => {
-                let mask =
-                    if prefix_len == 0 { 0 } else { u128::MAX << (128 - prefix_len.min(128)) };
-                (u128::from(addr) & mask).to_be_bytes().to_vec()
-            }
-        }
-    }
-
-    let mut canonical: Vec<(u8, u32, Vec<u8>)> = values
-        .iter()
-        .map(|config| {
-            let family = match config.ip {
-                IpAddr::V4(_) => 4u8,
-                IpAddr::V6(_) => 6u8,
-            };
-            (family, config.prefix, masked(config.ip, config.prefix))
-        })
-        .collect();
-    canonical.sort_unstable();
-    canonical.dedup();
-
-    let mut hasher = Sha256::new();
-    hasher.update((canonical.len() as u64).to_be_bytes());
-    for (family, prefix, network) in canonical {
-        hasher.update([family]);
-        hasher.update(prefix.to_be_bytes());
-        hasher.update((network.len() as u64).to_be_bytes());
-        hasher.update(&network);
-    }
-    let digest = hasher.finalize();
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 #[derive(Clone)]
 pub struct GeoIpService {
@@ -255,144 +212,10 @@ impl GeoIpService {
     }
 
     fn spawn_restore_task(&self, config: &GeoIpSourceConfig) {
-        if let Ok(cancel) = self.tasks.insert(config.id, GeoSourceKind::Ip, GeoTaskPhase::Parsing) {
+        if let Ok(cancel) = self.tasks.insert(config.id, GeoSourceKind::Ip, GeoTaskPhase::Verifying)
+        {
             self.spawn_geo_task(config.clone(), GeoTaskMode::RestoreOnly, cancel);
         }
-    }
-
-    async fn run_geo_task(
-        &self,
-        config: GeoIpSourceConfig,
-        mode: GeoTaskMode,
-        cancel: &CancellationToken,
-    ) {
-        let source_id = config.id;
-        let dat_path = raw_dat_path("ip", source_id);
-
-        let sealed = match mode {
-            GeoTaskMode::Download => {
-                let url = match &config.source {
-                    GeoIpSource::Url { url, .. } => url.clone(),
-                    _ => return,
-                };
-                tracing::debug!("download file: {}", url);
-                let time = Instant::now();
-                match download_to_sealed(source_id, &url, &dat_path, &self.tasks, cancel).await {
-                    Ok(sealed) => {
-                        tracing::debug!(
-                            "download file done: {}, time: {}s",
-                            url,
-                            time.elapsed().as_secs()
-                        );
-                        Some(sealed)
-                    }
-                    Err(GeoDownloadError::Cancelled) => {
-                        tracing::info!("refresh geo ip source {} cancelled", config.name);
-                        return;
-                    }
-                    Err(error) => {
-                        let error = GeoError::IpSourceRequestFailed(error.to_string());
-                        tracing::error!("refresh geo ip source {} error: {}", config.name, error);
-                        return;
-                    }
-                }
-            }
-            GeoTaskMode::RestoreOnly => {
-                let Ok(bytes) = fs::read(&dat_path) else {
-                    return;
-                };
-                self.tasks.advance(source_id, GeoTaskPhase::Parsing);
-                match self.parse_source_bytes(&config.source, bytes, cancel).await {
-                    Ok(result) if !result.is_empty() => {
-                        self.replace_cache_by_name(&config.name, result).await;
-                        tracing::info!(
-                            "restored geo ip cache '{}' from {:?}",
-                            config.name,
-                            dat_path
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(GeoError::TaskCancelled) => {}
-                    Err(e) => {
-                        tracing::warn!("restore geo ip cache from {:?} failed: {}", dat_path, e);
-                    }
-                }
-                return;
-            }
-            GeoTaskMode::Upload(file_bytes) => {
-                if matches!(config.source, GeoIpSource::Direct { .. }) {
-                    tracing::warn!(
-                        "upload is not supported for direct geo ip source '{}'",
-                        config.name
-                    );
-                    return;
-                }
-                match write_bytes_to_sealed(&dat_path, &file_bytes) {
-                    Ok(sealed) => Some(sealed),
-                    Err(e) => {
-                        tracing::error!("persist raw geo ip file {:?} failed: {}", dat_path, e);
-                        return;
-                    }
-                }
-            }
-        };
-
-        let Some(sealed) = sealed else { return };
-        if cancel.is_cancelled() {
-            sealed.abort();
-            return;
-        }
-
-        self.tasks.advance(source_id, GeoTaskPhase::Verifying);
-        let bytes = match sealed.read_back() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                sealed.abort();
-                tracing::error!("read back {:?} failed: {}", dat_path, e);
-                return;
-            }
-        };
-
-        self.tasks.advance(source_id, GeoTaskPhase::Parsing);
-        let result = match self.parse_source_bytes(&config.source, bytes, cancel).await {
-            Ok(result) => result,
-            Err(GeoError::TaskCancelled) => {
-                sealed.abort();
-                return;
-            }
-            Err(e) => {
-                sealed.abort();
-                tracing::error!("refresh geo ip source {} error: {}", config.name, e);
-                return;
-            }
-        };
-        if cancel.is_cancelled() {
-            sealed.abort();
-            return;
-        }
-
-        // A config deleted mid-flight can still commit here and resurrect the
-        // raw dat file that `notify_deleted` removed; the daily refresh sweep
-        // removes such orphans.
-        if let Err(e) = sealed.commit() {
-            tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, e);
-        }
-        self.tasks.advance(source_id, GeoTaskPhase::Applying);
-        self.replace_cache_by_name(&config.name, result).await;
-
-        match self.store.bump_refresh_schedule(source_id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::debug!(
-                    "geo ip config {} deleted during task; skip schedule update",
-                    config.name
-                );
-            }
-            Err(e) => {
-                tracing::error!("bump geo ip refresh schedule {} failed: {}", config.name, e);
-            }
-        }
-        self.notify_dst_ip_updated();
     }
 
     async fn has_cached_name(&self, name: &str) -> bool {
@@ -426,6 +249,30 @@ impl GeoIpService {
         }
     }
 
+    pub async fn get_snapshot_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
+        let snapshot_path = geo_snapshot_path("ip", id);
+        if snapshot_path.exists() {
+            let bytes = fs::read(&snapshot_path)
+                .map_err(|e| GeoError::RawDatReadFailed(format!("{snapshot_path:?}: {e}")))?;
+            return Ok(RawDatState::Ready(bytes));
+        }
+
+        let Some(config) = self.find_by_id(id).await? else {
+            return Err(GeoError::IpNotFound(id));
+        };
+        if !matches!(config.source, GeoIpSource::Url { .. }) {
+            return Err(GeoError::RawDatNotReady);
+        }
+
+        match self.tasks.insert(id, GeoSourceKind::Ip, GeoTaskPhase::Downloading) {
+            Ok(cancel) => {
+                self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
+                Ok(RawDatState::Started)
+            }
+            Err(()) => Ok(RawDatState::Running),
+        }
+    }
+
     pub async fn refresh(&self, force: bool) {
         let configs: Vec<GeoIpSourceConfig> = self.store.list().await.unwrap();
 
@@ -440,8 +287,15 @@ impl GeoIpService {
             match &config.source {
                 GeoIpSource::Url { next_update_at, .. } => {
                     let due = force || *next_update_at < now;
-                    if !due && !self.has_cached_name(&config.name).await {
-                        self.spawn_restore_task(&config);
+                    if !due {
+                        let snapshot_exists = geo_snapshot_path("ip", config.id).exists();
+                        let legacy_raw_exists = raw_dat_path("ip", config.id).exists();
+                        if snapshot_exists
+                            || legacy_raw_exists
+                            || !self.has_cached_name(&config.name).await
+                        {
+                            self.spawn_restore_task(&config);
+                        }
                     }
                     if due && !self.try_spawn_download_task(config.clone()) {
                         tracing::debug!("geo ip source {} refresh already running", config.name);
@@ -457,9 +311,9 @@ impl GeoIpService {
         self.sweep_orphans(&config_names, &config_ids).await;
     }
 
-    /// Remove cache rows and raw dat files whose source config no longer
-    /// exists. Runs on every refresh so the daily tick also sweeps orphans
-    /// left behind by deleted configs.
+    /// Remove cache rows, raw dat files, and snapshots whose source config no
+    /// longer exists. Runs on every refresh so the daily tick also sweeps
+    /// orphans left behind by deleted configs.
     async fn sweep_orphans(&self, config_names: &HashSet<String>, config_ids: &HashSet<Uuid>) {
         let need_to_remove = self
             .cache
@@ -478,6 +332,10 @@ impl GeoIpService {
         let removed = sweep_orphan_raw_files("ip", config_ids);
         if !removed.is_empty() {
             tracing::debug!("swept {} orphan geo ip raw file(s)", removed.len());
+        }
+        let removed = sweep_orphan_geo_snapshots("ip", config_ids);
+        if !removed.is_empty() {
+            tracing::debug!("swept {} orphan geo ip snapshot file(s)", removed.len());
         }
     }
 
@@ -545,54 +403,6 @@ impl GeoIpService {
         for key in stale_keys {
             if let Err(e) = self.cache.delete_by_name(&key.name, &key.key).await {
                 tracing::error!("delete geo ip cache {}/{} failed: {}", key.name, key.key, e);
-            }
-        }
-    }
-
-    async fn parse_source_bytes(
-        &self,
-        source: &GeoIpSource,
-        bytes: impl Into<Vec<u8>>,
-        cancel: &CancellationToken,
-    ) -> Result<HashMap<String, Vec<landscape_common::flow::ip_mark::IpConfig>>, GeoError> {
-        let bytes = bytes.into();
-        match source {
-            GeoIpSource::Url { format, txt_key, .. } => {
-                if cancel.is_cancelled() {
-                    return Err(GeoError::TaskCancelled);
-                }
-                let is_txt =
-                    matches!(format, landscape_common::config_service::geo::GeoIpFileFormat::Txt);
-                let format = format.clone();
-                let txt_key = txt_key.clone();
-                let cancel = cancel.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    landscape_protobuf::read_geo_ips_from_bytes_by_format(
-                        bytes,
-                        &format,
-                        txt_key.as_deref(),
-                        &|| cancel.is_cancelled(),
-                    )
-                })
-                .await
-                .map_err(|e| {
-                    GeoError::IpSourceRequestFailed(format!("parse worker join failed: {e}"))
-                })??;
-                if is_txt {
-                    tracing::info!(
-                        "parsed geo ip txt with {} valid lines and {} skipped lines",
-                        result.valid_lines,
-                        result.skipped_lines
-                    );
-                }
-                Ok(result.entries)
-            }
-            GeoIpSource::Direct { data } => {
-                let mut result = HashMap::new();
-                for item in data {
-                    result.insert(item.key.to_ascii_uppercase(), item.values.clone());
-                }
-                Ok(result)
             }
         }
     }
@@ -683,30 +493,6 @@ impl ConfigStoreController for GeoIpService {
     async fn notify_deleted(&self, old: Self::Config) {
         self.tasks.cancel_task(old.id);
         remove_raw_dat("ip", old.id);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use std::{net::IpAddr, str::FromStr};
-
-    #[test]
-    fn content_hash_is_masked_and_dedup_stable() {
-        let config = |network: &str, prefix: u32| landscape_common::flow::ip_mark::IpConfig {
-            ip: IpAddr::from_str(network).unwrap(),
-            prefix,
-        };
-        let masked_variants = vec![config("10.1.2.3", 8), config("10.200.0.9", 8)];
-        let canonical = vec![config("10.0.0.0", 8)];
-
-        assert_eq!(
-            super::geo_ip_content_hash(&masked_variants),
-            super::geo_ip_content_hash(&canonical)
-        );
-        assert_ne!(
-            super::geo_ip_content_hash(&masked_variants),
-            super::geo_ip_content_hash(&[config("11.0.0.0", 8)])
-        );
+        remove_geo_snapshot("ip", old.id);
     }
 }

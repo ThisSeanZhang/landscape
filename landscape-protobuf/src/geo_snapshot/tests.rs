@@ -8,8 +8,8 @@ use tempfile::tempdir;
 use uuid::Uuid;
 
 use super::{
-    GeoSnapshotError, GeoSnapshotReader, GeoSnapshotRule, GeoSnapshotSourceKind,
-    SiteSnapshotReader, SiteSnapshotWriter,
+    GeoSnapshotError, GeoSnapshotReader, GeoSnapshotRule, GeoSnapshotSourceKind, IpSnapshotCidr,
+    IpSnapshotReader, IpSnapshotWriter, SiteSnapshotReader, SiteSnapshotWriter,
 };
 
 fn create_writer(path: &std::path::Path) -> SiteSnapshotWriter {
@@ -246,5 +246,49 @@ fn generic_payload_roundtrip_and_item_count_validation() {
     assert!(matches!(
         SiteSnapshotReader::open(&path),
         Err(GeoSnapshotError::UnsupportedSourceKind(2))
+    ));
+}
+
+#[test]
+fn ip_snapshot_roundtrip_normalizes_networks() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ip.snap");
+    let source_id = Uuid::new_v4();
+
+    let mut writer = IpSnapshotWriter::create(&path, source_id).unwrap();
+    writer.start_key("cn").unwrap();
+    writer.write_cidr("10.1.2.3".parse().unwrap(), 8).unwrap();
+    writer.write_cidr("2001:db8::1".parse().unwrap(), 32).unwrap();
+    writer.end_key().unwrap();
+    writer.start_key("EMPTY").unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+
+    let reader = IpSnapshotReader::open(&path).unwrap();
+    assert_eq!(reader.index().len(), 2);
+    assert_eq!(reader.index().get("CN").unwrap().item_count, 2);
+
+    let mut key_reader = reader.open_key("CN").unwrap();
+    assert_eq!(
+        key_reader.next_cidr().unwrap(),
+        Some(IpSnapshotCidr { ip: "10.0.0.0".parse().unwrap(), prefix: 8 })
+    );
+    assert_eq!(
+        key_reader.next_cidr().unwrap(),
+        Some(IpSnapshotCidr { ip: "2001:db8::".parse().unwrap(), prefix: 32 })
+    );
+    assert!(key_reader.next_cidr().unwrap().is_none());
+    assert!(reader.open_key("EMPTY").unwrap().next_cidr().unwrap().is_none());
+}
+
+#[test]
+fn ip_snapshot_rejects_invalid_prefix() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ip.snap");
+    let mut writer = IpSnapshotWriter::create(&path, Uuid::new_v4()).unwrap();
+    writer.start_key("CN").unwrap();
+    assert!(matches!(
+        writer.write_cidr("10.0.0.0".parse().unwrap(), 33),
+        Err(GeoSnapshotError::InvalidPayload(_))
     ));
 }
