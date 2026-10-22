@@ -1,5 +1,9 @@
 name: Code Quality Check
 
+defaults:
+  run:
+    shell: bash
+
 on:
   push:
     branches:
@@ -14,15 +18,17 @@ on:
 jobs:
   rust-check:
     runs-on: ubuntu-latest
+    container:
+      image: rust:1.98.0-trixie
+    env:
+      CLANG: clang-19
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+      - name: Install pinned Clang 19 toolchain
+        run: ./scripts/setup_debian13_build.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -34,8 +40,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -50,7 +56,7 @@ jobs:
 
       - name: Setup sccache
         run: |
-          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
+          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
@@ -73,15 +79,17 @@ jobs:
 
   config-cli-e2e:
     runs-on: ubuntu-latest
+    container:
+      image: rust:1.98.0-trixie
+    env:
+      CLANG: clang-19
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+      - name: Install pinned Clang 19 toolchain
+        run: ./scripts/setup_debian13_build.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,8 +101,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -109,7 +117,7 @@ jobs:
 
       - name: Setup sccache
         run: |
-          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
+          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
@@ -137,7 +145,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Check Rust version
         run: rustc --version

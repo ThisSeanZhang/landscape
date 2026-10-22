@@ -5,6 +5,13 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+/* LLVM before Clang 19 does not emit BPF_ADDR_SPACE_CAST for arena globals.
+ * The program still compiles, but the kernel verifier rejects the resulting
+ * plain scalar pointer access with EACCES ("Permission denied"). */
+#if defined(__clang__) && __clang_major__ < 19
+#error "Landscape BPF arena requires Clang 19+"
+#endif
+
 /* Shared arena plumbing for every BPF_MAP_TYPE_ARENA declaration in this
  * tree (WAN trie, per-chain nat4 arenas, tests, benches). */
 

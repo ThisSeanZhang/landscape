@@ -1,5 +1,9 @@
 name: Build and Package Flow Edge Images
 
+defaults:
+  run:
+    shell: bash
+
 on:
   push:
     branches:
@@ -17,6 +21,8 @@ concurrency:
 jobs:
   build_rust:
     runs-on: ${{ matrix.host }}
+    container:
+      image: rust:1.98.0-trixie
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +45,7 @@ jobs:
             cross: true
 
     env:
+      CLANG: clang-19
       TARGET_ARCH: ${{ matrix.target }}
       TMP_DIR: tmp/${{ matrix.arch }}/redirect_prog
       BUILD_DIR: dockerfiles/redirect_prog
@@ -48,23 +55,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev wget
+      - name: Install pinned Clang 19 toolchain
+        run: ./scripts/setup_debian13_build.sh
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
 
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -83,14 +89,14 @@ jobs:
           if [ "${{ runner.arch }}" = "ARM64" ]; then
             SCCACHE_ARCH=aarch64
           fi
-          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-${SCCACHE_ARCH}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
+          wget -qO- https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-${SCCACHE_ARCH}-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
       - name: Setup zig and cargo-zigbuild
         if: matrix.cross
         run: |
-          sudo pip3 install --break-system-packages ziglang==0.16.0
+          pip3 install --break-system-packages ziglang==0.16.0
           cargo install --locked cargo-zigbuild --version 0.23.4
 
       - name: Build Rust binaries

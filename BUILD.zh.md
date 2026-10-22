@@ -18,12 +18,17 @@
 - 启用 BTF/BPF
 - Node.js `22+`
 - Rust 工具链（通过 [`rust-toolchain.toml`](./rust-toolchain.toml) 固定为 `1.98.0`）
+- Clang/LLVM `19+`。Clang 18 及更早版本虽然能编译 BPF 源码，但不会生成
+  eBPF arena 所需的 `BPF_ADDR_SPACE_CAST`，内核 verifier 会以
+  `Permission denied` 拒绝加载。
 
-系统依赖按 CI 安装：
+系统依赖按 CI 安装（Debian 13）：
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+sudo apt-get install -y cmake clang-19 lld-19 llvm-19 libclang-19-dev \
+  gcc g++ make pkg-config libelf-dev libzstd-dev zlib1g-dev
+export CLANG=clang-19
 ```
 
 ## pnpm 与 Corepack

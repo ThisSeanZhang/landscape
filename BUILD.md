@@ -18,12 +18,17 @@ Do not use `build.sh` for every edit. It rebuilds the frontend, ensures API bind
 - BTF/BPF enabled
 - Node.js `22+`
 - Rust toolchain (pinned to `1.98.0` via [`rust-toolchain.toml`](./rust-toolchain.toml))
+- Clang/LLVM `19+` for the eBPF arena backend. Clang 18 and older compile the
+  BPF sources but do not emit `BPF_ADDR_SPACE_CAST`, so the kernel verifier
+  rejects the resulting programs with `Permission denied`.
 
-Install the system packages used by CI:
+Install the system packages used by CI (Debian 13):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+sudo apt-get install -y cmake clang-19 lld-19 llvm-19 libclang-19-dev \
+  gcc g++ make pkg-config libelf-dev libzstd-dev zlib1g-dev
+export CLANG=clang-19
 ```
 
 ## pnpm and Corepack

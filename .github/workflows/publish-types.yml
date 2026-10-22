@@ -1,5 +1,9 @@
 name: Publish Types to npm
 
+defaults:
+  run:
+    shell: bash
+
 on:
   push:
     branches:
@@ -13,6 +17,10 @@ on:
 jobs:
   publish-types:
     runs-on: ubuntu-22.04-arm
+    container:
+      image: rust:1.98.0-trixie
+    env:
+      CLANG: clang-19
 
     steps:
       - name: Checkout code
@@ -29,17 +37,14 @@ jobs:
             openapi-spec-${{ hashFiles('Cargo.lock') }}-
             openapi-spec-
 
-      - name: Install system dependencies
-        if: steps.cache-openapi.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake clang gcc make pkg-config libelf-dev libclang-dev zlib1g-dev
+      - name: Install pinned Clang 19 toolchain
+        run: ./scripts/setup_debian13_build.sh
 
       - name: Setup Rust
-        if: steps.cache-openapi.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
+          components: rustfmt, clippy
 
       - name: Generate OpenAPI spec
         if: steps.cache-openapi.outputs.cache-hit != 'true'
