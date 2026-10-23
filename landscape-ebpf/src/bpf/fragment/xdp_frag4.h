@@ -24,8 +24,8 @@ static __always_inline int xdp_frag4_track(const struct scan_ipv4_idx *idx, __be
     key.l3proto = LANDSCAPE_IPV4_TYPE;
     key.l4proto = idx->l4_protocol;
     key.id = idx->fragment_id;
-    key.saddr.ip = saddr;
-    key.daddr.ip = daddr;
+    key.saddr.in6_u.u6_addr32[0] = saddr;
+    key.daddr.in6_u.u6_addr32[0] = daddr;
 
     struct frag_cache_value *value;
     if (unlikely(idx->fragment_type == FRAG_FIRST)) {

@@ -14,9 +14,9 @@ static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_k
         return -1;
     }
 
-    __builtin_memcpy(event->src_addr.bits, timer_value->client_prefix, 8);
-    __builtin_memcpy(event->src_addr.bits + 8, timer_key->client_suffix, 8);
-    COPY_ADDR_FROM(event->dst_addr.bits, timer_value->trigger_addr.bytes);
+    __builtin_memcpy(event->src_addr.in6_u.u6_addr8, timer_value->client_prefix, 8);
+    __builtin_memcpy(event->src_addr.in6_u.u6_addr8 + 8, timer_key->client_suffix, 8);
+    COPY_ADDR_FROM(event->dst_addr.in6_u.u6_addr8, timer_value->trigger_addr.in6_u.u6_addr8);
 
     event->src_port = timer_key->client_port;
     event->dst_port = timer_value->trigger_port;
@@ -52,8 +52,8 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
     int ret;
 
     if (value->trigger_port == TEST_PORT) {
-        ld_bpf_log("timer_clean_callback: %pI6, current_status: %llu", &value->trigger_addr.bytes,
-                   current_status);
+        ld_bpf_log("timer_clean_callback: %pI6, current_status: %llu",
+                   &value->trigger_addr.in6_u.u6_addr8, current_status);
     }
 
     if (current_status == TIMER_RELEASE) {

@@ -43,8 +43,8 @@ static __always_inline int ferry_frag4_cache(struct __sk_buff *skb, u32 l3_offse
     key.l3proto = LANDSCAPE_IPV4_TYPE;
     key.l4proto = idx->l4_protocol;
     key.id = idx->fragment_id;
-    key.saddr.ip = iph->saddr;
-    key.daddr.ip = iph->daddr;
+    key.saddr.in6_u.u6_addr32[0] = iph->saddr;
+    key.daddr.in6_u.u6_addr32[0] = iph->daddr;
 
     if (idx->fragment_type == FRAG_FIRST) {
         struct frag_cache_value value = {
@@ -72,8 +72,8 @@ static __always_inline int ferry_frag6_cache(struct __sk_buff *skb, u32 l3_offse
     key.l3proto = LANDSCAPE_IPV6_TYPE;
     key.l4proto = idx->l4_protocol;
     key.id = idx->fragment_id;
-    COPY_ADDR_FROM(key.saddr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(key.daddr.all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(key.saddr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(key.daddr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
 
     if (idx->fragment_type == FRAG_FIRST) {
         struct frag_cache_value value = {
@@ -218,14 +218,14 @@ static __always_inline bool cb_ferry_load_v6(struct __sk_buff *skb, u32 l3_offse
 
     struct ipv6hdr *ip6h;
     if (VALIDATE_READ_DATA(skb, &ip6h, l3_offset, sizeof(*ip6h))) return false;
-    COPY_ADDR_FROM(pair->src_addr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(pair->dst_addr.all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(pair->src_addr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(pair->dst_addr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
 
     if (idx->icmp_error_l3_offset) {
         struct ipv6hdr *inner_ip6;
         if (VALIDATE_READ_DATA(skb, &inner_ip6, idx->icmp_error_l3_offset, sizeof(*inner_ip6)))
             return false;
-        COPY_ADDR_FROM(pair->src_addr.all, inner_ip6->daddr.in6_u.u6_addr32);
+        COPY_ADDR_FROM(pair->src_addr.in6_u.u6_addr32, inner_ip6->daddr.in6_u.u6_addr32);
     }
 
     pair->src_port = tc_cb_sport(skb);

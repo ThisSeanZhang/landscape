@@ -13,7 +13,7 @@ struct flow_dns_match_value_v6 {
 } __flow_dns_match_value_v6;
 
 struct flow_dns_match_key_v6 {
-    union u_inet6_addr addr;
+    struct in6_addr addr;
 } __flow_dns_match_key_v6;
 
 struct each_flow_dns_v6 {
@@ -35,7 +35,7 @@ struct {
 //
 struct flow_ip_trie_key_v6 {
     __u32 prefixlen;
-    union u_inet6_addr addr;
+    struct in6_addr addr;
 } __flow_ip_trie_key_v6;
 
 struct flow_ip_trie_value_v6 {

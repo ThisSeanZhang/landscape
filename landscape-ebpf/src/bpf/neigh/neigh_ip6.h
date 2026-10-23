@@ -4,7 +4,7 @@
 #include "base/landscape.h"
 
 struct mac_key_v6 {
-    union u_inet6_addr addr;
+    struct in6_addr addr;
 };
 
 // Source of a mac_value_v6 entry. Entries sourced from kernel neigh / traffic

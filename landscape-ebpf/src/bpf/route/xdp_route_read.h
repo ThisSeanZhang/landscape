@@ -37,8 +37,8 @@ static __always_inline int xdp_read_ipv6(struct xdp_md *ctx, struct route6_conte
     ip6h = (struct ipv6hdr *)(eth + 1);
     if ((void *)(ip6h + 1) > data_end) return XDP_DROP;
 
-    COPY_ADDR_FROM(context->saddr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(context->daddr.all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(context->saddr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(context->daddr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
     return 0;
 }
 

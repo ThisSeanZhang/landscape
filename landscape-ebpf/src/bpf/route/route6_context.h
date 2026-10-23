@@ -9,8 +9,8 @@
 #include "route/route_common.h"
 
 struct route6_context {
-    union u_inet6_addr saddr;
-    union u_inet6_addr daddr;
+    struct in6_addr saddr;
+    struct in6_addr daddr;
     // IP 层协议: TCP / UDP
     u8 l4_protocol;
     // tos value
@@ -31,8 +31,8 @@ static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
         return TC_ACT_SHOT;
     }
 
-    COPY_ADDR_FROM(context->saddr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(context->daddr.all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(context->saddr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(context->daddr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
     context->l4_protocol = 0;
     context->tos = 0;
     return TC_ACT_OK;

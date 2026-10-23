@@ -81,7 +81,7 @@ int BPF_KPROBE(kprobe_neigh_update, struct neighbour *n, const u8 *new_lladdr, u
         struct mac_key_v6 key = {};
         bpf_probe_read_kernel(&key.addr, sizeof(key.addr), n->primary_key);
 
-        if (is_unrecord_ip6(key.addr.bytes)) {
+        if (is_unrecord_ip6(key.addr.in6_u.u6_addr8)) {
             return 0;
         }
 
@@ -103,9 +103,10 @@ int BPF_KPROBE(kprobe_neigh_update, struct neighbour *n, const u8 *new_lladdr, u
 
             if (value.mac[0] != 0 || value.mac[1] != 0 || value.mac[5] != 0) {
                 bpf_map_update_elem(&ip_mac_v6, &key, &value, BPF_ANY);
-                // bpf_printk("Update: IP is %pI6 | state: %d -> %d", key.addr.bytes,
+                // bpf_printk("Update: IP is %pI6 | state: %d -> %d", key.addr.in6_u.u6_addr8,
                 // ctx->nud_state, ctx->new_state);
-                // bpf_printk("IP:%pI6 | Flags:0x%x | %d->%d", key.addr.bytes, ctx->update_flags,
+                // bpf_printk("IP:%pI6 | Flags:0x%x | %d->%d", key.addr.in6_u.u6_addr8,
+                // ctx->update_flags,
                 //            ctx->nud_state, ctx->new_state);
                 // PRINT_MAC_ADDR(value.mac);
             }

@@ -67,7 +67,7 @@ impl From<ConnectStatusType> for u8 {
 /// 与 ebpf 侧 `nat_conn_metric_event` 逐字节一致的 wire 布局(104 字节,零 padding)。
 ///
 /// 布局约束(黄金测试 `landscape-ebpf/src/tests/metric.rs` 用 offset_of! 对照 skel 类型):
-/// - `src_addr`/`dst_addr` 为 16 字节原始地址字节,等价于 C 的 `union u_inet_addr`
+/// - `src_addr`/`dst_addr` 为 16 字节原始地址字节,等价于 C 的 `struct in6_addr`
 /// - `pad` 对应 C 中 `u16 dst_port` 与 `u64 create_time` 之间的对齐 padding
 /// - `pad_tail` 对应 C 结构体尾部对齐 padding(102 -> 104)
 #[derive(Debug, Serialize, Deserialize, Clone, KnownLayout, FromBytes, IntoBytes)]

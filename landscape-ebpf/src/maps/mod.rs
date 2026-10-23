@@ -36,11 +36,11 @@ use libbpf_rs::{AsRawLibbpf, MapCore, MapFlags, MapHandle, MapType, OpenMapMut};
 pub use crate::LandscapeMapPath;
 use crate::bpf_error::LdEbpfResult;
 
-/// Typed accessors for the `u_inet_addr` / `u_inet6_addr` unions modeled as
+/// Typed accessors for the `struct in6_addr` address fields modeled as
 /// `[u8; 16]`.
 ///
-/// IPv4 reads/writes the `ip` variant (first 4 bytes, network order); IPv6
-/// maps to the `bits` variant (all 16 bytes, network order).
+/// IPv4 reads/writes the first 32-bit word (`in6_u.u6_addr32[0]`, network
+/// order); IPv6 maps to the 16-byte view (`in6_u.u6_addr8`, network order).
 pub(crate) trait Inet6Bytes: AsRef<[u8]> + AsMut<[u8]> {
     fn set_ipv4_be(&mut self, addr: u32) {
         self.as_mut()[..4].copy_from_slice(&addr.to_be_bytes());

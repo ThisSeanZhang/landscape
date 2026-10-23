@@ -20,13 +20,13 @@ static __always_inline int skb_read_ipv4_l3(struct __sk_buff *skb, u32 l3_offset
 }
 
 static __always_inline int skb_read_ipv6_l3(struct __sk_buff *skb, u32 l3_offset,
-                                            union u_inet6_addr *saddr, union u_inet6_addr *daddr) {
+                                            struct in6_addr *saddr, struct in6_addr *daddr) {
     struct ipv6hdr *ip6h;
     if (VALIDATE_READ_DATA(skb, &ip6h, l3_offset, sizeof(*ip6h))) {
         return TC_ACT_SHOT;
     }
-    COPY_ADDR_FROM(saddr->all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(daddr->all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(saddr->in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(daddr->in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
     return TC_ACT_OK;
 }
 
@@ -103,15 +103,15 @@ static __always_inline int skb_read_ipv6_info(struct __sk_buff *skb, u32 l3_offs
     if (VALIDATE_READ_DATA(skb, &ip6h, l3_offset, sizeof(*ip6h))) {
         return TC_ACT_SHOT;
     }
-    COPY_ADDR_FROM(pair->src_addr.all, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(pair->dst_addr.all, ip6h->daddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(pair->src_addr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(pair->dst_addr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
 
     if (idx->icmp_error_l3_offset > 0) {
         struct ipv6hdr *inner_ip6;
         if (VALIDATE_READ_DATA(skb, &inner_ip6, idx->icmp_error_l3_offset, sizeof(*inner_ip6))) {
             return TC_ACT_SHOT;
         }
-        COPY_ADDR_FROM(pair->src_addr.all, inner_ip6->daddr.in6_u.u6_addr32);
+        COPY_ADDR_FROM(pair->src_addr.in6_u.u6_addr32, inner_ip6->daddr.in6_u.u6_addr32);
     }
 
     if (idx->fragment_type >= FRAG_MIDDLE) {

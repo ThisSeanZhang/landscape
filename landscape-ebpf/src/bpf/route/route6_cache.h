@@ -6,8 +6,8 @@
 #include "base/landscape.h"
 
 struct route6_cache_key {
-    union u_inet6_addr local_addr;
-    union u_inet6_addr remote_addr;
+    struct in6_addr local_addr;
+    struct in6_addr remote_addr;
 } _route6_cache_key;
 
 struct route6_cache_value {
@@ -17,7 +17,7 @@ struct route6_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
-    union u_inet6_addr gate_addr;
+    struct in6_addr gate_addr;
     u8 mac[6];
     __u16 link_chain_id;
 } _route6_cache_value;

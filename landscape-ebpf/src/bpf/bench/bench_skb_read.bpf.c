@@ -40,8 +40,8 @@ struct bench_v4_addrs {
 };
 
 struct bench_v6_addrs {
-    union u_inet6_addr saddr;
-    union u_inet6_addr daddr;
+    struct in6_addr saddr;
+    struct in6_addr daddr;
 };
 
 /* ARRAY values survive across BPF_PROG_TEST_RUN repeats: accumulate one
@@ -130,8 +130,8 @@ int bench_tc_helper6(struct __sk_buff *skb) {
     }
     u64 acc = 0;
     for (int j = 0; j < 4; j++) {
-        acc += (u64)(u32)addrs.saddr.all[j];
-        acc += (u64)(u32)addrs.daddr.all[j];
+        acc += (u64)(u32)addrs.saddr.in6_u.u6_addr32[j];
+        acc += (u64)(u32)addrs.daddr.in6_u.u6_addr32[j];
     }
     bench_sink_add(acc);
     return TC_ACT_OK;
@@ -232,8 +232,8 @@ int bench_tc_read6_icmp(struct __sk_buff *skb) {
     }
     u64 acc = 0;
     for (int j = 0; j < 4; j++) {
-        acc += (u64)(u32)pair.src_addr.all[j];
-        acc += (u64)(u32)pair.dst_addr.all[j];
+        acc += (u64)(u32)pair.src_addr.in6_u.u6_addr32[j];
+        acc += (u64)(u32)pair.dst_addr.in6_u.u6_addr32[j];
     }
     bench_sink_add(acc + bpf_ntohs(pair.src_port) + bpf_ntohs(pair.dst_port));
     return TC_ACT_OK;

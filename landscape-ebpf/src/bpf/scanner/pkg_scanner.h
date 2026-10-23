@@ -340,23 +340,23 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             offset_info->icmp_error_l3_protocol = LANDSCAPE_IPV6_TYPE;
             offset_info->icmp_error_l4_protocol = ctx.l4_protocol;
 
-            union u_ld_ip *temp_addr;
-            union u_ld_ip dst_ip_val, icmp_src_ip_val;
+            struct in6_addr *temp_addr;
+            struct in6_addr dst_ip_val, icmp_src_ip_val;
 
             if (VALIDATE_READ_DATA(skb, &temp_addr,
                                    offset_info->l3_offset_when_scan +
                                        offsetof(struct ipv6hdr, daddr),
-                                   sizeof(union u_ld_ip))) {
+                                   sizeof(struct in6_addr))) {
                 return TC_ACT_SHOT;
             }
-            COPY_ADDR_FROM(dst_ip_val.all, temp_addr->all);
+            COPY_ADDR_FROM(dst_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
             if (VALIDATE_READ_DATA(skb, &temp_addr,
                                    offset_info->icmp_error_l3_offset +
                                        offsetof(struct ipv6hdr, saddr),
-                                   sizeof(union u_ld_ip))) {
+                                   sizeof(struct in6_addr))) {
                 return TC_ACT_SHOT;
             }
-            COPY_ADDR_FROM(icmp_src_ip_val.all, temp_addr->all);
+            COPY_ADDR_FROM(icmp_src_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
 
             if (!ld_ip_addr_equal(&dst_ip_val, &icmp_src_ip_val)) {
                 ld_bpf_log("icmp error drop: inner src ip mismatches outer dst ip");

@@ -177,7 +177,7 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
 
         struct bpf_redir_neigh param;
         param.nh_family = AF_INET6;
-        COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr32);
         ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
         if (unlikely(ret != TC_ACT_REDIRECT)) ld_bpf_log("bpf_redirect_neigh error: %d", ret);
         return ret;
@@ -289,7 +289,7 @@ int tc_route6_wan_egress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
+    if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
         return TC_ACT_UNSPEC;
     }
 
@@ -331,7 +331,7 @@ int tc_route6_wan_direct_egress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
+    if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
         return TC_ACT_UNSPEC;
     }
 

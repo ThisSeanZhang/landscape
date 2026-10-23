@@ -136,17 +136,9 @@ static int store_mac_v6(struct __sk_buff *skb, u8 *dst_mac, u8 *src_mac) {
     return 0;
 }
 
-// only for ipv6
-union u_inet6_addr {
-    __be32 all[4];
-    __be32 ip;
-    __be32 ip6[4];
-    u8 bytes[16];
-};
-
 struct inet_pair {
-    union u_inet_addr src_addr;
-    union u_inet_addr dst_addr;
+    struct in6_addr src_addr;
+    struct in6_addr dst_addr;
     __be16 src_port;
     __be16 dst_port;
 };
@@ -216,7 +208,8 @@ static __always_inline bool is_broadcast_ip6(const u8 *bytes) {
 }
 
 static __always_inline bool is_broadcast_ip6_pair(const struct inet_pair *ip_pair) {
-    return is_broadcast_ip6(ip_pair->src_addr.bits) || is_broadcast_ip6(ip_pair->dst_addr.bits);
+    return is_broadcast_ip6(ip_pair->src_addr.in6_u.u6_addr8) ||
+           is_broadcast_ip6(ip_pair->dst_addr.in6_u.u6_addr8);
 }
 
 struct inet4_addr {
@@ -230,11 +223,9 @@ struct inet4_pair {
     __be16 dst_port;
 };
 
-typedef union u_inet6_addr inet6_addr;
-
 struct inet6_pair {
-    inet6_addr src_addr;
-    inet6_addr dst_addr;
+    struct in6_addr src_addr;
+    struct in6_addr dst_addr;
     __be16 src_port;
     __be16 dst_port;
 };
@@ -244,32 +235,42 @@ static __always_inline bool inet4_addr_equal(const struct inet4_addr *a,
     return a->addr == b->addr;
 }
 
-static __always_inline bool inet6_addr_equal(const inet6_addr *a, const inet6_addr *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
+static __always_inline bool inet6_addr_equal(const struct in6_addr *a, const struct in6_addr *b) {
+    return a->in6_u.u6_addr32[0] == b->in6_u.u6_addr32[0] &&
+           a->in6_u.u6_addr32[1] == b->in6_u.u6_addr32[1] &&
+           a->in6_u.u6_addr32[2] == b->in6_u.u6_addr32[2] &&
+           a->in6_u.u6_addr32[3] == b->in6_u.u6_addr32[3];
 }
 
-static __always_inline bool ip_addr_is_zero(const union u_inet_addr *a) {
-    return a->all[0] == 0 && a->all[1] == 0 && a->all[2] == 0 && a->all[3] == 0;
+static __always_inline bool ip_addr_is_zero(const struct in6_addr *a) {
+    return a->in6_u.u6_addr32[0] == 0 && a->in6_u.u6_addr32[1] == 0 && a->in6_u.u6_addr32[2] == 0 &&
+           a->in6_u.u6_addr32[3] == 0;
 }
 
-static __always_inline bool ip_addr_is_zero_in6(const inet6_addr *a) {
-    return a->all[0] == 0 && a->all[1] == 0 && a->all[2] == 0 && a->all[3] == 0;
+static __always_inline bool ip_addr_is_zero_in6(const struct in6_addr *a) {
+    return a->in6_u.u6_addr32[0] == 0 && a->in6_u.u6_addr32[1] == 0 && a->in6_u.u6_addr32[2] == 0 &&
+           a->in6_u.u6_addr32[3] == 0;
 }
 
-static __always_inline bool ip_addr_equal(const union u_inet_addr *a, const union u_inet_addr *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
+static __always_inline bool ip_addr_equal(const struct in6_addr *a, const struct in6_addr *b) {
+    return a->in6_u.u6_addr32[0] == b->in6_u.u6_addr32[0] &&
+           a->in6_u.u6_addr32[1] == b->in6_u.u6_addr32[1] &&
+           a->in6_u.u6_addr32[2] == b->in6_u.u6_addr32[2] &&
+           a->in6_u.u6_addr32[3] == b->in6_u.u6_addr32[3];
 }
 
-static __always_inline bool ip_addr_equal_in6(const inet6_addr *a, const inet6_addr *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
+static __always_inline bool ip_addr_equal_in6(const struct in6_addr *a, const struct in6_addr *b) {
+    return a->in6_u.u6_addr32[0] == b->in6_u.u6_addr32[0] &&
+           a->in6_u.u6_addr32[1] == b->in6_u.u6_addr32[1] &&
+           a->in6_u.u6_addr32[2] == b->in6_u.u6_addr32[2] &&
+           a->in6_u.u6_addr32[3] == b->in6_u.u6_addr32[3];
 }
 
-static __always_inline bool ip_addr_equal_x(const union u_inet_addr *a, const inet6_addr *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
+static __always_inline bool ip_addr_equal_x(const struct in6_addr *a, const struct in6_addr *b) {
+    return a->in6_u.u6_addr32[0] == b->in6_u.u6_addr32[0] &&
+           a->in6_u.u6_addr32[1] == b->in6_u.u6_addr32[1] &&
+           a->in6_u.u6_addr32[2] == b->in6_u.u6_addr32[2] &&
+           a->in6_u.u6_addr32[3] == b->in6_u.u6_addr32[3];
 }
 
 #define COPY_ADDR_FROM(t, s) (__builtin_memcpy((t), (s), sizeof(t)))

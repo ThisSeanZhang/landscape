@@ -199,7 +199,7 @@ mod tests {
 
     fn lookup_mac_v6<T: MapCore>(map: &T, addr: Ipv6Addr) -> Option<([u8; 6], u32)> {
         let mut key = mac_key_v6::default();
-        key.addr.bytes = addr.to_bits().to_be_bytes();
+        key.addr.in6_u.u6_addr8 = addr.to_bits().to_be_bytes();
         map.lookup(as_bytes(&key), MapFlags::ANY).expect("lookup ip_mac_v6").map(|bytes| {
             assert_eq!(bytes.len(), 20, "mac_value_v6 size");
             let mut mac = [0u8; 6];
@@ -359,7 +359,7 @@ mod tests {
         // owned by a different host, so the program takes the BPF_NOEXIST
         // failure path.
         let mut key = mac_key_v6::default();
-        key.addr.bytes = target.to_bits().to_be_bytes();
+        key.addr.in6_u.u6_addr8 = target.to_bits().to_be_bytes();
         let mut existing = vec![0u8; 20];
         existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
         existing[4..10].copy_from_slice(&other_mac);
@@ -419,7 +419,7 @@ mod tests {
 
         // Pre-insert a DAD-learned binding owned by a different host.
         let mut key = mac_key_v6::default();
-        key.addr.bytes = target.to_bits().to_be_bytes();
+        key.addr.in6_u.u6_addr8 = target.to_bits().to_be_bytes();
         let mut existing = vec![0u8; 20];
         existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
         existing[4..10].copy_from_slice(&other_mac);
@@ -470,7 +470,7 @@ mod tests {
 
         // Pre-insert a DAD-learned binding owned by the same host as the frame.
         let mut key = mac_key_v6::default();
-        key.addr.bytes = target.to_bits().to_be_bytes();
+        key.addr.in6_u.u6_addr8 = target.to_bits().to_be_bytes();
         let mut existing = vec![0u8; 20];
         existing[0..4].copy_from_slice(&TEST_IFINDEX.to_le_bytes());
         existing[4..10].copy_from_slice(&CLIENT_MAC);
@@ -739,7 +739,7 @@ mod tests {
             &simple_ipv6_ns_dad(CLIENT_MAC, target),
             |skel| {
                 let mut key = mac_key_v6::default();
-                key.addr.bytes = target.to_bits().to_be_bytes();
+                key.addr.in6_u.u6_addr8 = target.to_bits().to_be_bytes();
                 let mut existing = vec![0u8; 20];
                 existing[4..10].copy_from_slice(&existing_mac);
                 existing[10..16].copy_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);

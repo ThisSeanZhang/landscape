@@ -34,12 +34,12 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
     struct mac_value_v6 *mac_value = NULL;
 
     lan_search_key.prefixlen = 128;
-    COPY_ADDR_FROM(lan_search_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(lan_search_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
 
     struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
 
     if (lan_info == NULL) {
-        // ld_bpf_log("lan_info is null, address is: %pI6", context->daddr.bytes);
+        // ld_bpf_log("lan_info is null, address is: %pI6", context->daddr.in6_u.u6_addr8);
         return TC_ACT_OK;
     }
 
@@ -56,7 +56,7 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
     if (unlikely(lan_info->ifindex == skb->ifindex)) {
         if (is_lan && lan_info->has_mac && !ip_addr_is_zero_in6(&lan_info->addr) &&
             !ip_addr_equal_in6(&lan_info->addr, &context->daddr)) {
-            COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+            COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
             mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key_search);
             if (mac_value) {
                 if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
@@ -85,9 +85,9 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
 
     bool target_has_mac = lan_info->has_mac;
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(mac_key_search.addr.all, lan_info->addr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
     }
 
     if (target_has_mac) {
@@ -109,9 +109,9 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
     param.nh_family = AF_INET6;
 
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.in6_u.u6_addr32);
     }
 
     ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
@@ -146,7 +146,7 @@ static __always_inline int tc_route6_lan_redirect_check_in_lan(struct __sk_buff 
     struct mac_value_v6 *mac_value = NULL;
 
     lan_search_key.prefixlen = 128;
-    COPY_ADDR_FROM(lan_search_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(lan_search_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
 
     struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
 
@@ -160,7 +160,7 @@ static __always_inline int tc_route6_lan_redirect_check_in_lan(struct __sk_buff 
     if (unlikely(lan_info->ifindex == skb->ingress_ifindex)) {
         if (lan_info->has_mac && !ip_addr_is_zero_in6(&lan_info->addr) &&
             !ip_addr_equal_in6(&lan_info->addr, &context->daddr)) {
-            COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+            COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
             mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key_search);
             if (mac_value) {
                 if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
@@ -186,9 +186,9 @@ static __always_inline int tc_route6_lan_redirect_check_in_lan(struct __sk_buff 
 
     bool target_has_mac = lan_info->has_mac;
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(mac_key_search.addr.all, lan_info->addr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
     }
 
     if (target_has_mac) {
@@ -208,9 +208,9 @@ static __always_inline int tc_route6_lan_redirect_check_in_lan(struct __sk_buff 
     param.nh_family = AF_INET6;
 
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.in6_u.u6_addr32);
     }
 
     ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
@@ -232,7 +232,7 @@ tc_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3
     struct mac_value_v6 *mac_value = NULL;
 
     lan_search_key.prefixlen = 128;
-    COPY_ADDR_FROM(lan_search_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(lan_search_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
 
     struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_search_key);
 
@@ -257,9 +257,9 @@ tc_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3
 
     bool target_has_mac = lan_info->has_mac;
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(mac_key_search.addr.all, lan_info->addr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(mac_key_search.addr.all, context->daddr.all);
+        COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
     }
 
     if (target_has_mac) {
@@ -279,9 +279,9 @@ tc_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3
     param.nh_family = AF_INET6;
 
     if (unlikely(lan_info->route_type == ROUTE_TYPE_NEXTHOP)) {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_info->addr.in6_u.u6_addr32);
     } else {
-        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.all);
+        COPY_ADDR_FROM(param.ipv6_nh, lan_search_key.addr.in6_u.u6_addr32);
     }
 
     ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
@@ -309,7 +309,7 @@ static __always_inline int route6_flow_verdict(struct __sk_buff *skb, u32 curren
 
     struct flow_ip_trie_key_v6 ip_trie_key = {0};
     ip_trie_key.prefixlen = 128;
-    COPY_ADDR_FROM(ip_trie_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(ip_trie_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
 
     struct flow_ip_trie_value_v6 *ip_flow_mark_value = NULL;
     void *ip_rules_map = bpf_map_lookup_elem(&flow6_ip_map, &flow_id);
@@ -346,9 +346,10 @@ static __always_inline int route6_flow_verdict(struct __sk_buff *skb, u32 curren
                 priority = dns_rule_value->priority;
             }
             // ld_bpf_log("dns_flow_mark is:%d for: %pI4", flow_mark_action,
-            // &cache_key.dst_addr.ip);
+            // &cache_key.dst_addr.in6_u.u6_addr32[0]);
             // } else {
-            // ld_bpf_log("dns_flow_mark is none for: %pI4", &cache_key.dst_addr.ip);
+            // ld_bpf_log("dns_flow_mark is none for: %pI4",
+            // &cache_key.dst_addr.in6_u.u6_addr32[0]);
         }
     } else {
         // ld_bpf_log("flow_id: %d, dns map is empty", *flow_id_ptr);
@@ -466,7 +467,7 @@ static __always_inline int route6_pick_wan_and_send_by_flow_id(struct __sk_buff 
     struct bpf_redir_neigh param;
     param.nh_family = AF_INET6;
 
-    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.bytes);
+    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr8);
     ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
     if (ret != 7) {
         ld_bpf_log("bpf_redirect_neigh error: %d", ret);
@@ -539,7 +540,7 @@ static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *sk
 
     struct bpf_redir_neigh param;
     param.nh_family = AF_INET6;
-    COPY_ADDR_FROM(param.ipv6_nh, target->gate_addr.bytes);
+    COPY_ADDR_FROM(param.ipv6_nh, target->gate_addr.in6_u.u6_addr8);
     return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
 }
 
@@ -555,8 +556,8 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
     struct mac_value_v6 *mac_value = NULL;
     struct route6_cache_value *target = NULL;
 
-    __builtin_memcpy(search_key.local_addr.bytes, context->saddr.bytes, 16);
-    __builtin_memcpy(search_key.remote_addr.bytes, context->daddr.bytes, 16);
+    __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
+    __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
     // Fist WAN
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
@@ -574,19 +575,22 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
                 tc_cb_mark_forwarded(skb, target->link_chain_id);
 
                 // struct mac_key_v6 search_mac_key = {0};
-                // COPY_ADDR_FROM(search_mac_key.addr.all, wan_ip_info->gateway.all);
+                // COPY_ADDR_FROM(search_mac_key.addr.in6_u.u6_addr32,
+                // wan_ip_info->gateway.in6_u.u6_addr32);
 
                 if (!target_has_mac) {
                     return bpf_redirect(target->ifindex, 0);
                 } else {
-                    COPY_ADDR_FROM(mac_key.addr.bytes, search_key.remote_addr.bytes);
+                    COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
+                                   search_key.remote_addr.in6_u.u6_addr8);
                     mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
                     if (mac_value) {
                         if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
                             return bpf_redirect(target->ifindex, 0);
                         }
                     } else {
-                        COPY_ADDR_FROM(mac_key.addr.bytes, wan_ip_info->gateway.bits);
+                        COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
+                                       wan_ip_info->gateway.in6_u.u6_addr8);
                         mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
                         if (mac_value) {
                             if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
@@ -600,7 +604,7 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
 
                 param.nh_family = AF_INET6;
 
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.bits);
+                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
                 ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
                 return ret;
             }
@@ -633,8 +637,8 @@ static __always_inline int route6_set_cache_in_wan(const struct route6_context *
     struct route6_cache_value *target = NULL;
 
     u32 key = LAN_CACHE;
-    __builtin_memcpy(search_key.local_addr.bytes, context->daddr.bytes, 16);
-    __builtin_memcpy(search_key.remote_addr.bytes, context->saddr.bytes, 16);
+    __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
+    __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
 
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache != NULL) {
@@ -691,8 +695,8 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
     struct route6_cache_value *target = NULL;
     u32 key = WAN_CACHE;
 
-    __builtin_memcpy(search_key.local_addr.bytes, context->saddr.bytes, 16);
-    __builtin_memcpy(search_key.remote_addr.bytes, context->daddr.bytes, 16);
+    __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
+    __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (wan_cache) {
@@ -722,8 +726,8 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
                 new_target_cache.ifindex = slot_target->ifindex;
                 new_target_cache.has_mac = slot_target->has_mac;
                 new_target_cache.is_docker = slot_target->is_docker;
-                __builtin_memcpy(new_target_cache.gate_addr.bytes, slot_target->gate_addr.bytes,
-                                 16);
+                __builtin_memcpy(new_target_cache.gate_addr.in6_u.u6_addr8,
+                                 slot_target->gate_addr.in6_u.u6_addr8, 16);
                 __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
                 new_target_cache.link_chain_id = slot_target->link_chain_id;
             }

@@ -195,10 +195,10 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // Reachable entries), which must never be bound to a claimant's MAC.
     struct route6_lan_key lan_key = {0};
     lan_key.prefixlen = 128;
-    __builtin_memcpy(lan_key.addr.bytes, target, sizeof(target));
+    __builtin_memcpy(lan_key.addr.in6_u.u6_addr8, target, sizeof(target));
     struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
-    union u_inet6_addr target_addr = {0};
-    __builtin_memcpy(target_addr.bytes, target, sizeof(target));
+    struct in6_addr target_addr = {0};
+    __builtin_memcpy(target_addr.in6_u.u6_addr8, target, sizeof(target));
     if (!lan_info || lan_info->route_type != ROUTE_TYPE_LAN ||
         lan_info->ifindex != skb->ingress_ifindex ||
         ip_addr_equal_in6(&lan_info->addr, &target_addr)) {
@@ -215,7 +215,7 @@ int tc_lan_dao(struct __sk_buff *skb) {
     if (!is_target_solicited_node_mac(eth->h_dest, target)) return TC_ACT_UNSPEC;
 
     struct mac_key_v6 key = {0};
-    __builtin_memcpy(key.addr.bytes, target, sizeof(target));
+    __builtin_memcpy(key.addr.in6_u.u6_addr8, target, sizeof(target));
 
     struct mac_value_v6 value = {0};
     value.ifindex = skb->ingress_ifindex;

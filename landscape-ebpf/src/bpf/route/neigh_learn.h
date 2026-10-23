@@ -32,7 +32,7 @@ static __always_inline void learn_src_ip_mac_v4_xdp(struct xdp_md *ctx,
 static __always_inline void learn_src_ip_mac_v6_xdp(struct xdp_md *ctx,
                                                     const struct route6_context *context) {
     struct mac_key_v6 src_key = {};
-    COPY_ADDR_FROM(src_key.addr.bytes, context->saddr.bytes);
+    COPY_ADDR_FROM(src_key.addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8);
     if (bpf_map_lookup_elem(&ip_mac_v6, &src_key) != NULL) return;
 
     void *data = (void *)(long)ctx->data;
@@ -75,7 +75,7 @@ static __always_inline void learn_src_ip_mac_v6_tc(struct __sk_buff *skb,
     if (unlikely(current_l3_offset == 0)) return;
 
     struct mac_key_v6 src_key = {};
-    COPY_ADDR_FROM(src_key.addr.bytes, context->saddr.bytes);
+    COPY_ADDR_FROM(src_key.addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8);
     if (bpf_map_lookup_elem(&ip_mac_v6, &src_key) != NULL) return;
 
     u8 src_mac[6];

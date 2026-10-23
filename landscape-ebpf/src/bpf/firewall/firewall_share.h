@@ -28,8 +28,8 @@ struct {
 #define FIREWALL_CREATE_CONN 1
 #define FIREWALL_DELETE_CONN 2
 // struct firewall_conn_event {
-//     union u_inet_addr src_addr;
-//     union u_inet_addr dst_addr;
+//     struct in6_addr src_addr;
+//     struct in6_addr dst_addr;
 //     u16 src_port;
 //     u16 dst_port;
 //     u64 create_time;
@@ -47,8 +47,8 @@ struct {
 // } firewall_conn_events SEC(".maps");
 
 struct firewall_conn_metric_event {
-    union u_inet_addr src_addr;
-    union u_inet_addr dst_addr;
+    struct in6_addr src_addr;
+    struct in6_addr dst_addr;
     u16 src_port;
     u16 dst_port;
     u64 create_time;

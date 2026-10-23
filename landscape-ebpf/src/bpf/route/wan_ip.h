@@ -16,9 +16,9 @@ struct wan_ip_info_key {
 struct wan_ip_info_value {
     // when IPV4, is IPv4 Address
     // when IPv6, ip IPv6 Prefix
-    union u_inet_addr addr;
+    struct in6_addr addr;
     // always Gateway
-    union u_inet_addr gateway;
+    struct in6_addr gateway;
     // mask length
     u8 mask;
     u8 has_mac;

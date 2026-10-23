@@ -36,7 +36,7 @@ struct flow_match_key {
     u8 _pad[2];
     union {
         // 源 IP 地址
-        union u_inet_addr src_addr;
+        struct in6_addr src_addr;
         // MAC
         struct imac_addr mac;
     };
@@ -81,18 +81,21 @@ static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l
     match_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
     match_key.is_match_ip = FLOW_ENTRY_MODE_IP;
     match_key.prefixlen = FLOW_IP_IPV4_MATCH_LEN;
-    match_key.src_addr.ip = saddr;
+    match_key.src_addr.in6_u.u6_addr32[0] = saddr;
 
     u32 *flow_id_ptr = bpf_map_lookup_elem(&flow_match_map, &match_key);
     if (flow_id_ptr != NULL) {
         ret_flow_id = *flow_id_ptr;
         // if (ret_flow_id == 201) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id, match_key.src_addr.all);
+        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     match_key.src_addr.in6_u.u6_addr32);
         // }
         // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id, match_key.src_addr.all);
+        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     match_key.src_addr.in6_u.u6_addr32);
         // } else {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id, match_key.src_addr.all);
+        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id,
+        //     match_key.src_addr.in6_u.u6_addr32);
         // }
     }
 
@@ -103,8 +106,7 @@ static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l
 }
 
 static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l3_offset,
-                                            const union u_inet6_addr *saddr,
-                                            u32 *default_flow_id_) {
+                                            const struct in6_addr *saddr, u32 *default_flow_id_) {
 #define BPF_LOG_TOPIC "match_flow_id"
     struct flow_match_key match_key = {0};
     u32 ret_flow_id = *default_flow_id_;
@@ -131,15 +133,17 @@ static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l
     match_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
     match_key.is_match_ip = FLOW_ENTRY_MODE_IP;
     match_key.prefixlen = FLOW_IP_IPV6_MATCH_LEN;
-    COPY_ADDR_FROM(match_key.src_addr.all, saddr->bytes);
+    COPY_ADDR_FROM(match_key.src_addr.in6_u.u6_addr32, saddr->in6_u.u6_addr8);
 
     u32 *flow_id_ptr = bpf_map_lookup_elem(&flow_match_map, &match_key);
     if (flow_id_ptr != NULL) {
         ret_flow_id = *flow_id_ptr;
         // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id, match_key.src_addr.all);
+        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     match_key.src_addr.in6_u.u6_addr32);
         // } else {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id, match_key.src_addr.all);
+        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id,
+        //     match_key.src_addr.in6_u.u6_addr32);
         // }
     }
 

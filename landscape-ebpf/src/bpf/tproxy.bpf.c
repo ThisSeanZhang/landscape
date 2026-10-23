@@ -38,14 +38,14 @@ static __always_inline int handle_pkg(struct __sk_buff *skb, struct packet_offse
 
     if (offset->l3_protocol == LANDSCAPE_IPV4_TYPE) {
         tuple_len = sizeof(server.ipv4);
-        server.ipv4.saddr = ip_pair->src_addr.ip;
-        server.ipv4.daddr = ip_pair->dst_addr.ip;
+        server.ipv4.saddr = ip_pair->src_addr.in6_u.u6_addr32[0];
+        server.ipv4.daddr = ip_pair->dst_addr.in6_u.u6_addr32[0];
         server.ipv4.sport = ip_pair->src_port;
         server.ipv4.dport = ip_pair->dst_port;
     } else {
         tuple_len = sizeof(server.ipv6);
-        COPY_ADDR_FROM(server.ipv6.saddr, ip_pair->src_addr.all);
-        COPY_ADDR_FROM(server.ipv6.daddr, ip_pair->dst_addr.all);
+        COPY_ADDR_FROM(server.ipv6.saddr, ip_pair->src_addr.in6_u.u6_addr32);
+        COPY_ADDR_FROM(server.ipv6.daddr, ip_pair->dst_addr.in6_u.u6_addr32);
         server.ipv6.sport = ip_pair->src_port;
         server.ipv6.dport = ip_pair->dst_port;
     }

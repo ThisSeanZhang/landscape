@@ -24,8 +24,8 @@ static __always_inline int nat4_metric_try_report(struct nat4_timer_key *timer_k
         return -1;
     }
 
-    event->src_addr.ip = timer_value->client_addr.addr;
-    event->dst_addr.ip = timer_key->pair_ip.src_addr.addr;
+    event->src_addr.in6_u.u6_addr32[0] = timer_value->client_addr.addr;
+    event->dst_addr.in6_u.u6_addr32[0] = timer_key->pair_ip.src_addr.addr;
     event->src_port = timer_value->client_port;
     event->dst_port = timer_key->pair_ip.src_port;
     event->l4_proto = timer_key->l4proto;

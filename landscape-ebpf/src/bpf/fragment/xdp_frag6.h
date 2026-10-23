@@ -27,8 +27,8 @@ static __always_inline int xdp_frag6_track(const struct scan_ipv6_idx *idx,
     key.l4proto = idx->l4_protocol;
     key.id = idx->fragment_id;
 
-    COPY_ADDR_FROM(key.saddr.all, saddr->in6_u.u6_addr32);
-    COPY_ADDR_FROM(key.daddr.all, daddr->in6_u.u6_addr32);
+    COPY_ADDR_FROM(key.saddr.in6_u.u6_addr32, saddr->in6_u.u6_addr32);
+    COPY_ADDR_FROM(key.daddr.in6_u.u6_addr32, daddr->in6_u.u6_addr32);
 
     struct frag_cache_value *value;
     if (unlikely(idx->fragment_type == FRAG_FIRST)) {

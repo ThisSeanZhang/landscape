@@ -8,7 +8,7 @@
 
 struct route6_lan_key {
     __u32 prefixlen;
-    union u_inet6_addr addr;
+    struct in6_addr addr;
 };
 
 struct route6_lan_info {
@@ -16,7 +16,7 @@ struct route6_lan_info {
     u8 mac_addr[6];
     u8 route_type;
     u32 ifindex;
-    union u_inet6_addr addr;
+    struct in6_addr addr;
 };
 
 struct {

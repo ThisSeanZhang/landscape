@@ -74,10 +74,12 @@ int test_skb_read(struct __sk_buff *skb) {
         result->scan_ret = (int)scan_ipv6_full(skb, current_l3_offset, &result->v6_idx);
 
         if (result->scan_ret == LD_SCAN_OK) {
-            union u_inet6_addr saddr, daddr;
+            struct in6_addr saddr, daddr;
             result->read_l3_ret = skb_read_ipv6_l3(skb, current_l3_offset, &saddr, &daddr);
-            __builtin_memcpy(result->v6_l3_saddr, saddr.all, sizeof(result->v6_l3_saddr));
-            __builtin_memcpy(result->v6_l3_daddr, daddr.all, sizeof(result->v6_l3_daddr));
+            __builtin_memcpy(result->v6_l3_saddr, saddr.in6_u.u6_addr32,
+                             sizeof(result->v6_l3_saddr));
+            __builtin_memcpy(result->v6_l3_daddr, daddr.in6_u.u6_addr32,
+                             sizeof(result->v6_l3_daddr));
             result->read_info_ret =
                 skb_read_ipv6_info(skb, current_l3_offset, &result->v6_idx, &result->v6_info);
         } else {

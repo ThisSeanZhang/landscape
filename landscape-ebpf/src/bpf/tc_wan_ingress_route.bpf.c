@@ -89,13 +89,13 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
+    if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
         return TC_ACT_UNSPEC;
     }
 
     ret = route6_is_current_wan_packet(skb, l3, &context);
     if (ret != TC_ACT_OK) {
-        ld_bpf_log("route6_is_current_wan_packet: %pI6", context.daddr.bytes);
+        ld_bpf_log("route6_is_current_wan_packet: %pI6", context.daddr.in6_u.u6_addr8);
         return ret;
     }
 

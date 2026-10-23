@@ -26,7 +26,7 @@ static __always_inline void xdp_nat6_metric_accumulate(void *data, void *data_en
 
 static __always_inline int xdp_update_ipv6_cache_value(u32 mark, struct inet_pair *ip_pair,
                                                        struct nat6_timer_value *value) {
-    COPY_ADDR_FROM(value->client_prefix, ip_pair->src_addr.bits);
+    COPY_ADDR_FROM(value->client_prefix, ip_pair->src_addr.in6_u.u6_addr8);
     if (!value->is_static) {
         bool is_ancestor = ip_addr_equal_x(&ip_pair->dst_addr, &value->trigger_addr) &&
                            ip_pair->dst_port == value->trigger_port;
@@ -43,8 +43,8 @@ static __always_inline struct nat6_timer_value *
 xdp_lookup_ct6_ingress(u8 l4_protocol, struct inet_pair *ip_pair, u8 npt_id_mask) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->dst_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.bits + 8);
-    key.id_byte = ip_pair->dst_addr.bits[7] & npt_id_mask;
+    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.in6_u.u6_addr8 + 8);
+    key.id_byte = ip_pair->dst_addr.in6_u.u6_addr8[7] & npt_id_mask;
     key.l4_protocol = l4_protocol;
 
     return bpf_map_lookup_elem(&nat6_timer_map, &key);
@@ -55,8 +55,8 @@ xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *i
                        u8 npt_id_mask, const __be64 *client_prefix_hint, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->dst_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.bits + 8);
-    key.id_byte = ip_pair->dst_addr.bits[7] & npt_id_mask;
+    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.in6_u.u6_addr8 + 8);
+    key.id_byte = ip_pair->dst_addr.in6_u.u6_addr8[7] & npt_id_mask;
     key.l4_protocol = l4_protocol;
 
     struct nat6_timer_value new_value = {};
@@ -66,7 +66,7 @@ xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *i
     new_value.gress = NAT_MAPPING_INGRESS;
     new_value.cpu_id = bpf_get_smp_processor_id();
     new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.trigger_addr.bytes, ip_pair->src_addr.all);
+    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr8, ip_pair->src_addr.in6_u.u6_addr32);
     new_value.trigger_port = ip_pair->src_port;
     COPY_ADDR_FROM(new_value.client_prefix, client_prefix_hint);
     new_value.is_allow_reuse = 1;
@@ -80,8 +80,8 @@ static __always_inline struct nat6_timer_value *
 xdp_lookup_ct6_egress(u32 mark, u8 l4_protocol, struct inet_pair *ip_pair, u8 npt_id_mask) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->src_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.bits + 8);
-    key.id_byte = ip_pair->src_addr.bits[7] & npt_id_mask;
+    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.in6_u.u6_addr8 + 8);
+    key.id_byte = ip_pair->src_addr.in6_u.u6_addr8[7] & npt_id_mask;
     key.l4_protocol = l4_protocol;
 
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
@@ -99,8 +99,8 @@ xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip
                       u8 npt_id_mask, u8 is_allow_reuse, bool is_static, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
     key.client_port = ip_pair->src_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.bits + 8);
-    key.id_byte = ip_pair->src_addr.bits[7] & npt_id_mask;
+    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.in6_u.u6_addr8 + 8);
+    key.id_byte = ip_pair->src_addr.in6_u.u6_addr8[7] & npt_id_mask;
     key.l4_protocol = l4_protocol;
 
     struct nat6_timer_value new_value = {};
@@ -110,11 +110,11 @@ xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip
     new_value.gress = NAT_MAPPING_EGRESS;
     new_value.cpu_id = bpf_get_smp_processor_id();
     new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.client_prefix, ip_pair->src_addr.bits);
+    COPY_ADDR_FROM(new_value.client_prefix, ip_pair->src_addr.in6_u.u6_addr8);
     new_value.is_allow_reuse = is_allow_reuse;
     new_value.is_static = is_static ? 1 : 0;
     new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
-    COPY_ADDR_FROM(new_value.trigger_addr.all, ip_pair->dst_addr.all);
+    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr32, ip_pair->dst_addr.in6_u.u6_addr32);
     new_value.trigger_port = ip_pair->dst_port;
 
     return nat6_insert_timer(&key, &new_value);
@@ -229,7 +229,7 @@ do_xdp_nptv6:
         if (nat6_l4_checksum(idx->l4_offset, idx->l4_protocol, &l4_csum_off)) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.all, 8);
+        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.in6_u.u6_addr32, 8);
 
         __be64 new_ip_prefix =
             (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -273,7 +273,7 @@ do_xdp_nptv6:
         if (src_ptr + 8 > data_end) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.all, 8);
+        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.in6_u.u6_addr32, 8);
 
         __be64 new_ip_prefix =
             (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -325,7 +325,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
         xdp_nat6_metric_accumulate(data, data_end, true, ct_value);
 
         __be64 dst_prefix;
-        __builtin_memcpy(&dst_prefix, ip_pair->dst_addr.all, 8);
+        __builtin_memcpy(&dst_prefix, ip_pair->dst_addr.in6_u.u6_addr32, 8);
         if (!ct_value->need_prefix_replace || local_client_prefix == dst_prefix) {
             return ct_is_static ? 1 : 0;
         }
@@ -342,7 +342,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
     if (map_ret == NAT6_STATIC_REPLACE) {
         client_prefix_hint = local_client_prefix;
     } else if (map_ret == NAT6_STATIC_PASS) {
-        COPY_ADDR_FROM(&client_prefix_hint, ip_pair->dst_addr.bits);
+        COPY_ADDR_FROM(&client_prefix_hint, ip_pair->dst_addr.in6_u.u6_addr8);
     }
 
     if (!allow_create) {
@@ -416,7 +416,7 @@ do_xdp_ingress_nptv6:
         if (dst_ptr + 8 > data_end) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->dst_addr.all, 8);
+        __builtin_memcpy(&old_ip_prefix, ip_pair->dst_addr.in6_u.u6_addr32, 8);
 
         __builtin_memcpy(dst_ptr, &local_client_prefix, 8);
 

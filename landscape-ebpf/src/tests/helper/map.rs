@@ -409,7 +409,8 @@ pub(crate) fn seed_flow_match_mac<T: MapCore>(map: &T, mac: [u8; 6], flow_id: u3
 /// FLOW_IP_IPV4_MATCH_LEN).
 ///
 /// Mirrors the BPF key construction (flow_match.h match_flow_id_v4): the IP
-/// branch reuses the MAC-branch `match_key`, so the 4-byte `src_addr.ip`
+/// branch reuses the MAC-branch `match_key`, so the 4-byte
+/// `src_addr.in6_u.u6_addr32[0]`
 /// write leaves `mac[4..6]` in the union tail. Those bytes sit beyond the
 /// 64-bit LPM comparison (8 key header bytes + 4 address bytes), so they do
 /// NOT affect which entries match — the leak is cosmetic, not behavioural.

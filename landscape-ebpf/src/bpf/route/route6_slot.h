@@ -12,7 +12,7 @@ struct route6_slot_key {
 
 struct route6_target_info {
     u32 ifindex;
-    union u_inet6_addr gate_addr;
+    struct in6_addr gate_addr;
     u8 has_mac;
     u8 is_docker;
     u8 mac[6];
@@ -28,8 +28,8 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rt6_slot_map SEC(".maps");
 
-static __always_inline u32 route6_target_slot(const union u_inet6_addr *daddr) {
-    u32 hash = (u32)daddr->all[0] ^ (u32)daddr->all[1];
+static __always_inline u32 route6_target_slot(const struct in6_addr *daddr) {
+    u32 hash = (u32)daddr->in6_u.u6_addr32[0] ^ (u32)daddr->in6_u.u6_addr32[1];
     hash ^= hash >> 16;
     hash ^= hash >> 8;
     return hash & 0xF;

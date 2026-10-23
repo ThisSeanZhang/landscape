@@ -41,7 +41,7 @@ static __always_inline int xdp_route4_is_current_wan_packet(struct xdp_md *ctx,
     key.l3_protocol = LANDSCAPE_IPV4_TYPE;
 
     struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &key);
-    if (wan_info != NULL && wan_info->addr.ip == context->daddr) return XDP_PASS;
+    if (wan_info != NULL && wan_info->addr.in6_u.u6_addr32[0] == context->daddr) return XDP_PASS;
     return 0;
 }
 
@@ -137,8 +137,8 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
     struct route6_lan_key lan_key = {.prefixlen = 128};
     struct mac_key_v6 mac_key = {};
     struct mac_value_v6 *mac_val;
-    COPY_ADDR_FROM(lan_key.addr.bytes, context->daddr.bytes);
-    COPY_ADDR_FROM(mac_key.addr.bytes, context->daddr.bytes);
+    COPY_ADDR_FROM(lan_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
+    COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8);
 
     // ① lan_map lookup
     struct route6_lan_info *lan_info = bpf_map_lookup_elem(&rt6_lan_map, &lan_key);
@@ -163,9 +163,9 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
     }
 
     struct mac_key_v6 hop_key = {};
-    COPY_ADDR_FROM(hop_key.addr.all, lan_info->route_type == ROUTE_TYPE_NEXTHOP
-                                         ? lan_info->addr.all
-                                         : context->daddr.all);
+    COPY_ADDR_FROM(hop_key.addr.in6_u.u6_addr32, lan_info->route_type == ROUTE_TYPE_NEXTHOP
+                                                     ? lan_info->addr.in6_u.u6_addr32
+                                                     : context->daddr.in6_u.u6_addr32);
     mac_val = bpf_map_lookup_elem(&ip_mac_v6, &hop_key);
     if (mac_val) {
         void *data = (void *)(long)ctx->data;
@@ -180,8 +180,8 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
     // fib_lookup to fill MAC when neighbor cache missed
     struct bpf_fib_lookup fib = {};
     fib.family = AF_INET6;
-    COPY_ADDR_FROM(fib.ipv6_src, context->saddr.all);
-    COPY_ADDR_FROM(fib.ipv6_dst, context->daddr.all);
+    COPY_ADDR_FROM(fib.ipv6_src, context->saddr.in6_u.u6_addr32);
+    COPY_ADDR_FROM(fib.ipv6_dst, context->daddr.in6_u.u6_addr32);
     fib.ifindex = ctx->ingress_ifindex;
 
     int rc = bpf_fib_lookup(ctx, &fib, sizeof(fib), 0);
@@ -256,8 +256,8 @@ static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
                                                         const struct route6_context *context,
                                                         u32 link_chain_id) {
     struct route6_cache_key cache_key = {};
-    __builtin_memcpy(cache_key.local_addr.bytes, context->daddr.bytes, 16);
-    __builtin_memcpy(cache_key.remote_addr.bytes, context->saddr.bytes, 16);
+    __builtin_memcpy(cache_key.local_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
+    __builtin_memcpy(cache_key.remote_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
 
     u32 key = LAN_CACHE;
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
@@ -331,7 +331,7 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         struct xdp_pipe_meta meta = {};
         ret = xdp_read_ipv6(ctx, &context);
         if (ret) return ret;
-        if (unlikely(is_broadcast_ip6(context.daddr.bytes))) {
+        if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
             return XDP_PASS;
         }
         ret = xdp_route6_is_current_wan_packet(ctx, &context);

@@ -149,9 +149,9 @@ static __always_inline enum xdp_scan_status xdp_scan_ipv6_full(struct xdp_md *ct
             if (xdp_no_room(outer + 1, data_end)) return XDP_SCAN_ERR;
             if (xdp_no_room(inner_ip6 + 1, data_end)) return XDP_SCAN_ERR;
 
-            inet6_addr outer_daddr, inner_saddr;
-            COPY_ADDR_FROM(outer_daddr.all, outer->daddr.in6_u.u6_addr32);
-            COPY_ADDR_FROM(inner_saddr.all, inner_ip6->saddr.in6_u.u6_addr32);
+            struct in6_addr outer_daddr, inner_saddr;
+            COPY_ADDR_FROM(outer_daddr.in6_u.u6_addr32, outer->daddr.in6_u.u6_addr32);
+            COPY_ADDR_FROM(inner_saddr.in6_u.u6_addr32, inner_ip6->saddr.in6_u.u6_addr32);
 
             if (!inet6_addr_equal(&outer_daddr, &inner_saddr)) return XDP_SCAN_ERR;
             break;

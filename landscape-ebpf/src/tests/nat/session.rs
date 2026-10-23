@@ -420,7 +420,7 @@ fn xdp_nat_dynamic_egress() {
         l4proto: 6,
         _pad: [0; 3],
         src_addr: u32::from_be_bytes([93, 184, 216, 34]).to_be(),
-        dst_addr: u32::from_le_bytes([203, 0, 113, 1]).to_be(),
+        dst_addr: u32::from_be_bytes([203, 0, 113, 1]).to_be(),
         src_port: 80u16.to_be(),
         dst_port: 4096u16.to_be(),
     };

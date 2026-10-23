@@ -21,8 +21,8 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
             ld_bpf_log("ipv4 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
-        ip_pair->dst_addr.ip = iph->daddr;
-        ip_pair->src_addr.ip = iph->saddr;
+        ip_pair->dst_addr.in6_u.u6_addr32[0] = iph->daddr;
+        ip_pair->src_addr.in6_u.u6_addr32[0] = iph->saddr;
 
         if (offset_info->icmp_error_l3_offset > 0) {
             if (VALIDATE_READ_DATA(skb, &iph, offset_info->icmp_error_l3_offset,
@@ -30,7 +30,7 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
                 ld_bpf_log("ipv4 bpf_skb_load_bytes error");
                 return TC_ACT_SHOT;
             }
-            ip_pair->src_addr.ip = iph->daddr;
+            ip_pair->src_addr.in6_u.u6_addr32[0] = iph->daddr;
         }
     } else if (offset_info->l3_protocol == LANDSCAPE_IPV6_TYPE) {
         struct ipv6hdr *ip6h;
@@ -39,8 +39,8 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
             ld_bpf_log("ipv6 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
-        COPY_ADDR_FROM(ip_pair->src_addr.all, ip6h->saddr.in6_u.u6_addr32);
-        COPY_ADDR_FROM(ip_pair->dst_addr.all, ip6h->daddr.in6_u.u6_addr32);
+        COPY_ADDR_FROM(ip_pair->src_addr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
+        COPY_ADDR_FROM(ip_pair->dst_addr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
 
         if (offset_info->icmp_error_l3_offset > 0) {
             if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->icmp_error_l3_offset,
@@ -48,7 +48,7 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
                 ld_bpf_log("ipv6 bpf_skb_load_bytes error");
                 return TC_ACT_SHOT;
             }
-            COPY_ADDR_FROM(ip_pair->src_addr.all, ip6h->daddr.in6_u.u6_addr32);
+            COPY_ADDR_FROM(ip_pair->src_addr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
         }
     } else {
         return TC_ACT_UNSPEC;

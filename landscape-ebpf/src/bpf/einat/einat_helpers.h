@@ -12,16 +12,11 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 
-union u_ld_ip {
-    __be32 all[4];
-    __be32 ip;
-    __be32 ip6[4];
-    u8 bits[16];
-};
-
-static __always_inline bool ld_ip_addr_equal(const union u_ld_ip *a, const union u_ld_ip *b) {
-    return a->all[0] == b->all[0] && a->all[1] == b->all[1] && a->all[2] == b->all[2] &&
-           a->all[3] == b->all[3];
+static __always_inline bool ld_ip_addr_equal(const struct in6_addr *a, const struct in6_addr *b) {
+    return a->in6_u.u6_addr32[0] == b->in6_u.u6_addr32[0] &&
+           a->in6_u.u6_addr32[1] == b->in6_u.u6_addr32[1] &&
+           a->in6_u.u6_addr32[2] == b->in6_u.u6_addr32[2] &&
+           a->in6_u.u6_addr32[3] == b->in6_u.u6_addr32[3];
 }
 
 static __always_inline int icmp_msg_type(struct icmphdr *icmph) {

@@ -7,7 +7,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes};
 use crate::maps::Inet6Bytes;
 
 /// LPM key of `flow_match_map`. The C tail is
-/// `union { u_inet_addr src_addr; struct { u8 mac[6]; } mac; }`, mirrored as
+/// `union { struct in6_addr src_addr; struct { u8 mac[6]; } mac; }`, mirrored as
 /// `[u8; 16]` plus accessors.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]

@@ -157,20 +157,20 @@ static __always_inline enum land_scan_result scan_ipv6_full(struct __sk_buff *sk
             idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
             idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
 
-            union u_ld_ip *temp_addr;
-            union u_ld_ip dst_ip_val, icmp_src_ip_val;
+            struct in6_addr *temp_addr;
+            struct in6_addr dst_ip_val, icmp_src_ip_val;
 
             if (VALIDATE_READ_DATA(skb, &temp_addr, l3_offset + offsetof(struct ipv6hdr, daddr),
-                                   sizeof(union u_ld_ip))) {
+                                   sizeof(struct in6_addr))) {
                 return LD_SCAN_ERR;
             }
-            COPY_ADDR_FROM(dst_ip_val.all, temp_addr->all);
+            COPY_ADDR_FROM(dst_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
             if (VALIDATE_READ_DATA(skb, &temp_addr,
                                    idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr),
-                                   sizeof(union u_ld_ip))) {
+                                   sizeof(struct in6_addr))) {
                 return LD_SCAN_ERR;
             }
-            COPY_ADDR_FROM(icmp_src_ip_val.all, temp_addr->all);
+            COPY_ADDR_FROM(icmp_src_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
 
             if (!ld_ip_addr_equal(&dst_ip_val, &icmp_src_ip_val)) return LD_SCAN_ERR;
             break;
@@ -227,17 +227,17 @@ static __always_inline bool scan_ipv6_upgrade_icmp(struct __sk_buff *skb, u32 l3
     idx->icmp_error_inner_l4_offset = inner_ctx.l4_offset;
     idx->icmp_error_l4_protocol = inner_ctx.l4_protocol;
 
-    union u_ld_ip *temp_addr;
-    union u_ld_ip dst_ip_val, icmp_src_ip_val;
+    struct in6_addr *temp_addr;
+    struct in6_addr dst_ip_val, icmp_src_ip_val;
     if (VALIDATE_READ_DATA(skb, &temp_addr, l3_offset + offsetof(struct ipv6hdr, daddr),
-                           sizeof(union u_ld_ip)))
+                           sizeof(struct in6_addr)))
         return false;
-    COPY_ADDR_FROM(dst_ip_val.all, temp_addr->all);
+    COPY_ADDR_FROM(dst_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
     if (VALIDATE_READ_DATA(skb, &temp_addr,
                            idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr),
-                           sizeof(union u_ld_ip)))
+                           sizeof(struct in6_addr)))
         return false;
-    COPY_ADDR_FROM(icmp_src_ip_val.all, temp_addr->all);
+    COPY_ADDR_FROM(icmp_src_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
 
     if (!ld_ip_addr_equal(&dst_ip_val, &icmp_src_ip_val)) return false;
 

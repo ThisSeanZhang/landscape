@@ -349,9 +349,10 @@ static __always_inline int route4_flow_verdict(struct __sk_buff *skb, u32 curren
                 priority = dns_rule_value->priority;
             }
             // ld_bpf_log("dns_flow_mark is:%d for: %pI4", flow_mark_action,
-            // &cache_key.dst_addr.ip);
+            // &cache_key.dst_addr.in6_u.u6_addr32[0]);
             // } else {
-            // ld_bpf_log("dns_flow_mark is none for: %pI4", &cache_key.dst_addr.ip);
+            // ld_bpf_log("dns_flow_mark is none for: %pI4",
+            // &cache_key.dst_addr.in6_u.u6_addr32[0]);
         }
     } else {
         // ld_bpf_log("flow_id: %d, dns map is empty", *flow_id_ptr);
@@ -490,7 +491,7 @@ static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
     if (wan_ip_info != NULL) {
         // Check if the current DST IP is the IP that enters the WAN network card
         // ld_bpf_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
-        if (wan_ip_info->addr.ip == context->daddr) {
+        if (wan_ip_info->addr.in6_u.u6_addr32[0] == context->daddr) {
             return TC_ACT_UNSPEC;
         }
     }
@@ -585,10 +586,12 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                             return bpf_redirect(target->ifindex, 0);
                         }
                     } else {
-                        mac_value = bpf_map_lookup_elem(&ip_mac_v4, &wan_ip_info->gateway.ip);
+                        mac_value = bpf_map_lookup_elem(&ip_mac_v4,
+                                                        &wan_ip_info->gateway.in6_u.u6_addr32[0]);
                         if (mac_value) {
                             // ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
-                            //            &wan_ip_info->gateway.ip, target->ifindex);
+                            //            &wan_ip_info->gateway.in6_u.u6_addr32[0],
+                            //            target->ifindex);
                             if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
                                 return bpf_redirect(target->ifindex, 0);
                             }
@@ -599,7 +602,7 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                 struct bpf_redir_neigh param;
                 param.nh_family = AF_INET;
 
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.bits);
+                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
                 ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
                 return ret;
             }

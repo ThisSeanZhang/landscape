@@ -3,7 +3,7 @@
 //! test_route_packet).
 //!
 //! Same conventions as `crate::maps`: layouts are pinned by layout
-//! consistency tests; C unions (`u_inet_addr` / `u_inet6_addr` / `in6_addr`) are modeled
+//! consistency tests; the C address type (`struct in6_addr`) is modeled
 //! as `[u8; 16]`; implicit padding is spelled out explicitly. These types are
 //! decode-only, so only `FromBytes` is derived.
 
@@ -332,13 +332,13 @@ mod tests {
             SkbReadTestResult,
             v6_info.src_addr,
             skel::skb_read_test_result,
-            v6_info.src_addr.ip
+            v6_info.src_addr.in6_u.u6_addr32
         );
         assert_field_as!(
             SkbReadTestResult,
             v6_info.dst_addr,
             skel::skb_read_test_result,
-            v6_info.dst_addr.bits
+            v6_info.dst_addr.in6_u.u6_addr8
         );
         assert_field!(SkbReadTestResult, skel::skb_read_test_result, v6_info.src_port);
         assert_field!(SkbReadTestResult, skel::skb_read_test_result, v6_info.dst_port);
@@ -389,13 +389,13 @@ mod tests {
             TproxyPacketTestResult,
             pair.src_addr,
             tproxy_skel::tproxy_packet_test_result,
-            pair.src_addr.ip
+            pair.src_addr.in6_u.u6_addr32
         );
         assert_field_as!(
             TproxyPacketTestResult,
             pair.dst_addr,
             tproxy_skel::tproxy_packet_test_result,
-            pair.dst_addr.bits
+            pair.dst_addr.in6_u.u6_addr8
         );
         assert_field!(
             TproxyPacketTestResult,
@@ -424,13 +424,13 @@ mod tests {
             RoutePacketTestResult,
             v6.saddr,
             route_skel::route_packet_test_result,
-            v6.saddr.ip
+            v6.saddr.in6_u.u6_addr32
         );
         assert_field_as!(
             RoutePacketTestResult,
             v6.daddr,
             route_skel::route_packet_test_result,
-            v6.daddr.bytes
+            v6.daddr.in6_u.u6_addr8
         );
         assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, v6.l4_protocol);
         assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, v6.smac);
@@ -481,7 +481,12 @@ mod tests {
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, timer);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, server_status);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, status);
-        assert_field_as!(Nat6TimerValue, trigger_addr, xdp6::nat6_timer_value, trigger_addr.bytes);
+        assert_field_as!(
+            Nat6TimerValue,
+            trigger_addr,
+            xdp6::nat6_timer_value,
+            trigger_addr.in6_u.u6_addr8
+        );
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, trigger_port);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_allow_reuse);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_static);

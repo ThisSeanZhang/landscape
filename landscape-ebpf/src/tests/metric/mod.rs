@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
 use crate::metric::{ConnectMetricEventSource, EventSourceStopOutcome, MetricSourceHandle};
-use crate::skel::xdp_nat4::types::{nat_conn_metric_event, u_inet_addr};
+use crate::skel::xdp_nat4::types::{in6_addr, nat_conn_metric_event};
 use crate::tests::TestSkb;
 
 pub(crate) mod test_metric_ringbuf {
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn connect_metric_layout_matches_wire() {
-        assert_eq!(size_of::<u_inet_addr>(), 16, "u_inet_addr must be 16 bytes");
+        assert_eq!(size_of::<in6_addr>(), 16, "in6_addr must be 16 bytes");
         assert_eq!(
             size_of::<ConnectMetric>(),
             size_of::<nat_conn_metric_event>(),

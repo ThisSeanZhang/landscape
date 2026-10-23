@@ -46,7 +46,7 @@ int test_route_packet(struct __sk_buff *skb) {
             result.read_ret = route6_read_context_from_scan(skb, &result.offset, &result.v6);
             result.forward_ret =
                 result.read_ret == TC_ACT_OK
-                    ? (is_broadcast_ip6(result.v6.daddr.bytes) ? TC_ACT_UNSPEC : TC_ACT_OK)
+                    ? (is_broadcast_ip6(result.v6.daddr.in6_u.u6_addr8) ? TC_ACT_UNSPEC : TC_ACT_OK)
                     : result.read_ret;
         }
     }

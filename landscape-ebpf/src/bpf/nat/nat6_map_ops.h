@@ -18,9 +18,9 @@ static __always_inline int nat6_l4_checksum(u32 l4_offset, u8 l4_protocol,
     return NAT_OP_OK;
 }
 
-static __always_inline bool nat6_is_same_prefix(const u8 prefix[8], const union u_inet_addr *a,
+static __always_inline bool nat6_is_same_prefix(const u8 prefix[8], const struct in6_addr *a,
                                                 u8 npt_id_mask) {
-    const u8 *b = a->bits;
+    const u8 *b = a->in6_u.u6_addr8;
     u8 prefix_mask = (u8)~npt_id_mask;
     return prefix[0] == b[0] && prefix[1] == b[1] && prefix[2] == b[2] && prefix[3] == b[3] &&
            prefix[4] == b[4] && prefix[5] == b[5] && prefix[6] == b[6] &&
@@ -42,7 +42,7 @@ nat6_check_egress_static(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
     egress_key.l4_protocol = ip_protocol;
 
     egress_key.port = pkt_ip_pair->src_port;
-    __builtin_memcpy(egress_key.ip_suffix, pkt_ip_pair->src_addr.bits + 8, 8);
+    __builtin_memcpy(egress_key.ip_suffix, pkt_ip_pair->src_addr.in6_u.u6_addr8 + 8, 8);
     value = bpf_map_lookup_elem(&nat6_static_map, &egress_key);
     if (value) {
         return value;
@@ -60,7 +60,7 @@ static __always_inline int nat6_check_ingress_static(u8 ip_protocol,
 
     ingress_key.l4_protocol = ip_protocol;
     ingress_key.port = pkt_ip_pair->dst_port;
-    __builtin_memcpy(ingress_key.ip_suffix, pkt_ip_pair->dst_addr.bits + 8, 8);
+    __builtin_memcpy(ingress_key.ip_suffix, pkt_ip_pair->dst_addr.in6_u.u6_addr8 + 8, 8);
 
     value = bpf_map_lookup_elem(&nat6_static_map, &ingress_key);
     if (value) {

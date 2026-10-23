@@ -21,8 +21,8 @@ struct frag_cache_key {
     u8 l4proto;
     u16 _pad;
     u32 id;
-    union u_inet_addr saddr;
-    union u_inet_addr daddr;
+    struct in6_addr saddr;
+    struct in6_addr daddr;
 };
 
 struct frag_cache_value {
