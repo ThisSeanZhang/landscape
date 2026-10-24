@@ -382,6 +382,7 @@ fn main() {
         ("test-route", &["src/bpf/tests/route"]),
         ("test-nat", &["src/bpf/tests/nat", "src/bpf/tests/chain"]),
         ("test-scanner", &["src/bpf/tests/scanner"]),
+        ("test-reader", &["src/bpf/tests/reader"]),
         ("test-chain", &["src/bpf/tests/chain"]),
         ("test-metric", &["src/bpf/tests/metric"]),
         ("test-misc", &["src/bpf/tests/misc"]),

@@ -57,6 +57,7 @@ test-support = []
 test-route = ["test-support"]    # src/bpf/tests/route/
 test-nat = ["test-support"]      # src/bpf/tests/nat/ (+ chain helpers used by session tests)
 test-scanner = ["test-support"]  # src/bpf/tests/scanner/
+test-reader = ["test-support"]   # src/bpf/tests/reader/
 test-chain = ["test-support"]    # src/bpf/tests/chain/ (incl. tc_chain)
 test-metric = ["test-support"]   # src/bpf/tests/metric/
 test-misc = ["test-support"]     # src/bpf/tests/misc/ (time, mark_layout, tproxy, wan_trie_probe, csum)
@@ -66,6 +67,7 @@ bpf-test = [
     "test-route",
     "test-nat",
     "test-scanner",
+    "test-reader",
     "test-chain",
     "test-metric",
     "test-misc",

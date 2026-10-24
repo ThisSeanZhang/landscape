@@ -25,6 +25,8 @@ mod metric;
 mod misc;
 #[cfg(feature = "test-nat")]
 mod nat;
+#[cfg(feature = "test-reader")]
+mod reader;
 #[cfg(feature = "test-route")]
 pub(crate) mod route;
 #[cfg(feature = "test-scanner")]
@@ -74,9 +76,24 @@ pub(crate) mod test_skb_read_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_read.skel.rs"));
 }
 
+#[cfg(feature = "test-reader")]
+pub(crate) mod test_tc_read_head4_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tc_read_head4.skel.rs"));
+}
+
+#[cfg(feature = "test-reader")]
+pub(crate) mod test_tc_read_head6_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tc_read_head6.skel.rs"));
+}
+
 #[cfg(feature = "test-nat")]
 pub(crate) mod test_xdp_nat4_modify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_nat4_modify.skel.rs"));
+}
+
+#[cfg(feature = "test-nat")]
+pub(crate) mod tc_nat4_v4_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/tc_nat4_v4.skel.rs"));
 }
 
 #[cfg(feature = "test-misc")]
