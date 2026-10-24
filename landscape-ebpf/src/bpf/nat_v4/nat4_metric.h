@@ -9,7 +9,7 @@
 
 #define NAPT_METRIC_ACTIVE 1U
 #define NAPT_METRIC_DELETE 2U
-#define NAPT_METRIC_IPV4 1U
+#define NAPT_METRIC_IPV4 0U
 
 struct napt_metric_event {
     struct in6_addr src_addr;
@@ -32,16 +32,18 @@ struct napt_metric_event {
     __u8 gress;
 };
 
+_Static_assert(sizeof(struct napt_metric_event) == 104, "metric event wire size");
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 24);
-} napt_metric_events SEC(".maps");
+} nat_metric_events SEC(".maps");
 
 static __always_inline int napt_metric_try_report(const struct napt_ct_key *key,
                                                   const struct napt_ct_value *value, __u8 status) {
     struct napt_metric_event *event;
 
-    event = bpf_ringbuf_reserve(&napt_metric_events, sizeof(*event), 0);
+    event = bpf_ringbuf_reserve(&nat_metric_events, sizeof(*event), 0);
     if (!event) return -1;
 
     event->src_addr.in6_u.u6_addr32[0] = key->internal_addr;
@@ -70,12 +72,12 @@ static __always_inline void napt_metric_accumulate(struct __sk_buff *skb, u8 gre
                                                    struct napt_ct_value *value) {
     u64 bytes = skb->len;
 
-    if (gress == 0) {
-        __sync_fetch_and_add(&value->egress_bytes, bytes);
-        __sync_fetch_and_add(&value->egress_packets, 1);
-    } else {
+    if (gress == NAPT_GRESS_WAN) {
         __sync_fetch_and_add(&value->ingress_bytes, bytes);
         __sync_fetch_and_add(&value->ingress_packets, 1);
+    } else {
+        __sync_fetch_and_add(&value->egress_bytes, bytes);
+        __sync_fetch_and_add(&value->egress_packets, 1);
     }
 }
 

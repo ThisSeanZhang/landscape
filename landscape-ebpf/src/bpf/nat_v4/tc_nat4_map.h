@@ -8,6 +8,10 @@
 
 #include "base/ipv4.h"
 
+#ifndef ENOENT
+#define ENOENT 2
+#endif
+
 #define NAPT_FROM_WAN_PORT_COUNT 65536U
 #define NAPT_FROM_WAN_UDP_BASE 0U
 #define NAPT_FROM_WAN_TCP_BASE NAPT_FROM_WAN_PORT_COUNT
@@ -18,6 +22,11 @@ enum napt_mapping_kind {
     NAPT_MAPPING_FREE = 0,
     NAPT_MAPPING_DYNAMIC = 1,
     NAPT_MAPPING_STATIC = 2,
+};
+
+enum napt_gress {
+    NAPT_GRESS_WAN = 0,
+    NAPT_GRESS_LAN = 1,
 };
 
 #define NAPT_WAN_STATE_SHIFT 56
@@ -261,18 +270,20 @@ static __always_inline int napt_lan_insert(__be32 internal_addr, __be16 internal
     return bpf_map_update_elem(&napt_from_lan, &key, value, BPF_NOEXIST) == 0 ? 0 : -1;
 }
 
-static __always_inline void napt_lan_delete_dynamic(__be32 internal_addr, __be16 internal_port,
-                                                    __u8 proto, __be16 external_port, __u32 gen) {
+static __always_inline int napt_lan_delete_dynamic(__be32 internal_addr, __be16 internal_port,
+                                                   __u8 proto, __be16 external_port, __u32 gen) {
     struct napt_from_lan_key key = {};
     struct napt_from_lan_value *value;
+    int ret;
 
     napt_lan_key_init(&key, internal_addr, internal_port, proto);
     value = bpf_map_lookup_elem(&napt_from_lan, &key);
     if (!value || value->kind != NAPT_MAPPING_DYNAMIC || value->external_port != external_port ||
         value->generation != gen)
-        return;
+        return 0;
 
-    bpf_map_delete_elem(&napt_from_lan, &key);
+    ret = bpf_map_delete_elem(&napt_from_lan, &key);
+    return ret == 0 || ret == -ENOENT ? 0 : ret;
 }
 
 static __always_inline int napt_queue_pop(__u8 proto, __be16 *port, __u32 *gen) {

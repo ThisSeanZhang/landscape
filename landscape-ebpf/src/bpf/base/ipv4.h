@@ -137,17 +137,16 @@ struct icmp4_error_meta {
     __u8 tcp_phase;
 };
 
-static __always_inline int icmp4_parse_error(struct __sk_buff *skb, __u32 l4_offset, __u32 ip_total,
+static __always_inline int icmp4_parse_error(struct __sk_buff *skb, __u32 l3_offset,
+                                             __u32 l4_offset, __u32 ip_total,
                                              struct icmp4_error_meta *meta) {
-    if (!meta || l4_offset < sizeof(struct ethhdr) || ip_total > ICMP_ERROR_MAX_TOTAL_LEN)
-        return -1;
+    if (!meta || l4_offset < l3_offset || ip_total > ICMP_ERROR_MAX_TOTAL_LEN) return -1;
 
-    __u32 ihl = l4_offset - sizeof(struct ethhdr);
+    __u32 ihl = l4_offset - l3_offset;
     if (ip_total < ihl) return -1;
     __u32 icmp_len = ip_total - ihl;
     if (icmp_len < ICMP_ERROR_HDR_LEN) return -1;
-    if (icmp_len > ICMP_ERROR_MAX_TOTAL_LEN || l4_offset > sizeof(struct ethhdr) + IPV4_HDR_MAX_LEN)
-        return -1;
+    if (icmp_len > ICMP_ERROR_MAX_TOTAL_LEN || l4_offset > l3_offset + IPV4_HDR_MAX_LEN) return -1;
 
     __u32 full_len = l4_offset + icmp_len;
     if (full_len > skb->len) return -1;
@@ -167,7 +166,7 @@ static __always_inline int icmp4_parse_error(struct __sk_buff *skb, __u32 l4_off
         if ((char *)icmp + pull_len > data_end) return -1;
     }
 
-    struct iphdr *iph = (struct iphdr *)(data + sizeof(struct ethhdr));
+    struct iphdr *iph = (struct iphdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) return -1;
     if (ipv4_has_fragment(bpf_ntohs(iph->frag_off))) return -1;
 
@@ -183,7 +182,7 @@ static __always_inline int icmp4_parse_error(struct __sk_buff *skb, __u32 l4_off
     if (eihl < IPV4_HDR_MIN_LEN || eihl > IPV4_HDR_MAX_LEN ||
         ICMP_ERROR_HDR_LEN + eihl + 8U > icmp_len || (char *)emb + eihl > data_end)
         return -1;
-    if (ipv4_has_fragment(bpf_ntohs(emb->frag_off))) return -1;
+    if (ipv4_has_fragment_offset(bpf_ntohs(emb->frag_off))) return -1;
 
     __u32 emb_total = bpf_ntohs(emb->tot_len);
     if (emb_total < eihl + 8U) return -1;

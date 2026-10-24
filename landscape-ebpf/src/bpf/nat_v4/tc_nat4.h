@@ -6,20 +6,16 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "base/mark.h"
 #include "base/tc_act.h"
 #include "reader/skb_ferry.h"
 #include "nat_v4/nat4_ct_timer.h"
 #include "nat_v4/tc_nat4_map.h"
 
-enum napt_gress {
-    NAPT_GRESS_LAN = 0,
-    NAPT_GRESS_WAN = 1,
-};
-
 static __always_inline int napt_create_dynamic_mapping(__u8 proto, __be32 internal_addr,
                                                        __be16 internal_port, __be32 remote_addr,
                                                        __be16 remote_port, __be16 external_port,
-                                                       __u32 gen) {
+                                                       __u32 gen, __u8 allow_reuse) {
     struct napt_from_wan_value wan = {};
     struct napt_from_lan_value lan = {};
     struct napt_from_wan_value *slot = napt_wan_lookup(proto, external_port);
@@ -29,7 +25,7 @@ static __always_inline int napt_create_dynamic_mapping(__u8 proto, __be32 intern
     wan.internal_addr = internal_addr;
     wan.internal_port = internal_port;
     wan.kind = NAPT_MAPPING_DYNAMIC;
-    wan.allow_reuse = 1;
+    wan.allow_reuse = allow_reuse;
     wan.trigger_addr = remote_addr;
     wan.trigger_port = remote_port;
     wan.generation = gen;
@@ -39,7 +35,7 @@ static __always_inline int napt_create_dynamic_mapping(__u8 proto, __be32 intern
 
     lan.external_port = external_port;
     lan.kind = NAPT_MAPPING_DYNAMIC;
-    lan.allow_reuse = 1;
+    lan.allow_reuse = allow_reuse;
     lan.generation = gen;
     lan.trigger_addr = remote_addr;
     lan.trigger_port = remote_port;
@@ -62,7 +58,7 @@ static __always_inline void napt_rollback_new_mapping(__u8 proto, __be32 interna
         napt_state_refs(mapping->state_ref) != 0)
         return;
 
-    napt_lan_delete_dynamic(internal_addr, internal_port, proto, external_port, gen);
+    (void)napt_lan_delete_dynamic(internal_addr, internal_port, proto, external_port, gen);
     napt_wan_clear(proto, external_port);
     napt_queue_push(proto, external_port, gen);
 }
@@ -83,7 +79,7 @@ napt_ct_create(struct __sk_buff *skb, const struct napt_ct_key *key, __be16 exte
     initial.cpu_id = bpf_get_smp_processor_id();
     initial.ifindex = skb ? skb->ifindex : 0;
     initial.gress = gress;
-    initial.flow_id = 0;
+    initial.flow_id = skb ? get_flow_id(skb_mark(skb)) : 0;
 
     value = napt_ct_insert(key, &initial);
     if (!value) return 0;
@@ -97,6 +93,22 @@ napt_ct_create(struct __sk_buff *skb, const struct napt_ct_key *key, __be16 exte
     }
 
     return value;
+}
+
+#define NAPT_IP_MULTICAST_MASK bpf_ntohl(0xF0000000)
+#define NAPT_IP_MULTICAST_BASE bpf_ntohl(0xE0000000)
+
+static __always_inline int napt_is_broadcast_ip4(__be32 addr) {
+    return addr == 0 || addr == 0xffffffff ||
+           (addr & NAPT_IP_MULTICAST_MASK) == NAPT_IP_MULTICAST_BASE;
+}
+
+static __always_inline int napt_dynamic_remote_allowed(const struct napt_from_wan_value *mapping,
+                                                       __be32 remote_addr, __be16 remote_port,
+                                                       __u8 proto) {
+    if (proto == IPV4_PROTO_ICMP || mapping->kind != NAPT_MAPPING_DYNAMIC) return 1;
+    return mapping->allow_reuse ||
+           (mapping->trigger_addr == remote_addr && mapping->trigger_port == remote_port);
 }
 
 static __always_inline int napt_dynamic_mapping_usable(const struct napt_from_wan_value *mapping,

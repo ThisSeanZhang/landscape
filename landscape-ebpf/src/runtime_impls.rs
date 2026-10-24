@@ -80,8 +80,9 @@ impl NatDataplane for EbpfNatDataplane {
         &self,
         configs: &[landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config],
     ) {
+        self.rt.notify_static_nat4();
         if let Err(e) = maps::nat::reconcile_static_nat4_map(&self.rt.paths, configs) {
-            tracing::error!("reconcile static nat4 map error: {e:?}");
+            tracing::error!("reconcile legacy static nat4 map error: {e:?}");
         }
     }
 

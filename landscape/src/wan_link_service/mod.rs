@@ -39,6 +39,7 @@ use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
 use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, LDIAPrefix};
 use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_database::provider::LandscapeDBServiceProvider;
+use landscape_database::static_nat_mapping_v4::repository::StaticNatMappingV4Repository;
 use landscape_database::wan_link::repository::WanLinkRepository;
 use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 use landscape_ebpf::runtime::EbpfRuntime;
@@ -118,6 +119,7 @@ pub struct WanLinkService {
     config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
     status_store: WanLinkStatusStore,
     runtime_status_store: WanLinkRuntimeStatusStore,
+    static_nat4_store: StaticNatMappingV4Repository,
 }
 
 impl WanLinkService {
@@ -133,6 +135,7 @@ impl WanLinkService {
         config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
         status_store: WanLinkStatusStore,
         runtime_status_store: WanLinkRuntimeStatusStore,
+        static_nat4_store: StaticNatMappingV4Repository,
     ) -> Self {
         Self {
             route_service,
@@ -145,6 +148,7 @@ impl WanLinkService {
             config_channels,
             status_store,
             runtime_status_store,
+            static_nat4_store,
         }
     }
 }
@@ -297,10 +301,14 @@ impl ServiceStarterTrait for WanLinkService {
                 let dataplane = dataplane.clone();
                 let nat_runtime = sections.nat4_slot();
                 let state_rx = state_rx.clone();
+                let ebpf_rt = self.ebpf_rt.clone();
+                let static_nat4_store = self.static_nat4_store.clone();
                 Arc::new(move |iface, cfg, status| {
                     let dataplane = dataplane.clone();
                     let nat_runtime = nat_runtime.clone();
                     let mut state_rx = state_rx.clone();
+                    let ebpf_rt = ebpf_rt.clone();
+                    let static_nat4_store = static_nat4_store.clone();
                     Box::pin(async move {
                         let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                         // The ready gate guarantees a v4 lease; read its
@@ -316,8 +324,17 @@ impl ServiceStarterTrait for WanLinkService {
                                 return;
                             }
                         };
-                        nat4::run(iface, runtime.nat, wan_addr, status, dataplane, nat_runtime)
-                            .await;
+                        nat4::run(
+                            iface,
+                            runtime.nat,
+                            wan_addr,
+                            status,
+                            dataplane,
+                            nat_runtime,
+                            static_nat4_store,
+                            ebpf_rt.subscribe_static_nat4(),
+                        )
+                        .await;
                     })
                 })
             },
@@ -1038,6 +1055,7 @@ impl WanLinkServiceManagerService {
         shared_wan_iid: Arc<u64>,
     ) -> Self {
         let store = store_service.wan_link_store();
+        let static_nat4_store = store_service.static_nat_mapping_v4_store();
 
         let (iface_events, _) = broadcast::channel(128);
         let config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>> =
@@ -1056,6 +1074,7 @@ impl WanLinkServiceManagerService {
             config_channels.clone(),
             status_store.clone(),
             runtime_status_store.clone(),
+            static_nat4_store,
         );
         let service = ServiceManager::init(store.list().await.unwrap(), starter).await;
 

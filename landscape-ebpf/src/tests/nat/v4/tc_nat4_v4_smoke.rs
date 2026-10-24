@@ -9,7 +9,7 @@ use libbpf_rs::{
 use crate::tests::pkt::*;
 use crate::tests::tc_nat4_v4_skel::TcNat4V4SkelBuilder;
 
-const TC_ACT_OK: i32 = 0;
+const TC_ACT_UNSPEC: i32 = -1;
 const TC_ACT_SHOT: i32 = 2;
 
 const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
@@ -44,5 +44,5 @@ fn loads_and_reaches_lan_state_stage() {
 #[test]
 fn passes_non_ipv4() {
     let mut pkt = build_ipv6_udp_eth();
-    assert_eq!(run_lan(&mut pkt), TC_ACT_OK);
+    assert_eq!(run_lan(&mut pkt), TC_ACT_UNSPEC);
 }

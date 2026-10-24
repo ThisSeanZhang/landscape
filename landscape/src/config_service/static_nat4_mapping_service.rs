@@ -22,6 +22,8 @@ use uuid::Uuid;
 pub struct StaticNat4MappingService {
     store: StaticNatMappingV4Repository,
     dataplane: Arc<dyn NatDataplane>,
+    last_runtime_configs:
+        Arc<std::sync::Mutex<Option<Vec<landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config>>>>,
 }
 
 impl StaticNat4MappingService {
@@ -33,6 +35,7 @@ impl StaticNat4MappingService {
         let service = Self {
             store: store_provider.static_nat_mapping_v4_store(),
             dataplane,
+            last_runtime_configs: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let is_empty = service.store.list().await.is_ok_and(|l| l.is_empty());
@@ -105,7 +108,18 @@ impl StaticNat4MappingService {
             }
         };
 
-        self.dataplane.sync_static_nat4(&configs);
+        let changed = {
+            let mut last = self.last_runtime_configs.lock().unwrap();
+            if last.as_ref() == Some(&configs) {
+                false
+            } else {
+                *last = Some(configs.clone());
+                true
+            }
+        };
+        if changed {
+            self.dataplane.sync_static_nat4(&configs);
+        }
     }
 }
 

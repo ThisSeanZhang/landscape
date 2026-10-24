@@ -38,6 +38,9 @@ pub mod tc_mss;
 #[path = "../bpf_rs/tc_nat4.skel.rs"]
 pub mod tc_nat4;
 #[rustfmt::skip]
+#[path = "../bpf_rs/tc_nat4_v4.skel.rs"]
+pub mod tc_nat4_v4;
+#[rustfmt::skip]
 #[path = "../bpf_rs/tc_nat6.skel.rs"]
 pub mod tc_nat6;
 #[rustfmt::skip]

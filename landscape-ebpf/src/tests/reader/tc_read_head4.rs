@@ -57,7 +57,26 @@ fn run_reader_seq(payloads: &[&[u8]], direction: u32) -> Vec<TcReadHead4Result> 
 }
 
 fn run_reader(payload: &[u8], direction: u32) -> TcReadHead4Result {
-    run_reader_seq(&[payload], direction).remove(0)
+    run_reader_at(payload, direction, L3_OFFSET)
+}
+
+fn run_reader_at(payload: &[u8], direction: u32, l3_offset: u32) -> TcReadHead4Result {
+    let builder = TestTcReadHead4SkelBuilder::default();
+    let mut open_object = MaybeUninit::uninit();
+    let mut open = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.current_l3_offset = l3_offset;
+        rodata.current_direction = direction;
+    }
+    let skel = open.load().unwrap();
+    let prog = &skel.progs.test_tc_read_head4;
+    let mut data = payload.to_vec();
+    let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+    prog.test_run(input).expect("test_run failed");
+    let bytes =
+        skel.maps.reader_test_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).unwrap().unwrap();
+    TcReadHead4Result::read_from_bytes(&bytes).unwrap()
 }
 
 fn assert_read_ok(r: &TcReadHead4Result) {
@@ -153,6 +172,16 @@ fn build_ipv4_frag_nonfirst_tcp_eth() -> Vec<u8> {
     bytes
 }
 
+fn build_ipv4_tcp_noeth() -> Vec<u8> {
+    let builder = PacketBuilder::ipv4([192, 168, 1, 1], [192, 168, 1, 2], 64)
+        .tcp(21, 1234, 12345, 4000)
+        .syn();
+    let payload = [0u8; 0];
+    let mut bytes = Vec::with_capacity(builder.size(payload.len()));
+    builder.write(&mut bytes, &payload).unwrap();
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +211,21 @@ mod tests {
         let r = run_reader(&pkt, DIR_LAN);
         assert_read_ok(&r);
         assert_eq!(r.l4_protocol, 6);
+        assert_eq!(r.tcp_phase, TCP_PHASE_SYN);
+    }
+
+    #[test]
+    fn reader_v4_tcp_without_ethernet() {
+        let pkt = build_ipv4_tcp_noeth();
+        let r = run_reader_at(&pkt, DIR_LAN, 0);
+        assert_read_ok(&r);
+        assert_eq!(r.src_addr.to_ne_bytes(), [192, 168, 1, 1]);
+        assert_eq!(r.dst_addr.to_ne_bytes(), [192, 168, 1, 2]);
+        assert_eq!(r.l3_offset, 0);
+        assert_eq!(r.l4_offset, 20);
+        assert_eq!(r.l4_protocol, 6);
+        assert_eq!(be16(r.sport), 21);
+        assert_eq!(be16(r.dport), 1234);
         assert_eq!(r.tcp_phase, TCP_PHASE_SYN);
     }
 
@@ -278,6 +322,42 @@ mod tests {
         assert_eq!(r.icmp_inner_l4_offset, 62);
         assert_eq!(r.icmp_inner_l4_protocol, 17);
         assert_eq!(r.tcp_phase, TCP_PHASE_NONE);
+        assert_eq!(r.ports_valid, 1);
+    }
+
+    #[test]
+    fn reader_v4_icmp_error_without_ethernet() {
+        let eth = build_icmpv4_error_with_inner_ipv4_eth();
+        let pkt = &eth[14..];
+        let r = run_reader_at(pkt, DIR_LAN, 0);
+        assert_read_ok(&r);
+        assert_eq!(r.src_addr.to_ne_bytes(), [10, 0, 0, 2]);
+        assert_eq!(r.dst_addr.to_ne_bytes(), [10, 0, 0, 1]);
+        assert_eq!(r.l4_offset, 20);
+        assert_eq!(r.l4_protocol, 17);
+        assert_eq!(be16(r.sport), 4321);
+        assert_eq!(be16(r.dport), 1234);
+        assert_eq!(r.icmp_inner_l4_offset, 48);
+        assert_eq!(r.icmp_inner_l4_protocol, 17);
+        assert_eq!(r.ports_valid, 1);
+    }
+
+    #[test]
+    fn reader_v4_icmp_error_inner_first_fragment() {
+        let mut pkt = build_icmpv4_error_with_inner_ipv4_eth();
+        let inner_off = L3_OFFSET as usize + 20 + 8;
+        let frag_off = u16::from_be_bytes([pkt[inner_off + 6], pkt[inner_off + 7]]);
+        pkt[inner_off + 6..inner_off + 8].copy_from_slice(&(frag_off | 0x2000_u16).to_be_bytes());
+
+        let r = run_reader(&pkt, DIR_LAN);
+        assert_read_ok(&r);
+        assert_eq!(r.src_addr.to_ne_bytes(), [10, 0, 0, 2]);
+        assert_eq!(r.dst_addr.to_ne_bytes(), [10, 0, 0, 1]);
+        assert_eq!(r.l4_protocol, 17);
+        assert_eq!(be16(r.sport), 4321);
+        assert_eq!(be16(r.dport), 1234);
+        assert_eq!(r.icmp_inner_l4_offset, 62);
+        assert_eq!(r.icmp_inner_l4_protocol, 17);
         assert_eq!(r.ports_valid, 1);
     }
 

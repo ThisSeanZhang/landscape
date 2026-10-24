@@ -90,7 +90,7 @@ int bench_nat4_v4_wan_steady(struct __sk_buff *skb) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_wan_state(skb, &cb, src_addr, &new_addr, &new_port);
+    int rc = napt_wan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_OK && new_port == bpf_htons(12345) ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }
@@ -128,7 +128,7 @@ int bench_nat4_v4_wan_miss(struct __sk_buff *skb) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_wan_state(skb, &cb, src_addr, &new_addr, &new_port);
+    int rc = napt_wan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_SHOT ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }

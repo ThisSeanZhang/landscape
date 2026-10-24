@@ -35,9 +35,11 @@
 
 static __always_inline int tc_read_ipv4_icmp_error(struct __sk_buff *skb, struct skb_ferry_cb *cb,
                                                    __be32 *src_addr, __be32 *dst_addr,
-                                                   __u32 l4_offset, __u32 ip_total) {
+                                                   __u32 l3_offset, __u32 l4_offset,
+                                                   __u32 ip_total) {
     struct icmp4_error_meta meta = {};
-    if (!cb || !src_addr || !dst_addr || icmp4_parse_error(skb, l4_offset, ip_total, &meta) < 0)
+    if (!cb || !src_addr || !dst_addr || l4_offset < l3_offset ||
+        icmp4_parse_error(skb, l3_offset, l4_offset, ip_total, &meta) < 0)
         return -1;
 
     *src_addr = meta.src_addr;
@@ -55,22 +57,24 @@ static __always_inline int tc_read_ipv4_icmp_error(struct __sk_buff *skb, struct
 static __always_inline int tc_read_ipv4(struct __sk_buff *skb, struct skb_ferry_cb *cb,
                                         __be32 *src_addr, __be32 *dst_addr, __u32 l3_offset,
                                         __u8 direction) {
-    if (!cb || !src_addr || !dst_addr || l3_offset < sizeof(struct ethhdr) ||
+    if (!cb || !src_addr || !dst_addr || (l3_offset != 0 && l3_offset < sizeof(struct ethhdr)) ||
         l3_offset > 255U - sizeof(struct iphdr))
         return 0;
 
     char *data = (char *)(long)skb->data;
     char *data_end = (char *)(long)skb->data_end;
-    struct ethhdr *eth = (struct ethhdr *)data;
-    if ((char *)(eth + 1) > data_end) {
-        __u32 need = l3_offset + sizeof(struct iphdr);
-        if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return 0;
-        data = (char *)(long)skb->data;
-        data_end = (char *)(long)skb->data_end;
-        eth = (struct ethhdr *)data;
-        if ((char *)(eth + 1) > data_end) return 0;
+    if (l3_offset != 0) {
+        struct ethhdr *eth = (struct ethhdr *)data;
+        if ((char *)(eth + 1) > data_end) {
+            __u32 need = l3_offset + sizeof(struct iphdr);
+            if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return 0;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            eth = (struct ethhdr *)data;
+            if ((char *)(eth + 1) > data_end) return 0;
+        }
+        if (eth->h_proto != bpf_htons(ETH_P_IP)) return 0;
     }
-    if (eth->h_proto != bpf_htons(ETH_P_IP)) return 0;
 
     struct iphdr *iph = (struct iphdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) {
@@ -181,7 +185,8 @@ static __always_inline int tc_read_ipv4(struct __sk_buff *skb, struct skb_ferry_
         __u8 query_type = ICMP_ECHO_REPLY;
         if (direction == LAND_NAT_FRAG_FROM_LAN) query_type = ICMP_ECHO_REQUEST;
         if (icmp->type == ICMP_DEST_UNREACH || icmp->type == ICMP_TIME_EXCEEDED) {
-            if (tc_read_ipv4_icmp_error(skb, cb, src_addr, dst_addr, l4_offset, ip_total) < 0)
+            if (tc_read_ipv4_icmp_error(skb, cb, src_addr, dst_addr, l3_offset, l4_offset,
+                                        ip_total) < 0)
                 return 0;
         } else if (icmp->type == query_type && icmp->code == ICMP_ECHO_CODE) {
             cb->sport = icmp->un.echo.id;

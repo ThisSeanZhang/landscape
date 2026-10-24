@@ -221,11 +221,19 @@ impl WanLinkDataplane {
         has_eth_header: bool,
         config: &NatConfig,
         wan_addr: Ipv4Addr,
+        static_configs: &[landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config],
     ) -> Result<Box<dyn DataplaneGuard>, String> {
         self.observe(ifindex, has_eth_header);
-        crate::stages::nat4::attach_nat4(self, ifindex, has_eth_header, config, wan_addr)
-            .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
-            .map_err(|e| e.to_string())
+        crate::stages::nat4::attach_nat4(
+            self,
+            ifindex,
+            has_eth_header,
+            config,
+            wan_addr,
+            static_configs,
+        )
+        .map(|handle| Box::new(handle) as Box<dyn DataplaneGuard>)
+        .map_err(|e| e.to_string())
     }
 
     pub fn attach_nat6(

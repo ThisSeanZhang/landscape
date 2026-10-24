@@ -15,6 +15,7 @@ use crate::tests::tc_nat4_v4_skel::{TcNat4V4Skel, TcNat4V4SkelBuilder};
 
 const TC_ACT_OK: i32 = 0;
 const TC_ACT_SHOT: i32 = 2;
+const TC_ACT_UNSPEC: i32 = -1;
 
 const PROTO_ICMP: u8 = 1;
 const PROTO_TCP: u8 = 6;
@@ -357,12 +358,44 @@ fn seed_static(
     skel.maps.napt_from_wan.update(&wan_key, &wan, MapFlags::ANY).unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
+fn seed_dynamic(
+    skel: &TcNat4V4Skel<'_>,
+    proto: u8,
+    internal_addr: Ipv4Addr,
+    internal_port: u16,
+    external_port: u16,
+    remote_addr: Ipv4Addr,
+    remote_port: u16,
+    allow_reuse: u8,
+) {
+    let mut lan = [0u8; 16];
+    lan[0..2].copy_from_slice(&external_port.to_be_bytes());
+    lan[2] = KIND_DYNAMIC;
+    lan[3] = allow_reuse;
+    lan[8..12].copy_from_slice(&remote_addr.octets());
+    lan[12..14].copy_from_slice(&remote_port.to_be_bytes());
+    let lan_key = from_lan_key(internal_addr, internal_port, proto);
+    skel.maps.napt_from_lan.update(&lan_key, &lan, MapFlags::ANY).unwrap();
+
+    let mut wan = [0u8; 32];
+    wan[0..4].copy_from_slice(&internal_addr.octets());
+    wan[4..6].copy_from_slice(&internal_port.to_be_bytes());
+    wan[6] = KIND_DYNAMIC;
+    wan[7] = allow_reuse;
+    wan[8..12].copy_from_slice(&remote_addr.octets());
+    wan[12..14].copy_from_slice(&remote_port.to_be_bytes());
+    wan[24..32].copy_from_slice(&((STATE_ACTIVE << STATE_SHIFT) | 1).to_ne_bytes());
+    let wan_key = from_wan_index(proto, external_port).to_ne_bytes();
+    skel.maps.napt_from_wan.update(&wan_key, &wan, MapFlags::ANY).unwrap();
+}
+
 #[test]
 fn lan_udp_create_and_wan_reverse() {
     with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
         let (ret, out) =
             run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         let out = parse_udp(&out);
         assert_eq!(out.src, WAN_IP);
         assert_eq!(out.dst, REMOTE_IP);
@@ -423,14 +456,14 @@ fn lan_tcp_syn_and_ack() {
             &skel.progs.tc_v4_from_lan,
             &tcp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, TCP_REMOTE_PORT, true),
         );
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         assert_eq!(parse_tcp_ports(&out), (TCP_NAT_PORT, TCP_REMOTE_PORT));
 
         let (ret, out) = run(
             &skel.progs.tc_v4_from_lan,
             &tcp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, TCP_REMOTE_PORT, false),
         );
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         assert_eq!(parse_tcp_ports(&out), (TCP_NAT_PORT, TCP_REMOTE_PORT));
 
         let key = ct_key(LAN_HOST, LAN_PORT, REMOTE_IP, TCP_REMOTE_PORT, PROTO_TCP);
@@ -450,7 +483,7 @@ fn lan_icmp_query_and_wan_reply() {
     with_skel(&[], &[], &[ICMP_EXTERNAL_ID], |skel| {
         let (ret, out) =
             run(&skel.progs.tc_v4_from_lan, &icmp_pkt(LAN_HOST, REMOTE_IP, ICMP_INTERNAL_ID, true));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         let (dst, id) = parse_icmp_dst_id(&out);
         assert_eq!(dst, REMOTE_IP);
         assert_eq!(id, ICMP_EXTERNAL_ID);
@@ -471,7 +504,7 @@ fn lan_static_udp_and_wan_reverse() {
 
         let (ret, out) =
             run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         let out = parse_udp(&out);
         assert_eq!(out.src, WAN_IP);
         assert_eq!(out.sport, UDP_NAT_PORT);
@@ -493,13 +526,13 @@ fn lan_static_udp_and_wan_reverse() {
 fn lan_udp_fragment_first_and_nonfirst() {
     with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
         let (ret, out) = run(&skel.progs.tc_v4_from_lan, &ipv4_frag_udp(true, 0x7777));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         assert_eq!(parse_ipv4_src(&out), WAN_IP);
         let sport = u16::from_be_bytes([out[34], out[35]]);
         assert_eq!(sport, UDP_NAT_PORT);
 
         let (ret, out) = run(&skel.progs.tc_v4_from_lan, &ipv4_frag_udp(false, 0x7777));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         assert_eq!(parse_ipv4_src(&out), WAN_IP);
     });
 }
@@ -518,7 +551,7 @@ fn wan_icmp_error_rewrites_inner_udp_tuple() {
     with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
         let (ret, _) =
             run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
 
         let pkt = icmp_error_wan(WAN_IP, REMOTE_IP, UDP_NAT_PORT, REMOTE_PORT, REMOTE_IP, WAN_IP);
         let (ret, out) = run(&skel.progs.tc_v4_from_wan, &pkt);
@@ -538,7 +571,7 @@ fn closed_mapping_is_not_reused_and_requeued_generation_advances() {
     with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
         let (ret, _) =
             run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
 
         let wan_key = from_wan_index(PROTO_UDP, UDP_NAT_PORT).to_ne_bytes();
         let ct_key = ct_key(LAN_HOST, LAN_PORT, REMOTE_IP, REMOTE_PORT, PROTO_UDP);
@@ -564,7 +597,7 @@ fn closed_mapping_is_not_reused_and_requeued_generation_advances() {
 
         let (ret, out) =
             run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
-        assert_eq!(ret, TC_ACT_OK);
+        assert_eq!(ret, TC_ACT_UNSPEC);
         assert_eq!(parse_udp(&out).sport, UDP_NAT_PORT);
 
         let val = skel.maps.napt_from_lan.lookup(&lan_key, MapFlags::ANY).unwrap().unwrap();
@@ -580,5 +613,93 @@ fn unallocated_wan_slot_is_free() {
         let key = from_wan_index(PROTO_UDP, UDP_NAT_PORT).to_ne_bytes();
         let val = skel.maps.napt_from_wan.lookup(&key, MapFlags::ANY).unwrap().unwrap();
         assert_eq!(parse_wan_value(&val).kind, KIND_FREE);
+    });
+}
+
+#[test]
+fn static_wildcard_wan_keeps_original_destination() {
+    with_skel(&[], &[], &[], |skel| {
+        seed_static(skel, PROTO_UDP, Ipv4Addr::UNSPECIFIED, LAN_PORT, UDP_NAT_PORT);
+
+        let (ret, out) =
+            run(&skel.progs.tc_v4_from_wan, &udp_pkt(REMOTE_IP, WAN_IP, REMOTE_PORT, UDP_NAT_PORT));
+        assert_eq!(ret, TC_ACT_OK);
+        let out = parse_udp(&out);
+        assert_eq!(out.dst, WAN_IP, "wildcard static must keep the original destination");
+        assert_eq!(out.dport, LAN_PORT);
+    });
+}
+
+#[test]
+fn lan_broadcast_is_not_natted() {
+    with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
+        let broadcast = Ipv4Addr::new(255, 255, 255, 255);
+        let (ret, _) =
+            run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, broadcast, LAN_PORT, REMOTE_PORT));
+        assert_eq!(ret, TC_ACT_UNSPEC);
+
+        let key = from_wan_index(PROTO_UDP, UDP_NAT_PORT).to_ne_bytes();
+        let wan = skel.maps.napt_from_wan.lookup(&key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(wan[6], KIND_FREE);
+    });
+}
+
+#[test]
+fn dynamic_mapping_without_allow_reuse_rejects_other_remote() {
+    with_skel(&[], &[], &[], |skel| {
+        let other_remote = Ipv4Addr::new(10, 0, 0, 2);
+        seed_dynamic(skel, PROTO_UDP, LAN_HOST, LAN_PORT, UDP_NAT_PORT, REMOTE_IP, REMOTE_PORT, 0);
+
+        let (ret, _) = run(
+            &skel.progs.tc_v4_from_lan,
+            &udp_pkt(LAN_HOST, other_remote, LAN_PORT, REMOTE_PORT),
+        );
+        assert_eq!(ret, TC_ACT_SHOT);
+
+        let (ret, _) =
+            run(&skel.progs.tc_v4_from_lan, &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT));
+        assert_eq!(ret, TC_ACT_UNSPEC);
+    });
+}
+
+#[test]
+fn dynamic_mapping_with_allow_reuse_accepts_other_remote() {
+    with_skel(&[], &[], &[], |skel| {
+        let other_remote = Ipv4Addr::new(10, 0, 0, 2);
+        seed_dynamic(skel, PROTO_UDP, LAN_HOST, LAN_PORT, UDP_NAT_PORT, REMOTE_IP, REMOTE_PORT, 1);
+
+        let (ret, _) = run(
+            &skel.progs.tc_v4_from_lan,
+            &udp_pkt(LAN_HOST, other_remote, LAN_PORT, REMOTE_PORT),
+        );
+        assert_eq!(ret, TC_ACT_UNSPEC);
+    });
+}
+
+#[test]
+fn dynamic_mapping_without_allow_reuse_rejects_other_wan_source() {
+    with_skel(&[], &[], &[], |skel| {
+        let other_remote = Ipv4Addr::new(10, 0, 0, 2);
+        seed_dynamic(skel, PROTO_UDP, LAN_HOST, LAN_PORT, UDP_NAT_PORT, REMOTE_IP, REMOTE_PORT, 0);
+
+        let (ret, _) = run(
+            &skel.progs.tc_v4_from_wan,
+            &udp_pkt(other_remote, WAN_IP, REMOTE_PORT, UDP_NAT_PORT),
+        );
+        assert_eq!(ret, TC_ACT_SHOT);
+    });
+}
+
+#[test]
+fn lan_broadcast_mac_is_not_natted() {
+    with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
+        let mut pkt = udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT);
+        pkt[0..6].fill(0xff);
+        let (ret, _) = run(&skel.progs.tc_v4_from_lan, &pkt);
+        assert_eq!(ret, TC_ACT_UNSPEC);
+
+        let key = from_wan_index(PROTO_UDP, UDP_NAT_PORT).to_ne_bytes();
+        let wan = skel.maps.napt_from_wan.lookup(&key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(wan[6], KIND_FREE);
     });
 }

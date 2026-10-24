@@ -29,9 +29,15 @@ async fn main() {
     )
     .expect("stand up wan link dataplane");
 
-    let nat4 =
-        landscape_ebpf::stages::nat4::attach_nat4(&dp, ifindex, true, &NatConfig::default(), addr)
-            .expect("failed to start nat4 test");
+    let nat4 = landscape_ebpf::stages::nat4::attach_nat4(
+        &dp,
+        ifindex,
+        true,
+        &NatConfig::default(),
+        addr,
+        &[],
+    )
+    .expect("failed to start nat4 test");
     let nat6 = landscape_ebpf::stages::nat6::attach_nat6(
         &dp,
         ifindex,

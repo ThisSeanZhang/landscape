@@ -127,8 +127,11 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
     }
 
     if (current == NAPT_CT_DELETE_EGRESS) {
-        napt_lan_delete_dynamic(key->internal_addr, key->internal_port, key->proto,
-                                value->external_port, value->from_wan_gen);
+        if (napt_lan_delete_dynamic(key->internal_addr, key->internal_port, key->proto,
+                                    value->external_port, value->from_wan_gen) != 0)
+            return napt_ct_restart(value, current, current, NAPT_DELETE_RETRY_INTERVAL_NS,
+                                   next_timeout);
+
         return napt_ct_restart(value, current, NAPT_CT_DELETE_INGRESS,
                                NAPT_DELETE_RETRY_INTERVAL_NS, next_timeout);
     }
@@ -225,12 +228,12 @@ static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gre
     __u64 *modify_state;
     __u64 next_state;
 
-    if (gress == 0) {
-        current_state = value->client_status;
-        modify_state = &value->client_status;
-    } else {
+    if (gress == NAPT_GRESS_WAN) {
         current_state = value->server_status;
         modify_state = &value->server_status;
+    } else {
+        current_state = value->client_status;
+        modify_state = &value->client_status;
     }
 
     next_state = current_state;

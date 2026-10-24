@@ -13,6 +13,8 @@
 
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
+
 use crate::LandscapeMapPath;
 use crate::bpf_error::LdEbpfResult;
 use crate::maps;
@@ -62,6 +64,7 @@ pub struct EbpfRuntime {
     /// Per-iface XDP slot arbitration (native vs SKB fallback).
     pub(crate) xdp_attach: Arc<XdpAttach>,
     pub(crate) try_native_xdp: Option<Vec<i32>>,
+    static_nat4_tx: broadcast::Sender<()>,
 }
 
 impl EbpfRuntime {
@@ -89,7 +92,14 @@ impl EbpfRuntime {
         let wan_trie = Arc::new(WanTrieDispatcher::new());
         let backbone = Arc::new(RouteBackbone::new(paths.clone(), wan_trie)?);
         let xdp_attach = Arc::new(XdpAttach::new(paths.clone(), try_native_xdp.clone()));
-        Ok(Self { paths, backbone, xdp_attach, try_native_xdp })
+        let (static_nat4_tx, _) = broadcast::channel(16);
+        Ok(Self {
+            paths,
+            backbone,
+            xdp_attach,
+            try_native_xdp,
+            static_nat4_tx,
+        })
     }
 
     /// The shared route dispatch substrate.
@@ -105,6 +115,17 @@ impl EbpfRuntime {
     /// Shared map pin paths.
     pub fn paths(&self) -> &Arc<LandscapeMapPath> {
         &self.paths
+    }
+
+    /// Subscribe to static NAT4 configuration update notifications. The
+    /// receiver is expected to re-read the repository before restarting NAT.
+    pub fn subscribe_static_nat4(&self) -> broadcast::Receiver<()> {
+        self.static_nat4_tx.subscribe()
+    }
+
+    /// Notify listeners that static NAT4 configuration changed.
+    pub fn notify_static_nat4(&self) {
+        let _ = self.static_nat4_tx.send(());
     }
 
     /// Native XDP attach configuration this runtime was built with.

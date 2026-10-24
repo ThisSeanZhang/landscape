@@ -2,6 +2,9 @@
 #ifndef __LD_TC_ACT_H__
 #define __LD_TC_ACT_H__
 
+#ifndef TC_ACT_UNSPEC
+#define TC_ACT_UNSPEC -1
+#endif
 #ifndef TC_ACT_OK
 #define TC_ACT_OK 0
 #endif

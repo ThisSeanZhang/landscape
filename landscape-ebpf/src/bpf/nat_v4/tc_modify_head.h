@@ -18,10 +18,10 @@
  * `new_addr`.
  */
 static __always_inline int napt_modify_fragment(struct __sk_buff *skb, __be32 new_addr,
-                                                __u8 direction) {
+                                                __u8 direction, __u32 l3_offset) {
     char *data = (char *)(long)skb->data;
     char *data_end = (char *)(long)skb->data_end;
-    struct iphdr *iph = (void *)(data + sizeof(struct ethhdr));
+    struct iphdr *iph = (void *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) return TC_ACT_SHOT;
 
     __be32 old_src = iph->saddr;
@@ -46,10 +46,10 @@ static __always_inline int napt_modify_fragment(struct __sk_buff *skb, __be32 ne
  * addresses, and checksum are read from the still-unmodified header.
  */
 static __always_inline int napt_modify(struct __sk_buff *skb, __be32 new_addr, __be16 new_port,
-                                       __u8 direction) {
+                                       __u8 direction, __u32 l3_offset) {
     char *data = (char *)(long)skb->data;
     char *data_end = (char *)(long)skb->data_end;
-    struct iphdr *iph = (void *)(data + sizeof(struct ethhdr));
+    struct iphdr *iph = (void *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) return TC_ACT_SHOT;
 
     __u32 ihl = ((__u32)iph->ihl * 4U);
@@ -58,7 +58,7 @@ static __always_inline int napt_modify(struct __sk_buff *skb, __be32 new_addr, _
     __u8 proto = iph->protocol;
     if (proto != IPV4_PROTO_UDP && proto != IPV4_PROTO_TCP && proto != IPV4_PROTO_ICMP)
         return TC_ACT_SHOT;
-    __u32 l4_off = sizeof(struct ethhdr) + ihl;
+    __u32 l4_off = l3_offset + ihl;
     __u32 l4_min = sizeof(struct udphdr);
     if (proto == IPV4_PROTO_TCP)
         l4_min = sizeof(struct tcphdr);
@@ -147,10 +147,10 @@ static __always_inline void napt_emit_outer_ipv4(struct iphdr *iph, __be32 new_a
 }
 
 static __always_inline int napt_modify_icmp_error(struct __sk_buff *skb, __be32 new_addr,
-                                                  __be16 new_port, int from_wan) {
+                                                  __be16 new_port, int from_wan, __u32 l3_offset) {
     char *data = (char *)(long)skb->data;
     char *data_end = (char *)(long)skb->data_end;
-    struct iphdr *iph = (void *)(data + sizeof(struct ethhdr));
+    struct iphdr *iph = (void *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) return TC_ACT_SHOT;
 
     __u32 ihl = ((__u32)iph->ihl * 4U);
@@ -160,7 +160,7 @@ static __always_inline int napt_modify_icmp_error(struct __sk_buff *skb, __be32 
     __u32 ip_total = bpf_ntohs(iph->tot_len);
     if (ip_total < ihl + ICMP_ERROR_HDR_LEN || ip_total > ICMP_ERROR_MAX_TOTAL_LEN)
         return TC_ACT_SHOT;
-    __u32 l4_off = sizeof(struct ethhdr) + ihl;
+    __u32 l4_off = l3_offset + ihl;
     struct icmphdr *icmp = (void *)(data + l4_off);
     __u32 icmp_len = ip_total - ihl;
     if ((char *)icmp + ICMP_ERROR_HDR_LEN > (char *)data_end) return TC_ACT_SHOT;

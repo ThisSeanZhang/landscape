@@ -523,11 +523,30 @@ mod tests {
     #[test]
     fn advance_reactivates_release_and_updates_client_state() {
         with_skel(|skel| {
-            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_RELEASE, GENERATION, 0));
-            let result = run_advance(skel, PROTO_TCP, 1, 0);
+            let mut value = ct_value(CT_RELEASE, GENERATION, 0);
+            value.client_status = 0;
+            value.server_status = 0;
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &value);
+            let result = run_advance(skel, PROTO_TCP, 1, 1);
             assert_eq!(result.action, 0);
             assert_eq!(result.status, CT_ACTIVE);
             assert_eq!(result.client_status, 1);
+            assert_eq!(result.server_status, 0);
+        });
+    }
+
+    #[test]
+    fn advance_reactivates_release_and_updates_server_state() {
+        with_skel(|skel| {
+            let mut value = ct_value(CT_RELEASE, GENERATION, 0);
+            value.client_status = 0;
+            value.server_status = 0;
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &value);
+            let result = run_advance(skel, PROTO_TCP, 1, 0);
+            assert_eq!(result.action, 0);
+            assert_eq!(result.status, CT_ACTIVE);
+            assert_eq!(result.client_status, 0);
+            assert_eq!(result.server_status, 1);
         });
     }
 }

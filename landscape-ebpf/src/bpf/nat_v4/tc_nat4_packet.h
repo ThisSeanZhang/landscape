@@ -50,9 +50,10 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
         kind = lan->kind;
     } else {
         if (!allow_create || !cb->ports_valid) return TC_ACT_SHOT;
+        __u8 allow_reuse = get_flow_allow_reuse_port(skb_mark(skb)) ? 1 : 0;
         if (napt_queue_pop(proto, &external_port, &gen) != 0) return TC_ACT_SHOT;
         if (napt_create_dynamic_mapping(proto, src_addr, internal_port, dst_addr, remote_port,
-                                        external_port, gen) != 0) {
+                                        external_port, gen, allow_reuse) != 0) {
             napt_queue_push(proto, external_port, gen);
             return TC_ACT_SHOT;
         }
@@ -79,6 +80,16 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
         if (mapping_new)
             napt_rollback_new_mapping(proto, src_addr, internal_port, external_port, gen);
         return TC_ACT_SHOT;
+    }
+
+    if (!mapping_new && !napt_dynamic_remote_allowed(mapping, dst_addr, remote_port, proto))
+        return TC_ACT_SHOT;
+
+    if (!mapping_new && mapping->kind == NAPT_MAPPING_DYNAMIC &&
+        mapping->trigger_addr == dst_addr && mapping->trigger_port == remote_port) {
+        __u8 allow_reuse = get_flow_allow_reuse_port(skb_mark(skb)) ? 1 : 0;
+        mapping->allow_reuse = allow_reuse;
+        if (lan && lan->kind == NAPT_MAPPING_DYNAMIC) lan->allow_reuse = allow_reuse;
     }
 
     struct napt_ct_key key = {};
@@ -114,7 +125,8 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
 }
 
 static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct skb_ferry_cb *cb,
-                                          __be32 src_addr, __be32 *new_addr, __be16 *new_port) {
+                                          __be32 src_addr, __be32 dst_addr, __be32 *new_addr,
+                                          __be16 *new_port) {
     __u8 proto = cb->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
     int icmp_error = napt_is_icmp_error(cb);
@@ -129,17 +141,22 @@ static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct sk
     if (!mapping || (mapping->kind != NAPT_MAPPING_DYNAMIC && mapping->kind != NAPT_MAPPING_STATIC))
         return TC_ACT_SHOT;
 
+    __be32 target_addr;
     if (mapping->kind == NAPT_MAPPING_STATIC) {
         is_static = 1;
+        target_addr = mapping->internal_addr;
+        if (target_addr == 0) target_addr = dst_addr;
+        skb_set_mark(skb, replace_cache_mask(skb_mark(skb), INGRESS_STATIC_MARK));
     } else {
         gen = mapping->generation;
         if (!napt_dynamic_mapping_usable(mapping, gen)) return TC_ACT_SHOT;
+        if (!napt_dynamic_remote_allowed(mapping, src_addr, remote_port, proto)) return TC_ACT_SHOT;
         is_static = 0;
+        target_addr = mapping->internal_addr;
     }
 
     struct napt_ct_key key = {};
-    napt_ct_key_init(&key, mapping->internal_addr, mapping->internal_port, src_addr, remote_port,
-                     proto);
+    napt_ct_key_init(&key, target_addr, mapping->internal_port, src_addr, remote_port, proto);
 
     struct napt_ct_value *ct = 0;
     if (napt_ct_resolve(&key, mapping, &ct) != 0) ct = 0;
@@ -156,7 +173,7 @@ static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct sk
         napt_metric_accumulate(skb, NAPT_GRESS_WAN, ct);
     }
 
-    *new_addr = mapping->internal_addr;
+    *new_addr = target_addr;
     *new_port = mapping->internal_port;
     return TC_ACT_OK;
 }
