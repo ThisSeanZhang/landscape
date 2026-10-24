@@ -26,29 +26,60 @@
 /* Largest extension-header chain this parser accepts. */
 #define NPTV6_MAX_EXT_HEADERS 8U
 
-static __always_inline int nptv6_pull_bytes(struct __sk_buff *skb, __u32 len) {
-    if (len > skb->len) return 0;
-    return bpf_skb_pull_data(skb, len) == 0;
+static __always_inline int tc_read_ipv6_icmp_error(struct __sk_buff *skb, struct skb_ferry_cb *cb,
+                                                   struct in6_addr *src_addr,
+                                                   struct in6_addr *dst_addr, __u32 l3_offset,
+                                                   __u32 l4_offset, __u32 packet_end) {
+    struct icmp6_error_meta meta = {};
+    if (!cb || !src_addr || !dst_addr || l4_offset < l3_offset ||
+        icmp6_parse_error(skb, l3_offset, l4_offset, packet_end, &meta) < 0)
+        return -1;
+
+    *src_addr = meta.src_addr;
+    *dst_addr = meta.dst_addr;
+    cb->sport = meta.src_port;
+    cb->dport = meta.dst_port;
+    cb->l4_protocol = meta.proto;
+    cb->tcp_phase = meta.tcp_phase;
+    cb->icmp_inner_l4_offset = (__u16)meta.inner_l4_offset;
+    cb->icmp_inner_l4_protocol = meta.proto;
+    cb->ports_valid = 1;
+    return 0;
 }
 
 static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_cb *cb,
                                         struct in6_addr *src_addr, struct in6_addr *dst_addr,
                                         __u32 l3_offset, __u8 direction) {
-    if (!cb || !src_addr || !dst_addr || l3_offset != sizeof(struct ethhdr)) return 0;
-
-    __u32 need = l3_offset + IPV6_HDR_LEN;
-    if (!nptv6_pull_bytes(skb, need)) return 0;
+    if (!cb || !src_addr || !dst_addr || (l3_offset != 0 && l3_offset != sizeof(struct ethhdr)))
+        return 0;
 
     char *data = (char *)(long)skb->data;
     char *data_end = (char *)(long)skb->data_end;
-    struct ethhdr *eth = (struct ethhdr *)data;
-    if ((char *)(eth + 1) > data_end) return 0;
-    if (eth->h_proto != bpf_htons(ETH_P_IPV6)) return 0;
+
+    if (l3_offset != 0) {
+        struct ethhdr *eth = (struct ethhdr *)data;
+        if ((char *)(eth + 1) > data_end) {
+            __u32 need = l3_offset + IPV6_HDR_LEN;
+            if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return 0;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            eth = (struct ethhdr *)data;
+            if ((char *)(eth + 1) > data_end) return 0;
+        }
+        if (eth->h_proto != bpf_htons(ETH_P_IPV6)) return 0;
+    }
 
     struct ipv6hdr *iph = (struct ipv6hdr *)(data + l3_offset);
-    if ((char *)(iph + 1) > data_end) return 0;
-    if (iph->version != IPV6_VERSION) return 0;
+    if ((char *)(iph + 1) > data_end) {
+        __u32 need = l3_offset + IPV6_HDR_LEN;
+        if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return 0;
+        data = (char *)(long)skb->data;
+        data_end = (char *)(long)skb->data_end;
+        iph = (struct ipv6hdr *)(data + l3_offset);
+        if ((char *)(iph + 1) > data_end) return 0;
+    }
 
+    if (iph->version != IPV6_VERSION) return 0;
     __u16 payload_len = bpf_ntohs(iph->payload_len);
     if (payload_len == 0) return 0;
 
@@ -74,15 +105,20 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
     __u32 offset = l3_offset + IPV6_HDR_LEN;
     int seen_fragment = 0;
 
+    if (next == IPV6_NH_TCP || next == IPV6_NH_UDP) goto parse_l4;
+
     for (__u32 i = 0; i < NPTV6_MAX_EXT_HEADERS; i++) {
         if (next == IPV6_NH_FRAGMENT) {
             if (seen_fragment) return 0;
 
-            need = offset + sizeof(struct frag_hdr);
-            if (need > packet_end || !nptv6_pull_bytes(skb, need)) return 0;
+            __u32 need = offset + sizeof(struct frag_hdr);
+            if (need > packet_end) return 0;
+            if ((char *)(data + offset) + sizeof(struct frag_hdr) > data_end) {
+                if (bpf_skb_pull_data(skb, need) != 0) return 0;
+                data = (char *)(long)skb->data;
+                data_end = (char *)(long)skb->data_end;
+            }
 
-            data = (char *)(long)skb->data;
-            data_end = (char *)(long)skb->data_end;
             struct frag_hdr *frag = (struct frag_hdr *)(data + offset);
             if ((char *)(frag + 1) > data_end) return 0;
 
@@ -105,11 +141,14 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
         }
 
         if (next == IPV6_NH_HOPOPTS || next == IPV6_NH_ROUTING || next == IPV6_NH_DSTOPTS) {
-            need = offset + sizeof(struct ipv6_opt_hdr);
-            if (need > packet_end || !nptv6_pull_bytes(skb, need)) return 0;
+            __u32 need = offset + sizeof(struct ipv6_opt_hdr);
+            if (need > packet_end) return 0;
+            if ((char *)(data + offset) + sizeof(struct ipv6_opt_hdr) > data_end) {
+                if (bpf_skb_pull_data(skb, need) != 0) return 0;
+                data = (char *)(long)skb->data;
+                data_end = (char *)(long)skb->data_end;
+            }
 
-            data = (char *)(long)skb->data;
-            data_end = (char *)(long)skb->data_end;
             struct ipv6_opt_hdr *ext = (struct ipv6_opt_hdr *)(data + offset);
             if ((char *)(ext + 1) > data_end) return 0;
 
@@ -140,6 +179,7 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
         return 1;
     }
 
+parse_l4:
     __u32 l4_offset = offset;
     __u32 payload = packet_end - l4_offset;
     cb->l4_offset = (__u16)l4_offset;
@@ -156,10 +196,12 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
         return 1;
 
     if (pull_len > packet_end) pull_len = packet_end;
-    if (!nptv6_pull_bytes(skb, pull_len)) return 0;
-
-    data = (char *)(long)skb->data;
-    data_end = (char *)(long)skb->data_end;
+    if (pull_len > skb->len) pull_len = skb->len;
+    if ((char *)(data + pull_len) > data_end) {
+        if (bpf_skb_pull_data(skb, pull_len) != 0) return 0;
+        data = (char *)(long)skb->data;
+        data_end = (char *)(long)skb->data_end;
+    }
 
     int has_ports = 0;
     if (next == IPV6_NH_TCP) {
@@ -194,6 +236,14 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
             cb->sport = icmp->icmp6_dataun.u_echo.identifier;
             cb->dport = 0;
             has_ports = 1;
+        } else if (icmp->icmp6_type == ICMPV6_DEST_UNREACH ||
+                   icmp->icmp6_type == ICMPV6_PKT_TOOBIG ||
+                   icmp->icmp6_type == ICMPV6_TIME_EXCEED || icmp->icmp6_type == ICMPV6_PARAMPROB) {
+            if (cb->frag_code == LAND_NAT_FRAG_FIRST || cb->frag_code == LAND_NAT_FRAG_NON_INITIAL)
+                return 0;
+            if (tc_read_ipv6_icmp_error(skb, cb, src_addr, dst_addr, l3_offset, l4_offset,
+                                        packet_end) < 0)
+                return 0;
         }
     }
 

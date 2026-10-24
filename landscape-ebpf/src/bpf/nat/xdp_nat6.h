@@ -193,7 +193,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
     }
 
     struct static_nat6_mapping_value *static_val =
-        nat6_check_egress_static(idx->l4_protocol, ip_pair);
+        nat6_check_egress_static(idx->l4_protocol, &ip_pair->src_addr, ip_pair->src_port);
 
     bool allow_create = !is_icmpx_error && pkt_can_begin_ct(idx->pkt_type);
 
@@ -333,7 +333,8 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
         goto do_xdp_ingress_nptv6;
     }
 
-    map_ret = nat6_check_ingress_static(idx->l4_protocol, ip_pair, &local_client_prefix);
+    map_ret = nat6_check_ingress_static(idx->l4_protocol, &ip_pair->dst_addr, ip_pair->dst_port,
+                                        &local_client_prefix);
     bool is_static = (map_ret != NAT6_STATIC_MISS);
     need_prefix_replace = (map_ret == NAT6_STATIC_REPLACE);
     *out_is_static = is_static;

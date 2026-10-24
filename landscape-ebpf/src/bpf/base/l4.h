@@ -12,6 +12,18 @@
 #define TCP_FLAG_RST 0x04U
 #define TCP_FLAG_ACK 0x10U
 
+#ifndef ICMPV6_DEST_UNREACH
+#define ICMPV6_DEST_UNREACH 1
+#endif
+#ifndef ICMPV6_PKT_TOOBIG
+#define ICMPV6_PKT_TOOBIG 2
+#endif
+#ifndef ICMPV6_TIME_EXCEED
+#define ICMPV6_TIME_EXCEED 3
+#endif
+#ifndef ICMPV6_PARAMPROB
+#define ICMPV6_PARAMPROB 4
+#endif
 #ifndef ICMPV6_ECHO_REQUEST
 #define ICMPV6_ECHO_REQUEST 128
 #endif

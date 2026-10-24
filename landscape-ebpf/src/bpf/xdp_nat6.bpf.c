@@ -18,10 +18,7 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_ifindex = 0;
 
-#undef BPF_LOG_TOPIC
-
 static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "nat_v6_egress"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct xdp_pipe_meta meta = {};
@@ -56,11 +53,9 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     if (ret) return XDP_DROP;
 
     return XDP_PASS;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "nat_v6_ingress"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct xdp_pipe_meta meta = {};
@@ -105,29 +100,24 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     if (ret == 2) return XDP_PASS;
 
     return XDP_PASS;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("xdp")
 int egress_nat_v6(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "egress_nat_v6"
     int ret = nat_v6_egress(ctx);
     if (ret != XDP_PASS) return ret;
     /* Egress NAT (LAN→WAN translation) runs in the LAN-side chain. */
     XDP_FROM_LAN_CHAIN_NEXT_V6(ctx);
     XDP_FROM_LAN_CHAIN_EXIT(ctx);
     return XDP_PASS;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("xdp")
 int ingress_nat_v6(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "ingress_nat_v6"
     int ret = nat_v6_ingress(ctx);
     if (ret != XDP_PASS) return ret;
     /* Ingress NAT (WAN→LAN translation) runs in the WAN-side chain. */
     XDP_FROM_WAN_CHAIN_NEXT_V6(ctx);
     XDP_FROM_WAN_CHAIN_EXIT(ctx);
     return XDP_PASS;
-#undef BPF_LOG_TOPIC
 }

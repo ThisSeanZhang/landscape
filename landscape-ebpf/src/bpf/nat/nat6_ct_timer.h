@@ -1,6 +1,7 @@
 #ifndef __LD_NAT6_CT_TIMER_H__
 #define __LD_NAT6_CT_TIMER_H__
 
+#include "base/printk.h"
 #include "nat/nat_common.h"
 #include "nat/nat_metric.h"
 #include "nat/nat6_dyn_map.h"
@@ -42,8 +43,6 @@ static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_k
 
 static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer_key *key,
                                      struct nat6_timer_value *value) {
-#define BPF_LOG_TOPIC "nat6_timer_clean_callback"
-
     u64 client_status = value->client_status;
     u64 server_status = value->server_status;
     u64 current_status = value->status;
@@ -52,8 +51,8 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
     int ret;
 
     if (value->trigger_port == TEST_PORT) {
-        ld_bpf_log("timer_clean_callback: %pI6, current_status: %llu",
-                   &value->trigger_addr.in6_u.u6_addr8, current_status);
+        ld_timer_log("timer_clean_callback: %pI6, current_status: %llu",
+                     &value->trigger_addr.in6_u.u6_addr8, current_status);
     }
 
     if (current_status == TIMER_RELEASE) {
@@ -66,12 +65,12 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
 
     if (current_status == TIMER_CLEAN_START) {
         if (value->trigger_port == TEST_PORT) {
-            ld_bpf_log("release CONNECT");
+            ld_timer_log("release CONNECT");
         }
 
         ret = nat6_metric_try_report(key, value, NAT_CONN_DELETE);
         if (ret) {
-            ld_bpf_log("call back report fail");
+            ld_timer_log("call back report fail");
             bpf_timer_start(&value->timer, next_timeout, 0);
             return 0;
         }
@@ -80,7 +79,7 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
 
     ret = nat6_metric_try_report(key, value, NAT_CONN_ACTIVE);
     if (ret) {
-        ld_bpf_log("call back report fail");
+        ld_timer_log("call back report fail");
         bpf_timer_start(&value->timer, next_timeout, 0);
         return 0;
     }
@@ -90,14 +89,14 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
         next_timeout = REPORT_INTERVAL;
 
         if (value->trigger_port == TEST_PORT) {
-            ld_bpf_log("change next status TIMER_TIMEOUT_1");
+            ld_timer_log("change next status TIMER_TIMEOUT_1");
         }
     } else if (current_status == TIMER_TIMEOUT_1) {
         next_status = TIMER_TIMEOUT_2;
         next_timeout = REPORT_INTERVAL;
 
         if (value->trigger_port == TEST_PORT) {
-            ld_bpf_log("change next status TIMER_TIMEOUT_2");
+            ld_timer_log("change next status TIMER_TIMEOUT_2");
         }
     } else if (current_status == TIMER_TIMEOUT_2) {
         next_status = TIMER_RELEASE;
@@ -113,7 +112,7 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
 
         if (value->trigger_port == TEST_PORT) {
             u64 show = (next_timeout / 1000000000ULL);
-            ld_bpf_log("change next status TIMER_RELEASE, next_timeout: %d", show);
+            ld_timer_log("change next status TIMER_RELEASE, next_timeout: %d", show);
         }
     } else {
         next_status = TIMER_TIMEOUT_2;
@@ -122,8 +121,8 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
 
     if (__sync_val_compare_and_swap(&value->status, current_status, next_status) !=
         current_status) {
-        ld_bpf_log("call back modify status fail, current status: %d new status: %d",
-                   current_status, next_status);
+        ld_timer_log("call back modify status fail, current status: %d new status: %d",
+                     current_status, next_status);
         bpf_timer_start(&value->timer, REPORT_INTERVAL, 0);
         return 0;
     }
@@ -134,16 +133,13 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
 release:;
     bpf_map_delete_elem(&nat6_timer_map, key);
     return 0;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline struct nat6_timer_value *nat6_insert_timer(const struct nat6_timer_key *key,
                                                                   struct nat6_timer_value *val) {
-#define BPF_LOG_TOPIC "nat6_insert_timer"
-
     int ret = bpf_map_update_elem(&nat6_timer_map, key, val, BPF_NOEXIST);
     if (ret) {
-        ld_bpf_log("ct6 timer map insert failed: %d", ret);
+        ld_log("ct6 timer map insert failed: %d", ret);
         return NULL;
     }
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, key);
@@ -164,15 +160,13 @@ static __always_inline struct nat6_timer_value *nat6_insert_timer(const struct n
 
     return value;
 delete_timer:
-    ld_bpf_log("ct6 timer setup failed: %d", ret);
+    ld_log("ct6 timer setup failed: %d", ret);
     bpf_map_delete_elem(&nat6_timer_map, key);
     return NULL;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int nat6_ct_advance(u8 pkt_type, u8 gress,
                                            struct nat6_timer_value *ct_timer_value) {
-#define BPF_LOG_TOPIC "nat6_ct_advance"
     u64 curr_state, *modify_status = NULL;
     if (gress == NAT_MAPPING_INGRESS) {
         curr_state = ct_timer_value->server_status;
@@ -208,14 +202,13 @@ static __always_inline int nat6_ct_advance(u8 pkt_type, u8 gress,
             __sync_val_compare_and_swap(&ct_timer_value->status, current_status, TIMER_ACTIVE);
         if (prev_status == current_status) {
             if (ct_timer_value->trigger_port == TEST_PORT) {
-                ld_bpf_log("flush status to TIMER_ACTIVE: 20");
+                ld_log("flush status to TIMER_ACTIVE: 20");
             }
             bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
         }
     }
 
     return NAT_OP_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_NAT6_CT_TIMER_H__ */

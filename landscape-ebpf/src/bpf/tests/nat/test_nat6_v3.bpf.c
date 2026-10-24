@@ -7,69 +7,53 @@
 
 #include "nat/tc_nat6.h"
 #include "base/landscape.h"
-#include "scanner/skb_scanner6.h"
-#include "scanner/skb_read.h"
+#include "reader/skb_ferry.h"
+#include "reader/tc_read_head6.h"
 
 char LICENSE[] SEC("license") = "GPL";
-
-#undef BPF_LOG_TOPIC
 
 const volatile u32 current_l3_offset = 14;
 
 SEC("tc/egress")
 int handle_ipv6_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< handle_ipv6_egress <<<"
-
-    struct scan_ipv6_idx idx = {};
-    struct inet_pair ip_pair = {0};
+    struct skb_ferry_cb cb = {};
+    struct in6_addr src_addr = {};
+    struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) {
+    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         return TC_ACT_SHOT;
-    }
 
-    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
-    if (ret) {
-        return ret;
-    }
+    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&cb)))) return TC_ACT_OK;
+    if (unlikely(!cb.ports_valid)) return TC_ACT_SHOT;
 
-    ret =
-        ipv6_egress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, skb->ifindex);
+    ret = ipv6_egress_prefix_check_and_replace(skb, &cb, &src_addr, &dst_addr, current_l3_offset,
+                                               skb->ifindex);
     if (ret) {
         return ret;
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
 int handle_ipv6_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< handle_ipv6_ingress <<<"
-
-    struct scan_ipv6_idx idx = {};
-    struct inet_pair ip_pair = {0};
+    struct skb_ferry_cb cb = {};
+    struct in6_addr src_addr = {};
+    struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (scan_ipv6_full(skb, current_l3_offset, &idx) != LD_SCAN_OK) {
+    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         return TC_ACT_SHOT;
-    }
 
-    if (unlikely(should_nat_skip_protocol(idx.l4_protocol))) {
-        return TC_ACT_OK;
-    }
+    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&cb)))) return TC_ACT_OK;
+    if (unlikely(!cb.ports_valid)) return TC_ACT_SHOT;
 
-    ret = skb_read_ipv6_info(skb, current_l3_offset, &idx, &ip_pair);
-    if (ret) {
-        return ret;
-    }
-
-    ret =
-        ipv6_ingress_prefix_check_and_replace(skb, &idx, &ip_pair, current_l3_offset, skb->ifindex);
+    ret = ipv6_ingress_prefix_check_and_replace(skb, &cb, &src_addr, &dst_addr, current_l3_offset,
+                                                skb->ifindex);
     if (ret) {
         return ret;
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }

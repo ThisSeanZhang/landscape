@@ -64,6 +64,26 @@ fn run_reader(payload: &[u8], direction: u32) -> TcReadHead6Result {
     run_reader_seq(&[payload], direction).remove(0)
 }
 
+fn run_reader_at(payload: &[u8], direction: u32, l3_offset: u32) -> TcReadHead6Result {
+    let builder = TestTcReadHead6SkelBuilder::default();
+    let mut open_object = MaybeUninit::uninit();
+    let mut open = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.current_l3_offset = l3_offset;
+        rodata.current_direction = direction;
+    }
+    let skel = open.load().unwrap();
+    let mut data = payload.to_vec();
+    skel.progs
+        .test_tc_read_head6
+        .test_run(ProgramInput { data_in: Some(&mut data), ..Default::default() })
+        .expect("test_run failed");
+    let bytes =
+        skel.maps.reader_test_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).unwrap().unwrap();
+    TcReadHead6Result::read_from_bytes(&bytes).unwrap()
+}
+
 fn assert_read_ok(r: &TcReadHead6Result) {
     assert_eq!(r.read_ret, 1, "read_ret={}", r.read_ret);
 }
@@ -193,6 +213,35 @@ mod tests {
         assert_eq!(r.l4_protocol, 58);
         assert_eq!(be16(r.sport), 0x5edf);
         assert_eq!(r.dport, 0);
+        assert_eq!(r.ports_valid, 1);
+    }
+
+    #[test]
+    fn reader_v6_without_ethernet() {
+        let eth = build_ipv6_udp_eth();
+        let r = run_reader_at(&eth[14..], DIR_LAN, 0);
+        assert_read_ok(&r);
+        assert_eq!(r.l3_offset, 0);
+        assert_eq!(r.l4_offset, 40);
+        assert_eq!(r.l4_protocol, 17);
+        assert_eq!(be16(r.sport), 5000);
+        assert_eq!(be16(r.dport), 6000);
+        assert_eq!(r.ports_valid, 1);
+    }
+
+    #[test]
+    fn reader_v6_icmp_error_inner_udp() {
+        let pkt = build_icmpv6_error_with_inner_ipv6_eth();
+        let r = run_reader(&pkt, DIR_LAN);
+        assert_read_ok(&r);
+        assert_eq!(r.src_addr, [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2]);
+        assert_eq!(r.dst_addr, [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1]);
+        assert_eq!(r.l4_offset, 54);
+        assert_eq!(r.l4_protocol, 17);
+        assert_eq!(be16(r.sport), 4321);
+        assert_eq!(be16(r.dport), 1234);
+        assert_eq!(r.icmp_inner_l4_offset, 102);
+        assert_eq!(r.icmp_inner_l4_protocol, 17);
         assert_eq!(r.ports_valid, 1);
     }
 

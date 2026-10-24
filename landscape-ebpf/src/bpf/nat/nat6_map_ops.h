@@ -35,14 +35,14 @@ nat6_static_needs_prefix_replace(const struct static_nat6_mapping_value *value) 
 }
 
 static __always_inline struct static_nat6_mapping_value *
-nat6_check_egress_static(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
+nat6_check_egress_static(u8 ip_protocol, const struct in6_addr *src_addr, __be16 src_port) {
     struct static_nat6_mapping_key egress_key = {0};
     struct static_nat6_mapping_value *value;
 
     egress_key.l4_protocol = ip_protocol;
 
-    egress_key.port = pkt_ip_pair->src_port;
-    __builtin_memcpy(egress_key.ip_suffix, pkt_ip_pair->src_addr.in6_u.u6_addr8 + 8, 8);
+    egress_key.port = src_port;
+    __builtin_memcpy(egress_key.ip_suffix, src_addr->in6_u.u6_addr8 + 8, 8);
     value = bpf_map_lookup_elem(&nat6_static_map, &egress_key);
     if (value) {
         return value;
@@ -53,14 +53,14 @@ nat6_check_egress_static(u8 ip_protocol, const struct inet_pair *pkt_ip_pair) {
 }
 
 static __always_inline int nat6_check_ingress_static(u8 ip_protocol,
-                                                     const struct inet_pair *pkt_ip_pair,
-                                                     __be64 *local_client_prefix) {
+                                                     const struct in6_addr *dst_addr,
+                                                     __be16 dst_port, __be64 *local_client_prefix) {
     struct static_nat6_mapping_key ingress_key = {0};
     struct static_nat6_mapping_value *value = NULL;
 
     ingress_key.l4_protocol = ip_protocol;
-    ingress_key.port = pkt_ip_pair->dst_port;
-    __builtin_memcpy(ingress_key.ip_suffix, pkt_ip_pair->dst_addr.in6_u.u6_addr8 + 8, 8);
+    ingress_key.port = dst_port;
+    __builtin_memcpy(ingress_key.ip_suffix, dst_addr->in6_u.u6_addr8 + 8, 8);
 
     value = bpf_map_lookup_elem(&nat6_static_map, &ingress_key);
     if (value) {
