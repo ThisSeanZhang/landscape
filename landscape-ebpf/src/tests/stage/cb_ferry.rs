@@ -136,6 +136,16 @@ fn ipv4_icmp_echo(id: u16) -> Vec<u8> {
     buf
 }
 
+fn ipv4_icmp_echo_reply(id: u16) -> Vec<u8> {
+    let builder = PacketBuilder::ethernet2([2, 0, 0, 0, 0, 2], [2, 0, 0, 0, 0, 1])
+        .ipv4(REMOTE_IP.octets(), WAN_IP.octets(), 64)
+        .icmpv4(Icmpv4Type::EchoReply(IcmpEchoHeader { id, seq: 1 }));
+    let payload = [0xab_u8; 8];
+    let mut buf = Vec::with_capacity(builder.size(payload.len()));
+    builder.write(&mut buf, &payload).unwrap();
+    buf
+}
+
 /// icmp error quoting a minimal inner TCP header; the inner saddr must
 /// equal the outer daddr or the scanner rejects the packet.
 fn ipv4_icmp_error_quoting_tcp(
@@ -261,7 +271,7 @@ mod cb {
     pub fn l4_protocol(cb2: u32) -> u32 {
         (cb2 >> 16) & 0xFF
     }
-    pub fn pkt_type(cb2: u32) -> u32 {
+    pub fn tcp_phase(cb2: u32) -> u32 {
         cb2 >> 24
     }
     pub fn sport(cb3: u32) -> u16 {
@@ -278,8 +288,8 @@ mod cb {
     }
 }
 
-// PKT_TCP_SYN_V2 from einat_types.h
-const PKT_TCP_SYN_V2: u32 = 2;
+// NAPT_TCP_PHASE_SYN from base/tcp_phase.h
+const NAPT_TCP_PHASE_SYN: u32 = 1;
 
 #[cfg(test)]
 mod tests {
@@ -312,7 +322,7 @@ mod tests {
         assert_eq!(c[1], (CHAIN << 16) | L3, "ingress stamp: chain | l3");
         assert_eq!(cb::l4_offset(c[2]), L3 + 20, "l4 offset points at the TCP header");
         assert_eq!(cb::l4_protocol(c[2]), 6);
-        assert_eq!(cb::pkt_type(c[2]), PKT_TCP_SYN_V2);
+        assert_eq!(cb::tcp_phase(c[2]), NAPT_TCP_PHASE_SYN);
         assert_eq!(cb::sport(c[3]), 12345);
         assert_eq!(cb::dport(c[3]), 443);
         assert_eq!(cb::icmp_inner_l4(c[4]), 0);
@@ -320,12 +330,31 @@ mod tests {
 
         let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_udp());
         assert_eq!(cb::l4_protocol(c[2]), 17);
-        assert_eq!(cb::pkt_type(c[2]), 0);
+        assert_eq!(cb::tcp_phase(c[2]), 0);
 
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_icmp_echo(0x4321));
+        let (_, _, c) =
+            run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_icmp_echo_reply(0x4321));
         assert_eq!(cb::l4_protocol(c[2]), 1);
         assert_eq!(cb::sport(c[3]), 0x4321, "icmp echo id rides both port halves");
         assert_eq!(cb::dport(c[3]), 0x4321);
+    }
+
+    #[test]
+    fn ferry_cb_layout_v6_tcp() {
+        let root = load_ingress_root();
+        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &v6_tcp_syn_mss(1460));
+
+        assert!(cb::scan_valid(c[0]));
+        assert!(cb::ports_valid(c[0]));
+        assert_eq!(cb::frag(c[0]), 0);
+        assert_eq!(c[1], (CHAIN << 16) | L3, "ingress stamp: chain | l3");
+        assert_eq!(cb::l4_offset(c[2]), L3 + 40);
+        assert_eq!(cb::l4_protocol(c[2]), 6);
+        assert_eq!(cb::tcp_phase(c[2]), NAPT_TCP_PHASE_SYN);
+        assert_eq!(cb::sport(c[3]), 12345);
+        assert_eq!(cb::dport(c[3]), 443);
+        assert_eq!(cb::icmp_inner_l4(c[4]), 0);
+        assert_eq!(cb::icmp_l4_protocol(c[4]), 0);
     }
 
     #[test]
@@ -455,7 +484,7 @@ mod tests {
         assert_equiv(
             root_prog,
             &fw.progs.tc_firewall_wan_ingress_v4,
-            &ipv4_icmp_echo(9),
+            &ipv4_icmp_echo_reply(9),
             "fw v4 icmp echo",
         );
         assert_equiv(
