@@ -19,8 +19,8 @@
  * are written through `src_addr`/`dst_addr`; everything else is packed into
  * `cb`. The ferry's l4_offset includes the Ethernet header and points from
  * skb->data to the transport header. Direction is a property of the TC path
- * and is passed separately. ICMP Query stores its identifier in sport with
- * dport zero.
+ * and is passed separately. ICMP Query stores its identifier in both sport
+ * and dport.
  */
 /*
  * TCP phase is derived once from the TCP flags. The NAT state phase decides
@@ -190,7 +190,7 @@ static __always_inline int tc_read_ipv4(struct __sk_buff *skb, struct skb_ferry_
                 return 0;
         } else if (icmp->type == query_type && icmp->code == ICMP_ECHO_CODE) {
             cb->sport = icmp->un.echo.id;
-            cb->dport = 0;
+            cb->dport = cb->sport;
             cacheable = 1;
         } else {
             return 0;

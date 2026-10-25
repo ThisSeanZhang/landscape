@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(r.l4_offset, 54);
         assert_eq!(r.l4_protocol, 58);
         assert_eq!(be16(r.sport), 0x1234);
-        assert_eq!(r.dport, 0);
+        assert_eq!(be16(r.dport), 0x1234);
         assert_eq!(r.ports_valid, 1);
         assert_eq!(r.frag_code, FRAG_SINGLE);
     }
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(r.l4_offset, 62);
         assert_eq!(r.l4_protocol, 58);
         assert_eq!(be16(r.sport), 0x5edf);
-        assert_eq!(r.dport, 0);
+        assert_eq!(be16(r.dport), 0x5edf);
         assert_eq!(r.ports_valid, 1);
     }
 

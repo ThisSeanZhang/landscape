@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(first.l4_offset, 34);
         assert_eq!(first.l4_protocol, 1);
         assert_eq!(be16(first.sport), id);
-        assert_eq!(first.dport, 0);
+        assert_eq!(be16(first.dport), id);
 
         let nonfirst = &results[1];
         assert_read_ok(nonfirst);
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(nonfirst.l4_protocol, 1);
         assert_eq!(nonfirst.ports_valid, 1);
         assert_eq!(be16(nonfirst.sport), id);
-        assert_eq!(nonfirst.dport, 0);
+        assert_eq!(be16(nonfirst.dport), id);
     }
 
     #[test]

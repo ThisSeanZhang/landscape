@@ -20,7 +20,7 @@
  * written through `src_addr`/`dst_addr`; everything else is packed into `cb`.
  * The ferry's l4_offset includes the Ethernet header and points from
  * skb->data to the transport header. ICMPv6 Echo stores its identifier in
- * sport with dport zero.
+ * both sport and dport.
  */
 
 /* Largest extension-header chain this parser accepts. */
@@ -234,7 +234,7 @@ parse_l4:
 
         if (icmp->icmp6_type == ICMPV6_ECHO_REQUEST || icmp->icmp6_type == ICMPV6_ECHO_REPLY) {
             cb->sport = icmp->icmp6_dataun.u_echo.identifier;
-            cb->dport = 0;
+            cb->dport = cb->sport;
             has_ports = 1;
         } else if (icmp->icmp6_type == ICMPV6_DEST_UNREACH ||
                    icmp->icmp6_type == ICMPV6_PKT_TOOBIG ||

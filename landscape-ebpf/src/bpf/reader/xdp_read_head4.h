@@ -19,8 +19,8 @@
  * It accepts Ethernet frames only. One call parses IPv4, resolves the
  * transport tuple (including ICMP Error), and applies the nat_v4 first-
  * fragment cache. Addresses are written through src_addr/dst_addr; the rest
- * is stored in xdp_ferry_cb. ICMP Query stores its identifier in sport with
- * dport zero.
+ * is stored in xdp_ferry_cb. ICMP Query stores its identifier in both sport
+ * and dport.
  */
 
 #define XDP_NAT4_READ_DROP -1
@@ -222,7 +222,7 @@ static __always_inline int xdp_read_ipv4_nat4(void *data, void *data_end, struct
         if (icmp->type != query_type || icmp->code != ICMP_ECHO_CODE) return XDP_NAT4_READ_DROP;
 
         cb->sport = icmp->un.echo.id;
-        cb->dport = 0;
+        cb->dport = cb->sport;
         cacheable = 1;
     }
 
