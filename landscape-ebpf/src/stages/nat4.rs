@@ -260,12 +260,12 @@ pub fn attach_nat4(
         "xdp_nat4_v4 reuse napt_ct"
     )?;
     crate::bpf_ctx!(
-        xdp_open.maps.napt_frag_cache_lan.reuse_fd(tc_skel.maps.napt_frag_cache_lan.as_fd()),
-        "xdp_nat4_v4 reuse napt_frag_cache_lan"
+        xdp_open.maps.frag4_cache_lan.reuse_fd(tc_skel.maps.frag4_cache_lan.as_fd()),
+        "xdp_nat4_v4 reuse frag4_cache_lan"
     )?;
     crate::bpf_ctx!(
-        xdp_open.maps.napt_frag_cache_wan.reuse_fd(tc_skel.maps.napt_frag_cache_wan.as_fd()),
-        "xdp_nat4_v4 reuse napt_frag_cache_wan"
+        xdp_open.maps.frag4_cache_wan.reuse_fd(tc_skel.maps.frag4_cache_wan.as_fd()),
+        "xdp_nat4_v4 reuse frag4_cache_wan"
     )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat_metric_events.reuse_fd(tc_skel.maps.nat_metric_events.as_fd()),

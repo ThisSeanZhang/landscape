@@ -166,11 +166,10 @@ static __always_inline int tc_read_ipv6(struct __sk_buff *skb, struct skb_ferry_
     if (offset > packet_end || offset > 0xFFFFU) return 0;
 
     if (cb->frag_code == LAND_NAT_FRAG_NON_INITIAL) {
-        struct nptv6_frag_value value = {};
+        struct frag6_cache_value value = {};
         cb->l4_offset = 0;
         cb->l4_protocol = frag_next_header;
-        if (nptv6_frag_cache_lookup(src_addr, dst_addr, frag_id, frag_next_header, direction,
-                                    &value)) {
+        if (frag6_cache_lookup(src_addr, dst_addr, frag_id, frag_next_header, direction, &value)) {
             cb->sport = value.src_port;
             cb->dport = value.dst_port;
             cb->ports_valid = (value.flags & NPTV6_FRAG_FLAG_HAS_PORTS) ? 1 : 0;
@@ -250,8 +249,8 @@ parse_l4:
     if (has_ports) cb->ports_valid = 1;
 
     if (cb->frag_code == LAND_NAT_FRAG_FIRST && has_ports)
-        nptv6_frag_cache_store(src_addr, dst_addr, frag_id, next, frag_next_header, cb->sport,
-                               cb->dport, 1, direction);
+        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next_header, cb->sport, cb->dport,
+                          1, direction);
     return 1;
 }
 

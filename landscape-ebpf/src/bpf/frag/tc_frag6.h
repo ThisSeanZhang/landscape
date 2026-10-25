@@ -22,15 +22,15 @@
 #define NPTV6_FRAG_FLAG_HAS_PORTS 0x01U
 #define NPTV6_FRAG_FLAG_ICMP 0x02U
 
-struct nptv6_frag_key {
+struct frag6_cache_key {
     struct in6_addr src_addr;
     struct in6_addr dst_addr;
     __be32 frag_id;
 };
 
-_Static_assert(sizeof(struct nptv6_frag_key) == 36, "nptv6_frag_key must be 36 bytes");
+_Static_assert(sizeof(struct frag6_cache_key) == 36, "frag6_cache_key must be 36 bytes");
 
-struct nptv6_frag_value {
+struct frag6_cache_value {
     __be16 src_port;
     __be16 dst_port;
     __u8 proto;
@@ -39,40 +39,39 @@ struct nptv6_frag_value {
     __u8 pad[1];
 };
 
-_Static_assert(sizeof(struct nptv6_frag_value) == 8, "nptv6_frag_value must be 8 bytes");
+_Static_assert(sizeof(struct frag6_cache_value) == 8, "frag6_cache_value must be 8 bytes");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
-    __type(key, struct nptv6_frag_key);
-    __type(value, struct nptv6_frag_value);
-} nptv6_frag_lan SEC(".maps");
+    __type(key, struct frag6_cache_key);
+    __type(value, struct frag6_cache_value);
+} frag6_cache_lan SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
-    __type(key, struct nptv6_frag_key);
-    __type(value, struct nptv6_frag_value);
-} nptv6_frag_wan SEC(".maps");
+    __type(key, struct frag6_cache_key);
+    __type(value, struct frag6_cache_value);
+} frag6_cache_wan SEC(".maps");
 
-static __always_inline void nptv6_frag_key_init(struct nptv6_frag_key *key,
-                                                const struct in6_addr *src_addr,
-                                                const struct in6_addr *dst_addr, __be32 frag_id) {
+static __always_inline void frag6_cache_key_init(struct frag6_cache_key *key,
+                                                 const struct in6_addr *src_addr,
+                                                 const struct in6_addr *dst_addr, __be32 frag_id) {
     key->src_addr = *src_addr;
     key->dst_addr = *dst_addr;
     key->frag_id = frag_id;
 }
 
 /* Store after the first fragment has created or found its binding. */
-static __always_inline void nptv6_frag_cache_store(const struct in6_addr *src_addr,
-                                                   const struct in6_addr *dst_addr, __be32 frag_id,
-                                                   __u8 proto, __u8 frag_next_header,
-                                                   __be16 src_port, __be16 dst_port, __u8 has_ports,
-                                                   __u8 direction) {
-    struct nptv6_frag_key key = {};
-    nptv6_frag_key_init(&key, src_addr, dst_addr, frag_id);
+static __always_inline void frag6_cache_store(const struct in6_addr *src_addr,
+                                              const struct in6_addr *dst_addr, __be32 frag_id,
+                                              __u8 proto, __u8 frag_next_header, __be16 src_port,
+                                              __be16 dst_port, __u8 has_ports, __u8 direction) {
+    struct frag6_cache_key key = {};
+    frag6_cache_key_init(&key, src_addr, dst_addr, frag_id);
 
-    struct nptv6_frag_value value = {};
+    struct frag6_cache_value value = {};
     value.src_port = src_port;
     value.dst_port = dst_port;
     value.proto = proto;
@@ -81,9 +80,9 @@ static __always_inline void nptv6_frag_cache_store(const struct in6_addr *src_ad
     if (proto == IPV6_NH_ICMPV6) value.flags |= NPTV6_FRAG_FLAG_ICMP;
 
     if (direction == LAND_NAT_FRAG_FROM_LAN)
-        bpf_map_update_elem(&nptv6_frag_lan, &key, &value, BPF_ANY);
+        bpf_map_update_elem(&frag6_cache_lan, &key, &value, BPF_ANY);
     else
-        bpf_map_update_elem(&nptv6_frag_wan, &key, &value, BPF_ANY);
+        bpf_map_update_elem(&frag6_cache_wan, &key, &value, BPF_ANY);
 }
 
 /*
@@ -92,18 +91,18 @@ static __always_inline void nptv6_frag_cache_store(const struct in6_addr *src_ad
  * narrows identification collisions without putting the protocol in the key.
  * For ICMPv6, src_port carries the Echo identifier.
  */
-static __always_inline int nptv6_frag_cache_lookup(const struct in6_addr *src_addr,
-                                                   const struct in6_addr *dst_addr, __be32 frag_id,
-                                                   __u8 frag_next_header, __u8 direction,
-                                                   struct nptv6_frag_value *out) {
-    struct nptv6_frag_key key = {};
-    nptv6_frag_key_init(&key, src_addr, dst_addr, frag_id);
+static __always_inline int frag6_cache_lookup(const struct in6_addr *src_addr,
+                                              const struct in6_addr *dst_addr, __be32 frag_id,
+                                              __u8 frag_next_header, __u8 direction,
+                                              struct frag6_cache_value *out) {
+    struct frag6_cache_key key = {};
+    frag6_cache_key_init(&key, src_addr, dst_addr, frag_id);
 
-    struct nptv6_frag_value *value = 0;
+    struct frag6_cache_value *value = 0;
     if (direction == LAND_NAT_FRAG_FROM_LAN)
-        value = bpf_map_lookup_elem(&nptv6_frag_lan, &key);
+        value = bpf_map_lookup_elem(&frag6_cache_lan, &key);
     else
-        value = bpf_map_lookup_elem(&nptv6_frag_wan, &key);
+        value = bpf_map_lookup_elem(&frag6_cache_wan, &key);
     if (!value) return 0;
 
     if (value->frag_next_header != frag_next_header) return 0;

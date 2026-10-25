@@ -21,7 +21,7 @@
  * offset map, or reassembly timer. It supports in-order fragments only. The
  * per-direction LRU maps are bounded; a cache miss is dropped.
  */
-struct napt_frag_key {
+struct frag4_cache_key {
     __be32 src_addr;
     __be32 dst_addr;
     __be16 ip_id;
@@ -31,18 +31,18 @@ struct napt_frag_key {
 
 /*
  * The ports are the pre-translation ports from the first fragment. For ICMP
- * Query, src_port holds the identifier and dst_port is zero. A later fragment
+ * Query, both ports hold the identifier. A later fragment
  * calls the shared NAT mapping/CT lookup with these ports and derives the
  * translated IP addresses; the cache therefore does not duplicate the
  * translation result.
  */
-struct napt_frag_value {
+struct frag4_cache_value {
     __be16 src_port;
     __be16 dst_port;
 };
 
-_Static_assert(sizeof(struct napt_frag_key) == 12, "napt_frag_key must be 12 bytes");
-_Static_assert(sizeof(struct napt_frag_value) == 4, "napt_frag_value must be 4 bytes");
+_Static_assert(sizeof(struct frag4_cache_key) == 12, "frag4_cache_key must be 12 bytes");
+_Static_assert(sizeof(struct frag4_cache_value) == 4, "frag4_cache_value must be 4 bytes");
 
 /*
  * One bounded cache per direction. The key contains RFC 791 identification,
@@ -52,21 +52,21 @@ _Static_assert(sizeof(struct napt_frag_value) == 4, "napt_frag_value must be 4 b
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
-    __type(key, struct napt_frag_key);
-    __type(value, struct napt_frag_value);
-} napt_frag_cache_lan SEC(".maps");
+    __type(key, struct frag4_cache_key);
+    __type(value, struct frag4_cache_value);
+} frag4_cache_lan SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
-    __type(key, struct napt_frag_key);
-    __type(value, struct napt_frag_value);
-} napt_frag_cache_wan SEC(".maps");
+    __type(key, struct frag4_cache_key);
+    __type(value, struct frag4_cache_value);
+} frag4_cache_wan SEC(".maps");
 
 /* RFC 791 §3.1 identification, addresses, and protocol identify a datagram's
  * fragments without relying on the absent transport header. */
-static __always_inline void napt_frag_key_init(struct napt_frag_key *key, __be32 src_addr,
-                                               __be32 dst_addr, __be16 ip_id, __u8 proto) {
+static __always_inline void frag4_cache_key_init(struct frag4_cache_key *key, __be32 src_addr,
+                                                 __be32 dst_addr, __be16 ip_id, __u8 proto) {
     key->src_addr = src_addr;
     key->dst_addr = dst_addr;
     key->ip_id = ip_id;
@@ -80,33 +80,33 @@ static __always_inline void napt_frag_key_init(struct napt_frag_key *key, __be32
  * (pre-translation) values; later fragments use them to replay the same
  * NAT mapping/CT lookup.
  */
-static __always_inline void napt_frag_cache_store(__be32 src_addr, __be32 dst_addr, __be16 ip_id,
-                                                  __u8 proto, __be16 src_port, __be16 dst_port,
-                                                  __u8 direction) {
-    struct napt_frag_key key = {};
-    napt_frag_key_init(&key, src_addr, dst_addr, ip_id, proto);
+static __always_inline void frag4_cache_store(__be32 src_addr, __be32 dst_addr, __be16 ip_id,
+                                              __u8 proto, __be16 src_port, __be16 dst_port,
+                                              __u8 direction) {
+    struct frag4_cache_key key = {};
+    frag4_cache_key_init(&key, src_addr, dst_addr, ip_id, proto);
 
-    struct napt_frag_value value = {};
+    struct frag4_cache_value value = {};
     value.src_port = src_port;
     value.dst_port = dst_port;
     if (direction == LAND_NAT_FRAG_FROM_LAN)
-        bpf_map_update_elem(&napt_frag_cache_lan, &key, &value, BPF_ANY);
+        bpf_map_update_elem(&frag4_cache_lan, &key, &value, BPF_ANY);
     else
-        bpf_map_update_elem(&napt_frag_cache_wan, &key, &value, BPF_ANY);
+        bpf_map_update_elem(&frag4_cache_wan, &key, &value, BPF_ANY);
 }
 
 /* ADR 0016: a non-initial fragment takes its ports from its direction's cache. */
-static __always_inline int napt_frag_cache_lookup(__be32 src_addr, __be32 dst_addr, __be16 ip_id,
-                                                  __u8 proto, __u8 direction, __be16 *src_port,
-                                                  __be16 *dst_port) {
-    struct napt_frag_key key = {};
-    napt_frag_key_init(&key, src_addr, dst_addr, ip_id, proto);
+static __always_inline int frag4_cache_lookup(__be32 src_addr, __be32 dst_addr, __be16 ip_id,
+                                              __u8 proto, __u8 direction, __be16 *src_port,
+                                              __be16 *dst_port) {
+    struct frag4_cache_key key = {};
+    frag4_cache_key_init(&key, src_addr, dst_addr, ip_id, proto);
 
-    struct napt_frag_value *value = 0;
+    struct frag4_cache_value *value = 0;
     if (direction == LAND_NAT_FRAG_FROM_LAN)
-        value = bpf_map_lookup_elem(&napt_frag_cache_lan, &key);
+        value = bpf_map_lookup_elem(&frag4_cache_lan, &key);
     else
-        value = bpf_map_lookup_elem(&napt_frag_cache_wan, &key);
+        value = bpf_map_lookup_elem(&frag4_cache_wan, &key);
     if (!value) return 0;
 
     *src_port = value->src_port;

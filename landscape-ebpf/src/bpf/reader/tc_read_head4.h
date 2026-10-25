@@ -127,7 +127,7 @@ static __always_inline int tc_read_ipv4(struct __sk_buff *skb, struct skb_ferry_
         __be16 sport = 0;
         __be16 dport = 0;
         cb->l4_offset = 0;
-        if (napt_frag_cache_lookup(*src_addr, *dst_addr, ip_id, proto, direction, &sport, &dport)) {
+        if (frag4_cache_lookup(*src_addr, *dst_addr, ip_id, proto, direction, &sport, &dport)) {
             cb->sport = sport;
             cb->dport = dport;
             cb->ports_valid = 1;
@@ -202,7 +202,7 @@ static __always_inline int tc_read_ipv4(struct __sk_buff *skb, struct skb_ferry_
     if (cacheable) cb->ports_valid = 1;
 
     if (first_fragment && cacheable)
-        napt_frag_cache_store(*src_addr, *dst_addr, ip_id, proto, cb->sport, cb->dport, direction);
+        frag4_cache_store(*src_addr, *dst_addr, ip_id, proto, cb->sport, cb->dport, direction);
     return 1;
 }
 
