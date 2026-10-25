@@ -238,6 +238,39 @@ fn run_advance(
     read_unaligned::<types::napt_ct_timer_test_result>(&bytes)
 }
 
+fn run_resolve(
+    skel: &TestNat4V4CtTimerSkel<'_>,
+    proto: u8,
+    mapping_gen: u32,
+    mapping_kind: u8,
+) -> types::napt_ct_timer_test_result {
+    let input = types::napt_ct_resolve_test_input {
+        key: ct_key(proto),
+        r#gen: mapping_gen,
+        kind: mapping_kind,
+        pad: [0; 3],
+    };
+    let key = 0u32;
+    skel.maps
+        .napt_ct_resolve_test_input
+        .update(as_bytes(&key), as_bytes(&input), MapFlags::ANY)
+        .unwrap();
+
+    let data = vec![0u8; 64];
+    let input = ProgramInput { data_in: Some(&data), ..Default::default() };
+    let ret = skel.progs.napt_ct_resolve_test.test_run(input).expect("test_run failed").return_value
+        as i32;
+    assert_eq!(ret, 0);
+
+    let bytes = skel
+        .maps
+        .napt_ct_timer_test_result
+        .lookup(as_bytes(&key), MapFlags::ANY)
+        .unwrap()
+        .expect("missing result");
+    read_unaligned::<types::napt_ct_timer_test_result>(&bytes)
+}
+
 fn lookup_wan<M: MapCore>(map: &M, proto: u8) -> Option<types::napt_from_wan_value> {
     let key = wan_index(proto, NAT_PORT).to_ne_bytes();
     map.lookup(&key, MapFlags::ANY).unwrap().map(|bytes| read_unaligned(&bytes))
@@ -547,6 +580,51 @@ mod tests {
             assert_eq!(result.status, CT_ACTIVE);
             assert_eq!(result.client_status, 0);
             assert_eq!(result.server_status, 1);
+        });
+    }
+
+    #[test]
+    fn resolve_rejects_previous_generation_after_wrap_to_zero() {
+        with_skel(|skel| {
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, GENERATION, 0));
+
+            let result = run_resolve(skel, PROTO_TCP, 0, KIND_DYNAMIC);
+            assert_eq!(result.action, 0);
+            assert_eq!(result.timer_exists, 0);
+        });
+    }
+
+    #[test]
+    fn resolve_accepts_matching_zero_generation() {
+        with_skel(|skel| {
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, 0, 0));
+
+            let result = run_resolve(skel, PROTO_TCP, 0, KIND_DYNAMIC);
+            assert_eq!(result.action, 1);
+            assert_eq!(result.timer_exists, 1);
+            assert_eq!(result.r#gen, 0);
+        });
+    }
+
+    #[test]
+    fn resolve_static_ct_does_not_require_generation_match() {
+        with_skel(|skel| {
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, GENERATION, 1));
+
+            let result = run_resolve(skel, PROTO_TCP, 0, KIND_STATIC);
+            assert_eq!(result.action, 1);
+            assert_eq!(result.timer_exists, 1);
+        });
+    }
+
+    #[test]
+    fn advance_does_not_reactivate_cleanup_state() {
+        with_skel(|skel| {
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_DELETE_EGRESS, GENERATION, 0));
+
+            let result = run_advance(skel, PROTO_TCP, 1, 1);
+            assert_eq!(result.status, CT_DELETE_EGRESS, "cleanup state must not be reactivated");
+            assert_eq!(result.client_status, 1);
         });
     }
 }

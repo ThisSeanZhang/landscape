@@ -78,12 +78,10 @@ impl EbpfNatDataplane {
 impl NatDataplane for EbpfNatDataplane {
     fn sync_static_nat4(
         &self,
-        configs: &[landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config],
+        _configs: &[landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config],
     ) {
+        // The NAT4 stage reload re-seeds the napt maps from the repository.
         self.rt.notify_static_nat4();
-        if let Err(e) = maps::nat::reconcile_static_nat4_map(&self.rt.paths, configs) {
-            tracing::error!("reconcile legacy static nat4 map error: {e:?}");
-        }
     }
 
     fn sync_static_nat6(

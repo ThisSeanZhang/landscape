@@ -35,6 +35,13 @@ struct napt_ct_advance_test_input {
     __u8 pad[2];
 };
 
+struct napt_ct_resolve_test_input {
+    struct napt_ct_key key;
+    __u32 gen;
+    __u8 kind;
+    __u8 pad[3];
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);
@@ -135,5 +142,41 @@ int napt_ct_advance_test(struct __sk_buff *skb) {
     result->client_status = value->client_status;
     result->server_status = value->server_status;
     result->timer_exists = 1;
+    return TC_ACT_OK;
+}
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct napt_ct_resolve_test_input);
+    __uint(max_entries, 1);
+} napt_ct_resolve_test_input SEC(".maps");
+
+SEC("tc")
+int napt_ct_resolve_test(struct __sk_buff *skb) {
+    (void)skb;
+    __u32 index = 0;
+    struct napt_ct_resolve_test_input *input =
+        bpf_map_lookup_elem(&napt_ct_resolve_test_input, &index);
+    struct napt_ct_timer_test_result *result = napt_test_result();
+
+    if (!input || !result) return TC_ACT_SHOT;
+
+    __builtin_memset(result, 0, sizeof(*result));
+
+    struct napt_from_wan_value mapping = {};
+    mapping.kind = input->kind;
+    mapping.generation = input->gen;
+
+    struct napt_ct_value *value = 0;
+    int ret = napt_ct_resolve(&input->key, &mapping, &value);
+    result->action = ret == 0 ? 1 : 0;
+
+    value = bpf_map_lookup_elem(&napt_ct, &input->key);
+    result->timer_exists = value ? 1 : 0;
+    if (value) {
+        result->status = value->status;
+        result->gen = value->from_wan_gen;
+    }
     return TC_ACT_OK;
 }

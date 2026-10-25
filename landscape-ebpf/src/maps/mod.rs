@@ -541,7 +541,6 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("init wan_ip_binding failed");
     // NAT
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("init nat6_static_map failed");
-    nat::init_nat4_static_map(&paths.nat4_static_map).expect("init nat4_static_map failed");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("init nat_metric_events failed");
     frag::init_frag4_cache_lan_map(&paths.frag4_cache_lan).expect("init frag4_cache_lan failed");
     frag::init_frag4_cache_wan_map(&paths.frag4_cache_wan).expect("init frag4_cache_wan failed");
@@ -600,7 +599,6 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("test init wan_ip_binding");
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("test init nat6_static_map");
-    nat::init_nat4_static_map(&paths.nat4_static_map).expect("test init nat4_static_map");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("test init nat_metric_events");
     frag::init_frag4_cache_lan_map(&paths.frag4_cache_lan).expect("test init frag4_cache_lan");
     frag::init_frag4_cache_wan_map(&paths.frag4_cache_wan).expect("test init frag4_cache_wan");
@@ -687,9 +685,7 @@ mod tests {
             Route6CacheKey,
             Route4SlotKey,
             Route6SlotKey,
-            NatMappingKeyV4,
             StaticNat6MappingKey,
-            Nat4TimerKey,
             Nat6TimerKey,
         );
     }
@@ -1087,7 +1083,6 @@ mod tests {
             init_path(&paths);
             for name in [
                 wan::WAN_IP_BINDING_PIN,
-                nat::NAT4_STATIC_MAP_PIN,
                 nat::NAT6_STATIC_MAP_PIN,
                 firewall::FIREWALL_BLOCK_IP4_MAP_PIN,
                 firewall::FIREWALL_BLOCK_IP6_MAP_PIN,
@@ -1117,11 +1112,11 @@ mod tests {
                 assert!(root.join(name).exists(), "missing pin file {name}");
             }
 
-            // Seed a persistent map (nat4 static survives restarts).
-            let nat4 =
-                libbpf_rs::MapHandle::from_pinned_path(&paths.nat4_static_map).expect("open nat4");
-            let key = [1u8; 8];
-            nat4.update(&key, &[2u8; 8], MapFlags::ANY).expect("seed nat4 static");
+            // Seed a persistent map (nat6 static survives restarts).
+            let nat6 =
+                libbpf_rs::MapHandle::from_pinned_path(&paths.nat6_static_map).expect("open nat6");
+            let key = [1u8; 12];
+            nat6.update(&key, &[2u8; 8], MapFlags::ANY).expect("seed nat6 static");
 
             let frag4 =
                 libbpf_rs::MapHandle::from_pinned_path(&paths.frag4_cache_lan).expect("open frag4");
@@ -1129,10 +1124,10 @@ mod tests {
 
             // Second "boot": persistent data must survive, per-boot maps reset.
             init_path(&paths);
-            let nat4 =
-                libbpf_rs::MapHandle::from_pinned_path(&paths.nat4_static_map).expect("open nat4");
+            let nat6 =
+                libbpf_rs::MapHandle::from_pinned_path(&paths.nat6_static_map).expect("open nat6");
             assert!(
-                nat4.lookup(&key, MapFlags::ANY).expect("lookup").is_some(),
+                nat6.lookup(&key, MapFlags::ANY).expect("lookup").is_some(),
                 "persistent map data must survive a restart"
             );
             let frag4 =

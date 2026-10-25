@@ -1,18 +1,10 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv6Addr;
 
 use libbpf_rs::{MapCore, MapFlags};
 
 use crate::bpf_error::LdEbpfResult;
 
 use super::{RawEbpfMapEntries, apply_raw_map_diff, diff_raw_map, snapshot_raw_map};
-
-#[derive(Debug, Clone, Copy)]
-pub struct StaticNatMappingV4Item {
-    pub wan_port: u16,
-    pub lan_port: u16,
-    pub lan_ip: Ipv4Addr,
-    pub l4_protocol: u8,
-}
 
 #[derive(Debug)]
 pub struct StaticNatMappingV6Item {
@@ -43,13 +35,8 @@ fn update_raw_entries<M: MapCore>(map: &M, entries: RawEbpfMapEntries) -> LdEbpf
 
 mod init;
 pub(crate) mod types;
-pub mod v4;
 pub mod v6;
 
-pub use v4::{
-    add_static_nat4_mapping_v3, build_static_nat4_entries, reconcile_static_nat4_entries,
-    reconcile_static_nat4_map,
-};
 pub use v6::{
     add_static_nat6_mapping, build_static_nat6_entries, reconcile_static_nat6_entries,
     reconcile_static_nat6_map,

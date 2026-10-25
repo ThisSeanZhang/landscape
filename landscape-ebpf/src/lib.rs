@@ -37,7 +37,6 @@ pub struct LandscapeMapPath {
     pub wan_ip: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,
-    pub nat4_static_map: PathBuf,
     pub frag4_cache_lan: PathBuf,
     pub frag4_cache_wan: PathBuf,
     pub frag6_cache_lan: PathBuf,
@@ -97,7 +96,6 @@ impl LandscapeMapPath {
             wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
             // NAT
             nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
-            nat4_static_map: root.join(nat::NAT4_STATIC_MAP_PIN),
             frag4_cache_lan: root.join(frag::FRAG4_CACHE_LAN_PIN),
             frag4_cache_wan: root.join(frag::FRAG4_CACHE_WAN_PIN),
             frag6_cache_lan: root.join(frag::FRAG6_CACHE_LAN_PIN),
@@ -190,7 +188,9 @@ pub(crate) const TC_LAN_INGRESS_DAO_PRIORITY: u32 = 2;
 const LANDSCAPE_IPV4_TYPE: u8 = 0;
 const LANDSCAPE_IPV6_TYPE: u8 = 1;
 
+#[allow(dead_code)]
 const NAT_MAPPING_INGRESS: u8 = 0;
+#[allow(dead_code)]
 const NAT_MAPPING_EGRESS: u8 = 1;
 
 fn bump_memlock_rlimit() {

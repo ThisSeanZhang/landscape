@@ -35,9 +35,6 @@ pub mod tc_lan_ingress_route;
 #[path = "../bpf_rs/tc_mss.skel.rs"]
 pub mod tc_mss;
 #[rustfmt::skip]
-#[path = "../bpf_rs/tc_nat4.skel.rs"]
-pub mod tc_nat4;
-#[rustfmt::skip]
 #[path = "../bpf_rs/tc_nat4_v4.skel.rs"]
 pub mod tc_nat4_v4;
 #[rustfmt::skip]
@@ -82,9 +79,6 @@ pub mod xdp_lan_route;
 #[rustfmt::skip]
 #[path = "../bpf_rs/xdp_mss.skel.rs"]
 pub mod xdp_mss;
-#[rustfmt::skip]
-#[path = "../bpf_rs/xdp_nat4.skel.rs"]
-pub mod xdp_nat4;
 #[rustfmt::skip]
 #[path = "../bpf_rs/xdp_nat4_v4.skel.rs"]
 pub mod xdp_nat4_v4;

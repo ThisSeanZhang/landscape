@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use zerocopy::IntoBytes;
 
 use crate::metric::{ConnectMetricEventSource, EventSourceStopOutcome, MetricSourceHandle};
-use crate::skel::xdp_nat4::types::{in6_addr, nat_conn_metric_event};
+use crate::skel::xdp_nat6::types::{in6_addr, nat_conn_metric_event};
 use crate::tests::TestSkb;
 
 pub(crate) mod test_metric_ringbuf {

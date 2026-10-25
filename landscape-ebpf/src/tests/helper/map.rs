@@ -454,7 +454,6 @@ pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
 #[allow(dead_code)] // pinned handles exist for map-layout parity; not every test reads each one
 pub(crate) struct TestSharedMaps {
     pub wan_ip_binding: libbpf_rs::MapHandle,
-    pub nat4_static_map: libbpf_rs::MapHandle,
     pub rt4_lan_map: libbpf_rs::MapHandle,
     pub rt6_lan_map: libbpf_rs::MapHandle,
     pub rt4_slot_map: libbpf_rs::MapHandle,
@@ -471,7 +470,6 @@ impl TestSharedMaps {
         };
         Self {
             wan_ip_binding: pin(&paths.wan_ip),
-            nat4_static_map: pin(&paths.nat4_static_map),
             rt4_lan_map: pin(&paths.rt4_lan_map),
             rt6_lan_map: pin(&paths.rt6_lan_map),
             rt4_slot_map: pin(&paths.rt4_slot_map),

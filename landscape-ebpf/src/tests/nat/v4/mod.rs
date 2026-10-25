@@ -1,5 +1,5 @@
-mod dynamic_nat_v3;
-mod dynamic_nat_v3_timer;
+mod common;
+mod dynamic_nat_v4;
 mod egress_smoke_v4;
 mod static_nat_v3;
 mod tc_nat4_v4_behavior;

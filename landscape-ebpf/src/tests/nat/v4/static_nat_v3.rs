@@ -1,585 +1,164 @@
-use std::{mem::MaybeUninit, net::Ipv4Addr};
-
-use etherparse::PacketBuilder;
-use libbpf_rs::{
-    MapCore, MapFlags, ProgramInput,
-    skel::{OpenSkel, SkelBuilder as _},
-};
-use zerocopy::{FromBytes, IntoBytes};
-
-use crate::{
-    NAT_MAPPING_EGRESS, NAT_MAPPING_INGRESS,
-    maps::nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3},
-    maps::{Nat4TimerKey, Nat4TimerValueV3},
-    skel::tc_nat4::TcNat4SkelBuilder,
-    tests::TestSkb,
-};
-
-const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
-const LAN_HOST: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 100);
-const REMOTE_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
-const IFINDEX: u32 = 6;
-
-fn build_ipv4_tcp(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    )
-    .ipv4(src.octets(), dst.octets(), 64)
-    .tcp(src_port, dst_port, 0x12345678, 65535);
-
-    let payload = [0u8; 0];
-    let mut buf = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut buf, &payload).unwrap();
-    buf
-}
-
-fn build_ipv4_tcp_syn(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    )
-    .ipv4(src.octets(), dst.octets(), 64)
-    .tcp(src_port, dst_port, 0x12345678, 65535)
-    .syn();
-
-    let payload = [0u8; 0];
-    let mut buf = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut buf, &payload).unwrap();
-    buf
-}
-
-fn build_ipv4_udp(src: Ipv4Addr, dst: Ipv4Addr, src_port: u16, dst_port: u16) -> Vec<u8> {
-    let builder = PacketBuilder::ethernet2(
-        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
-    )
-    .ipv4(src.octets(), dst.octets(), 64)
-    .udp(src_port, dst_port);
-
-    let payload = [0u8; 8];
-    let mut buf = Vec::with_capacity(builder.size(payload.len()));
-    builder.write(&mut buf, &payload).unwrap();
-    buf
-}
-
-#[allow(clippy::too_many_arguments)]
-fn add_ct_entry<T: MapCore>(
-    timer_map: &T,
-    l4proto: u8,
-    src_addr: Ipv4Addr,
-    src_port: u16,
-    nat_addr: Ipv4Addr,
-    nat_port: u16,
-    client_addr: Ipv4Addr,
-    client_port: u16,
-    gress: u8,
-) {
-    let key = Nat4TimerKey {
-        l4proto,
-        _pad: [0; 3],
-        src_addr: src_addr.to_bits().to_be(),
-        dst_addr: nat_addr.to_bits().to_be(),
-        src_port: src_port.to_be(),
-        dst_port: nat_port.to_be(),
-    };
-    let value = Nat4TimerValueV3 {
-        server_status: 1,
-        client_status: 1,
-        gress,
-        client_addr: client_addr.to_bits().to_be(),
-        client_port: client_port.to_be(),
-        ifindex: IFINDEX,
-        ..Default::default()
-    };
-
-    timer_map
-        .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
-        .expect("failed to insert CT entry");
-}
+use super::common::*;
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
+    use libbpf_rs::{MapCore, MapFlags};
+
     use super::*;
+    use crate::tests::helper::map::as_bytes;
 
     const TC_ACT_SHOT: i32 = 2;
 
+    const WAN_PORT_TCP: u16 = 8080;
+    const LAN_PORT_TCP: u16 = 80;
+    const WAN_PORT_UDP: u16 = 5353;
+    const LAN_PORT_UDP: u16 = 53;
+
+    fn tcp_ingress_lan_host_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, LAN_HOST, LAN_PORT_TCP, WAN_PORT_TCP);
+            seed_static_ct(skel, PROTO_TCP, LAN_HOST, LAN_PORT_TCP, WAN_PORT_TCP, REMOTE_IP, 9999);
+
+            let pkt = tcp_pkt(REMOTE_IP, WAN_IP, 9999, WAN_PORT_TCP, false);
+            let (ret, out) = run(&skel.progs.tc_v4_from_wan, &pkt);
+            assert_eq!(ret, 0, "ingress should return TC_ACT_OK(0)");
+            assert_eq!(parse_ipv4_dst(&out), LAN_HOST, "dst_ip should be rewritten to LAN host");
+            assert_eq!(parse_tcp_ports(&out).1, LAN_PORT_TCP, "dst_port should be 80");
+        });
+    }
+
     #[test]
     fn tcp_ingress_lan_host_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        tcp_ingress_lan_host_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: LAN_HOST,
-                l4_protocol: 6,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            6,
-            REMOTE_IP,
-            9999,
-            WAN_IP,
-            8080,
-            LAN_HOST,
-            80,
-            NAT_MAPPING_INGRESS,
-        );
+    fn tcp_egress_lan_host_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, LAN_HOST, LAN_PORT_TCP, WAN_PORT_TCP);
+            seed_static_ct(skel, PROTO_TCP, LAN_HOST, LAN_PORT_TCP, WAN_PORT_TCP, REMOTE_IP, 9999);
 
-        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = pkt_out.net {
-            let dst: Ipv4Addr = ipv4.destination.into();
-            assert_eq!(dst, LAN_HOST, "dst_ip should be rewritten to LAN host");
-        } else {
-            panic!("expected IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
-            assert_eq!(tcp.destination_port, 80, "dst_port should be rewritten to 80");
-        } else {
-            panic!("expected TCP transport header in output");
-        }
+            let pkt = tcp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT_TCP, 9999, false);
+            let (ret, out) = run(&skel.progs.tc_v4_from_lan, &pkt);
+            assert_eq!(ret, -1, "egress should return TC_ACT_UNSPEC(-1)");
+            assert_eq!(parse_ipv4_src(&out), WAN_IP, "src_ip should be rewritten to WAN IP");
+            assert_eq!(parse_tcp_ports(&out).0, WAN_PORT_TCP, "src_port should be 8080");
+        });
     }
 
     #[test]
     fn tcp_egress_lan_host_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-lan");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        tcp_egress_lan_host_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: LAN_HOST,
-                l4_protocol: 6,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            6,
-            REMOTE_IP,
-            9999,
-            WAN_IP,
-            8080,
-            LAN_HOST,
-            80,
-            NAT_MAPPING_EGRESS,
-        );
+    fn tcp_ingress_local_router_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, Ipv4Addr::UNSPECIFIED, LAN_PORT_TCP, WAN_PORT_TCP);
+            seed_static_ct(skel, PROTO_TCP, WAN_IP, LAN_PORT_TCP, WAN_PORT_TCP, REMOTE_IP, 9999);
 
-        let pkt = build_ipv4_tcp(LAN_HOST, REMOTE_IP, 80, 9999);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = pkt_out.net {
-            let src: Ipv4Addr = ipv4.source.into();
-            assert_eq!(src, WAN_IP, "src_ip should be rewritten to WAN IP");
-        } else {
-            panic!("expected IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
-            assert_eq!(tcp.source_port, 8080, "src_port should be rewritten to 8080");
-        } else {
-            panic!("expected TCP transport header in output");
-        }
+            let pkt = tcp_pkt(REMOTE_IP, WAN_IP, 9999, WAN_PORT_TCP, false);
+            let (ret, out) = run(&skel.progs.tc_v4_from_wan, &pkt);
+            assert_eq!(ret, 0, "ingress should return TC_ACT_OK(0)");
+            assert_eq!(
+                parse_ipv4_dst(&out),
+                WAN_IP,
+                "dst_ip should stay WAN_IP, not 0.0.0.0 (OK path passthrough)"
+            );
+            assert_eq!(parse_tcp_ports(&out).1, LAN_PORT_TCP, "dst_port should be 80");
+        });
     }
 
     #[test]
     fn tcp_ingress_local_router_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        tcp_ingress_local_router_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            6,
-            REMOTE_IP,
-            9999,
-            WAN_IP,
-            8080,
-            WAN_IP,
-            80,
-            NAT_MAPPING_INGRESS,
-        );
+    fn tcp_ingress_local_router_create_path_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, Ipv4Addr::UNSPECIFIED, LAN_PORT_TCP, WAN_PORT_TCP);
 
-        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 8080);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+            let pkt = tcp_pkt(REMOTE_IP, WAN_IP, 443, WAN_PORT_TCP, true);
+            let (ret, out) = run(&skel.progs.tc_v4_from_wan, &pkt);
+            assert_eq!(ret, 0, "ingress should return TC_ACT_OK(0)");
+            assert_eq!(parse_ipv4_dst(&out), WAN_IP, "dst_ip should stay WAN_IP, not 0.0.0.0");
+            assert_eq!(parse_tcp_ports(&out).1, LAN_PORT_TCP, "dst_port should be 80");
 
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = pkt_out.net {
-            let dst: Ipv4Addr = ipv4.destination.into();
-            assert_eq!(dst, WAN_IP, "dst_ip should stay WAN_IP, not 0.0.0.0 (OK path passthrough)");
-        } else {
-            panic!("expected IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
-            assert_eq!(tcp.destination_port, 80, "dst_port should be rewritten to 80");
-        } else {
-            panic!("expected TCP transport header in output");
-        }
+            let key = ct_key(WAN_IP, LAN_PORT_TCP, REMOTE_IP, 443, PROTO_TCP);
+            let value = skel.maps.napt_ct.lookup(as_bytes(&key), MapFlags::ANY).unwrap();
+            let value = value.expect("ingress should create CT");
+            assert_eq!(value[2], 1, "CT must be marked static");
+        });
     }
 
     #[test]
     fn tcp_ingress_local_router_v3_create_path_preserves_dst_ip() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local-create");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        tcp_ingress_local_router_create_path_v4();
+    }
 
-        // Static mapping with lan_ip = 0.0.0.0 (passthrough / local router)
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
-        );
+    fn tcp_egress_local_router_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, Ipv4Addr::UNSPECIFIED, LAN_PORT_TCP, WAN_PORT_TCP);
+            seed_static_ct(skel, PROTO_TCP, WAN_IP, LAN_PORT_TCP, WAN_PORT_TCP, REMOTE_IP, 9999);
 
-        // No pre-seeded CT — exercise the create path (CT_RESOLVE_MISS)
-        let pkt = build_ipv4_tcp_syn(REMOTE_IP, WAN_IP, 443, 8080);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        // dst IP must stay WAN_IP (passthrough), NOT become 0.0.0.0
-        if let Some(etherparse::NetHeaders::Ipv4(ipv4, _)) = pkt_out.net {
-            let dst: Ipv4Addr = ipv4.destination.into();
-            assert_eq!(dst, WAN_IP, "dst_ip should stay WAN_IP, not 0.0.0.0");
-        } else {
-            panic!("expected IPv4 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
-            assert_eq!(tcp.destination_port, 80, "dst_port should be rewritten to 80");
-        } else {
-            panic!("expected TCP transport header in output");
-        }
-
-        // verify CT was created and stores the concrete dst (WAN_IP) as client_addr
-        let timer_key = Nat4TimerKey {
-            l4proto: 6,
-            _pad: [0; 3],
-            src_addr: REMOTE_IP.to_bits().to_be(),
-            dst_addr: WAN_IP.to_bits().to_be(),
-            src_port: 443u16.to_be(),
-            dst_port: 8080u16.to_be(),
-        };
-        let timer_bytes = skel
-            .maps
-            .nat4_timer_map
-            .lookup(timer_key.as_bytes(), MapFlags::ANY)
-            .expect("lookup ct");
-        let timer_bytes = timer_bytes.expect("ingress should create CT");
-        let timer = Nat4TimerValueV3::read_from_bytes(&timer_bytes).unwrap();
-        assert_eq!(
-            timer.client_addr,
-            WAN_IP.to_bits().to_be(),
-            "CT client_addr must be WAN_IP, not 0"
-        );
-        assert_eq!(timer.client_port, 80u16.to_be(), "CT client_port must be 80");
+            let pkt = tcp_pkt(WAN_IP, REMOTE_IP, LAN_PORT_TCP, 9999, false);
+            let (ret, out) = run(&skel.progs.tc_v4_from_lan, &pkt);
+            assert_eq!(ret, -1, "egress should return TC_ACT_UNSPEC(-1)");
+            assert_eq!(parse_tcp_ports(&out).0, WAN_PORT_TCP, "src_port should be 8080");
+        });
     }
 
     #[test]
     fn tcp_egress_local_router_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        tcp_egress_local_router_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            6,
-            REMOTE_IP,
-            9999,
-            WAN_IP,
-            8080,
-            WAN_IP,
-            80,
-            NAT_MAPPING_EGRESS,
-        );
+    fn udp_ingress_local_router_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_UDP, Ipv4Addr::UNSPECIFIED, LAN_PORT_UDP, WAN_PORT_UDP);
+            seed_static_ct(skel, PROTO_UDP, WAN_IP, LAN_PORT_UDP, WAN_PORT_UDP, REMOTE_IP, 12345);
 
-        let pkt = build_ipv4_tcp(WAN_IP, REMOTE_IP, 80, 9999);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::TransportHeader::Tcp(tcp)) = pkt_out.transport {
-            assert_eq!(tcp.source_port, 8080, "src_port should be rewritten to 8080");
-        } else {
-            panic!("expected TCP transport header in output");
-        }
+            let pkt = udp_pkt(REMOTE_IP, WAN_IP, 12345, WAN_PORT_UDP);
+            let (ret, out) = run(&skel.progs.tc_v4_from_wan, &pkt);
+            assert_eq!(ret, 0, "ingress should return TC_ACT_OK(0)");
+            assert_eq!(parse_udp(&out).dport, LAN_PORT_UDP, "dst_port should be 53");
+        });
     }
 
     #[test]
     fn udp_ingress_local_router_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        udp_ingress_local_router_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 5353,
-                lan_port: 53,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 17,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            17,
-            REMOTE_IP,
-            12345,
-            WAN_IP,
-            5353,
-            WAN_IP,
-            53,
-            NAT_MAPPING_INGRESS,
-        );
+    fn udp_egress_local_router_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_UDP, Ipv4Addr::UNSPECIFIED, LAN_PORT_UDP, WAN_PORT_UDP);
+            seed_static_ct(skel, PROTO_UDP, WAN_IP, LAN_PORT_UDP, WAN_PORT_UDP, REMOTE_IP, 12345);
 
-        let pkt = build_ipv4_udp(REMOTE_IP, WAN_IP, 12345, 5353);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::TransportHeader::Udp(udp)) = pkt_out.transport {
-            assert_eq!(udp.destination_port, 53, "dst_port should be rewritten to 53");
-        } else {
-            panic!("expected UDP transport header in output");
-        }
+            let pkt = udp_pkt(WAN_IP, REMOTE_IP, LAN_PORT_UDP, 12345);
+            let (ret, out) = run(&skel.progs.tc_v4_from_lan, &pkt);
+            assert_eq!(ret, -1, "egress should return TC_ACT_UNSPEC(-1)");
+            assert_eq!(parse_udp(&out).sport, WAN_PORT_UDP, "src_port should be 5353");
+        });
     }
 
     #[test]
     fn udp_egress_local_router_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
+        udp_egress_local_router_v4();
+    }
 
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 5353,
-                lan_port: 53,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 17,
-            }],
-        );
-        add_ct_entry(
-            &skel.maps.nat4_timer_map,
-            17,
-            REMOTE_IP,
-            12345,
-            WAN_IP,
-            5353,
-            WAN_IP,
-            53,
-            NAT_MAPPING_EGRESS,
-        );
+    fn tcp_ingress_no_match_drop_v4() {
+        with_skel(&[], &[], &[], |skel| {
+            seed_static(skel, PROTO_TCP, Ipv4Addr::UNSPECIFIED, LAN_PORT_TCP, WAN_PORT_TCP);
 
-        let pkt = build_ipv4_udp(WAN_IP, REMOTE_IP, 53, 12345);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_egress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, -1, "egress should return TC_ACT_UNSPEC(-1)");
-
-        let pkt_out = etherparse::PacketHeaders::from_ethernet_slice(&packet_out)
-            .expect("parse output packet");
-        if let Some(etherparse::TransportHeader::Udp(udp)) = pkt_out.transport {
-            assert_eq!(udp.source_port, 5353, "src_port should be rewritten to 5353");
-        } else {
-            panic!("expected UDP transport header in output");
-        }
+            let pkt = tcp_pkt(REMOTE_IP, WAN_IP, 9999, 9090, false);
+            let (ret, _) = run(&skel.progs.tc_v4_from_wan, &pkt);
+            assert_eq!(ret, TC_ACT_SHOT, "ingress with no matching mapping should drop");
+        });
     }
 
     #[test]
     fn tcp_ingress_no_match_drop_v3() {
-        let mut builder = TcNat4SkelBuilder::default();
-        let pin_root = crate::tests::isolated_pin_root("nat-v4-static-v3-local");
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        {
-            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
-            rodata.wan_ro_addr4 = crate::stages::nat4::wan_ro_addr4(WAN_IP);
-        }
-        let skel = open_skel.load().unwrap();
-
-        add_static_nat4_mapping_v3(
-            &skel.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: Ipv4Addr::UNSPECIFIED,
-                l4_protocol: 6,
-            }],
-        );
-
-        let pkt = build_ipv4_tcp(REMOTE_IP, WAN_IP, 9999, 9090);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
-
-        let result = skel.progs.tc_nat_wan_ingress_v4.test_run(input).expect("test_run failed");
-        assert_eq!(
-            result.return_value as i32, TC_ACT_SHOT,
-            "ingress with no matching mapping should return TC_ACT_SHOT(2)",
-        );
+        tcp_ingress_no_match_drop_v4();
     }
 }

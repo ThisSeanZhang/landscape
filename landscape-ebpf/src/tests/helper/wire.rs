@@ -484,32 +484,8 @@ mod tests {
     /// sure both generated skeletons agree on the layout.
     #[test]
     fn nat_timer_layouts_match_xdp_skel() {
-        use crate::maps::{Nat4TimerKey, Nat4TimerValueV3, Nat6TimerKey, Nat6TimerValue};
-        use crate::skel::xdp_nat4::types as xdp4;
+        use crate::maps::{Nat6TimerKey, Nat6TimerValue};
         use crate::skel::xdp_nat6::types as xdp6;
-
-        assert_size!(Nat4TimerKey, xdp4::nat4_timer_key);
-        assert_field!(Nat4TimerKey, xdp4::nat4_timer_key, l4proto);
-        assert_field_as!(Nat4TimerKey, src_addr, xdp4::nat4_timer_key, pair_ip.src_addr.addr);
-        assert_field_as!(Nat4TimerKey, dst_addr, xdp4::nat4_timer_key, pair_ip.dst_addr.addr);
-        assert_field_as!(Nat4TimerKey, src_port, xdp4::nat4_timer_key, pair_ip.src_port);
-        assert_field_as!(Nat4TimerKey, dst_port, xdp4::nat4_timer_key, pair_ip.dst_port);
-
-        assert_size!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, server_status);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, client_status);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, status);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, timer);
-        assert_field_as!(
-            Nat4TimerValueV3,
-            client_addr,
-            xdp4::nat4_timer_value_v3,
-            client_addr.addr
-        );
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, client_port);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, gress);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, ifindex);
-        assert_field!(Nat4TimerValueV3, xdp4::nat4_timer_value_v3, is_static);
 
         assert_size!(Nat6TimerKey, xdp6::nat6_timer_key);
         assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, client_suffix);

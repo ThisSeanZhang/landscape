@@ -4,7 +4,6 @@
 //! zeroed cb (the in-stage fallback scan).  Also asserts the packed cb
 //! layout for known packets.
 
-use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsFd, AsRawFd};
 
@@ -21,7 +20,6 @@ use zerocopy::IntoBytes;
 use crate::landscape::OwnedOpenObject;
 use crate::skel::tc_firewall::TcFirewallSkelBuilder;
 use crate::skel::tc_mss::TcMssSkelBuilder;
-use crate::skel::tc_nat4::TcNat4SkelBuilder;
 use crate::tests::TestSkb;
 
 const TC_SLOT_V4: u32 = 0;
@@ -32,7 +30,6 @@ const L3: u32 = 14;
 const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
 const LAN_HOST: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 100);
 const REMOTE_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
-const IFINDEX: u32 = 6;
 
 const V6_SRC: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
 const V6_DST: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
@@ -555,58 +552,111 @@ mod tests {
 
     #[test]
     fn ferry_equivalence_nat4_static() {
-        use crate::NAT_MAPPING_INGRESS;
-        use crate::maps::nat::{StaticNatMappingV4Item, add_static_nat4_mapping_v3};
-        use crate::maps::{Nat4TimerKey, Nat4TimerValueV3};
+        use crate::skel::tc_nat4_v4::{TcNat4V4Skel, TcNat4V4SkelBuilder, types};
+
+        fn be32(addr: Ipv4Addr) -> u32 {
+            u32::from_ne_bytes(addr.octets())
+        }
+
+        fn seed_static(nat: &TcNat4V4Skel<'_>) {
+            use types::*;
+
+            let lan_key = napt_from_lan_key {
+                internal_addr: be32(LAN_HOST),
+                internal_port: 80u16.to_be(),
+                proto: 6,
+                pad: 0,
+            };
+            let lan_value = napt_from_lan_value {
+                external_port: 8080u16.to_be(),
+                kind: 2,
+                allow_reuse: 1,
+                generation: 0,
+                trigger_addr: 0,
+                trigger_port: 0,
+                pad: 0,
+            };
+            nat.maps
+                .napt_from_lan
+                .update(
+                    crate::tests::helper::map::as_bytes(&lan_key),
+                    crate::tests::helper::map::as_bytes(&lan_value),
+                    MapFlags::ANY,
+                )
+                .unwrap();
+
+            let wan_value = napt_from_wan_value {
+                internal_addr: be32(LAN_HOST),
+                internal_port: 80u16.to_be(),
+                kind: 2,
+                allow_reuse: 1,
+                trigger_addr: 0,
+                trigger_port: 0,
+                pad0: 0,
+                generation: 0,
+                pad1: 0,
+                state_ref: 1u64 << 56,
+            };
+            nat.maps
+                .napt_from_wan
+                .update(
+                    &(65536u32 + 8080).to_ne_bytes(),
+                    crate::tests::helper::map::as_bytes(&wan_value),
+                    MapFlags::ANY,
+                )
+                .unwrap();
+
+            let ct_key = napt_ct_key {
+                internal_addr: be32(LAN_HOST),
+                remote_addr: be32(REMOTE_IP),
+                internal_port: 80u16.to_be(),
+                remote_port: 9999u16.to_be(),
+                proto: 6,
+                pad: [0; 3],
+            };
+            let ct_value = napt_ct_value {
+                external_port: 8080u16.to_be(),
+                is_static: 1,
+                from_wan_gen: 0,
+                status: 20,
+                ..Default::default()
+            };
+            nat.maps
+                .napt_ct
+                .update(
+                    crate::tests::helper::map::as_bytes(&ct_key),
+                    crate::tests::helper::map::as_bytes(&ct_value),
+                    MapFlags::ANY,
+                )
+                .unwrap();
+        }
 
         let root = load_ingress_root();
-        let pin_root = crate::tests::isolated_pin_root("cb-ferry-nat4");
-        let mut builder = TcNat4SkelBuilder::default();
-        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
-        let mut open_object = MaybeUninit::uninit();
-        let mut open_skel = builder.open(&mut open_object).unwrap();
-        open_skel.maps.rodata_data.as_deref_mut().unwrap().wan_ro_addr4 =
-            crate::stages::nat4::wan_ro_addr4(WAN_IP);
+        let (_backing, object) = OwnedOpenObject::new();
+        let mut open_skel = TcNat4V4SkelBuilder::default().open(object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.current_l3_offset = L3;
+            rodata.land_nat_external_addr = crate::stages::nat4::wan_ro_addr4(WAN_IP);
+            rodata.land_nat_udp_range_start = 32768;
+            rodata.land_nat_udp_range_end = 65535;
+            rodata.land_nat_tcp_range_start = 32768;
+            rodata.land_nat_tcp_range_end = 65535;
+        }
         let nat = open_skel.load().unwrap();
         wire_stage(
             &root.skel.maps.wan_ingress_root_next_stage,
             TC_SLOT_V4,
-            &nat.progs.tc_nat_wan_ingress_v4,
+            &nat.progs.tc_v4_from_wan,
         );
         let root_prog = &root.skel.progs.tc_wan_ingress_root;
 
-        add_static_nat4_mapping_v3(
-            &nat.maps.nat4_static_map,
-            vec![StaticNatMappingV4Item {
-                wan_port: 8080,
-                lan_port: 80,
-                lan_ip: LAN_HOST,
-                l4_protocol: 6,
-            }],
-        );
-        let key = Nat4TimerKey {
-            l4proto: 6,
-            _pad: [0; 3],
-            src_addr: REMOTE_IP.to_bits().to_be(),
-            dst_addr: WAN_IP.to_bits().to_be(),
-            src_port: 9999u16.to_be(),
-            dst_port: 8080u16.to_be(),
-        };
-        let value = Nat4TimerValueV3 {
-            server_status: 1,
-            client_status: 1,
-            gress: NAT_MAPPING_INGRESS,
-            client_addr: LAN_HOST.to_bits().to_be(),
-            client_port: 80u16.to_be(),
-            ifindex: IFINDEX,
-            ..Default::default()
-        };
-        nat.maps.nat4_timer_map.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).unwrap();
+        seed_static(&nat);
 
         // Plain TCP: both paths DNAT identically (byte-level, checksums
         // included) — and the translation really happened.
         let pkt = ipv4_tcp_to(WAN_IP, 9999, 8080);
-        assert_equiv(root_prog, &nat.progs.tc_nat_wan_ingress_v4, &pkt, "nat v4 tcp");
+        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &pkt, "nat v4 tcp");
         let (ret, out, _) = run_prog(root_prog, &pkt);
         assert_eq!(ret, 0);
         let headers = etherparse::PacketHeaders::from_ethernet_slice(&out).unwrap();
@@ -620,15 +670,15 @@ mod tests {
         // icmp error quoting the translated flow: exercises the cb[4] icmpx
         // fields through NAT's modify path.
         let icmpx = ipv4_icmp_error_quoting_tcp(WAN_IP, REMOTE_IP, 8080, 9999);
-        assert_equiv(root_prog, &nat.progs.tc_nat_wan_ingress_v4, &icmpx, "nat v4 icmpx");
+        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &icmpx, "nat v4 icmpx");
 
         // fragmented TCP: FIRST then MIDDLE ride the root/nat frag caches.
         let mut first = ipv4_tcp_to(WAN_IP, 9999, 8080);
         ipv4_set_frag(&mut first, 0x33, 0x2000);
-        assert_equiv(root_prog, &nat.progs.tc_nat_wan_ingress_v4, &first, "nat v4 frag FIRST");
+        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &first, "nat v4 frag FIRST");
         let mut middle = first.clone();
         ipv4_set_frag(&mut middle, 0x33, 0x2001);
-        assert_equiv(root_prog, &nat.progs.tc_nat_wan_ingress_v4, &middle, "nat v4 frag MIDDLE");
+        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &middle, "nat v4 frag MIDDLE");
     }
 
     fn ipv4_tcp_to(dst: Ipv4Addr, sp: u16, dp: u16) -> Vec<u8> {
