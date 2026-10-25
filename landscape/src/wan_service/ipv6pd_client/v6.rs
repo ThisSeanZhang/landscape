@@ -34,7 +34,7 @@ use landscape_common::{
     wan_service::ipv6_pd::LDIAPrefix,
 };
 use landscape_common::{
-    concurrency::{spawn_task, task_label},
+    concurrency::task_label,
     event::hub::IAPrefixEvent,
     net::MacAddr,
     sys_service::route_service::{RouteTargetInfo, WanRouteTarget},
@@ -247,9 +247,12 @@ fn create_pd_socket(
     if let Err(err) = socket.set_reuse_port(true) {
         tracing::warn!("set_reuse_port failed (non-fatal): {err:?}");
     }
+    // Scope the bind to this WAN device before claiming the wildcard port.
+    // Otherwise a DHCPv6 client bound to another interface (e.g. dhcpcd on
+    // the management NIC) makes bind() return EADDRINUSE.
+    socket.bind_device(Some(iface_name))?;
     socket.bind(&(*socket_addr).into())?;
     socket.set_nonblocking(true)?;
-    socket.bind_device(Some(iface_name))?;
     // All sends (Solicit / Renew / Release) carry the session's chain in
     // the HostDirect mark: the WAN egress entry hands the packet to the
     // link's chain root directly and every policy stage self-skips on
@@ -342,7 +345,14 @@ pub async fn dhcp_v6_pd_client(
     let socket = match create_pd_socket(&socket_addr, iface_name.as_bytes(), chain_id) {
         Ok(socket) => socket,
         Err(e) => {
-            tracing::error!("failed to create DHCPv6 PD socket on {}: {e:?}", iface_name);
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                tracing::error!(
+                    "failed to bind DHCPv6 PD socket on {iface_name}:{client_port}: UDP port already in use; \
+                     another DHCPv6 client may hold it (check: ss -lunp 'sport = :{client_port}')"
+                );
+            } else {
+                tracing::error!("failed to create DHCPv6 PD socket on {}: {e:?}", iface_name);
+            }
             service_status.just_change_status(ServiceStatus::Failed);
             swap_if_changed(&pd_runtime, PdRuntime::Stopped);
             return;
@@ -356,7 +366,7 @@ pub async fn dhcp_v6_pd_client(
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
     // 接收数据
-    spawn_task(task_label::task::WAN_IPV6PD_CLIENT_RENEW, async move {
+    service_status.spawn_task(task_label::task::WAN_IPV6PD_CLIENT_RENEW, async move {
         // 超时重发定时器
 
         let mut buf = vec![0u8; 65535];
