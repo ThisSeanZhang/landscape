@@ -27,14 +27,11 @@ static __always_inline u8 get_wan_ingress_l3_offset(struct __sk_buff *skb) {
     return tc_cb_l3_offset(skb);
 }
 
-#undef BPF_LOG_TOPIC
-
 #define TC_INGRESS_V4_SLOT 0
 #define TC_INGRESS_V6_SLOT 1
 
 SEC("tc/ingress")
 int tc_route4_wan_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route4_wan_ingress"
     int ret = 0;
     struct route4_context context = {0};
     struct packet_offset_info offset_info = {0};
@@ -68,12 +65,10 @@ int tc_route4_wan_ingress(struct __sk_buff *skb) {
     }
 
     return ret == TC_ACT_OK ? TC_ACT_OK : ret;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
 int tc_route6_wan_ingress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route6_wan_ingress"
     int ret = 0;
     struct route6_context context = {0};
     struct packet_offset_info offset_info = {0};
@@ -95,7 +90,7 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
 
     ret = route6_is_current_wan_packet(skb, l3, &context);
     if (ret != TC_ACT_OK) {
-        ld_bpf_log("route6_is_current_wan_packet: %pI6", context.daddr.in6_u.u6_addr8);
+        ld_from_wan_log("route6_is_current_wan_packet: %pI6", context.daddr.in6_u.u6_addr8);
         return ret;
     }
 
@@ -108,7 +103,6 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
     }
 
     return ret == TC_ACT_OK ? TC_ACT_OK : ret;
-#undef BPF_LOG_TOPIC
 }
 
 struct {
@@ -127,8 +121,6 @@ struct {
 
 SEC("tc/ingress")
 int tc_wan_ingress_route(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_wan_ingress_route <<<"
-
     bool is_ipv4;
     int ret;
     u8 l3 = get_wan_ingress_l3_offset(skb);
@@ -147,12 +139,11 @@ int tc_wan_ingress_route(struct __sk_buff *skb) {
 
     if (is_ipv4) {
         bpf_tail_call_static(skb, &ls_wan_in_tails, TC_INGRESS_V4_SLOT);
-        ld_bpf_log("bpf_tail_call_static error");
+        ld_from_wan_log("bpf_tail_call_static error");
     } else {
         bpf_tail_call_static(skb, &ls_wan_in_tails, TC_INGRESS_V6_SLOT);
-        ld_bpf_log("bpf_tail_call_static error");
+        ld_from_wan_log("bpf_tail_call_static error");
     }
 
     return TC_ACT_SHOT;
-#undef BPF_LOG_TOPIC
 }

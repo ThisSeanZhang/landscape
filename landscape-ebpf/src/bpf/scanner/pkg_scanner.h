@@ -3,7 +3,7 @@
 
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
-#include "base/landscape_log.h"
+#include "base/printk.h"
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "einat/einat_helpers.h"
@@ -69,8 +69,6 @@ struct packet_info {
 
 static __always_inline int pkt_scan_ipv4(struct __sk_buff *skb,
                                          struct ip_scanner_ctx *scanner_ctx) {
-#define BPF_LOG_TOPIC "pkt_scan_ipv4"
-
     struct iphdr *iph;
     if (VALIDATE_READ_DATA(skb, &iph, scanner_ctx->l4_offset, sizeof(struct iphdr))) {
         return LD_SCAN_ERR;
@@ -101,13 +99,10 @@ static __always_inline int pkt_scan_ipv4(struct __sk_buff *skb,
     scanner_ctx->l4_offset += (iph->ihl * 4);
 
     return LD_SCAN_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int pkt_scan_ipv6(struct __sk_buff *skb,
                                          struct ip_scanner_ctx *scanner_ctx) {
-#define BPF_LOG_TOPIC "pkt_scan_ipv6"
-
     struct ipv6hdr *ip6h;
     if (VALIDATE_READ_DATA(skb, &ip6h, scanner_ctx->l4_offset, sizeof(*ip6h))) {
         return LD_SCAN_ERR;
@@ -190,26 +185,20 @@ found_l4:
     scanner_ctx->l4_offset = payload_relative_pos;
 
     return LD_SCAN_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int scan_packet_l3(struct __sk_buff *skb, u32 current_l3_offset,
                                           struct packet_offset_info *offset_info) {
-#define BPF_LOG_TOPIC "scan_packet_l3"
-
     int ret = current_l3_protocol(skb, current_l3_offset, &offset_info->l3_protocol);
     if (ret == TC_ACT_SHOT) return LD_SCAN_ERR;
     if (ret != TC_ACT_OK) return LD_SCAN_UNSPEC;
 
     offset_info->l3_offset_when_scan = current_l3_offset;
     return LD_SCAN_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int scan_packet_outer_l4(struct __sk_buff *skb, u32 current_l3_offset,
                                                 struct packet_offset_info *offset_info) {
-#define BPF_LOG_TOPIC "scan_packet_outer_l4"
-
     bool is_ipv4;
     int ret = current_l3_protocol(skb, current_l3_offset, &offset_info->l3_protocol);
     if (ret == TC_ACT_SHOT) return LD_SCAN_ERR;
@@ -221,12 +210,12 @@ static __always_inline int scan_packet_outer_l4(struct __sk_buff *skb, u32 curre
     ctx.l4_offset = current_l3_offset;
     if (is_ipv4) {
         if (pkt_scan_ipv4(skb, &ctx)) {
-            ld_bpf_log("scan ip v4 err");
+            ld_log("scan ip v4 err");
             return LD_SCAN_ERR;
         }
     } else {
         if (pkt_scan_ipv6(skb, &ctx)) {
-            ld_bpf_log("scan ip v6 err");
+            ld_log("scan ip v6 err");
             return LD_SCAN_ERR;
         }
     }
@@ -244,13 +233,10 @@ static __always_inline int scan_packet_outer_l4(struct __sk_buff *skb, u32 curre
     }
 
     return LD_SCAN_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l3_offset,
                                             struct packet_offset_info *offset_info) {
-#define BPF_LOG_TOPIC "scan_packet_full"
-
     int ret = scan_packet_outer_l4(skb, current_l3_offset, offset_info);
     if (ret) return ret;
 
@@ -262,7 +248,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
     if (offset_info->l4_protocol == IPPROTO_ICMP) {
         struct icmphdr *icmph;
         if (VALIDATE_READ_DATA(skb, &icmph, offset_info->l4_offset, sizeof(struct icmphdr))) {
-            ld_bpf_log("icmphdr error, offset_info->l4_offset: %u", offset_info->l4_offset);
+            ld_log("icmphdr error, offset_info->l4_offset: %u", offset_info->l4_offset);
             return LD_SCAN_ERR;
         }
         switch (icmp_msg_type(icmph)) {
@@ -271,13 +257,13 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             barrier_var(offset_info->icmp_error_l3_offset);
             ctx.l4_offset = offset_info->icmp_error_l3_offset;
             if (pkt_scan_ipv4(skb, &ctx)) {
-                ld_bpf_log("scan icmp inner ipv4 error: %u", ctx.l4_offset);
+                ld_log("scan icmp inner ipv4 error: %u", ctx.l4_offset);
                 return LD_SCAN_ERR;
             }
 
             if (ctx.fragment_type >= FRAG_MIDDLE) {
                 // icmp 不处理分片导致的 icmp 错误
-                ld_bpf_log("could not handle icmp with fragment");
+                ld_log("could not handle icmp with fragment");
                 return LD_SCAN_ERR;
             }
 
@@ -302,7 +288,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             icmp_src_ip_val = *temp_addr;
 
             if (dst_ip_val != icmp_src_ip_val) {
-                ld_bpf_log("icmp error drop: inner src ip mismatches outer dst ip");
+                ld_log("icmp error drop: inner src ip mismatches outer dst ip");
                 return LD_SCAN_ERR;
             }
             break;
@@ -313,7 +299,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
         case ICMP_ACT_UNSPEC:
             return LD_SCAN_UNSPEC;
         default:
-            ld_bpf_log("icmp shot");
+            ld_log("icmp shot");
             return LD_SCAN_ERR;
         }
     } else if (offset_info->l4_protocol == IPPROTO_ICMPV6) {
@@ -327,7 +313,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             offset_info->icmp_error_l3_offset = offset_info->l4_offset + ICMP_HDR_LEN;
             ctx.l4_offset = offset_info->icmp_error_l3_offset;
             if (pkt_scan_ipv6(skb, &ctx)) {
-                ld_bpf_log("scan icmpv6 inner ipv6 error: %u", ctx.l4_offset);
+                ld_log("scan icmpv6 inner ipv6 error: %u", ctx.l4_offset);
                 return LD_SCAN_ERR;
             }
 
@@ -359,7 +345,7 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
             COPY_ADDR_FROM(icmp_src_ip_val.in6_u.u6_addr32, temp_addr->in6_u.u6_addr32);
 
             if (!ld_ip_addr_equal(&dst_ip_val, &icmp_src_ip_val)) {
-                ld_bpf_log("icmp error drop: inner src ip mismatches outer dst ip");
+                ld_log("icmp error drop: inner src ip mismatches outer dst ip");
                 return LD_SCAN_ERR;
             }
             break;
@@ -370,13 +356,12 @@ static __always_inline int scan_packet_full(struct __sk_buff *skb, u32 current_l
         case ICMP_ACT_UNSPEC:
             return LD_SCAN_UNSPEC;
         default:
-            ld_bpf_log("icmp shot");
+            ld_log("icmp shot");
             return LD_SCAN_ERR;
         }
     }
 
     return LD_SCAN_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline bool is_icmp_error_pkt(const struct packet_offset_info *offset) {

@@ -24,7 +24,7 @@ WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
 
 static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root_index) {
     bpf_tail_call(ctx, &xdp_pipe_root_progs, root_index);
-    ld_bpf_log("wan_intro tail call failed, root_index=%u", root_index);
+    ld_from_wan_log("wan_intro tail call failed, root_index=%u", root_index);
 }
 
 /* Primary key hit -> its chain root; miss -> XDP_DROP (default-deny).
@@ -41,7 +41,6 @@ static __always_inline int wan_intro_dispatch(struct xdp_md *ctx, u64 key) {
 
 SEC("xdp")
 int xdp_wan_intro(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "xdp_wan_intro"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -158,7 +157,7 @@ int xdp_wan_intro(struct xdp_md *ctx) {
 
     int result = bpf_xdp_adjust_head(ctx, 8);
     if (result != 0) {
-        ld_bpf_log("bpf_xdp_adjust_head failed: %d", result);
+        ld_from_wan_log("bpf_xdp_adjust_head failed: %d", result);
         return XDP_DROP;
     }
 
@@ -180,6 +179,4 @@ int xdp_wan_intro(struct xdp_md *ctx) {
 
     wan_intro_tailcall_root(ctx, root);
     return XDP_PASS;
-
-#undef BPF_LOG_TOPIC
 }

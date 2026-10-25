@@ -8,7 +8,7 @@
 
 #include <vmlinux.h>
 
-#include "base/landscape_log.h"
+#include "base/printk.h"
 #include "nat/nat_common.h"
 
 static __always_inline int icmpx_err_l3_offset(int l4_off) {
@@ -100,7 +100,6 @@ static __always_inline int modify_headers_v4(struct __sk_buff *skb, bool is_icmp
                                              u32 current_l3_offset, int l4_off, int err_l4_off,
                                              bool is_modify_source,
                                              const struct nat4_action *action) {
-#define BPF_LOG_TOPIC "modify_headers_v4"
     int ret;
     int l4_to_port_off;
     int l4_to_check_off;
@@ -184,7 +183,6 @@ static __always_inline int modify_headers_v4(struct __sk_buff *skb, bool is_icmp
     }
 
     return 0;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_EINAT_NAT4_H__ */

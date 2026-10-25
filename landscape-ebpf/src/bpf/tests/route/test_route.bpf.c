@@ -46,7 +46,6 @@ static __always_inline int read_route4_context(struct __sk_buff *skb,
 
 SEC("tc")
 int test_route_v6_search_cache_in_lan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_search_cache_in_lan"
     struct route6_context context = {0};
     u32 flow_mark = skb->mark;
     int ret = read_route6_context(skb, &context);
@@ -55,12 +54,10 @@ int test_route_v6_search_cache_in_lan(struct __sk_buff *skb) {
     }
 
     return route6_search_cache_in_lan(skb, current_l3_offset, &context, &flow_mark);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_v6_set_cache_in_wan"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -68,12 +65,10 @@ int test_route_v6_set_cache_in_wan(struct __sk_buff *skb) {
     }
 
     return route6_set_cache_in_wan(&context, current_l3_offset, skb->ifindex, tc_cb_chain(skb));
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_pick_wan_by_flow_id_default(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_pick_wan_by_flow_id_default"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -95,12 +90,10 @@ int test_route6_pick_wan_by_flow_id_default(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
     return (int)target_info->ifindex;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_pick_wan_by_flow_id_non_default(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_pick_wan_by_flow_id_non_default"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -122,22 +115,18 @@ int test_route6_pick_wan_by_flow_id_non_default(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
     }
     return (int)target_info->ifindex;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_cached_docker_vlan_id(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_cached_docker_vlan_id"
     struct route6_cache_value target = {0};
     target.mark_value = 0x0305;
 
     return route_flow_mark_vlan_id(target.mark_value);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_cached_docker_redirect(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_cached_docker_redirect"
     struct route6_cache_value target = {0};
     target.mark_value = 0x0305;
 
@@ -147,7 +136,6 @@ int test_route6_cached_docker_redirect(struct __sk_buff *skb) {
     }
 
     return skb->vlan_tci;
-#undef BPF_LOG_TOPIC
 }
 
 // ── lan_redirect_check unit hooks: each wraps one of the three per-hook
@@ -157,7 +145,6 @@ int test_route6_cached_docker_redirect(struct __sk_buff *skb) {
 
 SEC("tc")
 int test_route4_lan_redirect_check_in_wan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_wan"
     struct route4_context context = {0};
     int ret = read_route4_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -165,12 +152,10 @@ int test_route4_lan_redirect_check_in_wan(struct __sk_buff *skb) {
     }
 
     return tc_route4_lan_redirect_check_in_wan(skb, current_l3_offset, &context, false);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route4_lan_redirect_check_in_lan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_lan"
     struct route4_context context = {0};
     int ret = read_route4_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -178,12 +163,10 @@ int test_route4_lan_redirect_check_in_lan(struct __sk_buff *skb) {
     }
 
     return tc_route4_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route4_lan_redirect_check_in_wan_egress"
     struct route4_context context = {0};
     int ret = read_route4_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -191,11 +174,9 @@ int test_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
     }
 
     return tc_route4_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
-#undef BPF_LOG_TOPIC
 }
 SEC("tc")
 int test_route6_lan_redirect_check_in_wan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_wan"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -203,12 +184,10 @@ int test_route6_lan_redirect_check_in_wan(struct __sk_buff *skb) {
     }
 
     return tc_route6_lan_redirect_check_in_wan(skb, current_l3_offset, &context, false);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_lan_redirect_check_in_lan(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_lan"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -216,12 +195,10 @@ int test_route6_lan_redirect_check_in_lan(struct __sk_buff *skb) {
     }
 
     return tc_route6_lan_redirect_check_in_lan(skb, current_l3_offset, &context);
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc")
 int test_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route6_lan_redirect_check_in_wan_egress"
     struct route6_context context = {0};
     int ret = read_route6_context(skb, &context);
     if (ret != TC_ACT_OK) {
@@ -229,5 +206,4 @@ int test_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
     }
 
     return tc_route6_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
-#undef BPF_LOG_TOPIC
 }

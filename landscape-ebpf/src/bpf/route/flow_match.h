@@ -53,14 +53,13 @@ struct {
 
 static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l3_offset,
                                             __be32 saddr, u32 *default_flow_id_) {
-#define BPF_LOG_TOPIC "match_flow_id_v4"
     struct flow_match_key match_key = {0};
     u32 ret_flow_id = *default_flow_id_;
 
     if (current_l3_offset != 0) {
         u8 *mac;
         if (VALIDATE_READ_DATA(skb, &mac, 6, 6)) {
-            ld_bpf_log("read mac error");
+            ld_log("read mac error");
             return TC_ACT_SHOT;
         }
         __builtin_memcpy(match_key.mac.mac, mac, 6);
@@ -72,7 +71,7 @@ static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l
         if (flow_id_ptr != NULL) {
             ret_flow_id = *flow_id_ptr;
             // if (ret_flow_id == 201) {
-            //     ld_bpf_log("find flow_id by MAC: %u, ip: %pI4", ret_flow_id, &saddr);
+            //     ld_log("find flow_id by MAC: %u, ip: %pI4", ret_flow_id, &saddr);
             //     PRINT_MAC_ADDR(match_key.mac.mac);
             // }
         }
@@ -87,34 +86,32 @@ static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l
     if (flow_id_ptr != NULL) {
         ret_flow_id = *flow_id_ptr;
         // if (ret_flow_id == 201) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     ld_log("find flow_id: %u, ip: %pI4", ret_flow_id,
         //     match_key.src_addr.in6_u.u6_addr32);
         // }
         // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     ld_log("find flow_id: %u, ip: %pI4", ret_flow_id,
         //     match_key.src_addr.in6_u.u6_addr32);
         // } else {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id,
+        //     ld_log("find flow_id: %u, ip: %pI6", ret_flow_id,
         //     match_key.src_addr.in6_u.u6_addr32);
         // }
     }
 
     *default_flow_id_ = ret_flow_id;
-    // ld_bpf_log("flow_id: %u", ret_flow_id);
+    // ld_log("flow_id: %u", ret_flow_id);
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l3_offset,
                                             const struct in6_addr *saddr, u32 *default_flow_id_) {
-#define BPF_LOG_TOPIC "match_flow_id"
     struct flow_match_key match_key = {0};
     u32 ret_flow_id = *default_flow_id_;
 
     if (current_l3_offset != 0) {
         u8 *mac;
         if (VALIDATE_READ_DATA(skb, &mac, 6, 6)) {
-            ld_bpf_log("read mac error");
+            ld_log("read mac error");
             return TC_ACT_SHOT;
         }
         __builtin_memcpy(match_key.mac.mac, mac, 6);
@@ -125,7 +122,7 @@ static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l
         u32 *flow_id_ptr = bpf_map_lookup_elem(&flow_match_map, &match_key);
         if (flow_id_ptr != NULL) {
             ret_flow_id = *flow_id_ptr;
-            // ld_bpf_log("find flow_id by MAC: %u", ret_flow_id);
+            // ld_log("find flow_id by MAC: %u", ret_flow_id);
             // PRINT_MAC_ADDR(match_key.mac.mac);
         }
     }
@@ -139,18 +136,17 @@ static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l
     if (flow_id_ptr != NULL) {
         ret_flow_id = *flow_id_ptr;
         // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI4", ret_flow_id,
+        //     ld_log("find flow_id: %u, ip: %pI4", ret_flow_id,
         //     match_key.src_addr.in6_u.u6_addr32);
         // } else {
-        //     ld_bpf_log("find flow_id: %u, ip: %pI6", ret_flow_id,
+        //     ld_log("find flow_id: %u, ip: %pI6", ret_flow_id,
         //     match_key.src_addr.in6_u.u6_addr32);
         // }
     }
 
     *default_flow_id_ = ret_flow_id;
-    // ld_bpf_log("flow_id: %u", ret_flow_id);
+    // ld_log("flow_id: %u", ret_flow_id);
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_FLOW_MATCH_H__ */

@@ -1,7 +1,7 @@
 #ifndef LD_NAT_COMMON_H
 #define LD_NAT_COMMON_H
 #include <vmlinux.h>
-#include "base/landscape_log.h"
+#include "base/printk.h"
 #include "base/landscape.h"
 #include "base/proto_def.h"
 

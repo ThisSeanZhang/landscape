@@ -19,7 +19,6 @@ char LICENSE[] SEC("license") = "GPL";
 const volatile u32 current_l3_offset = 14;
 
 static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< fw_do_egress_v4 <<<"
     if (tc_cb_ferry_valid(skb)) {
         struct iphdr *iph;
         if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
@@ -72,12 +71,9 @@ static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< fw_do_egress_v6 <<<"
-
     if (tc_cb_ferry_valid(skb)) {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
@@ -129,11 +125,9 @@ static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< fw_do_ingress_v4 <<<"
     if (tc_cb_ferry_valid(skb)) {
         struct iphdr *iph;
         if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
@@ -192,12 +186,9 @@ static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< fw_do_ingress_v6 <<<"
-
     if (tc_cb_ferry_valid(skb)) {
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
@@ -256,13 +247,10 @@ static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
         return TC_ACT_SHOT;
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_firewall_wan_egress_v4 <<<"
-
     if (likely(not_host_direct(skb_mark(skb)))) {
         if (unlikely(fw_do_egress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
@@ -270,13 +258,10 @@ int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "<<< tc_firewall_wan_egress_v6 <<<"
-
     if (likely(not_host_direct(skb_mark(skb)))) {
         if (unlikely(fw_do_egress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
@@ -284,13 +269,10 @@ int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC ">>> tc_firewall_wan_ingress_v4 >>>"
-
     if (likely(not_host_direct(skb_mark(skb)))) {
         if (unlikely(fw_do_ingress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
@@ -298,13 +280,10 @@ int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_WAN_CHAIN_EXIT(skb);
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v6(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC ">>> tc_firewall_wan_ingress_v6 >>>"
-
     if (likely(not_host_direct(skb_mark(skb)))) {
         if (unlikely(fw_do_ingress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
@@ -312,5 +291,4 @@ int tc_firewall_wan_ingress_v6(struct __sk_buff *skb) {
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_WAN_CHAIN_EXIT(skb);
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }

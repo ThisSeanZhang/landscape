@@ -27,7 +27,6 @@ struct {
 
 SEC("tc/ingress")
 int test_route_packet(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "test_route_packet"
     u32 key = 0;
     struct route_packet_test_result result = {0};
 
@@ -53,5 +52,4 @@ int test_route_packet(struct __sk_buff *skb) {
 
     bpf_map_update_elem(&route_packet_test_result_map, &key, &result, BPF_ANY);
     return result.forward_ret;
-#undef BPF_LOG_TOPIC
 }

@@ -23,7 +23,6 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
                                                                u32 current_l3_offset,
                                                                struct route4_context *context,
                                                                bool is_lan) {
-#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_wan"
     // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below. Its only
     // production caller (tc_route4_wan_ingress) passes false, so that branch
     // is currently dead code; the LAN-ingress variant (tc_route4_lan_redirect_check_in_lan)
@@ -94,9 +93,9 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
                 if (!ret) {
                     return bpf_redirect(lan_info->ifindex, 0);
                 }
-                ld_bpf_log("store_mac_v4 err: %d", ret);
+                ld_from_wan_log("store_mac_v4 err: %d", ret);
             } else {
-                ld_bpf_log("can't find mac, IP: %pI4", &mac_key_search.addr);
+                ld_from_wan_log("can't find mac, IP: %pI4", &mac_key_search.addr);
             }
         } else {
             return bpf_redirect(lan_info->ifindex, 0);
@@ -112,32 +111,30 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
         }
 
         ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
-        // ld_bpf_log("lan_info->ifindex:  %d", lan_info->ifindex);
-        // ld_bpf_log("is_ipv4:  %d", is_ipv4);
-        // ld_bpf_log("bpf_redirect_neigh ip:  %pI6", lan_search_key.addr.in6_u.u6_addr8);
+        // ld_from_wan_log("lan_info->ifindex:  %d", lan_info->ifindex);
+        // ld_from_wan_log("is_ipv4:  %d", is_ipv4);
+        // ld_from_wan_log("bpf_redirect_neigh ip:  %pI6", lan_search_key.addr.in6_u.u6_addr8);
         if (unlikely(ret != 7)) {
-            ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+            ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
         }
-        // ld_bpf_log("bpf_redirect_neigh result: %d", ret);
+        // ld_from_wan_log("bpf_redirect_neigh result: %d", ret);
 
         return ret;
     }
 
-    // ld_bpf_log("lan_info pad: %d", lan_search_key._pad[0]);
-    // ld_bpf_log("lan_info pad: %d", lan_search_key._pad[1]);
-    // ld_bpf_log("lan_info pad: %d", lan_search_key._pad[2]);
-    // ld_bpf_log("lan_info prefixlen: %d", lan_search_key.prefixlen);
-    // ld_bpf_log("lan_info l3_protocol: %d", lan_search_key.l3_protocol);
-    // ld_bpf_log("lan_info ip: %pI4", lan_search_key.addr.in6_u.u6_addr8);
+    // ld_from_wan_log("lan_info pad: %d", lan_search_key._pad[0]);
+    // ld_from_wan_log("lan_info pad: %d", lan_search_key._pad[1]);
+    // ld_from_wan_log("lan_info pad: %d", lan_search_key._pad[2]);
+    // ld_from_wan_log("lan_info prefixlen: %d", lan_search_key.prefixlen);
+    // ld_from_wan_log("lan_info l3_protocol: %d", lan_search_key.l3_protocol);
+    // ld_from_wan_log("lan_info ip: %pI4", lan_search_key.addr.in6_u.u6_addr8);
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
                                                                struct route4_context *context) {
-#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_lan"
     int ret;
     struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -195,10 +192,10 @@ static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff 
         if (mac_value) {
             ret = store_mac_v4(skb, mac_value->mac, lan_info->mac_addr);
             if (!ret) return bpf_redirect(lan_info->ifindex, 0);
-            ld_bpf_log("store_mac_v4 err: %d", ret);
+            ld_from_lan_log("store_mac_v4 err: %d", ret);
         } else {
-            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
-                       lan_info->ifindex);
+            ld_from_lan_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                            lan_info->ifindex);
         }
     } else {
         return bpf_redirect(lan_info->ifindex, 0);
@@ -215,11 +212,10 @@ static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff 
 
     ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
     if (unlikely(ret != 7)) {
-        ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
     }
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 // ── tc_route4/6_lan_redirect_check_in_wan_egress: adapted from
@@ -228,7 +224,6 @@ static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff 
 static __always_inline int
 tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3_offset,
                                            struct route4_context *context) {
-#define BPF_LOG_TOPIC "tc_route4_lan_redirect_check_in_wan_egress"
     int ret;
     struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -269,10 +264,10 @@ tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3
         if (mac_value) {
             ret = store_mac_v4(skb, mac_value->mac, lan_info->mac_addr);
             if (!ret) return bpf_redirect(lan_info->ifindex, 0);
-            ld_bpf_log("store_mac_v4 err: %d", ret);
+            ld_from_wan_log("store_mac_v4 err: %d", ret);
         } else {
-            ld_bpf_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
-                       lan_info->ifindex);
+            ld_from_wan_log("can't find mac, IP: %pI4, target ifindex: %d", &mac_key_search.addr,
+                            lan_info->ifindex);
         }
     } else {
         return bpf_redirect(lan_info->ifindex, 0);
@@ -289,17 +284,14 @@ tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3
 
     ret = bpf_redirect_neigh(lan_info->ifindex, &param, sizeof(param), 0);
     if (unlikely(ret != 7)) {
-        ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+        ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
     }
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_flow_verdict(struct __sk_buff *skb, u32 current_l3_offset,
                                                struct route4_context *context, u32 *init_flow_id_) {
-#define BPF_LOG_TOPIC "route4_flow_verdict"
-
     volatile u32 flow_id = *init_flow_id_ & 0xff;
     u8 flow_action;
 
@@ -321,17 +313,17 @@ static __always_inline int route4_flow_verdict(struct __sk_buff *skb, u32 curren
         if (ip_flow_mark_value != NULL) {
             flow_mark_action = ip_flow_mark_value->mark;
             priority = ip_flow_mark_value->priority;
-            //     ld_bpf_log("find ip map mark: %d", flow_mark_action);
-            //     ld_bpf_log("get_flow_allow_reuse_port: %d",
+            //     ld_log("find ip map mark: %d", flow_mark_action);
+            //     ld_log("get_flow_allow_reuse_port: %d",
             //                  get_flow_allow_reuse_port(flow_mark_action));
             // } else {
-            //     ld_bpf_log("map id: %d", ip_rules_map);
-            //     ld_bpf_log("flow_id: %d,inner ip map is empty", flow_id);
-            //     ld_bpf_log("222 ip: %pI4", ip_trie_key.addr);
-            //     ld_bpf_log("prefixlen: %d", ip_trie_key.prefixlen);
+            //     ld_log("map id: %d", ip_rules_map);
+            //     ld_log("flow_id: %d,inner ip map is empty", flow_id);
+            //     ld_log("222 ip: %pI4", ip_trie_key.addr);
+            //     ld_log("prefixlen: %d", ip_trie_key.prefixlen);
         }
         // } else {
-        // ld_bpf_log("flow_id: %d, ip map is empty", flow_id);
+        // ld_log("flow_id: %d, ip map is empty", flow_id);
     }
 
     struct flow_dns_match_key_v4 key = {0};
@@ -348,56 +340,53 @@ static __always_inline int route4_flow_verdict(struct __sk_buff *skb, u32 curren
                 flow_mark_action = dns_rule_value->mark;
                 priority = dns_rule_value->priority;
             }
-            // ld_bpf_log("dns_flow_mark is:%d for: %pI4", flow_mark_action,
+            // ld_log("dns_flow_mark is:%d for: %pI4", flow_mark_action,
             // &cache_key.dst_addr.in6_u.u6_addr32[0]);
             // } else {
-            // ld_bpf_log("dns_flow_mark is none for: %pI4",
+            // ld_log("dns_flow_mark is none for: %pI4",
             // &cache_key.dst_addr.in6_u.u6_addr32[0]);
         }
     } else {
-        // ld_bpf_log("flow_id: %d, dns map is empty", *flow_id_ptr);
+        // ld_log("flow_id: %d, dns map is empty", *flow_id_ptr);
     }
 
-    // ld_bpf_log("flow_id %d, flow_mark_action: %u", flow_id, flow_mark_action);
+    // ld_log("flow_id %d, flow_mark_action: %u", flow_id, flow_mark_action);
     flow_action = get_flow_action(flow_mark_action);
     // dns_flow_id = get_flow_id(flow_mark_action);
-    // ld_bpf_log("flow_id %d, flow_action: %d ", flow_id, flow_action);
+    // ld_log("flow_id %d, flow_action: %d ", flow_id, flow_action);
     if (flow_action == FLOW_KEEP_GOING) {
         // 无动作
-        // ld_bpf_log("FLOW_KEEP_GOING ip: %pI4", context->daddr.in6_u.u6_addr32);
+        // ld_log("FLOW_KEEP_GOING ip: %pI4", context->daddr.in6_u.u6_addr32);
         flow_mark_action = replace_flow_id(flow_mark_action, flow_id & 0xFF);
     } else if (flow_action == FLOW_DIRECT) {
-        // ld_bpf_log("FLOW_DIRECT ip: %pI4", context->daddr.in6_u.u6_addr32);
+        // ld_log("FLOW_DIRECT ip: %pI4", context->daddr.in6_u.u6_addr32);
         // RESET Flow ID
         // flow_id = 0;
         flow_mark_action = replace_flow_id(flow_mark_action, 0);
         goto keep_going;
     } else if (flow_action == FLOW_DROP) {
-        // ld_bpf_log("FLOW_DROP ip: %pI4", context->daddr.in6_u.u6_addr32);
+        // ld_log("FLOW_DROP ip: %pI4", context->daddr.in6_u.u6_addr32);
         return TC_ACT_SHOT;
     } else if (flow_action == FLOW_REDIRECT) {
-        // ld_bpf_log("FLOW_REDIRECT ip: %pI4, flow_id: %d", context->daddr.in6_u.u6_addr32,
+        // ld_log("FLOW_REDIRECT ip: %pI4, flow_id: %d", context->daddr.in6_u.u6_addr32,
         //              dns_flow_id);
         // flow_id = dns_flow_id;
     }
 
 keep_going:
     // if (flow_mark_action != 0) {
-    //     ld_bpf_log("flow_mark_action value is : %u", flow_mark_action);
-    //     ld_bpf_log("get_flow_id value is : %u", get_flow_id(flow_mark_action));
-    //     ld_bpf_log("dst ip: %pI4", context->daddr.in6_u.u6_addr32);
+    //     ld_log("flow_mark_action value is : %u", flow_mark_action);
+    //     ld_log("get_flow_id value is : %u", get_flow_id(flow_mark_action));
+    //     ld_log("dst ip: %pI4", context->daddr.in6_u.u6_addr32);
     // }
     *init_flow_id_ = flow_mark_action;
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
                                                                const struct route4_context *context,
                                                                const u32 flow_id) {
-#define BPF_LOG_TOPIC "route4_pick_wan_and_send_by_flow_id"
-
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
@@ -413,7 +402,7 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
             // Default flow PASS
             return TC_ACT_UNSPEC;
         } else {
-            ld_bpf_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
+            ld_from_lan_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
             // Other DROP
             return TC_ACT_SHOT;
         }
@@ -431,7 +420,7 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
 
     if (current_l3_offset == 0 && target_info->has_mac) {
         if (prepend_dummy_mac(skb) != 0) {
-            ld_bpf_log("add dummy_mac fail");
+            ld_from_lan_log("add dummy_mac fail");
             return TC_ACT_SHOT;
         }
     }
@@ -439,11 +428,11 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
     if (target_info->is_docker) {
         ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
         if (ret) {
-            ld_bpf_log("bpf_skb_vlan_push error");
+            ld_from_lan_log("bpf_skb_vlan_push error");
         }
         ret = bpf_redirect(target_info->ifindex, 0);
         if (ret != 7) {
-            ld_bpf_log("bpf_redirect docker error: %d", ret);
+            ld_from_lan_log("bpf_redirect docker error: %d", ret);
         }
         return ret;
     }
@@ -462,8 +451,8 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
         }
     }
 
-    // ld_bpf_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
-    // ld_bpf_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
+    // ld_from_lan_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
+    // ld_from_lan_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
 
     struct bpf_redir_neigh param;
     param.nh_family = AF_INET;
@@ -471,18 +460,14 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
     param.ipv6_nh[0] = target_info->gate_addr;
     ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
     if (ret != 7) {
-        ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
     }
     return ret;
-
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
                                                         u32 current_l3_offset,
                                                         struct route4_context *context) {
-#define BPF_LOG_TOPIC "route4_is_current_wan_packet"
-
     struct wan_ip_info_key wan_search_key = {0};
     wan_search_key.ifindex = skb->ingress_ifindex;
     wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
@@ -490,20 +475,18 @@ static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
     struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
     if (wan_ip_info != NULL) {
         // Check if the current DST IP is the IP that enters the WAN network card
-        // ld_bpf_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
+        // ld_from_wan_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
         if (wan_ip_info->addr.in6_u.u6_addr32[0] == context->daddr) {
             return TC_ACT_UNSPEC;
         }
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route4_cache_value *target) {
-#define BPF_LOG_TOPIC "route4_redirect_by_cached_target"
     if (target->ifindex == skb->ifindex) {
         return TC_ACT_UNSPEC;
     }
@@ -540,19 +523,18 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
         }
     }
 
-    ld_bpf_log("CACHED-TGT neigh fallback: if %u gate %pI4", target->ifindex, &target->gate_addr);
+    ld_from_lan_log("CACHED-TGT neigh fallback: if %u gate %pI4", target->ifindex,
+                    &target->gate_addr);
     struct bpf_redir_neigh param;
     param.nh_family = AF_INET;
     param.ipv6_nh[0] = target->gate_addr;
     return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route4_context *context,
                                                       u32 *flow_mark) {
-#define BPF_LOG_TOPIC "route4_search_cache_in_lan"
     int ret = 0;
     u32 key = WAN_CACHE;
     struct route4_cache_key search_key = {0};
@@ -580,7 +562,7 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                 } else {
                     mac_value = bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
                     if (mac_value) {
-                        // ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
+                        // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
                         //            &search_key.remote_addr, target->ifindex);
                         if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
                             return bpf_redirect(target->ifindex, 0);
@@ -589,7 +571,7 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                         mac_value = bpf_map_lookup_elem(&ip_mac_v4,
                                                         &wan_ip_info->gateway.in6_u.u6_addr32[0]);
                         if (mac_value) {
-                            // ld_bpf_log("find ip: %pI4 mac, send to ifindex: %d",
+                            // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
                             //            &wan_ip_info->gateway.in6_u.u6_addr32[0],
                             //            target->ifindex);
                             if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
@@ -624,13 +606,11 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_set_cache_in_wan(const struct route4_context *context,
                                                    u32 current_l3_offset, u32 ifindex,
                                                    u32 link_chain_id) {
-#define BPF_LOG_TOPIC "route4_set_cache_in_wan"
     struct route4_cache_key search_key = {0};
     struct route4_cache_value *target = NULL;
 
@@ -643,10 +623,12 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
         target = bpf_map_lookup_elem(lan_cache, &search_key);
         if (target) {
             // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-            //     ld_bpf_log("Already cached %pI4 -> %pI4", search_key.local_addr.in6_u.u6_addr8,
+            //     ld_from_wan_log("Already cached %pI4 -> %pI4",
+            //     search_key.local_addr.in6_u.u6_addr8,
             //                 search_key.remote_addr.in6_u.u6_addr8);
             // } else {
-            //     ld_bpf_log("Already cached %pI6 -> %pI6", search_key.local_addr.in6_u.u6_addr8,
+            //     ld_from_wan_log("Already cached %pI6 -> %pI6",
+            //     search_key.local_addr.in6_u.u6_addr8,
             //                 search_key.remote_addr.in6_u.u6_addr8);
             // }
             return TC_ACT_OK;
@@ -676,27 +658,26 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
             //     }
             // }
             bpf_map_update_elem(wan_cache, &search_key, &new_target_cache, BPF_ANY);
-            // ld_bpf_log("wan_cache new new_target_cache.ifindex: %d", new_target_cache.ifindex);
+            // ld_from_wan_log("wan_cache new new_target_cache.ifindex: %d",
+            // new_target_cache.ifindex);
         }
 
         // if (context->l3_protocol == LANDSCAPE_IPV4_TYPE) {
-        //     ld_bpf_log("cache %pI4 -> %pI4", search_key.local_addr.in6_u.u6_addr8,
+        //     ld_from_wan_log("cache %pI4 -> %pI4", search_key.local_addr.in6_u.u6_addr8,
         //                  search_key.remote_addr.in6_u.u6_addr8);
         // } else {
-        //     ld_bpf_log("cache %pI6 -> %pI6", search_key.local_addr.in6_u.u6_addr8,
+        //     ld_from_wan_log("cache %pI6 -> %pI6", search_key.local_addr.in6_u.u6_addr8,
         //                  search_key.remote_addr.in6_u.u6_addr8);
         // }
     } else {
-        ld_bpf_log("could not find wan_cache: %d", key);
+        ld_from_wan_log("could not find wan_cache: %d", key);
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int route4_set_cache_in_lan(const struct route4_context *context,
                                                    u32 flow_mark) {
-#define BPF_LOG_TOPIC "route4_set_cache_in_lan"
     struct route4_cache_key search_key = {0};
     struct route4_cache_value *target = NULL;
     u32 key = WAN_CACHE;
@@ -743,7 +724,6 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_ROUTE4_PATH_H__ */

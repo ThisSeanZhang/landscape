@@ -18,8 +18,6 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 
-#undef BPF_LOG_TOPIC
-
 // Solicited-node multicast ff02::1:ff00:0:0:0:0:0/104
 // Byte layout: ff 02 00 00 00 00 00 00 00 00 00 01 ff XX XX XX
 static __always_inline bool is_solicited_node_multicast(const u8 *addr) {
@@ -89,7 +87,6 @@ static __always_inline void emit_ip6_dao_event(u32 ifindex, const u8 *ip, const 
 
 SEC("tc/ingress")
 int tc_lan_dao(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_lan_dao"
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
 
@@ -230,7 +227,7 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // Only insert when no binding exists yet, so an authoritative binding
     // (neigh/FIB learning, userspace) is never overwritten by a DAD frame.
     if (bpf_map_update_elem(&ip_mac_v6, &key, &value, BPF_NOEXIST) == 0) {
-        ld_bpf_log("learn DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
+        ld_from_lan_log("learn DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
         emit_ip6_dao_event(value.ifindex, target, eth->h_source);
     } else {
         // Already bound. Re-report whenever a *different* host now re-claims
@@ -240,11 +237,10 @@ int tc_lan_dao(struct __sk_buff *skb) {
         // Same-host re-tests (the common benign case) never trigger an event.
         struct mac_value_v6 *existing = bpf_map_lookup_elem(&ip_mac_v6, &key);
         if (existing && !is_same_mac(existing->mac, eth->h_source)) {
-            ld_bpf_log("re-claim DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
+            ld_from_lan_log("re-claim DAD NS target: %pI6, ifindex: %d", target, value.ifindex);
             emit_ip6_dao_event(value.ifindex, target, eth->h_source);
         }
     }
 
     return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
 }

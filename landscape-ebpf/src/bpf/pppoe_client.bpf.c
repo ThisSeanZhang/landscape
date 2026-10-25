@@ -8,15 +8,12 @@
 #include "base/landscape.h"
 #include "base/pppoe_def.h"
 
-#undef BPF_LOG_TOPIC
-
 char LICENSE[] SEC("license") = "GPL";
 
 #define ETH_HLEN 14
 
 SEC("socket")
 int pppoe_pnet_filter(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "pppoe_pnet_filter"
     u16 eth_proto;
 
     bpf_skb_load_bytes(skb, 12, &eth_proto, 2);
@@ -51,5 +48,4 @@ int pppoe_pnet_filter(struct __sk_buff *skb) {
     }
 
     return skb->len;
-#undef BPF_LOG_TOPIC
 }

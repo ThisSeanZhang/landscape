@@ -23,7 +23,6 @@ struct route6_context {
 static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
                                                          const struct packet_offset_info *offset,
                                                          struct route6_context *context) {
-#define BPF_LOG_TOPIC "route6_read_context_from_scan"
     if (offset->l3_protocol != LANDSCAPE_IPV6_TYPE) return TC_ACT_UNSPEC;
 
     struct ipv6hdr *ip6h;
@@ -36,7 +35,6 @@ static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
     context->l4_protocol = 0;
     context->tos = 0;
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_ROUTE6_CONTEXT_H__ */

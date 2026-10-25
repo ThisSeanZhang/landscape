@@ -13,12 +13,10 @@ static __always_inline int scan_tproxy_packet(struct __sk_buff *skb, u32 current
 static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
                                                    struct packet_offset_info *offset_info,
                                                    struct inet_pair *ip_pair) {
-#define BPF_LOG_TOPIC "read_tproxy_packet_info"
-
     if (offset_info->l3_protocol == LANDSCAPE_IPV4_TYPE) {
         struct iphdr *iph;
         if (VALIDATE_READ_DATA(skb, &iph, offset_info->l3_offset_when_scan, sizeof(struct iphdr))) {
-            ld_bpf_log("ipv4 bpf_skb_load_bytes error");
+            ld_log("ipv4 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
         ip_pair->dst_addr.in6_u.u6_addr32[0] = iph->daddr;
@@ -27,7 +25,7 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
         if (offset_info->icmp_error_l3_offset > 0) {
             if (VALIDATE_READ_DATA(skb, &iph, offset_info->icmp_error_l3_offset,
                                    sizeof(struct iphdr))) {
-                ld_bpf_log("ipv4 bpf_skb_load_bytes error");
+                ld_log("ipv4 bpf_skb_load_bytes error");
                 return TC_ACT_SHOT;
             }
             ip_pair->src_addr.in6_u.u6_addr32[0] = iph->daddr;
@@ -36,7 +34,7 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
         struct ipv6hdr *ip6h;
         if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->l3_offset_when_scan,
                                sizeof(struct ipv6hdr))) {
-            ld_bpf_log("ipv6 bpf_skb_load_bytes error");
+            ld_log("ipv6 bpf_skb_load_bytes error");
             return TC_ACT_SHOT;
         }
         COPY_ADDR_FROM(ip_pair->src_addr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
@@ -45,7 +43,7 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
         if (offset_info->icmp_error_l3_offset > 0) {
             if (VALIDATE_READ_DATA(skb, &ip6h, offset_info->icmp_error_l3_offset,
                                    sizeof(struct ipv6hdr))) {
-                ld_bpf_log("ipv6 bpf_skb_load_bytes error");
+                ld_log("ipv6 bpf_skb_load_bytes error");
                 return TC_ACT_SHOT;
             }
             COPY_ADDR_FROM(ip_pair->src_addr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
@@ -120,7 +118,6 @@ static __always_inline int read_tproxy_packet_info(struct __sk_buff *skb,
         return TC_ACT_UNSPEC;
     }
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_TPROXY_PACKET_H__ */

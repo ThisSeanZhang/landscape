@@ -397,7 +397,6 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
 
 static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *ctx,
                                                                 struct route4_context *context) {
-#define BPF_LOG_TOPIC "xdp_route4_lan_redirect_check_in_lan"
     struct route4_lan_key key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
@@ -425,7 +424,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
             ret = xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
-            // ld_bpf_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr,
+            // ld_from_lan_log("bpf_redirect 1 %pI4 -> %pI4 idx: %d ret: %d", &context->saddr,
             //            &context->daddr, lan_info->ifindex, ret);
             return ret;
         }
@@ -452,15 +451,14 @@ static __always_inline int xdp_route4_lan_redirect_check_in_lan(struct xdp_md *c
             if ((void *)(eth + 1) > data_end) return XDP_PASS;
             __builtin_memcpy(eth->h_dest, fib.dmac, 6);
             __builtin_memcpy(eth->h_source, lan_info->mac_addr, 6);
-            // ld_bpf_log("bpf_redirect 2");
+            // ld_from_lan_log("bpf_redirect 2");
             return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
         }
         return 0;
     }
 
-    // ld_bpf_log("bpf_redirect 3");
+    // ld_from_lan_log("bpf_redirect 3");
     return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, 0, 0);
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int xdp_route6_lan_redirect_check_in_lan(struct xdp_md *ctx,

@@ -21,7 +21,6 @@ const volatile u32 current_l3_offset = 14;
 
 SEC("tc/egress")
 int tc_wan_egress_root(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_egress_root <<<"
     u8 l3_protocol = 0;
     if (current_l3_protocol(skb, current_l3_offset, &l3_protocol) == TC_ACT_OK) {
         if (l3_protocol == LANDSCAPE_IPV6_TYPE) {
@@ -33,8 +32,7 @@ int tc_wan_egress_root(struct __sk_buff *skb) {
         }
     }
 
-    ld_bpf_log("ROOT next-stage tail FAILED (l3 %u) -> exit", l3_protocol);
+    ld_from_wan_log("ROOT next-stage tail FAILED (l3 %u) -> exit", l3_protocol);
     TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
-#undef BPF_LOG_TOPIC
 }

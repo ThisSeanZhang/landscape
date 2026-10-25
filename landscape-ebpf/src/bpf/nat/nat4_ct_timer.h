@@ -16,8 +16,6 @@
 static __always_inline int nat4_metric_try_report(struct nat4_timer_key *timer_key,
                                                   struct nat4_timer_value_v3 *timer_value,
                                                   u8 status) {
-#define BPF_LOG_TOPIC "nat4_metric_try_report"
-
     struct nat_conn_metric_event *event;
     event = bpf_ringbuf_reserve(&nat_metric_events, sizeof(struct nat_conn_metric_event), 0);
     if (event == NULL) {
@@ -45,7 +43,6 @@ static __always_inline int nat4_metric_try_report(struct nat4_timer_key *timer_k
     bpf_ringbuf_submit(event, 0);
 
     return 0;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline u32 nat4_timer_delete_ct(struct nat4_timer_key *key) {
@@ -67,7 +64,6 @@ static __always_inline u32 nat4_timer_restart(struct nat4_timer_value_v3 *value,
 
 static __always_inline int nat4_ct_advance(u8 pkt_type, u8 gress,
                                            struct nat4_timer_value_v3 *ct_timer_value) {
-#define BPF_LOG_TOPIC "nat4_ct_advance"
     u64 curr_state, *modify_status = NULL;
     if (gress == NAT_MAPPING_INGRESS) {
         curr_state = ct_timer_value->server_status;
@@ -103,14 +99,13 @@ static __always_inline int nat4_ct_advance(u8 pkt_type, u8 gress,
             __sync_val_compare_and_swap(&ct_timer_value->status, current_status, TIMER_ACTIVE);
         if (prev_status == current_status) {
             if (ct_timer_value->client_port == TEST_PORT) {
-                ld_bpf_log("flush status to TIMER_ACTIVE: 20");
+                ld_timer_log("flush status to TIMER_ACTIVE: 20");
             }
             bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
         }
     }
 
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline u32 nat4_handle_timer_step(struct nat4_timer_key *key,
@@ -266,7 +261,6 @@ static __always_inline u32 nat4_handle_timer_step(struct nat4_timer_key *key,
 
 static int nat4_timer_clean_callback(void *map_, struct nat4_timer_key *key,
                                      struct nat4_timer_value_v3 *value) {
-#define BPF_LOG_TOPIC "nat4_timer_clean_callback"
     int queue_push_ret = -2;
     u64 next_timeout = REPORT_INTERVAL;
     u32 action = nat4_handle_timer_step(key, value, false, &queue_push_ret, &next_timeout);
@@ -275,7 +269,6 @@ static int nat4_timer_clean_callback(void *map_, struct nat4_timer_key *key,
         bpf_timer_start(&value->timer, next_timeout, 0);
     }
     return 0;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline struct nat4_timer_value_v3 *

@@ -20,8 +20,6 @@ const volatile u32 current_l3_offset = 14;
 #define TCP_OPT_MSS 2
 #define TCP_HDR_LEN 20
 
-#undef BPF_LOG_TOPIC
-
 static __always_inline int extract_ipv6_tcp_offset(struct __sk_buff *skb, u32 l3_offset,
                                                    u32 *ip_hdr_len) {
     struct ipv6hdr *ip6h;
@@ -62,7 +60,6 @@ found_tcp:
 }
 
 static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 mss_value) {
-#define BPF_LOG_TOPIC "mss_clamp"
     struct tcphdr *tcph;
     if (VALIDATE_READ_DATA(skb, &tcph, offset, sizeof(*tcph))) {
         return;
@@ -115,12 +112,12 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
                 __be16 target_mss = bpf_htons(mss_value);
                 if (bpf_l4_csum_replace(skb, offset + offsetof(struct tcphdr, check), mss_val,
                                         target_mss, 2 | 0)) {
-                    ld_bpf_log("modify checksum error");
+                    ld_from_wan_log("modify checksum error");
                     return;
                 }
                 if (bpf_skb_store_bytes(skb, option_offset + 2, &target_mss, sizeof(target_mss),
                                         0)) {
-                    ld_bpf_log("modify mss error");
+                    ld_from_wan_log("modify mss error");
                     return;
                 }
             }
@@ -129,8 +126,6 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
 
         option_pos += opt_len_val;
     }
-
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {

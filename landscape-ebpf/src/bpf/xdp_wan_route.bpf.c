@@ -61,7 +61,6 @@ static __always_inline int xdp_route6_is_current_wan_packet(struct xdp_md *ctx,
 static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *ctx,
                                                                 struct route4_context *context,
                                                                 struct xdp_pipe_meta *meta) {
-#define BPF_LOG_TOPIC "xdp_route4_lan_redirect_check_in_wan"
     struct route4_lan_key lan_key = {.prefixlen = 32, .addr = context->daddr};
     struct mac_key_v4 mac_key = {.addr = context->daddr};
     struct mac_value_v4 *mac_val;
@@ -128,7 +127,6 @@ static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *c
     }
 
     return xdp_redirect_or_tc_handoff(ctx, lan_info->ifindex, meta->mark, 0);
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *ctx,
@@ -296,7 +294,6 @@ static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
 
 SEC("xdp")
 int xdp_wan_route_ingress(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "xdp_wan_route_ingress"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -347,5 +344,4 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
     }
 
     return XDP_PASS;
-#undef BPF_LOG_TOPIC
 }

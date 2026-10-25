@@ -23,7 +23,6 @@ struct route4_context {
 static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,
                                                          const struct packet_offset_info *offset,
                                                          struct route4_context *context) {
-#define BPF_LOG_TOPIC "route4_read_context_from_scan"
     if (offset->l3_protocol != LANDSCAPE_IPV4_TYPE) return TC_ACT_UNSPEC;
 
     struct iphdr *iph;
@@ -36,7 +35,6 @@ static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,
     context->l4_protocol = 0;
     context->tos = iph->tos;
     return TC_ACT_OK;
-#undef BPF_LOG_TOPIC
 }
 
 #endif /* __LD_ROUTE4_CONTEXT_H__ */

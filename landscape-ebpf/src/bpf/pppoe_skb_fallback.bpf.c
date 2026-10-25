@@ -23,7 +23,6 @@ char LICENSE[] SEC("license") = "GPL";
  * can dispatch them; everything else passes untouched. */
 SEC("xdp")
 int pppoe_skb_fallback(struct xdp_md *ctx) {
-#define BPF_LOG_TOPIC "pppoe_skb_fallback"
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     struct ethhdr *eth = data;
@@ -47,7 +46,7 @@ int pppoe_skb_fallback(struct xdp_md *ctx) {
     u16 session = bpf_ntohs(pppoe->session_id);
     u32 *own = bpf_map_lookup_elem(&pppoe_sessions, &session);
     if (!own) {
-        ld_bpf_log("session %x is not ours; passing untouched", session);
+        ld_from_wan_log("session %x is not ours; passing untouched", session);
         return XDP_PASS;
     }
 
@@ -59,7 +58,7 @@ int pppoe_skb_fallback(struct xdp_md *ctx) {
 
     int result = bpf_xdp_adjust_head(ctx, 8);
     if (result != 0) {
-        ld_bpf_log("bpf_xdp_adjust_head failed: %d", result);
+        ld_from_wan_log("bpf_xdp_adjust_head failed: %d", result);
         return XDP_DROP;
     }
 
@@ -72,6 +71,4 @@ int pppoe_skb_fallback(struct xdp_md *ctx) {
     __builtin_memcpy(eth->h_dest, mac_pair, sizeof(mac_pair));
     eth->h_proto = l2_proto;
     return XDP_PASS;
-
-#undef BPF_LOG_TOPIC
 }

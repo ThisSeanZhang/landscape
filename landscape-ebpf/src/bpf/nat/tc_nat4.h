@@ -3,7 +3,7 @@
 
 #include <vmlinux.h>
 
-#include "base/landscape_log.h"
+#include "base/printk.h"
 #include "nat/nat_common.h"
 #include "nat/nat_metric.h"
 #include "nat/nat4_map_ops.h"

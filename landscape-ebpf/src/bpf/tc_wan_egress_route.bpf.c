@@ -26,8 +26,6 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 
-#undef BPF_LOG_TOPIC
-
 #define TC_EGRESS_V4_SLOT 0
 #define TC_EGRESS_V6_SLOT 1
 #define TC_EGRESS_DIRECT_V4_SLOT 2
@@ -46,7 +44,6 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
                                                             u32 current_l3_offset,
                                                             const struct route4_context *context,
                                                             const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_route4_pick_wan_in_wan_egress"
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
@@ -58,26 +55,26 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
-            ld_bpf_log("DROP default flow v4, no target for: %pI4 -> %pI4", &context->saddr,
-                       &context->daddr);
+            ld_from_wan_log("DROP default flow v4, no target for: %pI4 -> %pI4", &context->saddr,
+                            &context->daddr);
             return TC_ACT_SHOT;
         }
-        ld_bpf_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4", resolved_flow_id, &context->saddr,
-                   &context->daddr);
+        ld_from_wan_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4", resolved_flow_id, &context->saddr,
+                        &context->daddr);
         return TC_ACT_SHOT;
     }
 
     if (target_info->ifindex != skb->ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
             if (prepend_dummy_mac(skb) != 0) {
-                ld_bpf_log("add dummy_mac fail");
+                ld_from_wan_log("add dummy_mac fail");
                 return TC_ACT_SHOT;
             }
         }
 
         if (target_info->is_docker) {
             ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-            if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            if (ret) ld_from_wan_log("bpf_skb_vlan_push error");
             return bpf_redirect(target_info->ifindex, 0);
         }
 
@@ -90,10 +87,10 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
                 if (!ret) {
                     mac_stored = true;
                 } else {
-                    ld_bpf_log("store_mac_v4 err: %d", ret);
+                    ld_from_wan_log("store_mac_v4 err: %d", ret);
                 }
             } else {
-                ld_bpf_log("can't find mac by: %pI4", &target_info->gate_addr);
+                ld_from_wan_log("can't find mac by: %pI4", &target_info->gate_addr);
             }
         }
 
@@ -108,21 +105,19 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
         param.ipv4_nh = target_info->gate_addr;
         ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
         if (unlikely(ret != TC_ACT_REDIRECT)) {
-            ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+            ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
         }
         return ret;
     }
 
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
     return TC_ACT_SHOT;
-#undef BPF_LOG_TOPIC
 }
 
 static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             const struct route6_context *context,
                                                             const u32 flow_id) {
-#define BPF_LOG_TOPIC "tc_route6_pick_wan_in_wan_egress"
     int ret;
     const u32 resolved_flow_id = get_flow_id(flow_id);
 
@@ -134,24 +129,24 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
-            ld_bpf_log("DROP default flow v6, no target");
+            ld_from_wan_log("DROP default flow v6, no target");
             return TC_ACT_SHOT;
         }
-        ld_bpf_log("DROP flow_id v6: %d", resolved_flow_id);
+        ld_from_wan_log("DROP flow_id v6: %d", resolved_flow_id);
         return TC_ACT_SHOT;
     }
 
     if (target_info->ifindex != skb->ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
             if (prepend_dummy_mac_v6(skb) != 0) {
-                ld_bpf_log("add dummy_mac fail");
+                ld_from_wan_log("add dummy_mac fail");
                 return TC_ACT_SHOT;
             }
         }
 
         if (target_info->is_docker) {
             ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-            if (ret) ld_bpf_log("bpf_skb_vlan_push error");
+            if (ret) ld_from_wan_log("bpf_skb_vlan_push error");
             return bpf_redirect(target_info->ifindex, 0);
         }
 
@@ -164,10 +159,10 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
                 if (!ret) {
                     mac_stored = true;
                 } else {
-                    ld_bpf_log("store_mac_v6 err: %d", ret);
+                    ld_from_wan_log("store_mac_v6 err: %d", ret);
                 }
             } else {
-                ld_bpf_log("can't find mac by: %pI6", &target_info->gate_addr);
+                ld_from_wan_log("can't find mac by: %pI6", &target_info->gate_addr);
             }
         }
 
@@ -179,20 +174,18 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
         param.nh_family = AF_INET6;
         COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr32);
         ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-        if (unlikely(ret != TC_ACT_REDIRECT)) ld_bpf_log("bpf_redirect_neigh error: %d", ret);
+        if (unlikely(ret != TC_ACT_REDIRECT)) ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
         return ret;
     }
 
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
     return TC_ACT_SHOT;
-#undef BPF_LOG_TOPIC
 }
 
 // ── route workers ──
 
 SEC("tc/egress")
 int tc_route4_wan_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route4_wan_egress"
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
@@ -229,12 +222,10 @@ int tc_route4_wan_egress(struct __sk_buff *skb) {
     ret = tc_route4_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
 int tc_route4_wan_direct_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route4_wan_direct_egress"
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
@@ -265,12 +256,10 @@ int tc_route4_wan_direct_egress(struct __sk_buff *skb) {
     ret = tc_route4_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
 int tc_route6_wan_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route6_wan_egress"
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
@@ -307,12 +296,10 @@ int tc_route6_wan_egress(struct __sk_buff *skb) {
     ret = tc_route6_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 SEC("tc/egress")
 int tc_route6_wan_direct_egress(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_route6_wan_direct_egress"
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
@@ -343,7 +330,6 @@ int tc_route6_wan_direct_egress(struct __sk_buff *skb) {
     ret = tc_route6_pick_wan_in_wan_egress(skb, current_l3_offset, &context, flow_mark);
 
     return ret;
-#undef BPF_LOG_TOPIC
 }
 
 struct {
@@ -364,13 +350,12 @@ struct {
 
 SEC("tc/egress")
 int tc_wan_egress_route(struct __sk_buff *skb) {
-#define BPF_LOG_TOPIC "tc_wan_egress_route <<<"
     // Already routed by a landscape pick_wan: enter the target link's
     // chain directly, the decision (and its chain id) travels in cb.
     if (tc_cb_forwarded(skb)) {
         u32 chain = tc_cb_chain(skb);
         bpf_tail_call(skb, &tc_wan_egress_roots, chain);
-        ld_bpf_log("WAN-E ROOT-TAIL-FAILED chain %u", chain);
+        ld_from_wan_log("WAN-E ROOT-TAIL-FAILED chain %u", chain);
         return TC_ACT_SHOT;
     }
 
@@ -386,7 +371,7 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     if (unlikely(is_host_direct(mark))) {
         u32 chain = get_host_direct_chain_id(mark);
         bpf_tail_call(skb, &tc_wan_egress_roots, chain);
-        ld_bpf_log("host-direct root tail failed chain %u; passing", chain);
+        ld_from_wan_log("host-direct root tail failed chain %u; passing", chain);
         return TC_ACT_UNSPEC;
     }
 
@@ -429,5 +414,4 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     }
 
     return TC_ACT_SHOT;
-#undef BPF_LOG_TOPIC
 }
