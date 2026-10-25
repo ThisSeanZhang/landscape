@@ -201,6 +201,8 @@ pub fn attach_nat4(
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
     pin_and_reuse_map(&mut open.maps.nat_metric_events, &paths.nat_metric_events)?;
+    pin_and_reuse_map(&mut open.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
+    pin_and_reuse_map(&mut open.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
 
     let tc_skel = bpf_ctx!(open.load(), "load tc_nat4_v4 skeleton")?;
     let reserved = seed_static_nat4(&tc_skel, static_configs);

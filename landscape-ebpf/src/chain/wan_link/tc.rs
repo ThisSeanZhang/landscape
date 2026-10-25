@@ -110,6 +110,22 @@ impl WanLinkDataplane {
             &mut ingress_open_skel.maps.tc_pipe_exits_wan_ingress,
             &backbone.paths().tc_pipe_exits_wan_ingress_path(),
         )?;
+        pin_and_reuse_map(
+            &mut ingress_open_skel.maps.frag4_cache_lan,
+            &backbone.paths().frag4_cache_lan,
+        )?;
+        pin_and_reuse_map(
+            &mut ingress_open_skel.maps.frag4_cache_wan,
+            &backbone.paths().frag4_cache_wan,
+        )?;
+        pin_and_reuse_map(
+            &mut ingress_open_skel.maps.frag6_cache_lan,
+            &backbone.paths().frag6_cache_lan,
+        )?;
+        pin_and_reuse_map(
+            &mut ingress_open_skel.maps.frag6_cache_wan,
+            &backbone.paths().frag6_cache_wan,
+        )?;
 
         let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
 
@@ -148,6 +164,22 @@ impl WanLinkDataplane {
         pin_and_reuse_map(
             &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
             &backbone.paths().tc_pipe_exits_wan_egress_path(),
+        )?;
+        pin_and_reuse_map(
+            &mut egress_open_skel.maps.frag4_cache_lan,
+            &backbone.paths().frag4_cache_lan,
+        )?;
+        pin_and_reuse_map(
+            &mut egress_open_skel.maps.frag4_cache_wan,
+            &backbone.paths().frag4_cache_wan,
+        )?;
+        pin_and_reuse_map(
+            &mut egress_open_skel.maps.frag6_cache_lan,
+            &backbone.paths().frag6_cache_lan,
+        )?;
+        pin_and_reuse_map(
+            &mut egress_open_skel.maps.frag6_cache_wan,
+            &backbone.paths().frag6_cache_wan,
         )?;
 
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;

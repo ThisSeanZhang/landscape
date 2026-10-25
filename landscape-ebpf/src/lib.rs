@@ -38,6 +38,10 @@ pub struct LandscapeMapPath {
     // NAT
     pub nat6_static_map: PathBuf,
     pub nat4_static_map: PathBuf,
+    pub frag4_cache_lan: PathBuf,
+    pub frag4_cache_wan: PathBuf,
+    pub frag6_cache_lan: PathBuf,
+    pub frag6_cache_wan: PathBuf,
 
     // 防火墙黑名单
     pub firewall_ipv4_block: PathBuf,
@@ -85,7 +89,7 @@ impl LandscapeMapPath {
     /// paths, skeleton pin reuse and tests all share one source of truth.
     pub fn from_root(root: &Path) -> Self {
         use crate::maps::{
-            dns, firewall, flow, flow_dns, flow_wanip, mac, nat, redirect_able, route, wan,
+            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route, wan,
         };
 
         let root = root.to_path_buf();
@@ -94,6 +98,10 @@ impl LandscapeMapPath {
             // NAT
             nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
             nat4_static_map: root.join(nat::NAT4_STATIC_MAP_PIN),
+            frag4_cache_lan: root.join(frag::FRAG4_CACHE_LAN_PIN),
+            frag4_cache_wan: root.join(frag::FRAG4_CACHE_WAN_PIN),
+            frag6_cache_lan: root.join(frag::FRAG6_CACHE_LAN_PIN),
+            frag6_cache_wan: root.join(frag::FRAG6_CACHE_WAN_PIN),
 
             // 防火墙黑名单
             firewall_ipv4_block: root.join(firewall::FIREWALL_BLOCK_IP4_MAP_PIN),

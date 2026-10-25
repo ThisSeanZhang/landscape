@@ -114,6 +114,7 @@ pub mod firewall;
 pub mod flow;
 pub mod flow_dns;
 pub mod flow_wanip;
+pub mod frag;
 pub mod mac;
 pub mod nat;
 pub mod redirect_able;
@@ -542,6 +543,10 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("init nat6_static_map failed");
     nat::init_nat4_static_map(&paths.nat4_static_map).expect("init nat4_static_map failed");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("init nat_metric_events failed");
+    frag::init_frag4_cache_lan_map(&paths.frag4_cache_lan).expect("init frag4_cache_lan failed");
+    frag::init_frag4_cache_wan_map(&paths.frag4_cache_wan).expect("init frag4_cache_wan failed");
+    frag::init_frag6_cache_lan_map(&paths.frag6_cache_lan).expect("init frag6_cache_lan failed");
+    frag::init_frag6_cache_wan_map(&paths.frag6_cache_wan).expect("init frag6_cache_wan failed");
 
     // firewall
     firewall::init_firewall_block_ip4_map(&paths.firewall_ipv4_block)
@@ -597,6 +602,10 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("test init nat6_static_map");
     nat::init_nat4_static_map(&paths.nat4_static_map).expect("test init nat4_static_map");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("test init nat_metric_events");
+    frag::init_frag4_cache_lan_map(&paths.frag4_cache_lan).expect("test init frag4_cache_lan");
+    frag::init_frag4_cache_wan_map(&paths.frag4_cache_wan).expect("test init frag4_cache_wan");
+    frag::init_frag6_cache_lan_map(&paths.frag6_cache_lan).expect("test init frag6_cache_lan");
+    frag::init_frag6_cache_wan_map(&paths.frag6_cache_wan).expect("test init frag6_cache_wan");
     firewall::init_firewall_block_ip4_map(&paths.firewall_ipv4_block)
         .expect("test init firewall_block_ip4_map");
     firewall::init_firewall_block_ip6_map(&paths.firewall_ipv6_block)
@@ -1069,7 +1078,7 @@ mod tests {
     fn init_path_creates_all_maps_and_reuses_on_restart() {
         use crate::LandscapeMapPath;
         use crate::maps::{
-            dns, firewall, flow, flow_dns, flow_wanip, mac, nat, redirect_able, route, wan,
+            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route, wan,
         };
 
         let Some(_) = run_or_skip("init-path", |root| {
@@ -1085,6 +1094,10 @@ mod tests {
                 flow::FLOW_MATCH_MAP_PIN,
                 dns::DNS_FLOW_SOCKS_PIN,
                 nat::NAT_METRIC_EVENTS_PIN,
+                frag::FRAG4_CACHE_LAN_PIN,
+                frag::FRAG4_CACHE_WAN_PIN,
+                frag::FRAG6_CACHE_LAN_PIN,
+                frag::FRAG6_CACHE_WAN_PIN,
                 firewall::FIREWALL_CONN_METRIC_EVENTS_PIN,
                 route::RT4_LAN_MAP_PIN,
                 route::RT6_LAN_MAP_PIN,
@@ -1110,6 +1123,10 @@ mod tests {
             let key = [1u8; 8];
             nat4.update(&key, &[2u8; 8], MapFlags::ANY).expect("seed nat4 static");
 
+            let frag4 =
+                libbpf_rs::MapHandle::from_pinned_path(&paths.frag4_cache_lan).expect("open frag4");
+            frag4.update(&[3u8; 12], &[4u8; 4], MapFlags::ANY).expect("seed frag4 cache");
+
             // Second "boot": persistent data must survive, per-boot maps reset.
             init_path(&paths);
             let nat4 =
@@ -1117,6 +1134,12 @@ mod tests {
             assert!(
                 nat4.lookup(&key, MapFlags::ANY).expect("lookup").is_some(),
                 "persistent map data must survive a restart"
+            );
+            let frag4 =
+                libbpf_rs::MapHandle::from_pinned_path(&paths.frag4_cache_lan).expect("open frag4");
+            assert!(
+                frag4.lookup(&[3u8; 12], MapFlags::ANY).expect("lookup").is_none(),
+                "fragment caches must be recreated on every boot"
             );
             let rt4_cache = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map)
                 .expect("open rt4_cache");

@@ -114,6 +114,8 @@ pub fn attach_nat6(
     )?;
     pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &paths.nat6_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
+    pin_and_reuse_map(&mut tc_open.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
+    pin_and_reuse_map(&mut tc_open.maps.frag6_cache_wan, &paths.frag6_cache_wan)?;
 
     let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat6 skeleton")?;
 
