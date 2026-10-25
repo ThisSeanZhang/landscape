@@ -86,6 +86,9 @@ pub mod xdp_mss;
 #[path = "../bpf_rs/xdp_nat4.skel.rs"]
 pub mod xdp_nat4;
 #[rustfmt::skip]
+#[path = "../bpf_rs/xdp_nat4_v4.skel.rs"]
+pub mod xdp_nat4_v4;
+#[rustfmt::skip]
 #[path = "../bpf_rs/xdp_nat6.skel.rs"]
 pub mod xdp_nat6;
 #[rustfmt::skip]

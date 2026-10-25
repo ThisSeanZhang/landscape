@@ -105,8 +105,8 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
             return TC_ACT_SHOT;
         }
 
-        ct = napt_ct_create(skb, &key, external_port, gen, kind == NAPT_MAPPING_STATIC,
-                            NAPT_GRESS_LAN, mapping);
+        ct = napt_ct_create(skb->ifindex, skb_mark(skb), &key, external_port, gen,
+                            kind == NAPT_MAPPING_STATIC, NAPT_GRESS_LAN, mapping);
         if (!ct) {
             if (mapping_new)
                 napt_rollback_new_mapping(proto, src_addr, internal_port, external_port, gen);
@@ -164,7 +164,8 @@ static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct sk
     if (!ct) {
         if (!allow_create || !cb->ports_valid) return TC_ACT_SHOT;
 
-        ct = napt_ct_create(skb, &key, external_port, gen, is_static, NAPT_GRESS_WAN, mapping);
+        ct = napt_ct_create(skb->ifindex, skb_mark(skb), &key, external_port, gen, is_static,
+                            NAPT_GRESS_WAN, mapping);
         if (!ct) return TC_ACT_SHOT;
     }
 

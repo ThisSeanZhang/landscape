@@ -63,38 +63,6 @@ static __always_inline void napt_rollback_new_mapping(__u8 proto, __be32 interna
     napt_queue_push(proto, external_port, gen);
 }
 
-static __always_inline struct napt_ct_value *
-napt_ct_create(struct __sk_buff *skb, const struct napt_ct_key *key, __be16 external_port,
-               __u32 gen, int is_static, u8 gress, struct napt_from_wan_value *mapping) {
-    struct napt_ct_value initial = {};
-    struct napt_ct_value *value;
-
-    initial.external_port = external_port;
-    initial.from_wan_gen = gen;
-    initial.is_static = is_static ? 1 : 0;
-    initial.status = is_static ? NAPT_CT_INIT : NAPT_CT_PENDING_REF;
-    initial.client_status = NAPT_TCP_STATE_INIT;
-    initial.server_status = NAPT_TCP_STATE_INIT;
-    initial.create_time = bpf_ktime_get_tai_ns();
-    initial.cpu_id = bpf_get_smp_processor_id();
-    initial.ifindex = skb ? skb->ifindex : 0;
-    initial.gress = gress;
-    initial.flow_id = skb ? get_flow_id(skb_mark(skb)) : 0;
-
-    value = napt_ct_insert(key, &initial);
-    if (!value) return 0;
-
-    if (!is_static) {
-        if (!mapping || napt_wan_ref_inc(mapping) != 0) {
-            bpf_map_delete_elem(&napt_ct, key);
-            return 0;
-        }
-        value->status = NAPT_CT_INIT;
-    }
-
-    return value;
-}
-
 #define NAPT_IP_MULTICAST_MASK bpf_ntohl(0xF0000000)
 #define NAPT_IP_MULTICAST_BASE bpf_ntohl(0xE0000000)
 

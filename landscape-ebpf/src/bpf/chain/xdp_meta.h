@@ -2,7 +2,6 @@
 #define __LD_PIPELINE_H_
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
-#include "base/landscape.h"
 
 struct xdp_pipe_meta {
     u32 mark;

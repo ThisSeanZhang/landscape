@@ -68,10 +68,8 @@ static __always_inline int napt_metric_try_report(const struct napt_ct_key *key,
     return 0;
 }
 
-static __always_inline void napt_metric_accumulate(struct __sk_buff *skb, u8 gress,
-                                                   struct napt_ct_value *value) {
-    u64 bytes = skb->len;
-
+static __always_inline void napt_metric_accumulate_bytes(u64 bytes, u8 gress,
+                                                         struct napt_ct_value *value) {
     if (gress == NAPT_GRESS_WAN) {
         __sync_fetch_and_add(&value->ingress_bytes, bytes);
         __sync_fetch_and_add(&value->ingress_packets, 1);
@@ -79,6 +77,11 @@ static __always_inline void napt_metric_accumulate(struct __sk_buff *skb, u8 gre
         __sync_fetch_and_add(&value->egress_bytes, bytes);
         __sync_fetch_and_add(&value->egress_packets, 1);
     }
+}
+
+static __always_inline void napt_metric_accumulate(struct __sk_buff *skb, u8 gress,
+                                                   struct napt_ct_value *value) {
+    napt_metric_accumulate_bytes(skb->len, gress, value);
 }
 
 #endif /* LAND_NAT_NAT4_METRIC_H */

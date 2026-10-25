@@ -6,6 +6,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "base/mark.h"
 #include "base/tc_act.h"
 #include "reader/skb_ferry.h"
 #include "nat_v4/nat4_metric.h"
@@ -222,8 +223,40 @@ static __always_inline struct napt_ct_value *napt_ct_insert(const struct napt_ct
     return value;
 }
 
-static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gress,
-                                           struct napt_ct_value *value) {
+static __always_inline struct napt_ct_value *
+napt_ct_create(u32 ifindex, u32 mark, const struct napt_ct_key *key, __be16 external_port, u32 gen,
+               int is_static, u8 gress, struct napt_from_wan_value *mapping) {
+    struct napt_ct_value initial = {};
+    struct napt_ct_value *value;
+
+    initial.external_port = external_port;
+    initial.from_wan_gen = gen;
+    initial.is_static = is_static ? 1 : 0;
+    initial.status = is_static ? NAPT_CT_INIT : NAPT_CT_PENDING_REF;
+    initial.client_status = NAPT_TCP_STATE_INIT;
+    initial.server_status = NAPT_TCP_STATE_INIT;
+    initial.create_time = bpf_ktime_get_tai_ns();
+    initial.cpu_id = bpf_get_smp_processor_id();
+    initial.ifindex = ifindex;
+    initial.gress = gress;
+    initial.flow_id = get_flow_id(mark);
+
+    value = napt_ct_insert(key, &initial);
+    if (!value) return 0;
+
+    if (!is_static) {
+        if (!mapping || napt_wan_ref_inc(mapping) != 0) {
+            bpf_map_delete_elem(&napt_ct, key);
+            return 0;
+        }
+        value->status = NAPT_CT_INIT;
+    }
+
+    return value;
+}
+
+static __always_inline int napt_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 gress,
+                                               struct napt_ct_value *value) {
     __u64 current_state;
     __u64 *modify_state;
     __u64 next_state;
@@ -237,12 +270,12 @@ static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gre
     }
 
     next_state = current_state;
-    if (cb->l4_protocol == IPV4_PROTO_TCP) {
-        if (cb->tcp_phase == NAPT_TCP_PHASE_SYN)
+    if (l4_protocol == IPV4_PROTO_TCP) {
+        if (tcp_phase == NAPT_TCP_PHASE_SYN)
             next_state = NAPT_TCP_STATE_SYN;
-        else if (cb->tcp_phase == NAPT_TCP_PHASE_RST)
+        else if (tcp_phase == NAPT_TCP_PHASE_RST)
             next_state = NAPT_TCP_STATE_INIT;
-        else if (cb->tcp_phase == NAPT_TCP_PHASE_FIN)
+        else if (tcp_phase == NAPT_TCP_PHASE_FIN)
             next_state = NAPT_TCP_STATE_FIN;
     } else {
         next_state = NAPT_TCP_STATE_LESS_EST;
@@ -259,6 +292,11 @@ static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gre
     }
 
     return TC_ACT_OK;
+}
+
+static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gress,
+                                           struct napt_ct_value *value) {
+    return napt_ct_advance_pkt(cb->l4_protocol, cb->tcp_phase, gress, value);
 }
 
 enum napt_ct_resolve_result {

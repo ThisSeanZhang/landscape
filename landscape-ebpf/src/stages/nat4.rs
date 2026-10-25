@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::sync::Arc;
 
 use landscape_common::config_service::static_nat::config4::RuntimeStaticNatMappingV4Config;
@@ -11,6 +11,7 @@ use crate::bpf_ctx;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::wan_link::WanLinkDataplane;
 use crate::skel::tc_nat4_v4::{TcNat4V4Skel, TcNat4V4SkelBuilder, types};
+use crate::skel::xdp_nat4_v4::{XdpNat4V4Skel, XdpNat4V4SkelBuilder};
 
 const NAPT_MAPPING_STATIC: u8 = 2;
 const NAPT_WAN_STATE_ACTIVE: u64 = 1;
@@ -29,16 +30,21 @@ fn as_bytes<T>(value: &T) -> &[u8] {
     }
 }
 
-/// The v4 NAT stage owns the TC ingress/egress programs and their maps.
+/// The v4 NAT stage owns the TC and XDP ingress/egress programs. TC owns the
+/// shared nat_v4 maps; XDP reuses their FDs so both datapaths see one state.
 pub struct Nat4Handle {
     dp: Arc<WanLinkDataplane>,
-    _skel: TcNat4V4Skel<'static>,
-    _backing: crate::landscape::OwnedOpenObject,
+    _tc_skel: TcNat4V4Skel<'static>,
+    _xdp_skel: XdpNat4V4Skel<'static>,
+    _tc_backing: crate::landscape::OwnedOpenObject,
+    _xdp_backing: crate::landscape::OwnedOpenObject,
 }
 
 impl Drop for Nat4Handle {
     fn drop(&mut self) {
         use crate::chain::stage::{FromLanStageType, FromWanStageType, StageFamily};
+        self.dp.xdp().remove_from_wan(FromWanStageType::Nat, StageFamily::V4);
+        self.dp.xdp().remove_from_lan(FromLanStageType::Nat, StageFamily::V4);
         self.dp.tc().remove_from_wan(FromWanStageType::Nat, StageFamily::V4);
         self.dp.tc().remove_from_lan(FromLanStageType::Nat, StageFamily::V4);
     }
@@ -161,7 +167,7 @@ fn seed_static_nat4(
 
 pub fn attach_nat4(
     dp: &Arc<WanLinkDataplane>,
-    _ifindex: u32,
+    ifindex: u32,
     has_eth_header: bool,
     config: &NatConfig,
     wan_addr: Ipv4Addr,
@@ -170,7 +176,6 @@ pub fn attach_nat4(
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
-    use std::os::fd::AsFd;
 
     let paths = dp.backbone().paths();
     let builder = TcNat4V4SkelBuilder::default();
@@ -197,26 +202,126 @@ pub fn attach_nat4(
     )?;
     pin_and_reuse_map(&mut open.maps.nat_metric_events, &paths.nat_metric_events)?;
 
-    let skel = bpf_ctx!(open.load(), "load tc_nat4_v4 skeleton")?;
-    let reserved = seed_static_nat4(&skel, static_configs);
-    seed_runtime_queues(&skel, config, &reserved);
+    let tc_skel = bpf_ctx!(open.load(), "load tc_nat4_v4 skeleton")?;
+    let reserved = seed_static_nat4(&tc_skel, static_configs);
+    seed_runtime_queues(&tc_skel, config, &reserved);
+
+    // ── XDP nat4: reuse the TC-owned nat_v4 maps ──
+
+    let xdp_builder = XdpNat4V4SkelBuilder::default();
+    let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
+    let mut xdp_open = bpf_ctx!(xdp_builder.open(xdp_obj), "open xdp_nat4_v4 skeleton")?;
+
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut xdp_open.maps.xdp_pipe_root_progs,
+            &paths.xdp_pipe_root_progs_path()
+        ),
+        "xdp_nat4_v4 pin xdp_pipe_root_progs"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
+        "xdp_nat4_v4 pin xdp_pipe_exits_lan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
+        "xdp_nat4_v4 pin xdp_pipe_exits_wan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut xdp_open.maps.xdp_lan_pipe_root_progs,
+            &paths.xdp_lan_pipe_root_progs_path(),
+        ),
+        "xdp_nat4_v4 pin xdp_lan_pipe_root_progs"
+    )?;
+
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_udp_ports.reuse_fd(tc_skel.maps.napt_udp_ports.as_fd()),
+        "xdp_nat4_v4 reuse napt_udp_ports"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_tcp_ports.reuse_fd(tc_skel.maps.napt_tcp_ports.as_fd()),
+        "xdp_nat4_v4 reuse napt_tcp_ports"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_icmp_ids.reuse_fd(tc_skel.maps.napt_icmp_ids.as_fd()),
+        "xdp_nat4_v4 reuse napt_icmp_ids"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_from_lan.reuse_fd(tc_skel.maps.napt_from_lan.as_fd()),
+        "xdp_nat4_v4 reuse napt_from_lan"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_from_wan.reuse_fd(tc_skel.maps.napt_from_wan.as_fd()),
+        "xdp_nat4_v4 reuse napt_from_wan"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_ct.reuse_fd(tc_skel.maps.napt_ct.as_fd()),
+        "xdp_nat4_v4 reuse napt_ct"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_frag_cache_lan.reuse_fd(tc_skel.maps.napt_frag_cache_lan.as_fd()),
+        "xdp_nat4_v4 reuse napt_frag_cache_lan"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.napt_frag_cache_wan.reuse_fd(tc_skel.maps.napt_frag_cache_wan.as_fd()),
+        "xdp_nat4_v4 reuse napt_frag_cache_wan"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.nat_metric_events.reuse_fd(tc_skel.maps.nat_metric_events.as_fd()),
+        "xdp_nat4_v4 reuse nat_metric_events"
+    )?;
+
+    {
+        let xdp_rodata =
+            xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat4_v4 rodata not memory mapped");
+        xdp_rodata.current_ifindex = ifindex;
+        xdp_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
+        xdp_rodata.land_nat_external_addr = wan_ro_addr4(wan_addr);
+    }
+
+    let xdp_skel = bpf_ctx!(xdp_open.load(), "load xdp_nat4_v4 skeleton")?;
 
     dp.tc().inject_from_wan(
         FromWanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
-            prog_fd: skel.progs.tc_v4_from_wan.as_fd().as_raw_fd(),
-            next_stage_map_fd: skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
+            prog_fd: tc_skel.progs.tc_v4_from_wan.as_fd().as_raw_fd(),
+            next_stage_map_fd: tc_skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd(),
         },
     )?;
     dp.tc().inject_from_lan(
         FromLanStageType::Nat,
         StageFamily::V4,
         FamilyProg {
-            prog_fd: skel.progs.tc_v4_from_lan.as_fd().as_raw_fd(),
-            next_stage_map_fd: skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
+            prog_fd: tc_skel.progs.tc_v4_from_lan.as_fd().as_raw_fd(),
+            next_stage_map_fd: tc_skel.maps.wan_egress_next_stage.as_fd().as_raw_fd(),
         },
     )?;
 
-    Ok(Nat4Handle { dp: dp.clone(), _skel: skel, _backing: backing })
+    let next_stage_fd = xdp_skel.maps.next_stage.as_fd().as_raw_fd();
+    dp.xdp().inject_from_wan(
+        FromWanStageType::Nat,
+        StageFamily::V4,
+        FamilyProg {
+            prog_fd: xdp_skel.progs.ingress_nat_v4_v4.as_fd().as_raw_fd(),
+            next_stage_map_fd: next_stage_fd,
+        },
+    )?;
+    dp.xdp().inject_from_lan(
+        FromLanStageType::Nat,
+        StageFamily::V4,
+        FamilyProg {
+            prog_fd: xdp_skel.progs.egress_nat_v4_v4.as_fd().as_raw_fd(),
+            next_stage_map_fd: next_stage_fd,
+        },
+    )?;
+
+    Ok(Nat4Handle {
+        dp: dp.clone(),
+        _tc_skel: tc_skel,
+        _xdp_skel: xdp_skel,
+        _tc_backing: backing,
+        _xdp_backing: xdp_backing,
+    })
 }
