@@ -1,6 +1,6 @@
 use std::{mem::MaybeUninit, net::Ipv6Addr, str::FromStr};
 
-use etherparse::{Icmpv6Type, PacketBuilder, PacketHeaders, icmpv6};
+use etherparse::{IcmpEchoHeader, Icmpv6Type, PacketBuilder, PacketHeaders, icmpv6};
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
@@ -44,6 +44,21 @@ fn build_ipv6_tcp(src: Ipv6Addr, dst: Ipv6Addr, src_port: u16, dst_port: u16) ->
     let payload = [0u8; 0];
     let mut buf = Vec::with_capacity(builder.size(payload.len()));
     builder.write(&mut buf, &payload).unwrap();
+    buf
+}
+
+fn build_ipv6_icmpv6_echo(src: Ipv6Addr, dst: Ipv6Addr, id: u16, request: bool) -> Vec<u8> {
+    let echo = IcmpEchoHeader { id, seq: 1 };
+    let ty = if request { Icmpv6Type::EchoRequest(echo) } else { Icmpv6Type::EchoReply(echo) };
+    let builder = PacketBuilder::ethernet2(
+        [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+    )
+    .ipv6(src.octets(), dst.octets(), 64)
+    .icmpv6(ty);
+
+    let mut buf = Vec::with_capacity(builder.size(0));
+    builder.write(&mut buf, &[]).unwrap();
     buf
 }
 
@@ -337,6 +352,69 @@ mod tests {
         timer_map
             .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
             .expect("failed to insert v3 v6 ct entry");
+    }
+
+    #[test]
+    fn icmpv6_echo_round_trip_dynamic_v3() {
+        let src = lan_host();
+        let dst = remote();
+        let id = 0x1234;
+        let prefix_len = 60;
+
+        let mut builder = TcNat6SkelBuilder::default();
+        let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-echo");
+        builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut open_object = MaybeUninit::uninit();
+        let mut open_skel = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
+            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        }
+        let skel = open_skel.load().unwrap();
+
+        let request = build_ipv6_icmpv6_echo(src, dst, id, true);
+        let mut out = vec![0u8; request.len()];
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+        let result = skel
+            .progs
+            .tc_nat_wan_egress_v6
+            .test_run(ProgramInput {
+                data_in: Some(&request),
+                context_in: Some(ctx.as_mut_bytes()),
+                data_out: Some(&mut out),
+                ..Default::default()
+            })
+            .expect("egress test_run failed");
+        assert_eq!(result.return_value as i32, -1);
+
+        let translated = npt_wan_ip_for(src);
+        let parsed = PacketHeaders::from_ethernet_slice(&out).expect("parse egress output");
+        let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = parsed.net else {
+            panic!("expected IPv6 egress output");
+        };
+        assert_eq!(Ipv6Addr::from(ipv6.source), translated);
+
+        let reply = build_ipv6_icmpv6_echo(dst, translated, id, false);
+        let mut out = vec![0u8; reply.len()];
+        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+        let result = skel
+            .progs
+            .tc_nat_wan_ingress_v6
+            .test_run(ProgramInput {
+                data_in: Some(&reply),
+                context_in: Some(ctx.as_mut_bytes()),
+                data_out: Some(&mut out),
+                ..Default::default()
+            })
+            .expect("ingress test_run failed");
+        assert_eq!(result.return_value as i32, 0);
+
+        let parsed = PacketHeaders::from_ethernet_slice(&out).expect("parse ingress output");
+        let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = parsed.net else {
+            panic!("expected IPv6 ingress output");
+        };
+        assert_eq!(Ipv6Addr::from(ipv6.destination), src);
     }
 
     #[test]

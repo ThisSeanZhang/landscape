@@ -13,23 +13,6 @@ static __always_inline __u8 nat6_outer_protocol(const struct skb_ferry_cb *cb) {
     return cb->icmp_inner_l4_offset ? NEXTHDR_ICMP : cb->l4_protocol;
 }
 
-static __always_inline __u8 nat6_pkt_type(const struct skb_ferry_cb *cb) {
-    if (cb->icmp_inner_l4_offset || cb->l4_protocol != NEXTHDR_TCP) return PKT_CONNLESS_V2;
-
-    switch (cb->tcp_phase) {
-    case NAPT_TCP_PHASE_SYN:
-        return PKT_TCP_SYN_V2;
-    case NAPT_TCP_PHASE_RST:
-        return PKT_TCP_RST_V2;
-    case NAPT_TCP_PHASE_FIN:
-        return PKT_TCP_FIN_V2;
-    case NAPT_TCP_PHASE_ESTABLISHED:
-        return PKT_TCP_ACK_V2;
-    default:
-        return PKT_TCP_DATA_V2;
-    }
-}
-
 static __always_inline bool nat6_is_icmp_error(const struct skb_ferry_cb *cb) {
     return cb->icmp_inner_l4_offset != 0;
 }
@@ -149,7 +132,7 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
 
     struct nat6_timer_value *ct_value = lookup_ct6_egress(skb, cb, src_addr, dst_addr, npt_id_mask);
     if (ct_value) {
-        nat6_ct_advance(nat6_pkt_type(cb), NAT_MAPPING_EGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
         nat6_metric_accumulate(skb, false, ct_value);
         if (!ct_value->need_prefix_replace) {
             return TC_ACT_UNSPEC;
@@ -161,7 +144,7 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
         nat6_check_egress_static(proto, src_addr, cb->sport);
 
     bool is_icmpx_error = nat6_is_icmp_error(cb);
-    bool allow_create = !is_icmpx_error && pkt_can_begin_ct(nat6_pkt_type(cb));
+    bool allow_create = nat6_allows_create_pkt(proto, cb->tcp_phase, is_icmpx_error);
 
     if (!allow_create) {
         if (!static_val) {
@@ -180,7 +163,7 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(struct __sk_buff
     if (!ct_value) {
         return TC_ACT_SHOT;
     }
-    nat6_ct_advance(nat6_pkt_type(cb), NAT_MAPPING_EGRESS, ct_value);
+    nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
     nat6_metric_accumulate(skb, false, ct_value);
     if (!need_prefix_replace) {
         return TC_ACT_UNSPEC;
@@ -323,7 +306,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
     u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
     bool is_icmpx = nat6_is_icmp_error(cb);
-    bool allow_create = !is_icmpx && pkt_can_begin_ct(nat6_pkt_type(cb));
+    bool allow_create = nat6_allows_create_pkt(proto, cb->tcp_phase, is_icmpx);
     bool need_prefix_replace = false;
 
     struct nat6_timer_value *ct_value = lookup_ct6_ingress(cb, dst_addr, npt_id_mask);
@@ -344,7 +327,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
         }
 
         COPY_ADDR_FROM(&local_client_prefix, ct_value->client_prefix);
-        nat6_ct_advance(nat6_pkt_type(cb), NAT_MAPPING_INGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
         nat6_metric_accumulate(skb, true, ct_value);
 
         __be64 dst_prefix;
@@ -385,7 +368,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
     ct_value = create_ct6_ingress(skb, cb, src_addr, dst_addr, npt_id_mask, ifindex,
                                   &client_prefix_hint, need_prefix_replace);
     if (ct_value) {
-        nat6_ct_advance(nat6_pkt_type(cb), NAT_MAPPING_INGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
         nat6_metric_accumulate(skb, true, ct_value);
     }
 

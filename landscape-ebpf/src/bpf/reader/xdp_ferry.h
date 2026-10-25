@@ -5,12 +5,16 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 
+#ifndef TC_CB_FRAG_SINGLE_V6H
+#define TC_CB_FRAG_SINGLE_V6H 4
+#endif
+
 /*
  * XDP per-packet parser output. This is stack-local scratch state; it is not
  * stored in data_meta and is not carried across tail calls.
  *
- * The Ethernet L3 offset is not stored: XDP NAT only accepts Ethernet frames,
- * so the reader uses sizeof(struct ethhdr) directly.
+ * The L3 offset is not stored; callers pass their configured l3_offset to
+ * the reader explicitly.
  */
 struct xdp_ferry_cb {
     __u16 l4_offset;

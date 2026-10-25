@@ -5,12 +5,26 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "base/ipv6.h"
+#include "base/tcp_phase.h"
 #include "nat/nat_common.h"
 #include "nat/nat6_map_ops.h"
 #include "nat/nat6_ct_timer.h"
 #include "nat/nat_rodata.h"
-#include "fragment/xdp_frag6.h"
 #include "nat/xdp_csum_helpers.h"
+#include "reader/xdp_ferry.h"
+
+static __always_inline u8 xdp_nat6_outer_protocol(const struct xdp_ferry_cb *cb) {
+    return cb->icmp_inner_l4_offset ? NEXTHDR_ICMP : cb->l4_protocol;
+}
+
+static __always_inline bool xdp_nat6_is_icmp_error(const struct xdp_ferry_cb *cb) {
+    return cb->icmp_inner_l4_offset != 0;
+}
+
+static __always_inline u16 xdp_nat6_icmp_error_l3_offset(const struct xdp_ferry_cb *cb) {
+    return cb->icmp_inner_l4_offset ? (u16)(cb->l4_offset + sizeof(struct icmp6hdr)) : 0;
+}
 
 static __always_inline void xdp_nat6_metric_accumulate(void *data, void *data_end, bool ingress,
                                                        struct nat6_timer_value *value) {
@@ -24,12 +38,14 @@ static __always_inline void xdp_nat6_metric_accumulate(void *data, void *data_en
     }
 }
 
-static __always_inline int xdp_update_ipv6_cache_value(u32 mark, struct inet_pair *ip_pair,
+static __always_inline int xdp_update_ipv6_cache_value(u32 mark, const struct xdp_ferry_cb *cb,
+                                                       const struct in6_addr *src_addr,
+                                                       const struct in6_addr *dst_addr,
                                                        struct nat6_timer_value *value) {
-    COPY_ADDR_FROM(value->client_prefix, ip_pair->src_addr.in6_u.u6_addr8);
+    COPY_ADDR_FROM(value->client_prefix, src_addr->in6_u.u6_addr8);
     if (!value->is_static) {
-        bool is_ancestor = ip_addr_equal_x(&ip_pair->dst_addr, &value->trigger_addr) &&
-                           ip_pair->dst_port == value->trigger_port;
+        bool is_ancestor =
+            ip_addr_equal_x(dst_addr, &value->trigger_addr) && cb->dport == value->trigger_port;
         if (is_ancestor) {
             bool allow_reuse_port = get_flow_allow_reuse_port(mark);
             value->is_allow_reuse = allow_reuse_port ? 1 : 0;
@@ -40,24 +56,26 @@ static __always_inline int xdp_update_ipv6_cache_value(u32 mark, struct inet_pai
 }
 
 static __always_inline struct nat6_timer_value *
-xdp_lookup_ct6_ingress(u8 l4_protocol, struct inet_pair *ip_pair, u8 npt_id_mask) {
+xdp_lookup_ct6_ingress(const struct xdp_ferry_cb *cb, const struct in6_addr *dst_addr,
+                       u8 npt_id_mask) {
     struct nat6_timer_key key = {0};
-    key.client_port = ip_pair->dst_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.in6_u.u6_addr8 + 8);
-    key.id_byte = ip_pair->dst_addr.in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = l4_protocol;
+    key.client_port = cb->dport;
+    COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
+    key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
+    key.l4_protocol = xdp_nat6_outer_protocol(cb);
 
     return bpf_map_lookup_elem(&nat6_timer_map, &key);
 }
 
 static __always_inline struct nat6_timer_value *
-xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip_pair,
+xdp_create_ct6_ingress(u32 wan_if, u32 mark, const struct xdp_ferry_cb *cb,
+                       const struct in6_addr *src_addr, const struct in6_addr *dst_addr,
                        u8 npt_id_mask, const __be64 *client_prefix_hint, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
-    key.client_port = ip_pair->dst_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->dst_addr.in6_u.u6_addr8 + 8);
-    key.id_byte = ip_pair->dst_addr.in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = l4_protocol;
+    key.client_port = cb->dport;
+    COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
+    key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
+    key.l4_protocol = xdp_nat6_outer_protocol(cb);
 
     struct nat6_timer_value new_value = {};
     __builtin_memset(&new_value, 0, sizeof(new_value));
@@ -66,8 +84,8 @@ xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *i
     new_value.gress = NAT_MAPPING_INGRESS;
     new_value.cpu_id = bpf_get_smp_processor_id();
     new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr8, ip_pair->src_addr.in6_u.u6_addr32);
-    new_value.trigger_port = ip_pair->src_port;
+    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr8, src_addr->in6_u.u6_addr32);
+    new_value.trigger_port = cb->sport;
     COPY_ADDR_FROM(new_value.client_prefix, client_prefix_hint);
     new_value.is_allow_reuse = 1;
     new_value.is_static = 1;
@@ -77,17 +95,18 @@ xdp_create_ct6_ingress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *i
 }
 
 static __always_inline struct nat6_timer_value *
-xdp_lookup_ct6_egress(u32 mark, u8 l4_protocol, struct inet_pair *ip_pair, u8 npt_id_mask) {
+xdp_lookup_ct6_egress(u32 mark, const struct xdp_ferry_cb *cb, const struct in6_addr *src_addr,
+                      const struct in6_addr *dst_addr, u8 npt_id_mask) {
     struct nat6_timer_key key = {0};
-    key.client_port = ip_pair->src_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.in6_u.u6_addr8 + 8);
-    key.id_byte = ip_pair->src_addr.in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = l4_protocol;
+    key.client_port = cb->sport;
+    COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
+    key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
+    key.l4_protocol = xdp_nat6_outer_protocol(cb);
 
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
     if (value) {
-        if (!nat6_is_same_prefix(value->client_prefix, &ip_pair->src_addr, npt_id_mask)) {
-            xdp_update_ipv6_cache_value(mark, ip_pair, value);
+        if (!nat6_is_same_prefix(value->client_prefix, src_addr, npt_id_mask)) {
+            xdp_update_ipv6_cache_value(mark, cb, src_addr, dst_addr, value);
         }
         return value;
     }
@@ -95,13 +114,14 @@ xdp_lookup_ct6_egress(u32 mark, u8 l4_protocol, struct inet_pair *ip_pair, u8 np
 }
 
 static __always_inline struct nat6_timer_value *
-xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip_pair,
+xdp_create_ct6_egress(u32 wan_if, u32 mark, const struct xdp_ferry_cb *cb,
+                      const struct in6_addr *src_addr, const struct in6_addr *dst_addr,
                       u8 npt_id_mask, u8 is_allow_reuse, bool is_static, bool need_prefix_replace) {
     struct nat6_timer_key key = {0};
-    key.client_port = ip_pair->src_port;
-    COPY_ADDR_FROM(key.client_suffix, ip_pair->src_addr.in6_u.u6_addr8 + 8);
-    key.id_byte = ip_pair->src_addr.in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = l4_protocol;
+    key.client_port = cb->sport;
+    COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
+    key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
+    key.l4_protocol = xdp_nat6_outer_protocol(cb);
 
     struct nat6_timer_value new_value = {};
     __builtin_memset(&new_value, 0, sizeof(new_value));
@@ -110,92 +130,41 @@ xdp_create_ct6_egress(u32 wan_if, u32 mark, u8 l4_protocol, struct inet_pair *ip
     new_value.gress = NAT_MAPPING_EGRESS;
     new_value.cpu_id = bpf_get_smp_processor_id();
     new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.client_prefix, ip_pair->src_addr.in6_u.u6_addr8);
+    COPY_ADDR_FROM(new_value.client_prefix, src_addr->in6_u.u6_addr8);
     new_value.is_allow_reuse = is_allow_reuse;
     new_value.is_static = is_static ? 1 : 0;
     new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
-    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr32, ip_pair->dst_addr.in6_u.u6_addr32);
-    new_value.trigger_port = ip_pair->dst_port;
+    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr32, dst_addr->in6_u.u6_addr32);
+    new_value.trigger_port = cb->dport;
 
     return nat6_insert_timer(&key, &new_value);
 }
 
-static __always_inline int xdp_read_nat_info6(void *data, void *data_end,
-                                              const struct scan_ipv6_idx *idx,
-                                              struct inet_pair *pair) {
-    struct ipv6hdr *ip6h = data + sizeof(struct ethhdr);
-    if ((void *)(ip6h + 1) > data_end) return -1;
+static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
+    struct xdp_md *ctx, void *data, void *data_end, u32 l3_offset, u32 wan_if, u32 mark,
+    const struct xdp_ferry_cb *cb, const struct in6_addr *src_addr,
+    const struct in6_addr *dst_addr) {
+    u8 proto = xdp_nat6_outer_protocol(cb);
 
-    __builtin_memcpy(&pair->src_addr, &ip6h->saddr, sizeof(pair->src_addr));
-    __builtin_memcpy(&pair->dst_addr, &ip6h->daddr, sizeof(pair->dst_addr));
-
-    if (idx->icmp_error_l3_offset > 0) {
-        struct ipv6hdr *inner_ip6 = data + idx->icmp_error_l3_offset;
-        if ((void *)(inner_ip6 + 1) > data_end) return -1;
-        __builtin_memcpy(&pair->src_addr, &inner_ip6->daddr, sizeof(pair->src_addr));
-    }
-
-    if (idx->fragment_type >= FRAG_MIDDLE) return 0;
-
-    u8 l4_protocol = idx->l4_protocol;
-    u16 l4_offset = idx->l4_offset;
-
-    if (idx->icmp_error_l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph = data + idx->icmp_error_inner_l4_offset;
-        if ((void *)(tcph + 1) > data_end) return -1;
-        pair->dst_port = tcph->source;
-        pair->src_port = tcph->dest;
-    } else if (l4_protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph = data + l4_offset;
-        if ((void *)(tcph + 1) > data_end) return -1;
-        pair->src_port = tcph->source;
-        pair->dst_port = tcph->dest;
-    } else if (idx->icmp_error_l4_protocol == IPPROTO_UDP) {
-        struct udphdr *udph = data + idx->icmp_error_inner_l4_offset;
-        if ((void *)(udph + 1) > data_end) return -1;
-        pair->dst_port = udph->source;
-        pair->src_port = udph->dest;
-    } else if (l4_protocol == IPPROTO_UDP) {
-        struct udphdr *udph = data + l4_offset;
-        if ((void *)(udph + 1) > data_end) return -1;
-        pair->src_port = udph->source;
-        pair->dst_port = udph->dest;
-    } else if (l4_protocol == IPPROTO_ICMP || l4_protocol == IPPROTO_ICMPV6) {
-        u32 offset = l4_offset;
-        if (idx->icmp_error_inner_l4_offset > 0) {
-            offset = idx->icmp_error_inner_l4_offset;
-        }
-        struct icmp6hdr *icmp6h = data + offset;
-        if ((void *)(icmp6h + 1) > data_end) return -1;
-        pair->src_port = pair->dst_port = icmp6h->icmp6_dataun.u_echo.identifier;
-    }
-
-    return 0;
-}
-
-static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, void *data_end,
-                                                                    u32 wan_if, u32 mark,
-                                                                    struct scan_ipv6_idx *idx,
-                                                                    struct inet_pair *ip_pair) {
     if (wan_ro_prefix6.b[0] == 0) return -1;
 
     u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
-    bool is_icmpx_error = idx->icmp_error_l3_offset != 0 && idx->icmp_error_inner_l4_offset != 0;
+    bool is_icmpx_error = xdp_nat6_is_icmp_error(cb);
 
     struct nat6_timer_value *ct_value =
-        xdp_lookup_ct6_egress(mark, idx->l4_protocol, ip_pair, npt_id_mask);
+        xdp_lookup_ct6_egress(mark, cb, src_addr, dst_addr, npt_id_mask);
     if (ct_value) {
-        nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
         xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
         if (!ct_value->need_prefix_replace) return 0;
         goto do_xdp_nptv6;
     }
 
     struct static_nat6_mapping_value *static_val =
-        nat6_check_egress_static(idx->l4_protocol, &ip_pair->src_addr, ip_pair->src_port);
+        nat6_check_egress_static(proto, src_addr, cb->sport);
 
-    bool allow_create = !is_icmpx_error && pkt_can_begin_ct(idx->pkt_type);
+    bool allow_create = nat6_allows_create_pkt(proto, cb->tcp_phase, is_icmpx_error);
 
     if (!allow_create) {
         if (!static_val) return -1;
@@ -205,31 +174,30 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(void *data, 
 
     bool need_prefix_replace = static_val ? nat6_static_needs_prefix_replace(static_val) : true;
     u8 reuse = static_val ? 1 : (get_flow_allow_reuse_port(mark) ? 1 : 0);
-    ct_value = xdp_create_ct6_egress(wan_if, mark, idx->l4_protocol, ip_pair, npt_id_mask, reuse,
+    ct_value = xdp_create_ct6_egress(wan_if, mark, cb, src_addr, dst_addr, npt_id_mask, reuse,
                                      static_val != NULL, need_prefix_replace);
     if (!ct_value) return -1;
-    nat6_ct_advance(idx->pkt_type, NAT_MAPPING_EGRESS, ct_value);
+    nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
     xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
     if (!need_prefix_replace) return 0;
 
 do_xdp_nptv6:
     if (is_icmpx_error) {
-        u32 err_sender_off = sizeof(struct ethhdr) + offsetof(struct ipv6hdr, saddr);
-        void *sender_ptr = data + err_sender_off;
-        if (sender_ptr + 8 > data_end) return -1;
+        u32 err_sender_off = l3_offset + offsetof(struct ipv6hdr, saddr);
         __be64 old_sender_prefix;
-        __builtin_memcpy(&old_sender_prefix, sender_ptr, 8);
+        if (bpf_xdp_load_bytes(ctx, err_sender_off, &old_sender_prefix, sizeof(old_sender_prefix)))
+            return -1;
 
-        u32 inner_dst_off = idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, daddr);
+        u32 inner_dst_off = xdp_nat6_icmp_error_l3_offset(cb) + offsetof(struct ipv6hdr, daddr);
         u32 inner_l4_csum_off = 0;
-        if (nat6_l4_checksum(idx->icmp_error_inner_l4_offset, idx->icmp_error_l4_protocol,
+        if (nat6_l4_checksum(cb->icmp_inner_l4_offset, cb->icmp_inner_l4_protocol,
                              &inner_l4_csum_off))
             return -1;
         u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(idx->l4_offset, idx->l4_protocol, &l4_csum_off)) return -1;
+        if (nat6_l4_checksum(cb->l4_offset, proto, &l4_csum_off)) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.in6_u.u6_addr32, 8);
+        __builtin_memcpy(&old_ip_prefix, src_addr->in6_u.u6_addr32, 8);
 
         __be64 new_ip_prefix =
             (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -237,43 +205,46 @@ do_xdp_nptv6:
         __be64 new_sender_prefix =
             (old_sender_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
-        __be16 *inner_csum_ptr = data + inner_l4_csum_off;
-        if ((void *)(inner_csum_ptr + 1) > data_end) return -1;
-        __be16 old_inner_l4_csum = *inner_csum_ptr;
-
-        void *inner_dst = data + inner_dst_off;
-        if (inner_dst + 8 > data_end) return -1;
-        __builtin_memcpy(inner_dst, &new_ip_prefix, 8);
+        __be16 old_inner_l4_csum;
+        if (bpf_xdp_load_bytes(ctx, inner_l4_csum_off, &old_inner_l4_csum,
+                               sizeof(old_inner_l4_csum)))
+            return -1;
 
         __wsum addr_delta =
             bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&new_ip_prefix, 8, 0);
-        *inner_csum_ptr = xdp_csum_apply(*inner_csum_ptr, addr_delta);
+        __be16 new_inner_l4_csum = xdp_csum_apply(old_inner_l4_csum, addr_delta);
 
-        __be16 *outer_csum_ptr = data + l4_csum_off;
-        if ((void *)(outer_csum_ptr + 1) > data_end) return -1;
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, addr_delta);
+        __be16 outer_csum;
+        if (bpf_xdp_load_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
+        outer_csum = xdp_csum_apply(outer_csum, addr_delta);
 
-        __be16 new_inner_l4_csum = *inner_csum_ptr;
+        if (bpf_xdp_store_bytes(ctx, inner_l4_csum_off, &new_inner_l4_csum,
+                                sizeof(new_inner_l4_csum)))
+            return -1;
+        if (bpf_xdp_store_bytes(ctx, inner_dst_off, &new_ip_prefix, sizeof(new_ip_prefix)))
+            return -1;
+
         __be32 old_ic32 = (__be32)old_inner_l4_csum;
         __be32 new_ic32 = (__be32)new_inner_l4_csum;
         __wsum ic_delta = bpf_csum_diff(&old_ic32, 4, &new_ic32, 4, 0);
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, ic_delta);
+        outer_csum = xdp_csum_apply(outer_csum, ic_delta);
 
-        __builtin_memcpy(sender_ptr, &new_sender_prefix, 8);
+        if (bpf_xdp_store_bytes(ctx, err_sender_off, &new_sender_prefix, sizeof(new_sender_prefix)))
+            return -1;
         __wsum sender_delta =
             bpf_csum_diff((__u32 *)&old_sender_prefix, 8, (__u32 *)&new_sender_prefix, 8, 0);
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, sender_delta);
-
+        outer_csum = xdp_csum_apply(outer_csum, sender_delta);
+        if (bpf_xdp_store_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
     } else {
         u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(idx->l4_offset, idx->l4_protocol, &l4_csum_off)) return -1;
+        if (nat6_l4_checksum(cb->l4_offset, proto, &l4_csum_off)) return -1;
 
-        u32 ip_src_off = sizeof(struct ethhdr) + offsetof(struct ipv6hdr, saddr);
+        u32 ip_src_off = l3_offset + offsetof(struct ipv6hdr, saddr);
         void *src_ptr = data + ip_src_off;
         if (src_ptr + 8 > data_end) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->src_addr.in6_u.u6_addr32, 8);
+        __builtin_memcpy(&old_ip_prefix, src_addr->in6_u.u6_addr32, 8);
 
         __be64 new_ip_prefix =
             (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -289,43 +260,42 @@ do_xdp_nptv6:
     return 0;
 }
 
-static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data, void *data_end,
-                                                                     u32 wan_if, u32 mark,
-                                                                     struct scan_ipv6_idx *idx,
-                                                                     struct inet_pair *ip_pair,
-                                                                     bool *out_is_static) {
+static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
+    struct xdp_md *ctx, void *data, void *data_end, u32 l3_offset, u32 wan_if, u32 mark,
+    const struct xdp_ferry_cb *cb, const struct in6_addr *src_addr, const struct in6_addr *dst_addr,
+    bool *out_is_static) {
     __be64 local_client_prefix = {0};
+    u8 proto = xdp_nat6_outer_protocol(cb);
 
     if (wan_ro_prefix6.b[0] == 0) return -1;
 
     u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
-    bool is_icmpx_error = idx->icmp_error_l3_offset != 0 && idx->icmp_error_inner_l4_offset != 0;
-    bool allow_create = !is_icmpx_error && pkt_can_begin_ct(idx->pkt_type);
+    bool is_icmpx_error = xdp_nat6_is_icmp_error(cb);
+    bool allow_create = nat6_allows_create_pkt(proto, cb->tcp_phase, is_icmpx_error);
     bool need_prefix_replace = false;
     int map_ret = 0;
 
-    struct nat6_timer_value *ct_value =
-        xdp_lookup_ct6_ingress(idx->l4_protocol, ip_pair, npt_id_mask);
+    struct nat6_timer_value *ct_value = xdp_lookup_ct6_ingress(cb, dst_addr, npt_id_mask);
     if (ct_value) {
         bool ct_is_static = ct_value->is_static != 0;
         *out_is_static = ct_is_static;
 
         if (!ct_is_static) {
-            if (ct_value->is_allow_reuse == 0 && idx->l4_protocol != IPPROTO_ICMPV6) {
-                if (!ip_addr_equal_x(&ip_pair->src_addr, &ct_value->trigger_addr) ||
-                    ip_pair->src_port != ct_value->trigger_port) {
+            if (ct_value->is_allow_reuse == 0 && proto != NEXTHDR_ICMP) {
+                if (!ip_addr_equal_x(src_addr, &ct_value->trigger_addr) ||
+                    cb->sport != ct_value->trigger_port) {
                     return -1;
                 }
             }
         }
 
         COPY_ADDR_FROM(&local_client_prefix, ct_value->client_prefix);
-        nat6_ct_advance(idx->pkt_type, NAT_MAPPING_INGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
         xdp_nat6_metric_accumulate(data, data_end, true, ct_value);
 
         __be64 dst_prefix;
-        __builtin_memcpy(&dst_prefix, ip_pair->dst_addr.in6_u.u6_addr32, 8);
+        __builtin_memcpy(&dst_prefix, dst_addr->in6_u.u6_addr32, 8);
         if (!ct_value->need_prefix_replace || local_client_prefix == dst_prefix) {
             return ct_is_static ? 1 : 0;
         }
@@ -333,8 +303,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
         goto do_xdp_ingress_nptv6;
     }
 
-    map_ret = nat6_check_ingress_static(idx->l4_protocol, &ip_pair->dst_addr, ip_pair->dst_port,
-                                        &local_client_prefix);
+    map_ret = nat6_check_ingress_static(proto, dst_addr, cb->dport, &local_client_prefix);
     bool is_static = (map_ret != NAT6_STATIC_MISS);
     need_prefix_replace = (map_ret == NAT6_STATIC_REPLACE);
     *out_is_static = is_static;
@@ -343,7 +312,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
     if (map_ret == NAT6_STATIC_REPLACE) {
         client_prefix_hint = local_client_prefix;
     } else if (map_ret == NAT6_STATIC_PASS) {
-        COPY_ADDR_FROM(&client_prefix_hint, ip_pair->dst_addr.in6_u.u6_addr8);
+        COPY_ADDR_FROM(&client_prefix_hint, dst_addr->in6_u.u6_addr8);
     }
 
     if (!allow_create) {
@@ -353,10 +322,10 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(void *data,
 
     if (!is_static) return -1;
 
-    ct_value = xdp_create_ct6_ingress(wan_if, mark, idx->l4_protocol, ip_pair, npt_id_mask,
+    ct_value = xdp_create_ct6_ingress(wan_if, mark, cb, src_addr, dst_addr, npt_id_mask,
                                       &client_prefix_hint, need_prefix_replace);
     if (ct_value) {
-        nat6_ct_advance(idx->pkt_type, NAT_MAPPING_INGRESS, ct_value);
+        nat6_ct_advance_pkt(proto, cb->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
         xdp_nat6_metric_accumulate(data, data_end, true, ct_value);
     }
 
@@ -368,56 +337,60 @@ do_xdp_ingress_nptv6:
     if (!need_prefix_replace) return 2;
 
     if (is_icmpx_error) {
-        u32 inner_src_off = idx->icmp_error_l3_offset + offsetof(struct ipv6hdr, saddr);
-        void *inner_src_ptr = data + inner_src_off;
-        if (inner_src_ptr + 8 > data_end) return -1;
+        u32 inner_src_off = xdp_nat6_icmp_error_l3_offset(cb) + offsetof(struct ipv6hdr, saddr);
         __be64 old_inner_ip_prefix;
-        __builtin_memcpy(&old_inner_ip_prefix, inner_src_ptr, 8);
+        if (bpf_xdp_load_bytes(ctx, inner_src_off, &old_inner_ip_prefix,
+                               sizeof(old_inner_ip_prefix)))
+            return -1;
 
         u32 inner_l4_csum_off = 0;
         u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(idx->icmp_error_inner_l4_offset, idx->icmp_error_l4_protocol,
+        if (nat6_l4_checksum(cb->icmp_inner_l4_offset, cb->icmp_inner_l4_protocol,
                              &inner_l4_csum_off))
             return -1;
-        if (nat6_l4_checksum(idx->l4_offset, idx->l4_protocol, &l4_csum_off)) return -1;
+        if (nat6_l4_checksum(cb->l4_offset, proto, &l4_csum_off)) return -1;
 
-        __be16 *inner_csum_ptr = data + inner_l4_csum_off;
-        if ((void *)(inner_csum_ptr + 1) > data_end) return -1;
-        __be16 old_inner_l4_csum = *inner_csum_ptr;
-
-        __builtin_memcpy(inner_src_ptr, &local_client_prefix, 8);
+        __be16 old_inner_l4_csum;
+        if (bpf_xdp_load_bytes(ctx, inner_l4_csum_off, &old_inner_l4_csum,
+                               sizeof(old_inner_l4_csum)))
+            return -1;
 
         __wsum addr_delta =
             bpf_csum_diff((__u32 *)&old_inner_ip_prefix, 8, (__u32 *)&local_client_prefix, 8, 0);
-        *inner_csum_ptr = xdp_csum_apply(*inner_csum_ptr, addr_delta);
+        __be16 new_inner_l4_csum = xdp_csum_apply(old_inner_l4_csum, addr_delta);
 
-        __be16 *outer_csum_ptr = data + l4_csum_off;
-        if ((void *)(outer_csum_ptr + 1) > data_end) return -1;
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, addr_delta);
+        __be16 outer_csum;
+        if (bpf_xdp_load_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
+        outer_csum = xdp_csum_apply(outer_csum, addr_delta);
 
-        __be16 new_inner_l4_csum = *inner_csum_ptr;
+        if (bpf_xdp_store_bytes(ctx, inner_l4_csum_off, &new_inner_l4_csum,
+                                sizeof(new_inner_l4_csum)))
+            return -1;
+        if (bpf_xdp_store_bytes(ctx, inner_src_off, &local_client_prefix,
+                                sizeof(local_client_prefix)))
+            return -1;
+
         __be32 old_ic32 = (__be32)old_inner_l4_csum;
         __be32 new_ic32 = (__be32)new_inner_l4_csum;
         __wsum ic_delta = bpf_csum_diff(&old_ic32, 4, &new_ic32, 4, 0);
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, ic_delta);
+        outer_csum = xdp_csum_apply(outer_csum, ic_delta);
 
-        u32 dst_ip_off = sizeof(struct ethhdr) + offsetof(struct ipv6hdr, daddr);
-        void *dst_ptr = data + dst_ip_off;
-        if (dst_ptr + 8 > data_end) return -1;
-        __builtin_memcpy(dst_ptr, &local_client_prefix, 8);
+        u32 dst_ip_off = l3_offset + offsetof(struct ipv6hdr, daddr);
+        if (bpf_xdp_store_bytes(ctx, dst_ip_off, &local_client_prefix, sizeof(local_client_prefix)))
+            return -1;
 
-        *outer_csum_ptr = xdp_csum_apply(*outer_csum_ptr, addr_delta);
-
+        outer_csum = xdp_csum_apply(outer_csum, addr_delta);
+        if (bpf_xdp_store_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
     } else {
         u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(idx->l4_offset, idx->l4_protocol, &l4_csum_off)) return -1;
+        if (nat6_l4_checksum(cb->l4_offset, proto, &l4_csum_off)) return -1;
 
-        u32 dst_ip_off = sizeof(struct ethhdr) + offsetof(struct ipv6hdr, daddr);
+        u32 dst_ip_off = l3_offset + offsetof(struct ipv6hdr, daddr);
         void *dst_ptr = data + dst_ip_off;
         if (dst_ptr + 8 > data_end) return -1;
 
         __be64 old_ip_prefix;
-        __builtin_memcpy(&old_ip_prefix, ip_pair->dst_addr.in6_u.u6_addr32, 8);
+        __builtin_memcpy(&old_ip_prefix, dst_addr->in6_u.u6_addr32, 8);
 
         __builtin_memcpy(dst_ptr, &local_client_prefix, 8);
 

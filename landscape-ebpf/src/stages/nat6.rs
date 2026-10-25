@@ -159,11 +159,20 @@ pub fn attach_nat6(
         xdp_open.maps.nat6_timer_map.reuse_fd(tc_skel.maps.nat6_timer_map.as_fd()),
         "xdp_nat6 reuse nat6_timer_map fd"
     )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.frag6_cache_lan.reuse_fd(tc_skel.maps.frag6_cache_lan.as_fd()),
+        "xdp_nat6 reuse frag6_cache_lan fd"
+    )?;
+    crate::bpf_ctx!(
+        xdp_open.maps.frag6_cache_wan.reuse_fd(tc_skel.maps.frag6_cache_wan.as_fd()),
+        "xdp_nat6 reuse frag6_cache_wan fd"
+    )?;
 
     {
         let xdp_rodata =
             xdp_open.maps.rodata_data.as_deref_mut().expect("xdp_nat6 rodata not memory mapped");
         xdp_rodata.current_ifindex = ifindex;
+        xdp_rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
         xdp_rodata.wan_ro_prefix6.b = wan_ro_prefix6(prefix.map(|(addr, _)| addr));
         xdp_rodata.wan_ro_addr6.b = wan_ro_addr6(wan_addr);
         xdp_rodata.wan_ro_npt_mask = npt_mask;

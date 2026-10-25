@@ -2,6 +2,7 @@
 #define __LD_NAT6_CT_TIMER_H__
 
 #include "base/printk.h"
+#include "base/tcp_phase.h"
 #include "nat/nat_common.h"
 #include "nat/nat_metric.h"
 #include "nat/nat6_dyn_map.h"
@@ -165,8 +166,14 @@ delete_timer:
     return NULL;
 }
 
-static __always_inline int nat6_ct_advance(u8 pkt_type, u8 gress,
-                                           struct nat6_timer_value *ct_timer_value) {
+static __always_inline bool nat6_allows_create_pkt(u8 l4_protocol, u8 tcp_phase, bool icmp_error) {
+    if (icmp_error) return false;
+    if (l4_protocol == NEXTHDR_TCP) return tcp_phase == NAPT_TCP_PHASE_SYN;
+    return l4_protocol == NEXTHDR_UDP || l4_protocol == NEXTHDR_ICMP;
+}
+
+static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 gress,
+                                               struct nat6_timer_value *ct_timer_value) {
     u64 curr_state, *modify_status = NULL;
     if (gress == NAT_MAPPING_INGRESS) {
         curr_state = ct_timer_value->server_status;
@@ -177,19 +184,20 @@ static __always_inline int nat6_ct_advance(u8 pkt_type, u8 gress,
     }
 
     u64 next_status = curr_state;
-    switch (pkt_type) {
-    case PKT_CONNLESS_V2:
+    if (l4_protocol != NEXTHDR_TCP) {
         next_status = CT_LESS_EST;
-        break;
-    case PKT_TCP_RST_V2:
-        next_status = CT_INIT;
-        break;
-    case PKT_TCP_SYN_V2:
-        next_status = CT_SYN;
-        break;
-    case PKT_TCP_FIN_V2:
-        next_status = CT_FIN;
-        break;
+    } else {
+        switch (tcp_phase) {
+        case NAPT_TCP_PHASE_RST:
+            next_status = CT_INIT;
+            break;
+        case NAPT_TCP_PHASE_SYN:
+            next_status = CT_SYN;
+            break;
+        case NAPT_TCP_PHASE_FIN:
+            next_status = CT_FIN;
+            break;
+        }
     }
 
     if (next_status != curr_state && !ct_try_set_status(modify_status, curr_state, next_status)) {
