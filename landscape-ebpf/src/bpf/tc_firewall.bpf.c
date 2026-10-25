@@ -6,66 +6,35 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_cb.h"
 #include "chain/tc_wan_exit_maps.h"
 #include "firewall/firewall_share.h"
-#include "scanner/skb_scanner4.h"
-#include "scanner/skb_scanner6.h"
-#include "fragment/frag4.h"
-#include "fragment/frag6.h"
+#include "frag/frag.h"
+#include "reader/skb_ferry.h"
+#include "reader/tc_read_head4.h"
+#include "reader/tc_read_head6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 
+static __always_inline bool fw_frag_single(u8 frag_code) {
+    return frag_code == LAND_NAT_FRAG_NONE || frag_code == TC_CB_FRAG_SINGLE_V6H;
+}
+
 static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
-    if (tc_cb_ferry_valid(skb)) {
-        struct iphdr *iph;
-        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
-        __be32 daddr = iph->daddr;
+    struct skb_ferry_cb cb = {};
+    __be32 src_addr = 0;
+    __be32 dst_addr = 0;
 
-        if (!tc_cb_icmp_inner_l4(skb) && !tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
-            return TC_ACT_SHOT;
-        }
-
-        struct ipv4_lpm_key block_search_key = {
-            .prefixlen = 32,
-            .addr = daddr,
-        };
-        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
-            return TC_ACT_SHOT;
-
+    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         return TC_ACT_OK;
-    }
 
-    struct scan_ipv4_idx idx = {};
-    if (scan_ipv4_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-
-    struct iphdr *iph;
-    if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
-    __be32 saddr = iph->saddr;
-    __be32 daddr = iph->daddr;
-
-    bool is_icmpx = false;
-    if (idx.fragment_type < FRAG_MIDDLE && idx.l4_protocol == IPPROTO_ICMP)
-        is_icmpx = scan_ipv4_upgrade_icmp(skb, current_l3_offset, &idx, &saddr);
-
-    if (likely(!is_icmpx)) {
-        __be16 sport = 0, dport = 0;
-        if (idx.fragment_type == FRAG_FIRST &&
-            (idx.l4_protocol == IPPROTO_TCP || idx.l4_protocol == IPPROTO_UDP)) {
-            __be16 *ports;
-            if (VALIDATE_READ_DATA(skb, &ports, idx.l4_offset, sizeof(__be16) * 2))
-                return TC_ACT_SHOT;
-            sport = ports[0];
-            dport = ports[1];
-        }
-        if (frag4_track(&idx, saddr, daddr, &sport, &dport) != TC_ACT_OK) return TC_ACT_SHOT;
-    }
+    if (!cb.icmp_inner_l4_offset && !cb.ports_valid && !fw_frag_single(cb.frag_code))
+        return TC_ACT_SHOT;
 
     struct ipv4_lpm_key block_search_key = {
         .prefixlen = 32,
-        .addr = daddr,
+        .addr = dst_addr,
     };
     if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
         return TC_ACT_SHOT;
@@ -74,53 +43,20 @@ static __always_inline int fw_do_egress_v4(struct __sk_buff *skb) {
 }
 
 static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
-    if (tc_cb_ferry_valid(skb)) {
-        struct ipv6hdr *ip6h;
-        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
+    struct skb_ferry_cb cb = {};
+    struct in6_addr src_addr = {};
+    struct in6_addr dst_addr = {};
 
-        if (!tc_cb_icmp_inner_l4(skb) && !tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
-            return TC_ACT_SHOT;
-        }
-
-        struct ipv6_lpm_key block_search_key = {
-            .prefixlen = 128,
-        };
-        __builtin_memcpy(&block_search_key.addr, &ip6h->daddr, sizeof(block_search_key.addr));
-        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
-            return TC_ACT_SHOT;
-
+    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         return TC_ACT_OK;
-    }
 
-    struct scan_ipv6_idx idx = {};
-    if (scan_ipv6_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-
-    struct ipv6hdr *ip6h;
-    if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
-    struct in6_addr saddr = ip6h->saddr;
-    struct in6_addr daddr = ip6h->daddr;
-
-    bool is_icmpx = false;
-    if (idx.fragment_type < FRAG_MIDDLE && idx.l4_protocol == IPPROTO_ICMPV6)
-        is_icmpx = scan_ipv6_upgrade_icmp(skb, current_l3_offset, &idx, &saddr);
-
-    if (likely(!is_icmpx)) {
-        __be16 sport = 0, dport = 0;
-        if (idx.fragment_type == FRAG_FIRST &&
-            (idx.l4_protocol == IPPROTO_TCP || idx.l4_protocol == IPPROTO_UDP)) {
-            __be16 *ports;
-            if (VALIDATE_READ_DATA(skb, &ports, idx.l4_offset, sizeof(__be16) * 2))
-                return TC_ACT_SHOT;
-            sport = ports[0];
-            dport = ports[1];
-        }
-        if (frag6_track(&idx, &saddr, &daddr, &sport, &dport) != TC_ACT_OK) return TC_ACT_SHOT;
-    }
+    if (!cb.icmp_inner_l4_offset && !cb.ports_valid && !fw_frag_single(cb.frag_code))
+        return TC_ACT_SHOT;
 
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
     };
-    __builtin_memcpy(&block_search_key.addr, &daddr, sizeof(block_search_key.addr));
+    __builtin_memcpy(&block_search_key.addr, &dst_addr, sizeof(block_search_key.addr));
     if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
         return TC_ACT_SHOT;
 
@@ -128,59 +64,19 @@ static __always_inline int fw_do_egress_v6(struct __sk_buff *skb) {
 }
 
 static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
-    if (tc_cb_ferry_valid(skb)) {
-        struct iphdr *iph;
-        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
-        __be32 saddr = iph->saddr;
+    struct skb_ferry_cb cb = {};
+    __be32 src_addr = 0;
+    __be32 dst_addr = 0;
 
-        if (tc_cb_icmp_inner_l4(skb)) {
-            struct iphdr *inner_ip;
-            if (VALIDATE_READ_DATA(skb, &inner_ip, tc_cb_l4_offset(skb) + ICMP_HDR_LEN,
-                                   sizeof(*inner_ip)))
-                return TC_ACT_OK;
-            saddr = inner_ip->daddr;
-        } else if (!tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
-            return TC_ACT_SHOT;
-        }
-
-        struct ipv4_lpm_key block_search_key = {
-            .prefixlen = 32,
-            .addr = saddr,
-        };
-        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
-            return TC_ACT_SHOT;
-
+    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         return TC_ACT_OK;
-    }
 
-    struct scan_ipv4_idx idx = {};
-    if (scan_ipv4_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-
-    struct iphdr *iph;
-    if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
-    __be32 saddr = iph->saddr;
-    __be32 daddr = iph->daddr;
-
-    bool is_icmpx = false;
-    if (idx.fragment_type < FRAG_MIDDLE && idx.l4_protocol == IPPROTO_ICMP)
-        is_icmpx = scan_ipv4_upgrade_icmp(skb, current_l3_offset, &idx, &saddr);
-
-    if (likely(!is_icmpx)) {
-        __be16 sport = 0, dport = 0;
-        if (idx.fragment_type == FRAG_FIRST &&
-            (idx.l4_protocol == IPPROTO_TCP || idx.l4_protocol == IPPROTO_UDP)) {
-            __be16 *ports;
-            if (VALIDATE_READ_DATA(skb, &ports, idx.l4_offset, sizeof(__be16) * 2))
-                return TC_ACT_SHOT;
-            sport = ports[0];
-            dport = ports[1];
-        }
-        if (frag4_track(&idx, saddr, daddr, &sport, &dport) != TC_ACT_OK) return TC_ACT_SHOT;
-    }
+    if (!cb.icmp_inner_l4_offset && !cb.ports_valid && !fw_frag_single(cb.frag_code))
+        return TC_ACT_SHOT;
 
     struct ipv4_lpm_key block_search_key = {
         .prefixlen = 32,
-        .addr = saddr,
+        .addr = src_addr,
     };
     if (unlikely(bpf_map_lookup_elem(&firewall_block_ip4_map, &block_search_key)))
         return TC_ACT_SHOT;
@@ -189,60 +85,20 @@ static __always_inline int fw_do_ingress_v4(struct __sk_buff *skb) {
 }
 
 static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
-    if (tc_cb_ferry_valid(skb)) {
-        struct ipv6hdr *ip6h;
-        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
-        struct in6_addr saddr = ip6h->saddr;
+    struct skb_ferry_cb cb = {};
+    struct in6_addr src_addr = {};
+    struct in6_addr dst_addr = {};
 
-        if (tc_cb_icmp_inner_l4(skb)) {
-            struct ipv6hdr *inner_ip6;
-            if (VALIDATE_READ_DATA(skb, &inner_ip6, tc_cb_l4_offset(skb) + ICMP6_HDR_LEN,
-                                   sizeof(*inner_ip6)))
-                return TC_ACT_OK;
-            saddr = inner_ip6->daddr;
-        } else if (!tc_cb_frag_single(skb) && !tc_cb_ports_valid(skb)) {
-            return TC_ACT_SHOT;
-        }
-
-        struct ipv6_lpm_key block_search_key = {
-            .prefixlen = 128,
-        };
-        __builtin_memcpy(&block_search_key.addr, &saddr, sizeof(block_search_key.addr));
-        if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
-            return TC_ACT_SHOT;
-
+    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         return TC_ACT_OK;
-    }
 
-    struct scan_ipv6_idx idx = {};
-    if (scan_ipv6_into_idx(skb, current_l3_offset, &idx) != LD_SCAN_OK) return TC_ACT_OK;
-
-    struct ipv6hdr *ip6h;
-    if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
-    struct in6_addr saddr = ip6h->saddr;
-    struct in6_addr daddr = ip6h->daddr;
-
-    bool is_icmpx = false;
-    if (idx.fragment_type < FRAG_MIDDLE && idx.l4_protocol == IPPROTO_ICMPV6)
-        is_icmpx = scan_ipv6_upgrade_icmp(skb, current_l3_offset, &idx, &saddr);
-
-    if (likely(!is_icmpx)) {
-        __be16 sport = 0, dport = 0;
-        if (idx.fragment_type == FRAG_FIRST &&
-            (idx.l4_protocol == IPPROTO_TCP || idx.l4_protocol == IPPROTO_UDP)) {
-            __be16 *ports;
-            if (VALIDATE_READ_DATA(skb, &ports, idx.l4_offset, sizeof(__be16) * 2))
-                return TC_ACT_SHOT;
-            sport = ports[0];
-            dport = ports[1];
-        }
-        if (frag6_track(&idx, &saddr, &daddr, &sport, &dport) != TC_ACT_OK) return TC_ACT_SHOT;
-    }
+    if (!cb.icmp_inner_l4_offset && !cb.ports_valid && !fw_frag_single(cb.frag_code))
+        return TC_ACT_SHOT;
 
     struct ipv6_lpm_key block_search_key = {
         .prefixlen = 128,
     };
-    __builtin_memcpy(&block_search_key.addr, &saddr, sizeof(block_search_key.addr));
+    __builtin_memcpy(&block_search_key.addr, &src_addr, sizeof(block_search_key.addr));
     if (unlikely(bpf_map_lookup_elem(&firewall_block_ip6_map, &block_search_key)))
         return TC_ACT_SHOT;
 

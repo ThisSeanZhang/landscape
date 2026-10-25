@@ -6,8 +6,11 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_cb.h"
 #include "chain/tc_wan_exit_maps.h"
+#include "frag/frag.h"
+#include "reader/skb_ferry.h"
+#include "reader/tc_read_head4.h"
+#include "reader/tc_read_head6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -19,45 +22,6 @@ const volatile u32 current_l3_offset = 14;
 #define TCP_OPT_NOP 1
 #define TCP_OPT_MSS 2
 #define TCP_HDR_LEN 20
-
-static __always_inline int extract_ipv6_tcp_offset(struct __sk_buff *skb, u32 l3_offset,
-                                                   u32 *ip_hdr_len) {
-    struct ipv6hdr *ip6h;
-    if (VALIDATE_READ_DATA(skb, &ip6h, l3_offset, sizeof(*ip6h))) return TC_ACT_SHOT;
-
-    if (ip6h->version != 6) return TC_ACT_SHOT;
-
-    u32 offset = l3_offset;
-    u32 len = sizeof(struct ipv6hdr);
-    u8 nexthdr = ip6h->nexthdr;
-    struct ipv6_opt_hdr *opthdr;
-
-#pragma unroll
-    for (int i = 0; i < LD_MAX_IPV6_EXT_NUM; i++) {
-        switch (nexthdr) {
-        case NEXTHDR_FRAGMENT:
-        case NEXTHDR_AUTH:
-            return TC_ACT_UNSPEC;
-        case NEXTHDR_HOP:
-        case NEXTHDR_ROUTING:
-        case NEXTHDR_DEST: {
-            if (VALIDATE_READ_DATA(skb, &opthdr, offset + len, sizeof(*opthdr))) return TC_ACT_SHOT;
-
-            nexthdr = opthdr->nexthdr;
-            len += (opthdr->hdrlen + 1) * 8;
-            break;
-        }
-        default:
-            goto found_tcp;
-        }
-    }
-
-found_tcp:
-    if (nexthdr != NEXTHDR_TCP) return TC_ACT_UNSPEC;
-
-    *ip_hdr_len = len;
-    return TC_ACT_OK;
-}
 
 static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 mss_value) {
     struct tcphdr *tcph;
@@ -128,44 +92,46 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
     }
 }
 
-static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
-    if (tc_cb_ferry_valid(skb)) {
-        if (tc_cb_frag(skb) >= FRAG_MIDDLE) return;
-        if (tc_cb_l4_protocol(skb) != IPPROTO_TCP) return;
-        u32 l4_offset = tc_cb_l4_offset(skb);
-        u32 ip_hdr_len = l4_offset - current_l3_offset;
-        do_mss_clamp(skb, l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
-        return;
-    }
+static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu,
+                                         u8 direction) {
+    struct skb_ferry_cb cb = {};
+    __be32 src_addr = 0;
+    __be32 dst_addr = 0;
 
-    struct iphdr *iph;
-    if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return;
-    if (iph->protocol != IPPROTO_TCP) return;
-    u32 ip_hdr_len = iph->ihl * 4;
+    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, direction)) return;
+    if (cb.icmp_inner_l4_offset) return;
+    if (cb.frag_code > LAND_NAT_FRAG_FIRST) return;
+    if (cb.l4_protocol != IPV4_PROTO_TCP) return;
+    if (cb.tcp_phase != NAPT_TCP_PHASE_SYN) return;
+    if (cb.l4_offset < current_l3_offset) return;
 
-    do_mss_clamp(skb, ip_hdr_len + current_l3_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+    u32 ip_hdr_len = cb.l4_offset - current_l3_offset;
+    if (ip_hdr_len + TCP_HDR_LEN >= mtu) return;
+    do_mss_clamp(skb, cb.l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
 }
 
-static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
-    if (tc_cb_ferry_valid(skb)) {
-        if (tc_cb_frag(skb) != FRAG_SINGLE) return;
-        if (tc_cb_l4_protocol(skb) != IPPROTO_TCP) return;
-        u32 l4_offset = tc_cb_l4_offset(skb);
-        u32 ip_hdr_len = l4_offset - current_l3_offset;
-        do_mss_clamp(skb, l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
-        return;
-    }
+static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu,
+                                         u8 direction) {
+    struct skb_ferry_cb cb = {};
+    struct in6_addr src_addr = {};
+    struct in6_addr dst_addr = {};
 
-    u32 ip_hdr_len;
-    if (extract_ipv6_tcp_offset(skb, current_l3_offset, &ip_hdr_len) != TC_ACT_OK) return;
+    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, direction)) return;
+    if (cb.icmp_inner_l4_offset) return;
+    if (cb.frag_code != LAND_NAT_FRAG_NONE) return;
+    if (cb.l4_protocol != IPV6_NH_TCP) return;
+    if (cb.tcp_phase != NAPT_TCP_PHASE_SYN) return;
+    if (cb.l4_offset < current_l3_offset) return;
 
-    do_mss_clamp(skb, ip_hdr_len + current_l3_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+    u32 ip_hdr_len = cb.l4_offset - current_l3_offset;
+    if (ip_hdr_len + TCP_HDR_LEN >= mtu) return;
+    do_mss_clamp(skb, cb.l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
 }
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_WAN);
     }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
@@ -176,7 +142,7 @@ int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_WAN);
     }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
@@ -187,7 +153,7 @@ int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_LAN);
     }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
@@ -198,7 +164,7 @@ int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_mss_wan_egress_v6(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_LAN);
     }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);

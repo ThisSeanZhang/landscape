@@ -57,6 +57,10 @@ pub fn attach_tc_mss(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
+    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan)?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
 
@@ -109,7 +113,11 @@ impl Drop for XdpMssHandle {
     }
 }
 
-pub fn init_xdp_mss(dp: &Arc<WanLinkDataplane>, mtu_size: u16) -> LdEbpfResult<XdpMssHandle> {
+pub fn init_xdp_mss(
+    dp: &Arc<WanLinkDataplane>,
+    mtu_size: u16,
+    has_eth_header: bool,
+) -> LdEbpfResult<XdpMssHandle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -144,11 +152,28 @@ pub fn init_xdp_mss(dp: &Arc<WanLinkDataplane>, mtu_size: u16) -> LdEbpfResult<X
         ),
         "xdp_mss pin xdp_lan_pipe_root_progs"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan),
+        "xdp_mss pin frag4_cache_lan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan),
+        "xdp_mss pin frag4_cache_wan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan),
+        "xdp_mss pin frag6_cache_lan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan),
+        "xdp_mss pin frag6_cache_wan"
+    )?;
 
     {
         let rodata =
             open_skel.maps.rodata_data.as_deref_mut().expect("xdp_mss rodata not memory mapped");
         rodata.mtu_size = mtu_size;
+        rodata.current_l3_offset = if has_eth_header { 14 } else { 0 };
     }
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_mss skeleton")?;
@@ -189,6 +214,6 @@ pub fn init_mss(
 ) -> LdEbpfResult<MssHandle> {
     Ok(MssHandle {
         tc: Some(attach_tc_mss(dp, mtu, has_eth_header)?),
-        xdp: Some(init_xdp_mss(dp, mtu)?),
+        xdp: Some(init_xdp_mss(dp, mtu, has_eth_header)?),
     })
 }

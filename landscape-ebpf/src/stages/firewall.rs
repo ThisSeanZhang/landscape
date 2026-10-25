@@ -63,6 +63,10 @@ pub fn attach_tc_firewall(
         &mut open_skel.maps.firewall_conn_metric_events,
         &paths.firewall_conn_metric_events,
     )?;
+    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
+    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan)?;
 
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
@@ -115,7 +119,10 @@ impl Drop for XdpFirewallHandle {
     }
 }
 
-pub fn init_xdp_firewall(dp: &Arc<WanLinkDataplane>) -> LdEbpfResult<XdpFirewallHandle> {
+pub fn init_xdp_firewall(
+    dp: &Arc<WanLinkDataplane>,
+    has_eth_header: bool,
+) -> LdEbpfResult<XdpFirewallHandle> {
     use crate::chain::stage::{FamilyProg, FromLanStageType, FromWanStageType, StageFamily};
     use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
     use libbpf_rs::skel::{OpenSkel, SkelBuilder};
@@ -166,6 +173,25 @@ pub fn init_xdp_firewall(dp: &Arc<WanLinkDataplane>) -> LdEbpfResult<XdpFirewall
         ),
         "xdp_firewall pin firewall_conn_metric_events"
     )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan),
+        "xdp_firewall pin frag4_cache_lan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan),
+        "xdp_firewall pin frag4_cache_wan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan),
+        "xdp_firewall pin frag6_cache_lan"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan),
+        "xdp_firewall pin frag6_cache_wan"
+    )?;
+
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset =
+        if has_eth_header { 14 } else { 0 };
 
     let skel = bpf_ctx!(open_skel.load(), "load xdp_firewall skeleton")?;
 
@@ -204,6 +230,6 @@ pub fn init_firewall(
 ) -> LdEbpfResult<FirewallHandle> {
     Ok(FirewallHandle {
         tc: Some(attach_tc_firewall(dp, has_eth_header)?),
-        xdp: Some(init_xdp_firewall(dp)?),
+        xdp: Some(init_xdp_firewall(dp, has_eth_header)?),
     })
 }
