@@ -5,7 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "base/landscape.h"
-#include "scanner/xdp_common.h"
+#include "reader/xdp_l3.h"
 #include "chain/xdp_meta.h"
 #include "chain/xdp_cb.h"
 #include "chain/xdp_wan_maps.h"

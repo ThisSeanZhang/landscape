@@ -210,11 +210,19 @@ pub(crate) struct RouteContextV6 {
     pub smac: [u8; 6],
 }
 
+/// C side `route_view`.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct RouteView {
+    pub l3_offset: u32,
+    pub l3_protocol: u8,
+}
+
 /// C side `route_packet_test_result`.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct RoutePacketTestResult {
-    pub offset: PacketOffsetInfo,
+    pub route: RouteView,
     pub v4: RouteContextV4,
     pub v6: RouteContextV6,
     pub scan_ret: i32,
@@ -385,27 +393,28 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "test-route", feature = "test-misc"))]
-    fn packet_offset_info_layouts_match_skel() {
-        use crate::tests::test_route_packet::types as route_skel;
+    #[cfg(feature = "test-misc")]
+    fn tproxy_packet_offset_info_layouts_match_skel() {
         use crate::tests::test_tproxy_packet::types as tproxy_skel;
 
-        assert_size!(PacketOffsetInfo, route_skel::packet_offset_info);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, icmp_error_l3_protocol);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, icmp_error_l4_protocol);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, status);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, pkt_type);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, l3_protocol);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, l4_protocol);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, fragment_type);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, fragment_off);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, fragment_id);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, l4_offset);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, l3_offset_when_scan);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, icmp_error_l3_offset);
-        assert_field!(PacketOffsetInfo, route_skel::packet_offset_info, icmp_error_inner_l4_offset);
-
         assert_size!(PacketOffsetInfo, tproxy_skel::packet_offset_info);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, icmp_error_l3_protocol);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, icmp_error_l4_protocol);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, status);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, pkt_type);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, l3_protocol);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, l4_protocol);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, fragment_type);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, fragment_off);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, fragment_id);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, l4_offset);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, l3_offset_when_scan);
+        assert_field!(PacketOffsetInfo, tproxy_skel::packet_offset_info, icmp_error_l3_offset);
+        assert_field!(
+            PacketOffsetInfo,
+            tproxy_skel::packet_offset_info,
+            icmp_error_inner_l4_offset
+        );
     }
 
     #[test]
@@ -450,11 +459,16 @@ mod tests {
         assert_field!(TproxyPacketTestResult, tproxy_skel::tproxy_packet_test_result, scan_ret);
         assert_field!(TproxyPacketTestResult, tproxy_skel::tproxy_packet_test_result, read_ret);
 
+        assert_size!(RouteView, route_skel::route_view);
+        assert_field!(RouteView, route_skel::route_view, l3_offset);
+        assert_field!(RouteView, route_skel::route_view, l3_protocol);
+
         assert_size!(RoutePacketTestResult, route_skel::route_packet_test_result);
+        assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, route.l3_offset);
         assert_field!(
             RoutePacketTestResult,
             route_skel::route_packet_test_result,
-            offset.l3_protocol
+            route.l3_protocol
         );
         assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, v4.saddr);
         assert_field!(RoutePacketTestResult, route_skel::route_packet_test_result, v4.daddr);

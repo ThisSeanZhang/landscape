@@ -34,15 +34,15 @@ SEC("tc/ingress")
 int tc_route4_wan_ingress(struct __sk_buff *skb) {
     int ret = 0;
     struct route4_context context = {0};
-    struct packet_offset_info offset_info = {0};
+    struct route_view view = {0};
     u8 l3 = get_wan_ingress_l3_offset(skb);
 
-    ret = scan_route_packet(skb, l3, &offset_info);
+    ret = scan_route_packet(skb, l3, &view);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
 
-    ret = route4_read_context_from_scan(skb, &offset_info, &context);
+    ret = route4_read_context_from_scan(skb, &view, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -71,15 +71,15 @@ SEC("tc/ingress")
 int tc_route6_wan_ingress(struct __sk_buff *skb) {
     int ret = 0;
     struct route6_context context = {0};
-    struct packet_offset_info offset_info = {0};
+    struct route_view view = {0};
     u8 l3 = get_wan_ingress_l3_offset(skb);
 
-    ret = scan_route_packet(skb, l3, &offset_info);
+    ret = scan_route_packet(skb, l3, &view);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
 
-    ret = route6_read_context_from_scan(skb, &offset_info, &context);
+    ret = route6_read_context_from_scan(skb, &view, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }

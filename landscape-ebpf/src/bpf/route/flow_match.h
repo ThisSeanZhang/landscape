@@ -7,6 +7,19 @@
 #define FLOW_ENTRY_MODE_MAC 0
 #define FLOW_ENTRY_MODE_IP 1
 
+static __always_inline int read_flow_src_mac(struct __sk_buff *skb, u8 mac[6]) {
+    char *data = (char *)(long)skb->data;
+    char *data_end = (char *)(long)skb->data_end;
+    if ((char *)(data + 12) > data_end) {
+        if (skb->len < 12 || bpf_skb_pull_data(skb, 12) != 0) return -1;
+        data = (char *)(long)skb->data;
+        data_end = (char *)(long)skb->data_end;
+        if ((char *)(data + 12) > data_end) return -1;
+    }
+    __builtin_memcpy(mac, data + 6, 6);
+    return 0;
+}
+
 // IPV4 32 + 32 = 64
 #define FLOW_IP_IPV4_MATCH_LEN 64
 // IPV4 32 + 128 = 160
@@ -57,12 +70,10 @@ static __always_inline int match_flow_id_v4(struct __sk_buff *skb, u32 current_l
     u32 ret_flow_id = *default_flow_id_;
 
     if (current_l3_offset != 0) {
-        u8 *mac;
-        if (VALIDATE_READ_DATA(skb, &mac, 6, 6)) {
+        if (read_flow_src_mac(skb, match_key.mac.mac)) {
             ld_log("read mac error");
             return TC_ACT_SHOT;
         }
-        __builtin_memcpy(match_key.mac.mac, mac, 6);
 
         match_key.prefixlen = FLOW_MAC_MATCH_LEN;
         match_key.is_match_ip = FLOW_ENTRY_MODE_MAC;
@@ -109,12 +120,10 @@ static __always_inline int match_flow_id_v6(struct __sk_buff *skb, u32 current_l
     u32 ret_flow_id = *default_flow_id_;
 
     if (current_l3_offset != 0) {
-        u8 *mac;
-        if (VALIDATE_READ_DATA(skb, &mac, 6, 6)) {
+        if (read_flow_src_mac(skb, match_key.mac.mac)) {
             ld_log("read mac error");
             return TC_ACT_SHOT;
         }
-        __builtin_memcpy(match_key.mac.mac, mac, 6);
 
         match_key.prefixlen = FLOW_MAC_MATCH_LEN;
         match_key.is_match_ip = FLOW_ENTRY_MODE_MAC;

@@ -165,17 +165,17 @@ int tc_route4_lan_ingress(struct __sk_buff *skb) {
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route4_context context = {0};
-    struct packet_offset_info offset_info = {0};
+    struct route_view view = {0};
 
-    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
-    if (ret == LD_SCAN_ERR) {
+    ret = scan_route_packet(skb, current_l3_offset, &view);
+    if (ret == TC_ACT_SHOT) {
         return TC_ACT_SHOT;
     }
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
 
-    ret = route4_read_context_from_scan(skb, &offset_info, &context);
+    ret = route4_read_context_from_scan(skb, &view, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
@@ -216,17 +216,17 @@ int tc_route6_lan_ingress(struct __sk_buff *skb) {
     int ret = 0;
     u32 flow_mark = skb_mark(skb);
     struct route6_context context = {0};
-    struct packet_offset_info offset_info = {0};
+    struct route_view view = {0};
 
-    ret = scan_route_packet(skb, current_l3_offset, &offset_info);
-    if (ret == LD_SCAN_ERR) {
+    ret = scan_route_packet(skb, current_l3_offset, &view);
+    if (ret == TC_ACT_SHOT) {
         return TC_ACT_SHOT;
     }
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
 
-    ret = route6_read_context_from_scan(skb, &offset_info, &context);
+    ret = route6_read_context_from_scan(skb, &view, &context);
     if (ret != TC_ACT_OK) {
         return TC_ACT_OK;
     }
