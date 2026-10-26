@@ -25,8 +25,9 @@
 #define XDP_NAT6_READ_PASS 0
 #define XDP_NAT6_READ_OK 1
 
-static __noinline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_offset, __u32 l4_offset,
-                                            __u32 packet_end, struct icmp6_error_meta *meta) {
+static __always_inline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_offset,
+                                                 __u32 l4_offset, __u32 packet_end,
+                                                 struct icmp6_error_meta *meta) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     if (!meta || l4_offset < l3_offset || l4_offset > packet_end) return -1;

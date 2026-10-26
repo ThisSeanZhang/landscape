@@ -70,8 +70,9 @@ struct icmp6_error_meta {
     __u8 tcp_phase;
 };
 
-static __noinline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_offset, __u32 l4_offset,
-                                        __u32 packet_end, struct icmp6_error_meta *meta) {
+static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_offset,
+                                             __u32 l4_offset, __u32 packet_end,
+                                             struct icmp6_error_meta *meta) {
     if (!meta || l4_offset < l3_offset || l4_offset > packet_end) return -1;
     if (l4_offset + sizeof(struct icmp6hdr) + sizeof(struct ipv6hdr) > packet_end) return -1;
     if (packet_end > skb->len || packet_end - l4_offset > ICMP6_ERROR_MAX_TOTAL_LEN) return -1;
