@@ -25,17 +25,7 @@
 //! meaningful when the sink counters prove every iteration actually hit the
 //! lookup under test.
 //!
-//! `bench_skb_read` batches at the kernel level instead
-//! (`ProgramInput::repeat`): one syscall runs the program N times and the
-//! kernel reports the per-run average, keeping the loop out of the BPF
-//! program entirely (the scanner twins blow the 1M-insn verifier budget
-//! as in-program loops). Same baseline-subtraction and sink rules apply.
-//!
 //! Run with: `cargo test -p landscape-ebpf --lib --features bpf-test bench:: -- --ignored --nocapture`
-
-pub(crate) mod bench_skb_read {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/bench_skb_read.skel.rs"));
-}
 
 pub(crate) mod bench_wan_dispatch {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/bench_wan_dispatch.skel.rs"));
@@ -51,5 +41,4 @@ pub(crate) mod bench_nat4_v4 {
 
 mod nat4_lookup;
 mod nat4_v4;
-mod skb_read;
 mod wan_dispatch;

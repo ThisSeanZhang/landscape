@@ -5,14 +5,13 @@
 //! with production-faithful map shapes. See the header comment of
 //! `src/bpf/bench/bench_nat4_lookup.bpf.c` for what each variant models.
 //!
-//! Methodology as `bench_skb_read`: programs are single-shot, one syscall
-//! runs `REPEAT` kernel-side repeats and reports the per-run average, and
-//! the accumulating sink proves every run hit (`warmup_batches * repeat *
-//! per_run`). Baseline subtraction cancels the shared packet-parse and
-//! test-run machinery. Unlike skb_read we cannot interleave programs across
-//! rounds (arena_create's teardown frees the idx slots the steady-state
-//! twins claim), so each program is measured sequentially: warmup+assert,
-//! then `TIMING_BATCHES` batch averages.
+//! Programs are single-shot: one syscall runs `REPEAT` kernel-side repeats
+//! and reports the per-run average, and the accumulating sink proves every
+//! run hit (`warmup_batches * repeat * per_run`). Baseline subtraction
+//! cancels the shared packet-parse and test-run machinery. Programs cannot
+//! be interleaved across rounds (arena_create's teardown frees the idx slots
+//! the steady-state twins claim), so each program is measured sequentially:
+//! warmup+assert, then `TIMING_BATCHES` batch averages.
 //!
 //! Run with: `cargo test -p landscape-ebpf --lib --features bpf-test bench:: -- --ignored --nocapture`
 

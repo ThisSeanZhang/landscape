@@ -134,7 +134,7 @@ fn ipv4_icmp_echo_reply(id: u16) -> Vec<u8> {
 }
 
 /// icmp error quoting a minimal inner TCP header; the inner saddr must
-/// equal the outer daddr or the scanner rejects the packet.
+/// equal the outer daddr or the NAT reader rejects the packet.
 fn ipv4_icmp_error_quoting_tcp(
     inner_src: Ipv4Addr,
     inner_dst: Ipv4Addr,

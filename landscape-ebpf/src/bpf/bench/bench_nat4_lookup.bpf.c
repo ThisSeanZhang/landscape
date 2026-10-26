@@ -27,7 +27,7 @@
  * Programs are single-shot: the driver runs each one via BPF_PROG_TEST_RUN
  * with kernel-side `repeat` batching and reads the kernel-reported per-run
  * average (no in-program loop → no verifier bounded-loop pressure; same
- * methodology as bench_skb_read). Every run folds its per-run value into
+ * methodology). Every run folds its per-run value into
  * the accumulating sink map, so `warmup_batches * repeat * per_run` proves
  * from Rust that every single run hit the lookup under test.
  */

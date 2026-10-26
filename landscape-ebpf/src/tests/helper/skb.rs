@@ -1,5 +1,5 @@
 //! `struct __sk_buff` mirror used to drive `BPF_PROG_TEST_RUN` inputs and
-//! to decode scanner outputs that report skb metadata (ex `tests/mod.rs`).
+//! to report skb metadata written by test programs.
 
 use zerocopy::{FromBytes, IntoBytes};
 

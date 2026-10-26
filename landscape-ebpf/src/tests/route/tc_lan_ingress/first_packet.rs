@@ -25,7 +25,7 @@ fn lan_ingress_arp_frame_passes_untouched() {
     );
 }
 
-// NOTE: LD_SCAN_ERR (eth-header read failure) is not reachable under
+// NOTE: the eth-header read failure is not reachable under
 // PROG_TEST_RUN: the kernel rejects data_size_in < ETH_HLEN before the
 // program runs (test_run.c `if (size < ETH_HLEN) return -EINVAL`), and
 // rejects ethertype-IP inputs whose L3 header would be truncated

@@ -6,7 +6,7 @@
 //! - [`helper`]: shared infrastructure, compiled under bare `test-support`
 //!   (packet/frame builders, map seeding, netns utils, wire mirror types).
 //! - [`stage`]: runtime-stage behaviour tests (production skeletons only).
-//! - [`route`] / [`nat`] / [`scanner`] / [`chain`] / [`metric`] / [`misc`]:
+//! - [`route`] / [`nat`] / [`chain`] / [`metric`] / [`misc`]:
 //!   topic suites, each pulling its own test-only BPF objects.
 #![cfg_attr(not(feature = "bpf-test"), allow(dead_code, unused_imports))]
 
@@ -29,8 +29,6 @@ mod nat;
 mod reader;
 #[cfg(feature = "test-route")]
 pub(crate) mod route;
-#[cfg(feature = "test-scanner")]
-pub(crate) mod scanner;
 mod stage;
 
 // Test-only skeleton single-inclusion points. Each gate is the union of its
@@ -59,21 +57,6 @@ pub(crate) mod test_xdp_chain_stage {
 #[cfg(any(feature = "test-chain", feature = "test-nat"))]
 pub(crate) mod test_xdp_dummy {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_dummy.skel.rs"));
-}
-
-#[cfg(feature = "test-scanner")]
-pub(crate) mod test_xdp_scanner_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_scanner.skel.rs"));
-}
-
-#[cfg(feature = "test-scanner")]
-pub(crate) mod test_skb_scanner_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_scanner.skel.rs"));
-}
-
-#[cfg(feature = "test-scanner")]
-pub(crate) mod test_skb_read_skel {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_skb_read.skel.rs"));
 }
 
 #[cfg(feature = "test-reader")]

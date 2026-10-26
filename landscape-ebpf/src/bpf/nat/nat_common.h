@@ -131,10 +131,6 @@ enum nat6_static_result {
     NAT6_STATIC_PASS = 2,     // static mapping hit, no prefix replace needed
 };
 
-static __always_inline bool pkt_can_begin_ct(u8 pkt_type) {
-    return pkt_type == PKT_CONNLESS_V2 || pkt_type == PKT_TCP_SYN_V2;
-}
-
 static __always_inline bool ct_try_set_status(u64 *status_in_value, u64 curr_state,
                                               u64 next_state) {
     return __sync_bool_compare_and_swap(status_in_value, curr_state, next_state);

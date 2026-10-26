@@ -3,7 +3,6 @@
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
 #include "base/printk.h"
-#include "einat/einat_types.h"
 #include "base/mark.h"
 #include "base/tproxy.h"
 
