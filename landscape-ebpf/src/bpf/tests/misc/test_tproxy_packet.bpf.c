@@ -9,7 +9,7 @@ char LICENSE[] SEC("license") = "GPL";
 const volatile u32 current_l3_offset = 14;
 
 struct tproxy_packet_test_result {
-    struct packet_offset_info offset;
+    struct tproxy_view view;
     struct inet_pair pair;
     int scan_ret;
     int read_ret;
@@ -27,11 +27,11 @@ int test_tproxy_packet(struct __sk_buff *skb) {
     u32 key = 0;
     struct tproxy_packet_test_result result = {0};
 
-    result.scan_ret = scan_tproxy_packet(skb, current_l3_offset, &result.offset);
+    result.scan_ret = scan_tproxy_packet(skb, current_l3_offset, &result.view, &result.pair);
     result.read_ret = result.scan_ret;
 
-    if (result.scan_ret == LD_SCAN_OK) {
-        result.read_ret = read_tproxy_packet_info(skb, &result.offset, &result.pair);
+    if (result.scan_ret == TC_ACT_OK) {
+        result.read_ret = read_tproxy_packet_info(skb, &result.view, &result.pair);
     }
 
     bpf_map_update_elem(&tproxy_packet_test_result_map, &key, &result, BPF_ANY);
