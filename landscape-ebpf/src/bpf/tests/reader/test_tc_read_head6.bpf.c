@@ -6,7 +6,7 @@
 
 #include "frag/frag.h"
 #include "reader/tc_nat_view.h"
-#include "reader/tc_read_head6.h"
+#include "reader/tc_nat_read6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -50,7 +50,7 @@ int test_tc_read_head6(struct __sk_buff *skb) {
     struct in6_addr dst_addr = {};
 
     r->read_ret =
-        tc_read_ipv6(skb, &view, &src_addr, &dst_addr, current_l3_offset, (__u8)current_direction);
+        tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, (__u8)current_direction);
     r->src_addr = src_addr;
     r->dst_addr = dst_addr;
     r->l3_offset = view.l3_offset;

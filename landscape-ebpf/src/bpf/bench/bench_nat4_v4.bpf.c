@@ -37,7 +37,7 @@ static __always_inline void bench_sink_add(u64 value) {
 static __always_inline int bench_read(struct __sk_buff *skb, struct tc_nat_view *view,
                                       __be32 *src_addr, __be32 *dst_addr, __u8 direction) {
     if (skb->protocol != bpf_htons(ETH_P_IP)) return 0;
-    if (!tc_read_ipv4(skb, view, src_addr, dst_addr, current_l3_offset, direction)) return 0;
+    if (!tc_nat_read4(skb, view, src_addr, dst_addr, current_l3_offset, direction)) return 0;
     if (view->l4_protocol != IPV4_PROTO_TCP) return 0;
     if (!view->ports_valid) return 0;
     return 1;

@@ -5,7 +5,7 @@
 #include "frag/frag.h"
 #include "nat_v4/xdp_modify_head.h"
 #include "nat_v4/xdp_nat4.h"
-#include "reader/xdp_read_head4.h"
+#include "reader/xdp_nat_read4.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -58,8 +58,8 @@ int test_xdp_nat4_read_icmp_error_tcp_quote(struct xdp_md *ctx) {
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
 
-    if (xdp_read_ipv4_nat4(data, data_end, &view, &src_addr, &dst_addr, L3_OFFSET,
-                           LAND_NAT_FRAG_FROM_WAN) != XDP_NAT4_READ_OK)
+    if (xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, L3_OFFSET,
+                      LAND_NAT_FRAG_FROM_WAN) != XDP_NAT4_READ_OK)
         return XDP_DROP;
 
     if (view.icmp_inner_l4_protocol != IPPROTO_TCP) return XDP_DROP;

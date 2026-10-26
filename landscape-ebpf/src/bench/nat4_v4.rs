@@ -217,6 +217,11 @@ fn nat4_v4_steady_state_cost() {
         timing(p, &wan_miss_pkt)
     };
 
+    println!("--- NAT4 v4 reader baseline (kernel repeat={REPEAT}) ---");
+    println!(
+        "{:<18} per-run(min/med) {:>7.2}/{:>7.2} ns",
+        "reader_baseline", base.0 as f64, base.1 as f64
+    );
     println!("--- NAT4 v4 state phase (kernel repeat={REPEAT}, baseline-subtracted) ---");
     report("lan_steady", lan, base);
     report("wan_steady", wan, base);

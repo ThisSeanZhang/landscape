@@ -12,7 +12,7 @@
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
 #include "chain/xdp_stage.h"
-#include "reader/xdp_read_head6.h"
+#include "reader/xdp_nat_read6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -29,8 +29,8 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
 
-    int read_ret = xdp_read_ipv6_nat6(ctx, &view, &src_addr, &dst_addr, current_l3_offset,
-                                      LAND_NAT_FRAG_FROM_LAN);
+    int read_ret =
+        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
@@ -56,8 +56,8 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
 
-    int read_ret = xdp_read_ipv6_nat6(ctx, &view, &src_addr, &dst_addr, current_l3_offset,
-                                      LAND_NAT_FRAG_FROM_WAN);
+    int read_ret =
+        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 

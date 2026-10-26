@@ -10,7 +10,7 @@
 #include "chain/tc_wan_exit_maps.h"
 #include "nat/tc_nat6.h"
 #include "reader/tc_nat_view.h"
-#include "reader/tc_read_head6.h"
+#include "reader/tc_nat_read6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -22,7 +22,7 @@ static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifinde
     struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (!tc_read_ipv6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
+    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         return TC_ACT_OK;
 
     if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;
@@ -42,7 +42,7 @@ static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifind
     struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (!tc_read_ipv6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
+    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         return TC_ACT_OK;
 
     if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;

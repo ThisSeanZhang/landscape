@@ -26,7 +26,7 @@ static __always_inline int tc_mss4_read(struct __sk_buff *skb, __u32 l3_offset,
     if (!view) return 0;
 
     int ihl = tc_ip4_hdrlen(skb, l3_offset, &view->next, &view->frag, &view->packet_end, 0,
-                            &view->doff, &view->flags);
+                            &view->doff, &view->flags, 0, 0);
     if (ihl < 0) return 0;
 
     view->l4_off = l3_offset + (__u32)ihl;

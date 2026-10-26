@@ -28,7 +28,7 @@ static __always_inline int xdp_mss6_read(const void *data, const void *data_end,
     if (!view) return 0;
 
     int hlen = xdp_ip6_hdrlen(data, data_end, l3_offset, &view->next, &view->frag,
-                              &view->packet_end, 0, 0);
+                              &view->packet_end, 0, 0, 0, 0);
     if (hlen < 0) return 0;
 
     view->l4_off = l3_offset + (__u32)hlen;

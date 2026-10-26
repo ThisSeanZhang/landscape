@@ -16,7 +16,7 @@
 #include "chain/xdp_lan_maps.h"
 #include "nat_v4/xdp_modify_head.h"
 #include "nat_v4/xdp_nat4.h"
-#include "reader/xdp_read_head4.h"
+#include "reader/xdp_nat_read4.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -42,8 +42,8 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     struct xdp_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
-    int read_ret = xdp_read_ipv4_nat4(data, data_end, &view, &src_addr, &dst_addr,
-                                      current_l3_offset, LAND_NAT_FRAG_FROM_LAN);
+    int read_ret = xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, current_l3_offset,
+                                 LAND_NAT_FRAG_FROM_LAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
@@ -91,8 +91,8 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     struct xdp_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
-    int read_ret = xdp_read_ipv4_nat4(data, data_end, &view, &src_addr, &dst_addr,
-                                      current_l3_offset, LAND_NAT_FRAG_FROM_WAN);
+    int read_ret = xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, current_l3_offset,
+                                 LAND_NAT_FRAG_FROM_WAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 

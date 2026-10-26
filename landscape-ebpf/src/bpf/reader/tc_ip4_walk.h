@@ -19,7 +19,8 @@
  */
 static __always_inline int tc_ip4_hdrlen(struct __sk_buff *skb, __u32 l3_offset, __u8 *next,
                                          __u8 *frag, __u32 *packet_end, __be16 *frag_id,
-                                         __u8 *tcp_doff, __u8 *tcp_flags) {
+                                         __u8 *tcp_doff, __u8 *tcp_flags, __be32 *src_addr,
+                                         __be32 *dst_addr) {
     if (!next || !frag || !packet_end || (l3_offset != 0 && l3_offset < sizeof(struct ethhdr)) ||
         l3_offset > 255U - sizeof(struct iphdr))
         return -1;
@@ -68,6 +69,8 @@ static __always_inline int tc_ip4_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
     *next = iph->protocol;
     *packet_end = l3_offset + ip_total;
     if (frag_id) *frag_id = iph->id;
+    if (src_addr) *src_addr = iph->saddr;
+    if (dst_addr) *dst_addr = iph->daddr;
 
     if (tcp_doff && tcp_flags && *next == IPV4_PROTO_TCP) {
         __u32 hdr_off = l3_offset + ihl + 12;

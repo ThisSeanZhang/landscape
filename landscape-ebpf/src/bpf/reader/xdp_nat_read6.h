@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#ifndef __LD_XDP_READ_HEAD6_H__
-#define __LD_XDP_READ_HEAD6_H__
+#ifndef LAND_XDP_NAT_READ6_H
+#define LAND_XDP_NAT_READ6_H
 
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
@@ -11,13 +11,12 @@
 #include "base/tcp_phase.h"
 #include "frag/frag.h"
 #include "frag/tc_frag6.h"
+#include "reader/xdp_ip6_walk.h"
 #include "xdp_nat_view.h"
 
 /*
- * XDP IPv6 reader, the XDP counterpart of reader/tc_read_head6.h.
- *
- * It parses Ethernet/IPv6, walks the extension-header chain, resolves the
- * transport tuple (including ICMPv6 Error), and applies the IPv6 fragment
+ * XDP NAT IPv6 reader: use the shared XDP IPv6 walker for L3 navigation, then
+ * resolve the transport tuple (including ICMPv6 Error) and the IPv6 fragment
  * cache. Addresses are written through src_addr/dst_addr; the rest is stored
  * in xdp_nat_view. ICMPv6 Echo stores its identifier in both sport and dport.
  */
@@ -25,8 +24,6 @@
 #define XDP_NAT6_READ_DROP -1
 #define XDP_NAT6_READ_PASS 0
 #define XDP_NAT6_READ_OK 1
-
-#define XDP_NPTV6_MAX_EXT_HEADERS 8U
 
 static __noinline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_offset, __u32 l4_offset,
                                             __u32 packet_end, struct icmp6_error_meta *meta) {
@@ -60,7 +57,7 @@ static __noinline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_offset,
     __u32 offset = l4_offset + sizeof(struct icmp6hdr) + IPV6_HDR_LEN;
     __u8 next = emb->nexthdr;
 
-    for (__u32 i = 0; i < XDP_NPTV6_MAX_EXT_HEADERS; i++) {
+    for (__u32 i = 0; i < XDP_IP6_WALK_MAX_EXT; i++) {
         if (next == IPV6_NH_FRAGMENT) {
             if (offset + sizeof(struct frag_hdr) > packet_end) return -1;
             struct frag_hdr *frag = (struct frag_hdr *)((char *)data + offset);
@@ -121,35 +118,24 @@ static __noinline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_offset,
     return 0;
 }
 
-static __always_inline int xdp_read_ipv6_nat6(struct xdp_md *ctx, struct xdp_nat_view *view,
-                                              struct in6_addr *src_addr, struct in6_addr *dst_addr,
-                                              __u32 l3_offset, __u8 direction) {
+static __always_inline int xdp_nat_read6(struct xdp_md *ctx, struct xdp_nat_view *view,
+                                         struct in6_addr *src_addr, struct in6_addr *dst_addr,
+                                         __u32 l3_offset, __u8 direction) {
     void *data = (void *)(long)ctx->data;
     void *data_end = (void *)(long)ctx->data_end;
     if (!view || !src_addr || !dst_addr) return XDP_NAT6_READ_DROP;
-    if (l3_offset != 0 && l3_offset != sizeof(struct ethhdr)) return XDP_NAT6_READ_DROP;
 
-    __u32 pkt_len = (__u32)((char *)data_end - (char *)data);
-    if (l3_offset > pkt_len) return XDP_NAT6_READ_DROP;
+    __u8 next = 0;
+    __u8 frag = 0;
+    __u8 frag_next = 0;
+    __be32 frag_id = 0;
+    __u32 packet_end = 0;
+    int hlen = xdp_ip6_hdrlen(data, data_end, l3_offset, &next, &frag, &packet_end, &frag_id,
+                              &frag_next, src_addr, dst_addr);
+    if (hlen < 0) return XDP_NAT6_READ_DROP;
 
-    if (l3_offset != 0) {
-        struct ethhdr *eth = (struct ethhdr *)data;
-        if ((char *)(eth + 1) > (char *)data_end) return XDP_NAT6_READ_DROP;
-        if (eth->h_proto != bpf_htons(ETH_P_IPV6)) return XDP_NAT6_READ_DROP;
-    }
+    __u32 l4_offset = l3_offset + (__u32)hlen;
 
-    struct ipv6hdr *iph = (struct ipv6hdr *)((char *)data + l3_offset);
-    if ((char *)(iph + 1) > (char *)data_end) return XDP_NAT6_READ_DROP;
-    if (iph->version != IPV6_VERSION) return XDP_NAT6_READ_DROP;
-
-    __u16 payload_len = bpf_ntohs(iph->payload_len);
-    if (payload_len == 0) return XDP_NAT6_READ_DROP;
-
-    __u32 packet_end = l3_offset + IPV6_HDR_LEN + payload_len;
-    if (packet_end > pkt_len) return XDP_NAT6_READ_DROP;
-
-    *src_addr = iph->saddr;
-    *dst_addr = iph->daddr;
     view->l4_offset = 0;
     view->l4_protocol = 0;
     view->tcp_phase = NAPT_TCP_PHASE_NONE;
@@ -158,70 +144,12 @@ static __always_inline int xdp_read_ipv6_nat6(struct xdp_md *ctx, struct xdp_nat
     view->ports_valid = 0;
     view->icmp_inner_l4_offset = 0;
     view->icmp_inner_l4_protocol = 0;
-    view->frag_code = LAND_NAT_FRAG_NONE;
+    view->frag_code = frag;
 
-    __u8 next = iph->nexthdr;
-    __be32 frag_id = 0;
-    __u8 frag_next_header = 0;
-    __u32 offset = l3_offset + IPV6_HDR_LEN;
-    int seen_fragment = 0;
-    __u32 l4_offset;
-    __u32 payload;
-
-    if (next == IPV6_NH_TCP || next == IPV6_NH_UDP) goto parse_l4;
-
-    for (__u32 i = 0; i < XDP_NPTV6_MAX_EXT_HEADERS; i++) {
-        if (next == IPV6_NH_FRAGMENT) {
-            if (seen_fragment) return XDP_NAT6_READ_DROP;
-            if (offset + sizeof(struct frag_hdr) > packet_end) return XDP_NAT6_READ_DROP;
-
-            struct frag_hdr *frag = (struct frag_hdr *)((char *)data + offset);
-            if ((char *)(frag + 1) > (char *)data_end) return XDP_NAT6_READ_DROP;
-
-            seen_fragment = 1;
-            frag_id = frag->identification;
-            frag_next_header = frag->nexthdr;
-            __be16 frag_off = frag->frag_off;
-
-            if (ipv6_frag_offset(frag_off) != 0) {
-                view->frag_code = LAND_NAT_FRAG_NON_INITIAL;
-                next = frag->nexthdr;
-                offset += sizeof(struct frag_hdr);
-                break;
-            }
-
-            view->frag_code =
-                ipv6_frag_more(frag_off) ? LAND_NAT_FRAG_FIRST : LAND_NAT_FRAG_SINGLE_V6H;
-            next = frag->nexthdr;
-            offset += sizeof(struct frag_hdr);
-            continue;
-        }
-
-        if (next == IPV6_NH_HOPOPTS || next == IPV6_NH_ROUTING || next == IPV6_NH_DSTOPTS) {
-            if (offset + sizeof(struct ipv6_opt_hdr) > packet_end) return XDP_NAT6_READ_DROP;
-
-            struct ipv6_opt_hdr *ext = (struct ipv6_opt_hdr *)((char *)data + offset);
-            if ((char *)(ext + 1) > (char *)data_end) return XDP_NAT6_READ_DROP;
-
-            __u32 ext_len = ipv6_opt_len(ext);
-            if (ext_len < sizeof(struct ipv6_opt_hdr) || ext_len > packet_end - offset)
-                return XDP_NAT6_READ_DROP;
-
-            next = ext->nexthdr;
-            offset += ext_len;
-            continue;
-        }
-
-        break;
-    }
-
-    if (offset > packet_end || offset > 0xFFFFU) return XDP_NAT6_READ_DROP;
-
-    if (view->frag_code == LAND_NAT_FRAG_NON_INITIAL) {
+    if (frag == LAND_NAT_FRAG_NON_INITIAL) {
         struct frag6_cache_value value = {};
-        view->l4_offset = 0;
-        view->l4_protocol = frag_next_header;
-        if (frag6_cache_lookup(src_addr, dst_addr, frag_id, frag_next_header, direction, &value)) {
+        view->l4_protocol = frag_next;
+        if (frag6_cache_lookup(src_addr, dst_addr, frag_id, frag_next, direction, &value)) {
             view->sport = value.src_port;
             view->dport = value.dst_port;
             view->ports_valid = (value.flags & NPTV6_FRAG_FLAG_HAS_PORTS) ? 1 : 0;
@@ -230,9 +158,7 @@ static __always_inline int xdp_read_ipv6_nat6(struct xdp_md *ctx, struct xdp_nat
         return XDP_NAT6_READ_OK;
     }
 
-parse_l4:
-    l4_offset = offset;
-    payload = packet_end - l4_offset;
+    __u32 payload = packet_end - l4_offset;
     view->l4_offset = (__u16)l4_offset;
     view->l4_protocol = next;
 
@@ -253,7 +179,7 @@ parse_l4:
         if ((char *)(udp + 1) > (char *)data_end) return XDP_NAT6_READ_DROP;
 
         __u32 udp_len = bpf_ntohs(udp->len);
-        if (udp_len < sizeof(*udp) || (view->frag_code != LAND_NAT_FRAG_FIRST && udp_len > payload))
+        if (udp_len < sizeof(*udp) || (frag != LAND_NAT_FRAG_FIRST && udp_len > payload))
             return XDP_NAT6_READ_DROP;
 
         view->sport = udp->source;
@@ -271,9 +197,7 @@ parse_l4:
         } else if (icmp->icmp6_type == ICMPV6_DEST_UNREACH ||
                    icmp->icmp6_type == ICMPV6_PKT_TOOBIG ||
                    icmp->icmp6_type == ICMPV6_TIME_EXCEED || icmp->icmp6_type == ICMPV6_PARAMPROB) {
-            if (view->frag_code == LAND_NAT_FRAG_FIRST ||
-                view->frag_code == LAND_NAT_FRAG_NON_INITIAL)
-                return XDP_NAT6_READ_DROP;
+            if (frag == LAND_NAT_FRAG_FIRST) return XDP_NAT6_READ_DROP;
 
             struct icmp6_error_meta meta = {};
             if (xdp_icmp6_parse_error(ctx, l3_offset, l4_offset, packet_end, &meta) < 0)
@@ -296,10 +220,10 @@ parse_l4:
 
     if (has_ports) view->ports_valid = 1;
 
-    if (view->frag_code == LAND_NAT_FRAG_FIRST && has_ports)
-        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next_header, view->sport,
-                          view->dport, 1, direction);
+    if (frag == LAND_NAT_FRAG_FIRST && has_ports)
+        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, view->sport, view->dport, 1,
+                          direction);
     return XDP_NAT6_READ_OK;
 }
 
-#endif /* __LD_XDP_READ_HEAD6_H__ */
+#endif /* LAND_XDP_NAT_READ6_H */

@@ -9,7 +9,7 @@
 #include "base/ipv4.h"
 #include "frag/frag.h"
 #include "reader/tc_nat_view.h"
-#include "reader/tc_read_head4.h"
+#include "reader/tc_nat_read4.h"
 #include "nat_v4/tc_nat4.h"
 #include "nat_v4/tc_nat4_rodata.h"
 

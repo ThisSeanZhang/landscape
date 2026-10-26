@@ -21,11 +21,11 @@
  * before treating the result as an L4 offset.
  */
 #define IP6_WALK_MAX_EXT 8U
-#define IP6_WALK_FRAG_ATOMIC 4U
 
 static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset, __u8 *next,
                                          __u8 *frag, __u32 *packet_end, __be32 *frag_id,
-                                         __u8 *frag_next, __u8 *tcp_doff, __u8 *tcp_flags) {
+                                         __u8 *frag_next, __u8 *tcp_doff, __u8 *tcp_flags,
+                                         struct in6_addr *src_addr, struct in6_addr *dst_addr) {
     if (!next || !frag || !packet_end || (l3_offset != 0 && l3_offset != sizeof(struct ethhdr)))
         return -1;
 
@@ -67,6 +67,8 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
     *packet_end = end;
     if (frag_id) *frag_id = 0;
     if (frag_next) *frag_next = 0;
+    if (src_addr) *src_addr = iph->saddr;
+    if (dst_addr) *dst_addr = iph->daddr;
 
     __u8 cur = iph->nexthdr;
     __be32 id = 0;
@@ -102,7 +104,7 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
                 return (int)(offset + sizeof(struct frag_hdr) - l3_offset);
             }
 
-            *frag = ipv6_frag_more(frag_off) ? LAND_NAT_FRAG_FIRST : IP6_WALK_FRAG_ATOMIC;
+            *frag = ipv6_frag_more(frag_off) ? LAND_NAT_FRAG_FIRST : LAND_NAT_FRAG_SINGLE_V6H;
             if (frag_id) *frag_id = id;
             if (frag_next) *frag_next = frag_nh;
             cur = fh->nexthdr;

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#ifndef __LD_XDP_READ_HEAD4_H__
-#define __LD_XDP_READ_HEAD4_H__
+#ifndef LAND_XDP_NAT_READ4_H
+#define LAND_XDP_NAT_READ4_H
 
 #include <vmlinux.h>
 #include <bpf/bpf_endian.h>
@@ -11,16 +11,14 @@
 #include "base/tcp_phase.h"
 #include "frag/frag.h"
 #include "frag/tc_frag4.h"
+#include "reader/xdp_ip4_walk.h"
 #include "xdp_nat_view.h"
 
 /*
- * XDP IPv4 reader, the XDP counterpart of reader/tc_read_head4.h.
- *
- * It accepts Ethernet frames only. One call parses IPv4, resolves the
- * transport tuple (including ICMP Error), and applies the nat_v4 first-
- * fragment cache. Addresses are written through src_addr/dst_addr; the rest
- * is stored in xdp_nat_view. ICMP Query stores its identifier in both sport
- * and dport.
+ * XDP NAT IPv4 reader: use the shared XDP IPv4 walker for L3 navigation, then
+ * resolve the transport tuple (including ICMP Error) and the first-fragment
+ * cache. Addresses are written through src_addr/dst_addr; the rest is stored
+ * in xdp_nat_view. ICMP Query stores its identifier in both sport and dport.
  */
 
 #define XDP_NAT4_READ_DROP -1
@@ -100,62 +98,39 @@ static __always_inline int xdp_icmp4_parse_error(void *data, void *data_end, __u
     return 0;
 }
 
-static __always_inline int xdp_read_ipv4_nat4(void *data, void *data_end, struct xdp_nat_view *view,
-                                              __be32 *src_addr, __be32 *dst_addr, __u32 l3_offset,
-                                              __u8 direction) {
+static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_nat_view *view,
+                                         __be32 *src_addr, __be32 *dst_addr, __u32 l3_offset,
+                                         __u8 direction) {
     if (!view || !src_addr || !dst_addr) return XDP_NAT4_READ_DROP;
 
-    __u32 pkt_len = (__u32)((char *)data_end - (char *)data);
-    if (pkt_len < l3_offset) return XDP_NAT4_READ_DROP;
+    __u8 next = 0;
+    __u8 frag = 0;
+    __be16 ip_id = 0;
+    __u32 packet_end = 0;
+    int ihl = xdp_ip4_hdrlen(data, data_end, l3_offset, &next, &frag, &packet_end, &ip_id, src_addr,
+                             dst_addr);
+    if (ihl < 0) return XDP_NAT4_READ_DROP;
 
-    if (l3_offset != 0) {
-        struct ethhdr *eth = (struct ethhdr *)data;
-        if ((char *)(eth + 1) > (char *)data_end) return XDP_NAT4_READ_DROP;
-        if (eth->h_proto != bpf_htons(ETH_P_IP)) return XDP_NAT4_READ_DROP;
-    }
-
-    struct iphdr *iph = (struct iphdr *)((char *)data + l3_offset);
-    if ((char *)(iph + 1) > (char *)data_end) return XDP_NAT4_READ_DROP;
-    if (iph->version != IPV4_VERSION) return XDP_NAT4_READ_DROP;
-
-    __u32 ihl = (__u32)iph->ihl * 4U;
-    if (ihl < IPV4_HDR_MIN_LEN || ihl > IPV4_HDR_MAX_LEN) return XDP_NAT4_READ_DROP;
-
-    __u32 ip_total = bpf_ntohs(iph->tot_len);
-    if (ip_total < ihl) return XDP_NAT4_READ_DROP;
-    if (ip_total > pkt_len - l3_offset) return XDP_NAT4_READ_DROP;
-
-    __u8 proto = iph->protocol;
-    __u32 payload = ip_total - ihl;
-    __u16 frag_off = bpf_ntohs(iph->frag_off);
-    __be16 ip_id = iph->id;
-    __u32 l4_offset = l3_offset + ihl;
-
-    *src_addr = iph->saddr;
-    *dst_addr = iph->daddr;
+    __u32 ip_total = packet_end - l3_offset;
+    __u32 payload = ip_total - (__u32)ihl;
+    __u32 l4_offset = l3_offset + (__u32)ihl;
 
     view->l4_offset = (__u16)l4_offset;
-    view->l4_protocol = proto;
+    view->l4_protocol = next;
     view->tcp_phase = NAPT_TCP_PHASE_NONE;
     view->sport = 0;
     view->dport = 0;
     view->ports_valid = 0;
     view->icmp_inner_l4_offset = 0;
     view->icmp_inner_l4_protocol = 0;
+    view->frag_code = frag;
 
-    if (ipv4_has_fragment_offset(frag_off))
-        view->frag_code = LAND_NAT_FRAG_NON_INITIAL;
-    else if (frag_off & IPV4_FLAG_MF)
-        view->frag_code = LAND_NAT_FRAG_FIRST;
-    else
-        view->frag_code = LAND_NAT_FRAG_NONE;
-
-    if (view->frag_code >= LAND_NAT_FRAG_NON_INITIAL) {
+    if (frag >= LAND_NAT_FRAG_NON_INITIAL) {
         __be16 sport = 0;
         __be16 dport = 0;
 
         view->l4_offset = 0;
-        if (frag4_cache_lookup(*src_addr, *dst_addr, ip_id, proto, direction, &sport, &dport)) {
+        if (frag4_cache_lookup(*src_addr, *dst_addr, ip_id, next, direction, &sport, &dport)) {
             view->sport = sport;
             view->dport = dport;
             view->ports_valid = 1;
@@ -165,14 +140,13 @@ static __always_inline int xdp_read_ipv4_nat4(void *data, void *data_end, struct
         return XDP_NAT4_READ_OK;
     }
 
-    if (proto != IPV4_PROTO_TCP && proto != IPV4_PROTO_UDP && proto != IPV4_PROTO_ICMP)
+    if (next != IPV4_PROTO_TCP && next != IPV4_PROTO_UDP && next != IPV4_PROTO_ICMP)
         return XDP_NAT4_READ_PASS;
-    if (l4_offset > l3_offset + ip_total) return XDP_NAT4_READ_DROP;
 
-    int first_fragment = view->frag_code == LAND_NAT_FRAG_FIRST;
+    int first_fragment = frag == LAND_NAT_FRAG_FIRST;
     int cacheable = 0;
 
-    if (proto == IPV4_PROTO_TCP) {
+    if (next == IPV4_PROTO_TCP) {
         if (payload < sizeof(struct tcphdr)) return XDP_NAT4_READ_DROP;
         struct tcphdr *tcp = (struct tcphdr *)((char *)data + l4_offset);
         if ((char *)(tcp + 1) > (char *)data_end) return XDP_NAT4_READ_DROP;
@@ -182,7 +156,7 @@ static __always_inline int xdp_read_ipv4_nat4(void *data, void *data_end, struct
         view->dport = tcp->dest;
         view->tcp_phase = napt_tcp_phase_from_flags(tcp_hdr_flags(tcp));
         cacheable = 1;
-    } else if (proto == IPV4_PROTO_UDP) {
+    } else if (next == IPV4_PROTO_UDP) {
         if (payload < sizeof(struct udphdr)) return XDP_NAT4_READ_DROP;
         struct udphdr *udp = (struct udphdr *)((char *)data + l4_offset);
         if ((char *)(udp + 1) > (char *)data_end) return XDP_NAT4_READ_DROP;
@@ -229,9 +203,9 @@ static __always_inline int xdp_read_ipv4_nat4(void *data, void *data_end, struct
     if (cacheable) view->ports_valid = 1;
 
     if (first_fragment && cacheable)
-        frag4_cache_store(*src_addr, *dst_addr, ip_id, proto, view->sport, view->dport, direction);
+        frag4_cache_store(*src_addr, *dst_addr, ip_id, next, view->sport, view->dport, direction);
 
     return XDP_NAT4_READ_OK;
 }
 
-#endif /* __LD_XDP_READ_HEAD4_H__ */
+#endif /* LAND_XDP_NAT_READ4_H */

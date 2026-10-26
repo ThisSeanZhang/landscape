@@ -14,7 +14,7 @@
 #include "chain/tc_wan_exit_maps.h"
 #include "frag/frag.h"
 #include "reader/tc_nat_view.h"
-#include "reader/tc_read_head4.h"
+#include "reader/tc_nat_read4.h"
 #include "nat_v4/tc_nat4_packet.h"
 #include "nat_v4/tc_nat4_rodata.h"
 #include "nat_v4/tc_modify_head.h"
@@ -68,7 +68,7 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_read_ipv4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
+    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
@@ -113,7 +113,7 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_read_ipv4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
+    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
