@@ -70,7 +70,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
     view->icmp_inner_l4_protocol = 0;
     view->frag_code = frag;
 
-    if (frag == LAND_NAT_FRAG_NON_INITIAL) {
+    if (frag == LAND_FRAG_NON_INITIAL) {
         struct frag6_cache_value value = {};
         view->l4_protocol = frag_next;
         if (frag6_cache_lookup(src_addr, dst_addr, frag_id, frag_next, direction, &value)) {
@@ -120,7 +120,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
         if ((char *)(udp + 1) > data_end) return 0;
 
         __u32 udp_len = bpf_ntohs(udp->len);
-        if (udp_len < sizeof(*udp) || (frag != LAND_NAT_FRAG_FIRST && udp_len > payload)) return 0;
+        if (udp_len < sizeof(*udp) || (frag != LAND_FRAG_FIRST && udp_len > payload)) return 0;
 
         view->sport = udp->source;
         view->dport = udp->dest;
@@ -137,7 +137,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
         } else if (icmp->icmp6_type == ICMPV6_DEST_UNREACH ||
                    icmp->icmp6_type == ICMPV6_PKT_TOOBIG ||
                    icmp->icmp6_type == ICMPV6_TIME_EXCEED || icmp->icmp6_type == ICMPV6_PARAMPROB) {
-            if (frag == LAND_NAT_FRAG_FIRST) return 0;
+            if (frag == LAND_FRAG_FIRST) return 0;
             if (tc_nat_read6_icmp_error(skb, view, src_addr, dst_addr, l3_offset, l4_offset,
                                         packet_end) < 0)
                 return 0;
@@ -146,7 +146,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
 
     if (has_ports) view->ports_valid = 1;
 
-    if (frag == LAND_NAT_FRAG_FIRST && has_ports)
+    if (frag == LAND_FRAG_FIRST && has_ports)
         frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, view->sport, view->dport, 1,
                           direction);
     return 1;

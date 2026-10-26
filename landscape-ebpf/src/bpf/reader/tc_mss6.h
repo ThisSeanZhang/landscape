@@ -11,7 +11,7 @@
 
 /*
  * MSS-only IPv6 view. Fragment headers (including atomic ones) are ignored,
- * matching the previous full reader's `frag_code != LAND_NAT_FRAG_NONE`
+ * matching the previous full reader's `frag_code != LAND_FRAG_NONE`
  * check.
  */
 struct tc_mss6_view {
@@ -32,7 +32,7 @@ static __always_inline int tc_mss6_read(struct __sk_buff *skb, __u32 l3_offset,
     if (hlen < 0) return 0;
 
     view->l4_off = l3_offset + (__u32)hlen;
-    if (view->frag != LAND_NAT_FRAG_NONE) return 0;
+    if (view->frag != LAND_FRAG_NONE) return 0;
     if (view->next != IPV6_NH_TCP) return 0;
     if (view->l4_off + sizeof(struct tcphdr) > view->packet_end) return 0;
 

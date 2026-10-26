@@ -18,10 +18,10 @@ const MAP_KEY: u32 = 0;
 const L3_OFFSET: u32 = 14;
 const DIR_LAN: u32 = 0;
 
-const FRAG_SINGLE: u8 = 0;
-const FRAG_FIRST: u8 = 1;
-const FRAG_MIDDLE: u8 = 2;
-const FRAG_SINGLE_V6H: u8 = 4;
+const LAND_FRAG_NONE: u8 = 0;
+const LAND_FRAG_FIRST: u8 = 1;
+const LAND_FRAG_NON_INITIAL: u8 = 2;
+const LAND_FRAG_SINGLE_V6H: u8 = 4;
 
 const TCP_PHASE_NONE: u8 = 0;
 const TCP_PHASE_SYN: u8 = 1;
@@ -161,7 +161,7 @@ mod tests {
         assert_eq!(be16(r.sport), 21);
         assert_eq!(be16(r.dport), 1234);
         assert_eq!(r.tcp_phase, TCP_PHASE_NONE);
-        assert_eq!(r.frag_code, FRAG_SINGLE);
+        assert_eq!(r.frag_code, LAND_FRAG_NONE);
         assert_eq!(r.ports_valid, 1);
     }
 
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(r.l4_protocol, 17);
         assert_eq!(be16(r.sport), 5000);
         assert_eq!(be16(r.dport), 6000);
-        assert_eq!(r.frag_code, FRAG_SINGLE);
+        assert_eq!(r.frag_code, LAND_FRAG_NONE);
         assert_eq!(r.ports_valid, 1);
     }
 
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(be16(r.sport), 0x1234);
         assert_eq!(be16(r.dport), 0x1234);
         assert_eq!(r.ports_valid, 1);
-        assert_eq!(r.frag_code, FRAG_SINGLE);
+        assert_eq!(r.frag_code, LAND_FRAG_NONE);
     }
 
     #[test]
@@ -208,7 +208,7 @@ mod tests {
         let pkt = build_ipv6_frag_eth();
         let r = run_reader(&pkt, DIR_LAN);
         assert_read_ok(&r);
-        assert_eq!(r.frag_code, FRAG_FIRST);
+        assert_eq!(r.frag_code, LAND_FRAG_FIRST);
         assert_eq!(r.l4_offset, 62);
         assert_eq!(r.l4_protocol, 58);
         assert_eq!(be16(r.sport), 0x5edf);
@@ -250,7 +250,7 @@ mod tests {
         let pkt = build_ipv6_frag_nonfirst_eth();
         let r = run_reader(&pkt, DIR_LAN);
         assert_read_ok(&r);
-        assert_eq!(r.frag_code, FRAG_MIDDLE);
+        assert_eq!(r.frag_code, LAND_FRAG_NON_INITIAL);
         assert_eq!(r.l4_offset, 0);
         assert_eq!(r.l4_protocol, 58);
         assert_eq!(r.ports_valid, 0);
@@ -261,7 +261,7 @@ mod tests {
         let pkt = build_ipv6_frag_tcp(0, false, 8);
         let r = run_reader(&pkt, DIR_LAN);
         assert_read_ok(&r);
-        assert_eq!(r.frag_code, FRAG_SINGLE_V6H);
+        assert_eq!(r.frag_code, LAND_FRAG_SINGLE_V6H);
         assert_eq!(r.l4_offset, 62);
         assert_eq!(r.l4_protocol, 6);
         assert_eq!(be16(r.sport), 12345);
@@ -279,7 +279,7 @@ mod tests {
 
         let first = &results[0];
         assert_read_ok(first);
-        assert_eq!(first.frag_code, FRAG_FIRST);
+        assert_eq!(first.frag_code, LAND_FRAG_FIRST);
         assert_eq!(first.l4_offset, 62);
         assert_eq!(first.l4_protocol, 6);
         assert_eq!(be16(first.sport), 12345);
@@ -288,7 +288,7 @@ mod tests {
 
         let nonfirst = &results[1];
         assert_read_ok(nonfirst);
-        assert_eq!(nonfirst.frag_code, FRAG_MIDDLE);
+        assert_eq!(nonfirst.frag_code, LAND_FRAG_NON_INITIAL);
         assert_eq!(nonfirst.l4_offset, 0);
         assert_eq!(nonfirst.l4_protocol, 6);
         assert_eq!(nonfirst.tcp_phase, TCP_PHASE_NONE);

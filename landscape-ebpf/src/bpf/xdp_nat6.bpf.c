@@ -30,7 +30,7 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     struct in6_addr dst_addr = {};
 
     int read_ret =
-        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN);
+        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
@@ -57,7 +57,7 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     struct in6_addr dst_addr = {};
 
     int read_ret =
-        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN);
+        xdp_nat_read6(ctx, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 

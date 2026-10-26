@@ -32,7 +32,7 @@ static __always_inline int xdp_mss6_read(const void *data, const void *data_end,
     if (hlen < 0) return 0;
 
     view->l4_off = l3_offset + (__u32)hlen;
-    if (view->frag != LAND_NAT_FRAG_NONE) return 0;
+    if (view->frag != LAND_FRAG_NONE) return 0;
     if (view->next != IPV6_NH_TCP) return 0;
     if (view->l4_off > view->packet_end || view->l4_off + sizeof(struct tcphdr) > view->packet_end)
         return 0;

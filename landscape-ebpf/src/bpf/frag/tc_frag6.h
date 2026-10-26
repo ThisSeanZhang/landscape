@@ -79,7 +79,7 @@ static __always_inline void frag6_cache_store(const struct in6_addr *src_addr,
     if (has_ports) value.flags |= NPTV6_FRAG_FLAG_HAS_PORTS;
     if (proto == IPV6_NH_ICMPV6) value.flags |= NPTV6_FRAG_FLAG_ICMP;
 
-    if (direction == LAND_NAT_FRAG_FROM_LAN)
+    if (direction == LAND_FRAG_FROM_LAN)
         bpf_map_update_elem(&frag6_cache_lan, &key, &value, BPF_ANY);
     else
         bpf_map_update_elem(&frag6_cache_wan, &key, &value, BPF_ANY);
@@ -99,7 +99,7 @@ static __always_inline int frag6_cache_lookup(const struct in6_addr *src_addr,
     frag6_cache_key_init(&key, src_addr, dst_addr, frag_id);
 
     struct frag6_cache_value *value = 0;
-    if (direction == LAND_NAT_FRAG_FROM_LAN)
+    if (direction == LAND_FRAG_FROM_LAN)
         value = bpf_map_lookup_elem(&frag6_cache_lan, &key);
     else
         value = bpf_map_lookup_elem(&frag6_cache_wan, &key);

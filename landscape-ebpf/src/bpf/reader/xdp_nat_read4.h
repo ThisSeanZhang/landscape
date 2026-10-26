@@ -125,7 +125,7 @@ static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_
     view->icmp_inner_l4_protocol = 0;
     view->frag_code = frag;
 
-    if (frag >= LAND_NAT_FRAG_NON_INITIAL) {
+    if (frag >= LAND_FRAG_NON_INITIAL) {
         __be16 sport = 0;
         __be16 dport = 0;
 
@@ -143,7 +143,7 @@ static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_
     if (next != IPV4_PROTO_TCP && next != IPV4_PROTO_UDP && next != IPV4_PROTO_ICMP)
         return XDP_NAT4_READ_PASS;
 
-    int first_fragment = frag == LAND_NAT_FRAG_FIRST;
+    int first_fragment = frag == LAND_FRAG_FIRST;
     int cacheable = 0;
 
     if (next == IPV4_PROTO_TCP) {
@@ -174,7 +174,7 @@ static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_
         if ((char *)(icmp + 1) > (char *)data_end) return XDP_NAT4_READ_DROP;
 
         __u8 query_type = ICMP_ECHO_REPLY;
-        if (direction == LAND_NAT_FRAG_FROM_LAN) query_type = ICMP_ECHO_REQUEST;
+        if (direction == LAND_FRAG_FROM_LAN) query_type = ICMP_ECHO_REQUEST;
 
         if (icmp->type == ICMP_DEST_UNREACH || icmp->type == ICMP_TIME_EXCEEDED) {
             struct icmp4_error_meta meta = {};

@@ -68,7 +68,7 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
+    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
@@ -89,9 +89,9 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
     if (napt_is_icmp_error(&view)) {
         rc = napt_modify_icmp_error(skb, new_addr, new_port, 0, view.l3_offset);
     } else if (napt_is_non_initial(&view)) {
-        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_LAN, view.l3_offset);
+        rc = napt_modify_fragment(skb, new_addr, LAND_FRAG_FROM_LAN, view.l3_offset);
     } else {
-        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_LAN, view.l3_offset);
+        rc = napt_modify(skb, new_addr, new_port, LAND_FRAG_FROM_LAN, view.l3_offset);
     }
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
@@ -113,7 +113,7 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
+    if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
@@ -134,9 +134,9 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
     if (napt_is_icmp_error(&view)) {
         rc = napt_modify_icmp_error(skb, new_addr, new_port, 1, view.l3_offset);
     } else if (napt_is_non_initial(&view)) {
-        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_WAN, view.l3_offset);
+        rc = napt_modify_fragment(skb, new_addr, LAND_FRAG_FROM_WAN, view.l3_offset);
     } else {
-        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_WAN, view.l3_offset);
+        rc = napt_modify(skb, new_addr, new_port, LAND_FRAG_FROM_WAN, view.l3_offset);
     }
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;

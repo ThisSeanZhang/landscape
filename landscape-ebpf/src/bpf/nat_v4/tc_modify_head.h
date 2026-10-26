@@ -27,7 +27,7 @@ static __always_inline int napt_modify_fragment(struct __sk_buff *skb, __be32 ne
     __be32 old_src = iph->saddr;
     __be32 old_dst = iph->daddr;
     __u16 check = bpf_ntohs(iph->check);
-    if (direction == LAND_NAT_FRAG_FROM_LAN) {
+    if (direction == LAND_FRAG_FROM_LAN) {
         if (new_addr == old_src) return TC_ACT_OK;
         check = ipv4_csum_replace_addr(check, (const __u8 *)&old_src, (const __u8 *)&new_addr);
         iph->saddr = new_addr;
@@ -66,7 +66,7 @@ static __always_inline int napt_modify(struct __sk_buff *skb, __be32 new_addr, _
         l4_min = sizeof(struct icmphdr);
     if (ip_total < ihl + l4_min || data + l4_off + l4_min > data_end) return TC_ACT_SHOT;
 
-    int lan = direction == LAND_NAT_FRAG_FROM_LAN;
+    int lan = direction == LAND_FRAG_FROM_LAN;
     __be32 old_src = iph->saddr;
     __be32 old_dst = iph->daddr;
     __be32 new_src = lan ? new_addr : old_src;

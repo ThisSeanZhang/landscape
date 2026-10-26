@@ -11,7 +11,7 @@
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
-const volatile u32 current_direction = LAND_NAT_FRAG_FROM_LAN;
+const volatile u32 current_direction = LAND_FRAG_FROM_LAN;
 
 struct reader_test_result {
     int read_ret;

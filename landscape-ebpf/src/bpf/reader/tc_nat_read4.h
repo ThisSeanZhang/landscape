@@ -83,7 +83,7 @@ static __always_inline int tc_nat_read4(struct __sk_buff *skb, struct tc_nat_vie
     view->icmp_inner_l4_protocol = 0;
     view->frag_code = frag;
 
-    if (frag >= LAND_NAT_FRAG_NON_INITIAL) {
+    if (frag >= LAND_FRAG_NON_INITIAL) {
         __be16 sport = 0;
         __be16 dport = 0;
         view->l4_offset = 0;
@@ -112,7 +112,7 @@ static __always_inline int tc_nat_read4(struct __sk_buff *skb, struct tc_nat_vie
     data_end = (char *)(long)skb->data_end;
 
     int cacheable = 0;
-    int first_fragment = frag == LAND_NAT_FRAG_FIRST;
+    int first_fragment = frag == LAND_FRAG_FIRST;
     if (next == IPV4_PROTO_UDP) {
         if (payload < sizeof(struct udphdr)) return 0;
         struct udphdr *udp = (struct udphdr *)(data + l4_offset);
@@ -141,7 +141,7 @@ static __always_inline int tc_nat_read4(struct __sk_buff *skb, struct tc_nat_vie
         if ((char *)(icmp + 1) > data_end) return 0;
 
         __u8 query_type = ICMP_ECHO_REPLY;
-        if (direction == LAND_NAT_FRAG_FROM_LAN) query_type = ICMP_ECHO_REQUEST;
+        if (direction == LAND_FRAG_FROM_LAN) query_type = ICMP_ECHO_REQUEST;
         if (icmp->type == ICMP_DEST_UNREACH || icmp->type == ICMP_TIME_EXCEEDED) {
             if (tc_nat_read4_icmp_error(skb, view, src_addr, dst_addr, l3_offset, l4_offset,
                                         ip_total) < 0)

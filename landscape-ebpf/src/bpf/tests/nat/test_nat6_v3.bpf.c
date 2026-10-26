@@ -21,7 +21,7 @@ int handle_ipv6_egress(struct __sk_buff *skb) {
     struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
+    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN))
         return TC_ACT_SHOT;
 
     if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;
@@ -43,7 +43,7 @@ int handle_ipv6_ingress(struct __sk_buff *skb) {
     struct in6_addr dst_addr = {};
     int ret = 0;
 
-    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
+    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN))
         return TC_ACT_SHOT;
 
     if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;

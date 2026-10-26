@@ -49,7 +49,7 @@ int bench_nat4_v4_baseline(struct __sk_buff *skb) {
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
 
-    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -65,7 +65,7 @@ int bench_nat4_v4_lan_steady(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -82,7 +82,7 @@ int bench_nat4_v4_wan_steady(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_FRAG_FROM_WAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -103,7 +103,7 @@ int bench_nat4_v4_lan_miss(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -120,7 +120,7 @@ int bench_nat4_v4_wan_miss(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_FRAG_FROM_WAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }

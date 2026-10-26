@@ -29,7 +29,7 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
     u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
     int icmp_error = view->icmp_inner_l4_offset != 0;
-    int non_initial = view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    int non_initial = view->frag_code == LAND_FRAG_NON_INITIAL;
     __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
                        (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN
@@ -132,7 +132,7 @@ static __always_inline int xdp_napt_wan_state(const struct xdp_nat_view *view, _
     u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
     int icmp_error = view->icmp_inner_l4_offset != 0;
-    int non_initial = view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    int non_initial = view->frag_code == LAND_FRAG_NON_INITIAL;
     __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
                        (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN

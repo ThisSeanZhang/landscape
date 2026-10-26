@@ -89,7 +89,7 @@ static __always_inline void frag4_cache_store(__be32 src_addr, __be32 dst_addr, 
     struct frag4_cache_value value = {};
     value.src_port = src_port;
     value.dst_port = dst_port;
-    if (direction == LAND_NAT_FRAG_FROM_LAN)
+    if (direction == LAND_FRAG_FROM_LAN)
         bpf_map_update_elem(&frag4_cache_lan, &key, &value, BPF_ANY);
     else
         bpf_map_update_elem(&frag4_cache_wan, &key, &value, BPF_ANY);
@@ -103,7 +103,7 @@ static __always_inline int frag4_cache_lookup(__be32 src_addr, __be32 dst_addr, 
     frag4_cache_key_init(&key, src_addr, dst_addr, ip_id, proto);
 
     struct frag4_cache_value *value = 0;
-    if (direction == LAND_NAT_FRAG_FROM_LAN)
+    if (direction == LAND_FRAG_FROM_LAN)
         value = bpf_map_lookup_elem(&frag4_cache_lan, &key);
     else
         value = bpf_map_lookup_elem(&frag4_cache_wan, &key);

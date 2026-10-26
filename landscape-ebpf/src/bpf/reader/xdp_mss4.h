@@ -46,13 +46,13 @@ static __always_inline int xdp_mss4_read(const void *data, const void *data_end,
 
     __u16 frag_off = bpf_ntohs(iph->frag_off);
     if (ipv4_has_fragment_offset(frag_off))
-        view->frag = LAND_NAT_FRAG_NON_INITIAL;
+        view->frag = LAND_FRAG_NON_INITIAL;
     else if (frag_off & IPV4_FLAG_MF)
-        view->frag = LAND_NAT_FRAG_FIRST;
+        view->frag = LAND_FRAG_FIRST;
     else
-        view->frag = LAND_NAT_FRAG_NONE;
+        view->frag = LAND_FRAG_NONE;
 
-    if (view->frag > LAND_NAT_FRAG_FIRST) return 0;
+    if (view->frag > LAND_FRAG_FIRST) return 0;
     if (iph->protocol != IPV4_PROTO_TCP) return 0;
 
     __u32 pkt_len = (__u32)((const char *)data_end - (const char *)data);

@@ -18,7 +18,7 @@ static __always_inline int napt_is_icmp_error(const struct tc_nat_view *view) {
 }
 
 static __always_inline int napt_is_non_initial(const struct tc_nat_view *view) {
-    return view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    return view->frag_code == LAND_FRAG_NON_INITIAL;
 }
 
 static __always_inline int napt_allows_create(const struct tc_nat_view *view) {

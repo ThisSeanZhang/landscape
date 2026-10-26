@@ -42,7 +42,7 @@ int test_xdp_nat4_modify_icmp_error_ingress(struct xdp_md *ctx) {
 
 SEC("xdp")
 int test_xdp_nat4_modify_udp_egress(struct xdp_md *ctx) {
-    return run_modify(ctx, bpf_htonl(0xCB007101), bpf_htons(0x5678), LAND_NAT_FRAG_FROM_LAN);
+    return run_modify(ctx, bpf_htonl(0xCB007101), bpf_htons(0x5678), LAND_FRAG_FROM_LAN);
 }
 
 SEC("xdp")
@@ -58,8 +58,8 @@ int test_xdp_nat4_read_icmp_error_tcp_quote(struct xdp_md *ctx) {
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
 
-    if (xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, L3_OFFSET,
-                      LAND_NAT_FRAG_FROM_WAN) != XDP_NAT4_READ_OK)
+    if (xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, L3_OFFSET, LAND_FRAG_FROM_WAN) !=
+        XDP_NAT4_READ_OK)
         return XDP_DROP;
 
     if (view.icmp_inner_l4_protocol != IPPROTO_TCP) return XDP_DROP;

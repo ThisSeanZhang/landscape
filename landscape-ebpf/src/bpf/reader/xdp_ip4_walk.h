@@ -43,11 +43,11 @@ static __always_inline int xdp_ip4_hdrlen(const void *data, const void *data_end
 
     __u16 frag_off = bpf_ntohs(iph->frag_off);
     if (ipv4_has_fragment_offset(frag_off))
-        *frag = LAND_NAT_FRAG_NON_INITIAL;
+        *frag = LAND_FRAG_NON_INITIAL;
     else if (frag_off & IPV4_FLAG_MF)
-        *frag = LAND_NAT_FRAG_FIRST;
+        *frag = LAND_FRAG_FIRST;
     else
-        *frag = LAND_NAT_FRAG_NONE;
+        *frag = LAND_FRAG_NONE;
 
     *next = iph->protocol;
     *packet_end = end;

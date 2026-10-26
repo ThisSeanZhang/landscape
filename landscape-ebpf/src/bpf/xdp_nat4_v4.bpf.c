@@ -43,7 +43,7 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     int read_ret = xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, current_l3_offset,
-                                 LAND_NAT_FRAG_FROM_LAN);
+                                 LAND_FRAG_FROM_LAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
@@ -52,7 +52,7 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     if (land_nat_external_addr == 0) return XDP_PASS;
 
     bool is_icmp_error = view.icmp_inner_l4_offset != 0;
-    bool non_initial = view.frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    bool non_initial = view.frag_code == LAND_FRAG_NON_INITIAL;
 
     __be32 new_addr = 0;
     __be16 new_port = 0;
@@ -67,11 +67,11 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
     data_end = (void *)(long)ctx->data_end;
 
     if (!non_initial && !is_icmp_error) {
-        if (napt_xdp_modify(data, data_end, new_addr, new_port, LAND_NAT_FRAG_FROM_LAN,
+        if (napt_xdp_modify(data, data_end, new_addr, new_port, LAND_FRAG_FROM_LAN,
                             current_l3_offset))
             return XDP_DROP;
     } else if (non_initial) {
-        if (napt_xdp_modify_fragment(data, data_end, new_addr, LAND_NAT_FRAG_FROM_LAN,
+        if (napt_xdp_modify_fragment(data, data_end, new_addr, LAND_FRAG_FROM_LAN,
                                      current_l3_offset))
             return XDP_DROP;
     } else {
@@ -92,7 +92,7 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     int read_ret = xdp_nat_read4(data, data_end, &view, &src_addr, &dst_addr, current_l3_offset,
-                                 LAND_NAT_FRAG_FROM_WAN);
+                                 LAND_FRAG_FROM_WAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
@@ -101,7 +101,7 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     if (dst_addr != land_nat_external_addr) return XDP_PASS;
 
     bool is_icmp_error = view.icmp_inner_l4_offset != 0;
-    bool non_initial = view.frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    bool non_initial = view.frag_code == LAND_FRAG_NON_INITIAL;
 
     __be32 new_addr = 0;
     __be16 new_port = 0;
@@ -118,11 +118,11 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     data_end = (void *)(long)ctx->data_end;
 
     if (!non_initial && !is_icmp_error) {
-        if (napt_xdp_modify(data, data_end, new_addr, new_port, LAND_NAT_FRAG_FROM_WAN,
+        if (napt_xdp_modify(data, data_end, new_addr, new_port, LAND_FRAG_FROM_WAN,
                             current_l3_offset))
             return XDP_DROP;
     } else if (non_initial) {
-        if (napt_xdp_modify_fragment(data, data_end, new_addr, LAND_NAT_FRAG_FROM_WAN,
+        if (napt_xdp_modify_fragment(data, data_end, new_addr, LAND_FRAG_FROM_WAN,
                                      current_l3_offset))
             return XDP_DROP;
     } else {

@@ -30,7 +30,7 @@ static __always_inline int tc_mss4_read(struct __sk_buff *skb, __u32 l3_offset,
     if (ihl < 0) return 0;
 
     view->l4_off = l3_offset + (__u32)ihl;
-    if (view->frag > LAND_NAT_FRAG_FIRST) return 0;
+    if (view->frag > LAND_FRAG_FIRST) return 0;
     if (view->next != IPV4_PROTO_TCP) return 0;
     if (view->l4_off + sizeof(struct tcphdr) > view->packet_end) return 0;
 

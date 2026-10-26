@@ -63,7 +63,7 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
     if (end > skb->len) return -1;
 
     *next = iph->nexthdr;
-    *frag = LAND_NAT_FRAG_NONE;
+    *frag = LAND_FRAG_NONE;
     *packet_end = end;
     if (frag_id) *frag_id = 0;
     if (frag_next) *frag_next = 0;
@@ -97,14 +97,14 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
             __be16 frag_off = fh->frag_off;
 
             if (ipv6_frag_offset(frag_off) != 0) {
-                *frag = LAND_NAT_FRAG_NON_INITIAL;
+                *frag = LAND_FRAG_NON_INITIAL;
                 *next = fh->nexthdr;
                 if (frag_id) *frag_id = id;
                 if (frag_next) *frag_next = frag_nh;
                 return (int)(offset + sizeof(struct frag_hdr) - l3_offset);
             }
 
-            *frag = ipv6_frag_more(frag_off) ? LAND_NAT_FRAG_FIRST : LAND_NAT_FRAG_SINGLE_V6H;
+            *frag = ipv6_frag_more(frag_off) ? LAND_FRAG_FIRST : LAND_FRAG_SINGLE_V6H;
             if (frag_id) *frag_id = id;
             if (frag_next) *frag_next = frag_nh;
             cur = fh->nexthdr;
@@ -138,7 +138,7 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
     if (offset > end || offset > 0xFFFFU) return -1;
 
     *next = cur;
-    if (tcp_doff && tcp_flags && *frag == LAND_NAT_FRAG_NONE && cur == IPV6_NH_TCP) {
+    if (tcp_doff && tcp_flags && *frag == LAND_FRAG_NONE && cur == IPV6_NH_TCP) {
         __u32 hdr_off = offset + 12;
         if (hdr_off + 2 > end) return -1;
         char *p = data + hdr_off;

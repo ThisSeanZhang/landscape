@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(out, atomic, "atomic v6 fragment is not clamped");
         let first = v6_frag_tcp(1460, 0, true);
         let (_, out) = run_root(root_prog, &first);
-        assert_eq!(out, first, "v6 FRAG_FIRST is not clamped");
+        assert_eq!(out, first, "v6 LAND_FRAG_FIRST is not clamped");
     }
 
     #[test]
