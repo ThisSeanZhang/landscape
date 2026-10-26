@@ -57,11 +57,6 @@ pub fn attach_tc_mss(
         &mut open_skel.maps.tc_pipe_exits_wan_egress,
         &paths.tc_pipe_exits_wan_egress_path(),
     )?;
-    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan)?;
-
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
 
     let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
@@ -152,23 +147,6 @@ pub fn init_xdp_mss(
         ),
         "xdp_mss pin xdp_lan_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan),
-        "xdp_mss pin frag4_cache_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan),
-        "xdp_mss pin frag4_cache_wan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan),
-        "xdp_mss pin frag6_cache_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan),
-        "xdp_mss pin frag6_cache_wan"
-    )?;
-
     {
         let rodata =
             open_skel.maps.rodata_data.as_deref_mut().expect("xdp_mss rodata not memory mapped");

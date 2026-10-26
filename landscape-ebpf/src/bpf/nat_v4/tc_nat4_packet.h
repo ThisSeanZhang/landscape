@@ -8,35 +8,35 @@
 
 #include "base/ipv4.h"
 #include "frag/frag.h"
-#include "reader/skb_ferry.h"
+#include "reader/tc_nat_view.h"
 #include "reader/tc_read_head4.h"
 #include "nat_v4/tc_nat4.h"
 #include "nat_v4/tc_nat4_rodata.h"
 
-static __always_inline int napt_is_icmp_error(const struct skb_ferry_cb *cb) {
-    return cb->icmp_inner_l4_offset != 0;
+static __always_inline int napt_is_icmp_error(const struct tc_nat_view *view) {
+    return view->icmp_inner_l4_offset != 0;
 }
 
-static __always_inline int napt_is_non_initial(const struct skb_ferry_cb *cb) {
-    return cb->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+static __always_inline int napt_is_non_initial(const struct tc_nat_view *view) {
+    return view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
 }
 
-static __always_inline int napt_allows_create(const struct skb_ferry_cb *cb) {
-    if (napt_is_icmp_error(cb) || napt_is_non_initial(cb)) return 0;
-    if (cb->l4_protocol == IPV4_PROTO_TCP) return cb->tcp_phase == NAPT_TCP_PHASE_SYN;
-    return cb->l4_protocol == IPV4_PROTO_UDP || cb->l4_protocol == IPV4_PROTO_ICMP;
+static __always_inline int napt_allows_create(const struct tc_nat_view *view) {
+    if (napt_is_icmp_error(view) || napt_is_non_initial(view)) return 0;
+    if (view->l4_protocol == IPV4_PROTO_TCP) return view->tcp_phase == NAPT_TCP_PHASE_SYN;
+    return view->l4_protocol == IPV4_PROTO_UDP || view->l4_protocol == IPV4_PROTO_ICMP;
 }
 
-static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct skb_ferry_cb *cb,
+static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct tc_nat_view *view,
                                           __be32 src_addr, __be32 dst_addr, __be32 *new_addr,
                                           __be16 *new_port) {
-    __u8 proto = cb->l4_protocol;
+    __u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
-    int icmp_error = napt_is_icmp_error(cb);
-    int non_initial = napt_is_non_initial(cb);
-    int allow_create = napt_allows_create(cb);
-    __be16 internal_port = cb->sport;
-    __be16 remote_port = icmp ? 0 : cb->dport;
+    int icmp_error = napt_is_icmp_error(view);
+    int non_initial = napt_is_non_initial(view);
+    int allow_create = napt_allows_create(view);
+    __be16 internal_port = view->sport;
+    __be16 remote_port = icmp ? 0 : view->dport;
     __be16 external_port = 0;
     __u32 gen = 0;
     __u8 kind = NAPT_MAPPING_FREE;
@@ -49,7 +49,7 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
         gen = lan->generation;
         kind = lan->kind;
     } else {
-        if (!allow_create || !cb->ports_valid) return TC_ACT_SHOT;
+        if (!allow_create || !view->ports_valid) return TC_ACT_SHOT;
         __u8 allow_reuse = get_flow_allow_reuse_port(skb_mark(skb)) ? 1 : 0;
         if (napt_queue_pop(proto, &external_port, &gen) != 0) return TC_ACT_SHOT;
         if (napt_create_dynamic_mapping(proto, src_addr, internal_port, dst_addr, remote_port,
@@ -115,7 +115,7 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
     }
 
     if (!icmp_error && !non_initial) {
-        if (napt_ct_advance(cb, NAPT_GRESS_LAN, ct) != TC_ACT_OK) return TC_ACT_SHOT;
+        if (napt_ct_advance(view, NAPT_GRESS_LAN, ct) != TC_ACT_OK) return TC_ACT_SHOT;
         napt_metric_accumulate(skb, NAPT_GRESS_LAN, ct);
     }
 
@@ -124,16 +124,16 @@ static __always_inline int napt_lan_state(struct __sk_buff *skb, const struct sk
     return TC_ACT_OK;
 }
 
-static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct skb_ferry_cb *cb,
+static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct tc_nat_view *view,
                                           __be32 src_addr, __be32 dst_addr, __be32 *new_addr,
                                           __be16 *new_port) {
-    __u8 proto = cb->l4_protocol;
+    __u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
-    int icmp_error = napt_is_icmp_error(cb);
-    int non_initial = napt_is_non_initial(cb);
-    int allow_create = napt_allows_create(cb);
-    __be16 external_port = icmp ? cb->sport : cb->dport;
-    __be16 remote_port = icmp ? 0 : cb->sport;
+    int icmp_error = napt_is_icmp_error(view);
+    int non_initial = napt_is_non_initial(view);
+    int allow_create = napt_allows_create(view);
+    __be16 external_port = icmp ? view->sport : view->dport;
+    __be16 remote_port = icmp ? 0 : view->sport;
     __u32 gen = 0;
     int is_static;
 
@@ -162,7 +162,7 @@ static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct sk
     if (napt_ct_resolve(&key, mapping, &ct) != 0) ct = 0;
 
     if (!ct) {
-        if (!allow_create || !cb->ports_valid) return TC_ACT_SHOT;
+        if (!allow_create || !view->ports_valid) return TC_ACT_SHOT;
 
         ct = napt_ct_create(skb->ifindex, skb_mark(skb), &key, external_port, gen, is_static,
                             NAPT_GRESS_WAN, mapping);
@@ -170,7 +170,7 @@ static __always_inline int napt_wan_state(struct __sk_buff *skb, const struct sk
     }
 
     if (!icmp_error && !non_initial) {
-        if (napt_ct_advance(cb, NAPT_GRESS_WAN, ct) != TC_ACT_OK) return TC_ACT_SHOT;
+        if (napt_ct_advance(view, NAPT_GRESS_WAN, ct) != TC_ACT_OK) return TC_ACT_SHOT;
         napt_metric_accumulate(skb, NAPT_GRESS_WAN, ct);
     }
 

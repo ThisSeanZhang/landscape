@@ -49,7 +49,7 @@ vmlinux = { git = "https://github.com/libbpf/vmlinux.h.git", rev = "83a228cf37fc
 default = []
 # Shared test infrastructure (crate::tests helpers). Every test-* feature
 # implies it; enabling it alone compiles only the runtime-skeleton tests
-# (cb_ferry, mss, net_utils, check, wire-less helpers).
+# (root_stage, mss, net_utils, check, wire-less helpers).
 test-support = []
 # Per-topic eBPF tests: each feature compiles the matching BPF objects under
 # src/bpf/tests/<topic>/ and gates the corresponding crate::tests modules.

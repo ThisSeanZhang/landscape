@@ -7,10 +7,8 @@
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
 #include "chain/tc_wan_exit_maps.h"
-#include "frag/frag.h"
-#include "reader/skb_ferry.h"
-#include "reader/tc_read_head4.h"
-#include "reader/tc_read_head6.h"
+#include "reader/tc_mss4.h"
+#include "reader/tc_mss6.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -23,15 +21,9 @@ const volatile u32 current_l3_offset = 14;
 #define TCP_OPT_MSS 2
 #define TCP_HDR_LEN 20
 
-static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 mss_value) {
-    struct tcphdr *tcph;
-    if (VALIDATE_READ_DATA(skb, &tcph, offset, sizeof(*tcph))) {
-        return;
-    }
-    if (!tcph->syn) {
-        return;
-    }
-    u8 tcp_size = (tcph->doff * 4);
+static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u8 tcp_doff,
+                                         u16 mss_value) {
+    u8 tcp_size = tcp_doff * 4;
     if (tcp_size <= TCP_HDR_LEN) {
         return;
     }
@@ -92,46 +84,30 @@ static __always_inline void do_mss_clamp(struct __sk_buff *skb, u32 offset, u16 
     }
 }
 
-static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu,
-                                         u8 direction) {
-    struct skb_ferry_cb cb = {};
-    __be32 src_addr = 0;
-    __be32 dst_addr = 0;
+static __always_inline void clamp_tcp_v4(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
+    struct tc_mss4_view view;
 
-    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, direction)) return;
-    if (cb.icmp_inner_l4_offset) return;
-    if (cb.frag_code > LAND_NAT_FRAG_FIRST) return;
-    if (cb.l4_protocol != IPV4_PROTO_TCP) return;
-    if (cb.tcp_phase != NAPT_TCP_PHASE_SYN) return;
-    if (cb.l4_offset < current_l3_offset) return;
+    if (!tc_mss4_read(skb, current_l3_offset, &view)) return;
 
-    u32 ip_hdr_len = cb.l4_offset - current_l3_offset;
+    u32 ip_hdr_len = view.l4_off - current_l3_offset;
     if (ip_hdr_len + TCP_HDR_LEN >= mtu) return;
-    do_mss_clamp(skb, cb.l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+    do_mss_clamp(skb, view.l4_off, view.doff, mtu - ip_hdr_len - TCP_HDR_LEN);
 }
 
-static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu,
-                                         u8 direction) {
-    struct skb_ferry_cb cb = {};
-    struct in6_addr src_addr = {};
-    struct in6_addr dst_addr = {};
+static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_offset, u16 mtu) {
+    struct tc_mss6_view view;
 
-    if (!tc_read_ipv6(skb, &cb, &src_addr, &dst_addr, current_l3_offset, direction)) return;
-    if (cb.icmp_inner_l4_offset) return;
-    if (cb.frag_code != LAND_NAT_FRAG_NONE) return;
-    if (cb.l4_protocol != IPV6_NH_TCP) return;
-    if (cb.tcp_phase != NAPT_TCP_PHASE_SYN) return;
-    if (cb.l4_offset < current_l3_offset) return;
+    if (!tc_mss6_read(skb, current_l3_offset, &view)) return;
 
-    u32 ip_hdr_len = cb.l4_offset - current_l3_offset;
+    u32 ip_hdr_len = view.l4_off - current_l3_offset;
     if (ip_hdr_len + TCP_HDR_LEN >= mtu) return;
-    do_mss_clamp(skb, cb.l4_offset, mtu - ip_hdr_len - TCP_HDR_LEN);
+    do_mss_clamp(skb, view.l4_off, view.doff, mtu - ip_hdr_len - TCP_HDR_LEN);
 }
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v4(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_WAN);
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
     }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
@@ -142,7 +118,7 @@ int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v6(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_WAN);
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
     }
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
@@ -153,7 +129,7 @@ int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v4(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_LAN);
+        clamp_tcp_v4(skb, current_l3_offset, mtu_size);
     }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
@@ -164,7 +140,7 @@ int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_mss_wan_egress_v6(struct __sk_buff *skb) {
     if (likely(not_host_direct(skb_mark(skb)))) {
-        clamp_tcp_v6(skb, current_l3_offset, mtu_size, LAND_NAT_FRAG_FROM_LAN);
+        clamp_tcp_v6(skb, current_l3_offset, mtu_size);
     }
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);

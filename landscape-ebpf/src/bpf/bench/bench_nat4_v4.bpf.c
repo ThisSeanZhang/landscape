@@ -34,22 +34,22 @@ static __always_inline void bench_sink_add(u64 value) {
     if (acc) *acc += value;
 }
 
-static __always_inline int bench_read(struct __sk_buff *skb, struct skb_ferry_cb *cb,
+static __always_inline int bench_read(struct __sk_buff *skb, struct tc_nat_view *view,
                                       __be32 *src_addr, __be32 *dst_addr, __u8 direction) {
     if (skb->protocol != bpf_htons(ETH_P_IP)) return 0;
-    if (!tc_read_ipv4(skb, cb, src_addr, dst_addr, current_l3_offset, direction)) return 0;
-    if (cb->l4_protocol != IPV4_PROTO_TCP) return 0;
-    if (!cb->ports_valid) return 0;
+    if (!tc_read_ipv4(skb, view, src_addr, dst_addr, current_l3_offset, direction)) return 0;
+    if (view->l4_protocol != IPV4_PROTO_TCP) return 0;
+    if (!view->ports_valid) return 0;
     return 1;
 }
 
 SEC("tc")
 int bench_nat4_v4_baseline(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
 
-    if (!bench_read(skb, &cb, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -59,30 +59,30 @@ int bench_nat4_v4_baseline(struct __sk_buff *skb) {
 
 SEC("tc")
 int bench_nat4_v4_lan_steady(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &cb, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_lan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    int rc = napt_lan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_OK && new_port == bpf_htons(40000) ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }
 
 SEC("tc")
 int bench_nat4_v4_wan_steady(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &cb, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -90,37 +90,37 @@ int bench_nat4_v4_wan_steady(struct __sk_buff *skb) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_wan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    int rc = napt_wan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_OK && new_port == bpf_htons(12345) ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }
 
 SEC("tc")
 int bench_nat4_v4_lan_miss(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &cb, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_LAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_lan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    int rc = napt_lan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_SHOT ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }
 
 SEC("tc")
 int bench_nat4_v4_wan_miss(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
     __be16 new_port = 0;
 
-    if (!bench_read(skb, &cb, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
+    if (!bench_read(skb, &view, &src_addr, &dst_addr, LAND_NAT_FRAG_FROM_WAN)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
@@ -128,7 +128,7 @@ int bench_nat4_v4_wan_miss(struct __sk_buff *skb) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    int rc = napt_wan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    int rc = napt_wan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     bench_sink_add(rc == TC_ACT_SHOT ? 1 : BENCH_FAIL);
     return TC_ACT_OK;
 }

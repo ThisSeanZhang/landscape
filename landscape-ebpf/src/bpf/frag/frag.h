@@ -18,4 +18,9 @@ enum land_nat_frag_type {
 #define LAND_NAT_FRAG_FROM_LAN 0U
 #define LAND_NAT_FRAG_FROM_WAN 1U
 
+/* Reader-internal frag_code for an IPv6 atomic fragment (offset 0, !MF):
+ * there is a Fragment header, so L4 must not be parsed, but NAT treats the
+ * packet as unfragmented. */
+#define LAND_NAT_FRAG_SINGLE_V6H 4
+
 #endif /* LAND_NAT_FRAG_H */

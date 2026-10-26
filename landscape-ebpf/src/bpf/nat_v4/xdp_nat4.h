@@ -12,7 +12,7 @@
 #include "nat_v4/tc_nat4.h"
 #include "nat_v4/tc_nat4_map.h"
 #include "nat_v4/tc_nat4_rodata.h"
-#include "reader/xdp_ferry.h"
+#include "reader/xdp_nat_view.h"
 
 #define NAPT_XDP_OK 0
 #define NAPT_XDP_DROP 1
@@ -21,21 +21,21 @@ static __always_inline bool xdp_nat4_supported_protocol(__u8 proto) {
     return proto == IPV4_PROTO_TCP || proto == IPV4_PROTO_UDP || proto == IPV4_PROTO_ICMP;
 }
 
-static __always_inline int xdp_napt_lan_state(const struct xdp_ferry_cb *cb, __be32 src_addr,
+static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, __be32 src_addr,
                                               __be32 dst_addr, u32 ifindex, u32 mark, u64 bytes,
                                               __be32 *new_addr, __be16 *new_port) {
-    if (!cb->ports_valid) return NAPT_XDP_DROP;
+    if (!view->ports_valid) return NAPT_XDP_DROP;
 
-    u8 proto = cb->l4_protocol;
+    u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
-    int icmp_error = cb->icmp_inner_l4_offset != 0;
-    int non_initial = cb->frag_code == LAND_NAT_FRAG_NON_INITIAL;
-    __u8 tcp_phase = cb->tcp_phase;
+    int icmp_error = view->icmp_inner_l4_offset != 0;
+    int non_initial = view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
                        (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN
                                                 : (proto == IPV4_PROTO_UDP || icmp));
-    __be16 internal_port = cb->sport;
-    __be16 remote_port = icmp ? 0 : cb->dport;
+    __be16 internal_port = view->sport;
+    __be16 remote_port = icmp ? 0 : view->dport;
     __be16 external_port = 0;
     __u32 gen = 0;
     __u8 kind = NAPT_MAPPING_FREE;
@@ -124,21 +124,21 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_ferry_cb *cb, __b
     return NAPT_XDP_OK;
 }
 
-static __always_inline int xdp_napt_wan_state(const struct xdp_ferry_cb *cb, __be32 src_addr,
+static __always_inline int xdp_napt_wan_state(const struct xdp_nat_view *view, __be32 src_addr,
                                               __be32 dst_addr, u32 ifindex, u32 *mark, u64 bytes,
                                               __be32 *new_addr, __be16 *new_port, bool *is_static) {
-    if (!cb->ports_valid) return NAPT_XDP_DROP;
+    if (!view->ports_valid) return NAPT_XDP_DROP;
 
-    u8 proto = cb->l4_protocol;
+    u8 proto = view->l4_protocol;
     int icmp = proto == IPV4_PROTO_ICMP;
-    int icmp_error = cb->icmp_inner_l4_offset != 0;
-    int non_initial = cb->frag_code == LAND_NAT_FRAG_NON_INITIAL;
-    __u8 tcp_phase = cb->tcp_phase;
+    int icmp_error = view->icmp_inner_l4_offset != 0;
+    int non_initial = view->frag_code == LAND_NAT_FRAG_NON_INITIAL;
+    __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
                        (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN
                                                 : (proto == IPV4_PROTO_UDP || icmp));
-    __be16 external_port = icmp ? cb->sport : cb->dport;
-    __be16 remote_port = icmp ? 0 : cb->sport;
+    __be16 external_port = icmp ? view->sport : view->dport;
+    __be16 remote_port = icmp ? 0 : view->sport;
     __u32 gen = 0;
     int static_mapping;
 

@@ -25,22 +25,22 @@ static __always_inline int nat_v6_egress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ferry_cb cb = {};
+    struct xdp_nat_view view = {};
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
 
-    int read_ret = xdp_read_ipv6_nat6(ctx, &cb, &src_addr, &dst_addr, current_l3_offset,
+    int read_ret = xdp_read_ipv6_nat6(ctx, &view, &src_addr, &dst_addr, current_l3_offset,
                                       LAND_NAT_FRAG_FROM_LAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
-    if (unlikely(should_nat_skip_protocol(xdp_nat6_outer_protocol(&cb)))) return XDP_PASS;
-    if (unlikely(!cb.ports_valid)) return XDP_DROP;
+    if (unlikely(should_nat_skip_protocol(xdp_nat6_outer_protocol(&view)))) return XDP_PASS;
+    if (unlikely(!view.ports_valid)) return XDP_DROP;
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
 
     int ret = xdp_ipv6_egress_prefix_check_and_replace(
-        ctx, data, data_end, current_l3_offset, wan_if, meta.mark, &cb, &src_addr, &dst_addr);
+        ctx, data, data_end, current_l3_offset, wan_if, meta.mark, &view, &src_addr, &dst_addr);
     if (ret) return XDP_DROP;
 
     return XDP_PASS;
@@ -52,24 +52,24 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     struct xdp_pipe_meta meta = {};
     xdp_get_meta(ctx, &meta);
 
-    struct xdp_ferry_cb cb = {};
+    struct xdp_nat_view view = {};
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
 
-    int read_ret = xdp_read_ipv6_nat6(ctx, &cb, &src_addr, &dst_addr, current_l3_offset,
+    int read_ret = xdp_read_ipv6_nat6(ctx, &view, &src_addr, &dst_addr, current_l3_offset,
                                       LAND_NAT_FRAG_FROM_WAN);
     if (read_ret < 0) return XDP_DROP;
     if (read_ret == 0) return XDP_PASS;
 
-    if (unlikely(should_nat_skip_protocol(xdp_nat6_outer_protocol(&cb)))) return XDP_PASS;
-    if (unlikely(!cb.ports_valid)) return XDP_DROP;
+    if (unlikely(should_nat_skip_protocol(xdp_nat6_outer_protocol(&view)))) return XDP_PASS;
+    if (unlikely(!view.ports_valid)) return XDP_DROP;
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
 
     bool is_static = false;
-    int ret =
-        xdp_ipv6_ingress_prefix_check_and_replace(ctx, data, data_end, current_l3_offset, wan_if,
-                                                  meta.mark, &cb, &src_addr, &dst_addr, &is_static);
+    int ret = xdp_ipv6_ingress_prefix_check_and_replace(ctx, data, data_end, current_l3_offset,
+                                                        wan_if, meta.mark, &view, &src_addr,
+                                                        &dst_addr, &is_static);
     if (ret == -1) return XDP_DROP;
     if (ret == 1) {
         meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);

@@ -133,11 +133,11 @@ int napt_ct_advance_test(struct __sk_buff *skb) {
     struct napt_ct_value *value = bpf_map_lookup_elem(&napt_ct, &input->key);
     if (!value) return TC_ACT_SHOT;
 
-    struct skb_ferry_cb cb = {};
-    cb.l4_protocol = input->key.proto;
-    cb.tcp_phase = input->tcp_phase;
+    struct tc_nat_view view = {};
+    view.l4_protocol = input->key.proto;
+    view.tcp_phase = input->tcp_phase;
 
-    result->action = napt_ct_advance(&cb, input->gress, value);
+    result->action = napt_ct_advance(&view, input->gress, value);
     result->status = value->status;
     result->client_status = value->client_status;
     result->server_status = value->server_status;

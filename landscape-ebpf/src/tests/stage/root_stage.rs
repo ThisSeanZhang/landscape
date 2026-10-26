@@ -1,8 +1,7 @@
-//! cb ferry equivalence: running the production chain roots (which scan
-//! once and pack skb->cb) wired to a real stage must produce exactly the
-//! same verdict and output bytes as running the stage directly with a
-//! zeroed cb (the in-stage fallback scan).  Also asserts the packed cb
-//! layout for known packets.
+//! Root + stage integration: production chain roots tail-call into real
+//! stages. Roots only stamp chain/l3 into skb->cb; each stage re-reads the
+//! packet. These tests assert the stage behaviour on the root path and the
+//! fragment/cache decisions that used to be cached in cb.
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsFd, AsRawFd};
@@ -87,15 +86,6 @@ fn run_prog(prog: &ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>, [u32; 5]) {
         .expect("test_run failed")
         .return_value as i32;
     (ret, out, ctx_out.cb)
-}
-
-/// root (cb packed) vs direct stage (zeroed cb → fallback): same verdict,
-/// same bytes.
-fn assert_equiv(root_prog: &ProgramMut<'_>, stage_prog: &ProgramMut<'_>, pkt: &[u8], label: &str) {
-    let (ret_root, out_root, _) = run_prog(root_prog, pkt);
-    let (ret_direct, out_direct, _) = run_prog(stage_prog, pkt);
-    assert_eq!(ret_root, ret_direct, "{label}: verdict differs");
-    assert_eq!(out_root, out_direct, "{label}: output bytes differ");
 }
 
 // ── packet builders ──
@@ -248,46 +238,6 @@ fn tcp_mss_of(pkt: &[u8]) -> Option<u16> {
     None
 }
 
-// ── cb layout constants (mirror of chain/tc_cb.h) ──
-
-mod cb {
-    pub const MAGIC: u32 = 0x53A2;
-
-    pub fn scan_valid(cb0: u32) -> bool {
-        (cb0 >> 1) & 0x7FFF == MAGIC && (cb0 >> 16) & 1 == 1
-    }
-    pub fn ports_valid(cb0: u32) -> bool {
-        (cb0 >> 17) & 1 == 1
-    }
-    pub fn frag(cb0: u32) -> u32 {
-        (cb0 >> 18) & 7
-    }
-    pub fn l4_offset(cb2: u32) -> u32 {
-        cb2 & 0x7FFF
-    }
-    pub fn l4_protocol(cb2: u32) -> u32 {
-        (cb2 >> 16) & 0xFF
-    }
-    pub fn tcp_phase(cb2: u32) -> u32 {
-        cb2 >> 24
-    }
-    pub fn sport(cb3: u32) -> u16 {
-        u16::from_be((cb3 & 0xFFFF) as u16)
-    }
-    pub fn dport(cb3: u32) -> u16 {
-        u16::from_be((cb3 >> 16) as u16)
-    }
-    pub fn icmp_inner_l4(cb4: u32) -> u32 {
-        cb4 & 0x7FFF
-    }
-    pub fn icmp_l4_protocol(cb4: u32) -> u32 {
-        (cb4 >> 16) & 0xFF
-    }
-}
-
-// NAPT_TCP_PHASE_SYN from base/tcp_phase.h
-const NAPT_TCP_PHASE_SYN: u32 = 1;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,109 +252,34 @@ mod tests {
         skel
     }
 
-    #[test]
-    fn ferry_cb_layout_tcp_udp_icmp() {
-        let root = load_ingress_root();
-        let mss = mss_skel();
-        wire_stage(
-            &root.skel.maps.wan_ingress_root_next_stage,
-            TC_SLOT_V4,
-            &mss.progs.tc_mss_wan_ingress_v4,
-        );
+    fn run_root(prog: &ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>) {
+        let (ret, out, _) = run_prog(prog, pkt);
+        (ret, out)
+    }
 
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_tcp_syn_mss(1460));
-        assert!(cb::scan_valid(c[0]));
-        assert!(cb::ports_valid(c[0]));
-        assert_eq!(cb::frag(c[0]), 0);
-        assert_eq!(c[1], (CHAIN << 16) | L3, "ingress stamp: chain | l3");
-        assert_eq!(cb::l4_offset(c[2]), L3 + 20, "l4 offset points at the TCP header");
-        assert_eq!(cb::l4_protocol(c[2]), 6);
-        assert_eq!(cb::tcp_phase(c[2]), NAPT_TCP_PHASE_SYN);
-        assert_eq!(cb::sport(c[3]), 12345);
-        assert_eq!(cb::dport(c[3]), 443);
-        assert_eq!(cb::icmp_inner_l4(c[4]), 0);
-        assert_eq!(cb::icmp_l4_protocol(c[4]), 0);
-
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_udp());
-        assert_eq!(cb::l4_protocol(c[2]), 17);
-        assert_eq!(cb::tcp_phase(c[2]), 0);
-
-        let (_, _, c) =
-            run_prog(&root.skel.progs.tc_wan_ingress_root, &ipv4_icmp_echo_reply(0x4321));
-        assert_eq!(cb::l4_protocol(c[2]), 1);
-        assert_eq!(cb::sport(c[3]), 0x4321, "icmp echo id rides both port halves");
-        assert_eq!(cb::dport(c[3]), 0x4321);
+    fn ipv4_dst(pkt: &[u8]) -> Option<Ipv4Addr> {
+        let headers = etherparse::PacketHeaders::from_ethernet_slice(pkt).ok()?;
+        match headers.net {
+            Some(etherparse::NetHeaders::Ipv4(ip, _)) => Some(Ipv4Addr::from(ip.destination)),
+            _ => None,
+        }
     }
 
     #[test]
-    fn ferry_cb_layout_v6_tcp() {
+    fn root_stamps_chain_and_l3_without_caching_parse() {
         let root = load_ingress_root();
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &v6_tcp_syn_mss(1460));
+        let pkt = ipv4_tcp_syn_mss(1460);
+        let (ret, out, cb) = run_prog(&root.skel.progs.tc_wan_ingress_root, &pkt);
 
-        assert!(cb::scan_valid(c[0]));
-        assert!(cb::ports_valid(c[0]));
-        assert_eq!(cb::frag(c[0]), 0);
-        assert_eq!(c[1], (CHAIN << 16) | L3, "ingress stamp: chain | l3");
-        assert_eq!(cb::l4_offset(c[2]), L3 + 40);
-        assert_eq!(cb::l4_protocol(c[2]), 6);
-        assert_eq!(cb::tcp_phase(c[2]), NAPT_TCP_PHASE_SYN);
-        assert_eq!(cb::sport(c[3]), 12345);
-        assert_eq!(cb::dport(c[3]), 443);
-        assert_eq!(cb::icmp_inner_l4(c[4]), 0);
-        assert_eq!(cb::icmp_l4_protocol(c[4]), 0);
+        assert_eq!(ret, 0);
+        assert_eq!(out, pkt, "no stage wired: packet leaves unchanged");
+        assert_eq!(cb[0] & 1, 0, "not forwarded");
+        assert_eq!(cb[1], (CHAIN << 16) | L3, "chain id | l3 offset");
+        assert_eq!(&cb[2..], &[0, 0, 0], "no parse cache in cb[2..4]");
     }
 
     #[test]
-    fn ferry_cb_layout_icmpx_and_frag() {
-        let root = load_ingress_root();
-        let mss = mss_skel();
-        wire_stage(
-            &root.skel.maps.wan_ingress_root_next_stage,
-            TC_SLOT_V4,
-            &mss.progs.tc_mss_wan_ingress_v4,
-        );
-
-        // icmp error quoting inner TCP: cb[4] carries the inner walk and the
-        // ports are the (swapped) inner pair.
-        let pkt = ipv4_icmp_error_quoting_tcp(WAN_IP, REMOTE_IP, 5555, 6666);
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &pkt);
-        assert!(cb::scan_valid(c[0]));
-        assert!(cb::ports_valid(c[0]));
-        assert!(cb::icmp_inner_l4(c[4]) > 0);
-        assert_eq!(cb::icmp_l4_protocol(c[4]), 6);
-        assert_eq!(cb::sport(c[3]), 6666, "icmpx ports swapped: src = inner dport");
-        assert_eq!(cb::dport(c[3]), 5555);
-        // FIRST fragment: cache write + packet ports.
-        let mut first = ipv4_tcp_syn_mss(1460);
-        ipv4_set_frag(&mut first, 0x77, 0x2000);
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &first);
-        assert_eq!(cb::frag(c[0]), 1);
-        assert!(cb::ports_valid(c[0]));
-
-        // MIDDLE fragment, same id: cache hit restores the FIRST ports.
-        let mut middle = vec![0x55_u8; 74];
-        middle[12] = 0x08;
-        middle[13] = 0x00;
-        middle[14] = 0x45;
-        middle[14 + 9] = 6; // TCP: the frag cache key includes l4proto
-        middle[14 + 4..14 + 6].copy_from_slice(&0x77u16.to_be_bytes());
-        middle[14 + 6..14 + 8].copy_from_slice(&0x2001u16.to_be_bytes());
-        middle[14 + 12..14 + 16].copy_from_slice(&LAN_HOST.octets());
-        middle[14 + 16..14 + 20].copy_from_slice(&REMOTE_IP.octets());
-        let (_, _, c) = run_prog(&root.skel.progs.tc_wan_ingress_root, &middle);
-        assert_eq!(cb::frag(c[0]), 2);
-        assert!(cb::ports_valid(c[0]), "MIDDLE after FIRST: frag cache hit");
-        assert_eq!(cb::sport(c[3]), 12345);
-        assert_eq!(cb::l4_offset(c[2]), 0, "no L4 header on MIDDLE fragments");
-
-        // MIDDLE without a prior FIRST (fresh root object): cache miss.
-        let root2 = load_ingress_root();
-        let (_, _, c) = run_prog(&root2.skel.progs.tc_wan_ingress_root, &middle);
-        assert!(!cb::ports_valid(c[0]), "cache miss → PORTS_INVALID");
-    }
-
-    #[test]
-    fn ferry_equivalence_mss_v4() {
+    fn root_stage_mss_v4() {
         let root = load_egress_root();
         let mss = mss_skel();
         wire_stage(
@@ -415,27 +290,34 @@ mod tests {
         let root_prog = &root.skel.progs.tc_wan_egress_root;
 
         let syn = ipv4_tcp_syn_mss(1460);
-        assert_equiv(root_prog, &mss.progs.tc_mss_wan_egress_v4, &syn, "v4 syn");
-        let (_, out, _) = run_prog(root_prog, &syn);
+        let (_, out) = run_root(root_prog, &syn);
         assert_eq!(tcp_mss_of(&out), Some(1492 - 20 - 20), "root path still clamps");
 
-        assert_equiv(root_prog, &mss.progs.tc_mss_wan_egress_v4, &ipv4_udp(), "v4 udp");
-        assert_equiv(root_prog, &mss.progs.tc_mss_wan_egress_v4, &ipv4_icmp_echo(1), "v4 icmp");
+        for pkt in [ipv4_udp(), ipv4_icmp_echo(1)] {
+            let (_, out) = run_root(root_prog, &pkt);
+            assert_eq!(out, pkt, "non-TCP leaves the packet alone");
+        }
 
         let mut first = ipv4_tcp_syn_mss(1460);
         ipv4_set_frag(&mut first, 0x77, 0x2000);
-        assert_equiv(root_prog, &mss.progs.tc_mss_wan_egress_v4, &first, "v4 frag FIRST");
+        let (_, out) = run_root(root_prog, &first);
+        let mss_opt = L3 as usize + 20 + 20;
+        assert_eq!(
+            u16::from_be_bytes([out[mss_opt + 2], out[mss_opt + 3]]),
+            1492 - 20 - 20,
+            "FIRST fragment carries the TCP header and is clamped"
+        );
 
-        // Decision ①: a MIDDLE fragment's payload must never be parsed as a
-        // TCP header, even when it mimics SYN+MSS.
+        // A MIDDLE fragment's payload must never be parsed as a TCP header,
+        // even when it mimics SYN+MSS.
         let mut middle = ipv4_tcp_syn_mss(1460);
         ipv4_set_frag(&mut middle, 0x78, 0x2001);
-        let (_, out, _) = run_prog(root_prog, &middle);
-        assert_eq!(out, middle, "cb path leaves non-first fragments alone");
+        let (_, out) = run_root(root_prog, &middle);
+        assert_eq!(out, middle, "non-first fragments are left alone");
     }
 
     #[test]
-    fn ferry_equivalence_mss_v6() {
+    fn root_stage_mss_v6() {
         let root = load_egress_root();
         let mss = mss_skel();
         wire_stage(
@@ -446,21 +328,19 @@ mod tests {
         let root_prog = &root.skel.progs.tc_wan_egress_root;
 
         let syn = v6_tcp_syn_mss(1460);
-        assert_equiv(root_prog, &mss.progs.tc_mss_wan_egress_v6, &syn, "v6 syn");
-        let (_, out, _) = run_prog(root_prog, &syn);
+        let (_, out) = run_root(root_prog, &syn);
         assert_eq!(tcp_mss_of(&out), Some(1492 - 40 - 20));
 
-        // Decision ②: any v6 frag header (even atomic offset-0 !MF) skips.
         let atomic = v6_frag_tcp(1460, 0, false);
-        let (_, out, _) = run_prog(root_prog, &atomic);
+        let (_, out) = run_root(root_prog, &atomic);
         assert_eq!(out, atomic, "atomic v6 fragment is not clamped");
         let first = v6_frag_tcp(1460, 0, true);
-        let (_, out, _) = run_prog(root_prog, &first);
+        let (_, out) = run_root(root_prog, &first);
         assert_eq!(out, first, "v6 FRAG_FIRST is not clamped");
     }
 
     #[test]
-    fn ferry_equivalence_firewall_v4() {
+    fn root_stage_firewall_v4() {
         let root = load_ingress_root();
         let (_fw_backing, fw_obj) = OwnedOpenObject::new();
         let fw = TcFirewallSkelBuilder::default().open(fw_obj).unwrap().load().unwrap();
@@ -471,55 +351,40 @@ mod tests {
         );
         let root_prog = &root.skel.progs.tc_wan_ingress_root;
 
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v4,
-            &ipv4_tcp_syn_mss(1460),
-            "fw v4 tcp",
-        );
-        assert_equiv(root_prog, &fw.progs.tc_firewall_wan_ingress_v4, &ipv4_udp(), "fw v4 udp");
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v4,
-            &ipv4_icmp_echo_reply(9),
-            "fw v4 icmp echo",
-        );
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v4,
-            &ipv4_icmp_error_quoting_tcp(WAN_IP, REMOTE_IP, 5555, 6666),
-            "fw v4 icmpx",
-        );
+        for pkt in [
+            ipv4_tcp_syn_mss(1460),
+            ipv4_udp(),
+            ipv4_icmp_echo_reply(9),
+            ipv4_icmp_error_quoting_tcp(WAN_IP, REMOTE_IP, 5555, 6666),
+        ] {
+            let (ret, out) = run_root(root_prog, &pkt);
+            assert_eq!(ret, 0);
+            assert_eq!(out, pkt, "no block entry: pass unchanged");
+        }
 
         let mut first = ipv4_tcp_syn_mss(1460);
         ipv4_set_frag(&mut first, 0x91, 0x2000);
-        assert_equiv(root_prog, &fw.progs.tc_firewall_wan_ingress_v4, &first, "fw v4 frag FIRST");
+        let (ret, out) = run_root(root_prog, &first);
+        assert_eq!(ret, 0);
+        assert_eq!(out, first);
 
         let mut middle = first.clone();
         ipv4_set_frag(&mut middle, 0x91, 0x2001);
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v4,
-            &middle,
-            "fw v4 frag MIDDLE after FIRST",
-        );
+        let (ret, out) = run_root(root_prog, &middle);
+        assert_eq!(ret, 0);
+        assert_eq!(out, middle);
 
-        // MIDDLE with no prior FIRST on either path: root cache miss and fw
-        // cache miss both SHOT.
+        // The firewall only enforces the IP block map now, so an orphan
+        // fragment is allowed.
         let mut orphan = first.clone();
         ipv4_set_frag(&mut orphan, 0x92, 0x2001);
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v4,
-            &orphan,
-            "fw v4 orphan MIDDLE",
-        );
-        let (ret, _, _) = run_prog(root_prog, &orphan);
-        assert_eq!(ret, 2, "orphan fragment is dropped");
+        let (ret, out) = run_root(root_prog, &orphan);
+        assert_eq!(ret, 0, "orphan fragment is allowed");
+        assert_eq!(out, orphan);
     }
 
     #[test]
-    fn ferry_equivalence_firewall_v6() {
+    fn root_stage_firewall_v6() {
         let root = load_ingress_root();
         let (_fw_backing, fw_obj) = OwnedOpenObject::new();
         let fw = TcFirewallSkelBuilder::default().open(fw_obj).unwrap().load().unwrap();
@@ -530,28 +395,15 @@ mod tests {
         );
         let root_prog = &root.skel.progs.tc_wan_ingress_root;
 
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v6,
-            &v6_tcp_syn_mss(1460),
-            "fw v6 tcp",
-        );
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v6,
-            &v6_frag_tcp(1460, 0, false),
-            "fw v6 atomic frag",
-        );
-        assert_equiv(
-            root_prog,
-            &fw.progs.tc_firewall_wan_ingress_v6,
-            &v6_frag_tcp(1460, 0, true),
-            "fw v6 frag FIRST",
-        );
+        for pkt in [v6_tcp_syn_mss(1460), v6_frag_tcp(1460, 0, false), v6_frag_tcp(1460, 0, true)] {
+            let (ret, out) = run_root(root_prog, &pkt);
+            assert_eq!(ret, 0);
+            assert_eq!(out, pkt);
+        }
     }
 
     #[test]
-    fn ferry_equivalence_nat4_static() {
+    fn root_stage_nat4_static() {
         use crate::skel::tc_nat4_v4::{TcNat4V4Skel, TcNat4V4SkelBuilder, types};
 
         fn be32(addr: Ipv4Addr) -> u32 {
@@ -653,32 +505,30 @@ mod tests {
 
         seed_static(&nat);
 
-        // Plain TCP: both paths DNAT identically (byte-level, checksums
-        // included) — and the translation really happened.
+        // Plain TCP: the root no longer parses, NAT re-reads and DNATs.
         let pkt = ipv4_tcp_to(WAN_IP, 9999, 8080);
-        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &pkt, "nat v4 tcp");
-        let (ret, out, _) = run_prog(root_prog, &pkt);
+        let (ret, out) = run_root(root_prog, &pkt);
         assert_eq!(ret, 0);
-        let headers = etherparse::PacketHeaders::from_ethernet_slice(&out).unwrap();
-        match headers.net {
-            Some(etherparse::NetHeaders::Ipv4(ip, _)) => {
-                assert_eq!(Ipv4Addr::from(ip.destination), LAN_HOST);
-            }
-            _ => panic!("expected ipv4"),
-        }
+        assert_eq!(ipv4_dst(&out), Some(LAN_HOST));
 
-        // icmp error quoting the translated flow: exercises the cb[4] icmpx
-        // fields through NAT's modify path.
+        // icmp error quoting the translated flow.
         let icmpx = ipv4_icmp_error_quoting_tcp(WAN_IP, REMOTE_IP, 8080, 9999);
-        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &icmpx, "nat v4 icmpx");
+        let (ret, out) = run_root(root_prog, &icmpx);
+        assert_eq!(ret, 0);
+        assert_eq!(ipv4_dst(&out), Some(LAN_HOST));
 
-        // fragmented TCP: FIRST then MIDDLE ride the root/nat frag caches.
+        // fragmented TCP: FIRST writes NAT's frag cache, MIDDLE reads it.
         let mut first = ipv4_tcp_to(WAN_IP, 9999, 8080);
         ipv4_set_frag(&mut first, 0x33, 0x2000);
-        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &first, "nat v4 frag FIRST");
+        let (ret, out) = run_root(root_prog, &first);
+        assert_eq!(ret, 0);
+        assert_eq!(ipv4_dst(&out), Some(LAN_HOST));
+
         let mut middle = first.clone();
         ipv4_set_frag(&mut middle, 0x33, 0x2001);
-        assert_equiv(root_prog, &nat.progs.tc_v4_from_wan, &middle, "nat v4 frag MIDDLE");
+        let (ret, out) = run_root(root_prog, &middle);
+        assert_eq!(ret, 0);
+        assert_eq!(ipv4_dst(&out), Some(LAN_HOST));
     }
 
     fn ipv4_tcp_to(dst: Ipv4Addr, sp: u16, dp: u16) -> Vec<u8> {

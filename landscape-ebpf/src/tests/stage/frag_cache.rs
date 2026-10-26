@@ -8,7 +8,6 @@ use libbpf_rs::{
 use crate::landscape::{OwnedOpenObject, pin_and_reuse_map};
 use crate::skel::tc_nat4_v4::TcNat4V4SkelBuilder;
 use crate::skel::tc_nat6::TcNat6SkelBuilder;
-use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
 use crate::skel::xdp_nat4_v4::XdpNat4V4SkelBuilder;
 use crate::skel::xdp_nat6::XdpNat6SkelBuilder;
 
@@ -19,21 +18,10 @@ fn map_id<M: MapCore>(map: &M) -> u32 {
 }
 
 #[test]
-fn frag_caches_are_shared_by_root_and_nat_datapaths() {
+fn frag_caches_are_shared_by_nat_datapaths() {
     let pin_root = isolated_pin_root("frag-cache-share");
     let paths = crate::LandscapeMapPath::from_root(&pin_root);
     let _shared = init_shared_maps_for_test(&pin_root);
-
-    let (_root_backing, root_obj) = OwnedOpenObject::new();
-    let mut root_open =
-        TcWanIngressRootSkelBuilder::default().open(root_obj).expect("open tc_wan_ingress_root");
-    root_open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = 14;
-    root_open.maps.rodata_data.as_deref_mut().unwrap().current_chain = 1;
-    pin_and_reuse_map(&mut root_open.maps.frag4_cache_lan, &paths.frag4_cache_lan).unwrap();
-    pin_and_reuse_map(&mut root_open.maps.frag4_cache_wan, &paths.frag4_cache_wan).unwrap();
-    pin_and_reuse_map(&mut root_open.maps.frag6_cache_lan, &paths.frag6_cache_lan).unwrap();
-    pin_and_reuse_map(&mut root_open.maps.frag6_cache_wan, &paths.frag6_cache_wan).unwrap();
-    let root = root_open.load().expect("load tc_wan_ingress_root");
 
     let (_tc4_backing, tc4_obj) = OwnedOpenObject::new();
     let mut tc4_open = TcNat4V4SkelBuilder::default().open(tc4_obj).expect("open tc_nat4_v4");
@@ -85,11 +73,6 @@ fn frag_caches_are_shared_by_root_and_nat_datapaths() {
         MapHandle::from_pinned_path(&paths.frag6_cache_lan).expect("open frag6 lan pin");
     let central_frag6_wan =
         MapHandle::from_pinned_path(&paths.frag6_cache_wan).expect("open frag6 wan pin");
-
-    assert_eq!(map_id(&root.maps.frag4_cache_lan), map_id(&central_frag4_lan));
-    assert_eq!(map_id(&root.maps.frag4_cache_wan), map_id(&central_frag4_wan));
-    assert_eq!(map_id(&root.maps.frag6_cache_lan), map_id(&central_frag6_lan));
-    assert_eq!(map_id(&root.maps.frag6_cache_wan), map_id(&central_frag6_wan));
 
     assert_eq!(map_id(&tc4.maps.frag4_cache_lan), map_id(&central_frag4_lan));
     assert_eq!(map_id(&tc4.maps.frag4_cache_wan), map_id(&central_frag4_wan));

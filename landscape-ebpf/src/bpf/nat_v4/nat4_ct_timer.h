@@ -8,7 +8,7 @@
 
 #include "base/mark.h"
 #include "base/tc_act.h"
-#include "reader/skb_ferry.h"
+#include "reader/tc_nat_view.h"
 #include "nat_v4/nat4_metric.h"
 #include "nat_v4/tc_nat4_map.h"
 
@@ -294,9 +294,9 @@ static __always_inline int napt_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
     return TC_ACT_OK;
 }
 
-static __always_inline int napt_ct_advance(const struct skb_ferry_cb *cb, u8 gress,
+static __always_inline int napt_ct_advance(const struct tc_nat_view *view, u8 gress,
                                            struct napt_ct_value *value) {
-    return napt_ct_advance_pkt(cb->l4_protocol, cb->tcp_phase, gress, value);
+    return napt_ct_advance_pkt(view->l4_protocol, view->tcp_phase, gress, value);
 }
 
 enum napt_ct_resolve_result {

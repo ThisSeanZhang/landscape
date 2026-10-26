@@ -1,6 +1,6 @@
 //! Runtime-stage behaviour tests using production skeletons only
-//! (`test-support` tier): cb ferrying between chain stages and the MSS
-//! clamp stage.
-mod cb_ferry;
+//! (`test-support` tier): root -> stage plumbing plus the MSS clamp and
+//! fragment caches.
 mod frag_cache;
 mod mss;
+mod root_stage;

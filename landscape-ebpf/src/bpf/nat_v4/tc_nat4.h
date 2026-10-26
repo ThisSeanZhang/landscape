@@ -8,7 +8,7 @@
 
 #include "base/mark.h"
 #include "base/tc_act.h"
-#include "reader/skb_ferry.h"
+#include "reader/tc_nat_view.h"
 #include "nat_v4/nat4_ct_timer.h"
 #include "nat_v4/tc_nat4_map.h"
 

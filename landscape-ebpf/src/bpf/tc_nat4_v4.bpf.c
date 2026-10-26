@@ -13,7 +13,7 @@
 #include "base/mark.h"
 #include "chain/tc_wan_exit_maps.h"
 #include "frag/frag.h"
-#include "reader/skb_ferry.h"
+#include "reader/tc_nat_view.h"
 #include "reader/tc_read_head4.h"
 #include "nat_v4/tc_nat4_packet.h"
 #include "nat_v4/tc_nat4_rodata.h"
@@ -59,7 +59,7 @@ const volatile u32 current_l3_offset = 14;
 
 SEC("tc/egress")
 int tc_v4_from_lan(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
@@ -68,7 +68,7 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
+    if (!tc_read_ipv4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_LAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
@@ -76,22 +76,22 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
 
     if (land_nat_external_addr == 0) goto chain;
 
-    if (cb.l4_protocol != IPV4_PROTO_ICMP && cb.l4_protocol != IPV4_PROTO_TCP &&
-        cb.l4_protocol != IPV4_PROTO_UDP)
+    if (view.l4_protocol != IPV4_PROTO_ICMP && view.l4_protocol != IPV4_PROTO_TCP &&
+        view.l4_protocol != IPV4_PROTO_UDP)
         goto chain;
 
-    if (!cb.ports_valid) return TC_ACT_SHOT;
+    if (!view.ports_valid) return TC_ACT_SHOT;
 
-    rc = napt_lan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    rc = napt_lan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
 
-    if (napt_is_icmp_error(&cb)) {
-        rc = napt_modify_icmp_error(skb, new_addr, new_port, 0, cb.l3_offset);
-    } else if (napt_is_non_initial(&cb)) {
-        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_LAN, cb.l3_offset);
+    if (napt_is_icmp_error(&view)) {
+        rc = napt_modify_icmp_error(skb, new_addr, new_port, 0, view.l3_offset);
+    } else if (napt_is_non_initial(&view)) {
+        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_LAN, view.l3_offset);
     } else {
-        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_LAN, cb.l3_offset);
+        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_LAN, view.l3_offset);
     }
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
@@ -104,7 +104,7 @@ chain:
 
 SEC("tc/ingress")
 int tc_v4_from_wan(struct __sk_buff *skb) {
-    struct skb_ferry_cb cb = {};
+    struct tc_nat_view view = {};
     __be32 src_addr = 0;
     __be32 dst_addr = 0;
     __be32 new_addr = 0;
@@ -113,7 +113,7 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
 
     if (!not_host_direct(skb_mark(skb))) goto chain;
 
-    if (!tc_read_ipv4(skb, &cb, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
+    if (!tc_read_ipv4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_NAT_FRAG_FROM_WAN))
         goto chain;
 
     if (napt_broadcast_mac(skb, current_l3_offset)) goto chain;
@@ -121,22 +121,22 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
 
     if (dst_addr != land_nat_external_addr) goto chain;
 
-    if (cb.l4_protocol != IPV4_PROTO_ICMP && cb.l4_protocol != IPV4_PROTO_TCP &&
-        cb.l4_protocol != IPV4_PROTO_UDP)
+    if (view.l4_protocol != IPV4_PROTO_ICMP && view.l4_protocol != IPV4_PROTO_TCP &&
+        view.l4_protocol != IPV4_PROTO_UDP)
         goto chain;
 
-    if (!cb.ports_valid) return TC_ACT_SHOT;
+    if (!view.ports_valid) return TC_ACT_SHOT;
 
-    rc = napt_wan_state(skb, &cb, src_addr, dst_addr, &new_addr, &new_port);
+    rc = napt_wan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
 
-    if (napt_is_icmp_error(&cb)) {
-        rc = napt_modify_icmp_error(skb, new_addr, new_port, 1, cb.l3_offset);
-    } else if (napt_is_non_initial(&cb)) {
-        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_WAN, cb.l3_offset);
+    if (napt_is_icmp_error(&view)) {
+        rc = napt_modify_icmp_error(skb, new_addr, new_port, 1, view.l3_offset);
+    } else if (napt_is_non_initial(&view)) {
+        rc = napt_modify_fragment(skb, new_addr, LAND_NAT_FRAG_FROM_WAN, view.l3_offset);
     } else {
-        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_WAN, cb.l3_offset);
+        rc = napt_modify(skb, new_addr, new_port, LAND_NAT_FRAG_FROM_WAN, view.l3_offset);
     }
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;

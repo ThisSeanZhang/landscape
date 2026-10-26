@@ -63,11 +63,6 @@ pub fn attach_tc_firewall(
         &mut open_skel.maps.firewall_conn_metric_events,
         &paths.firewall_conn_metric_events,
     )?;
-    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
-    pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan)?;
-
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
     let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
@@ -173,23 +168,6 @@ pub fn init_xdp_firewall(
         ),
         "xdp_firewall pin firewall_conn_metric_events"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_lan, &paths.frag4_cache_lan),
-        "xdp_firewall pin frag4_cache_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag4_cache_wan, &paths.frag4_cache_wan),
-        "xdp_firewall pin frag4_cache_wan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_lan, &paths.frag6_cache_lan),
-        "xdp_firewall pin frag6_cache_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.frag6_cache_wan, &paths.frag6_cache_wan),
-        "xdp_firewall pin frag6_cache_wan"
-    )?;
-
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset =
         if has_eth_header { 14 } else { 0 };
 

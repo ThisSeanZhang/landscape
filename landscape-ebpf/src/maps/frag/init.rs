@@ -108,16 +108,20 @@ pub fn init_frag6_cache_wan_map(path: &Path) -> LdEbpfResult<MapHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
+    use crate::skel::tc_nat4_v4::TcNat4V4SkelBuilder;
+    use crate::skel::tc_nat6::TcNat6SkelBuilder;
     use libbpf_rs::skel::SkelBuilder as _;
 
     #[test]
     fn frag_cache_map_params_match_skel() {
-        let mut obj = std::mem::MaybeUninit::uninit();
-        let open = TcWanIngressRootSkelBuilder::default().open(&mut obj).expect("open anchor skel");
-        crate::maps::assert_skel_map_matches(&open.maps.frag4_cache_lan, &FRAG4_CACHE_LAN_SPEC);
-        crate::maps::assert_skel_map_matches(&open.maps.frag4_cache_wan, &FRAG4_CACHE_WAN_SPEC);
-        crate::maps::assert_skel_map_matches(&open.maps.frag6_cache_lan, &FRAG6_CACHE_LAN_SPEC);
-        crate::maps::assert_skel_map_matches(&open.maps.frag6_cache_wan, &FRAG6_CACHE_WAN_SPEC);
+        let mut obj4 = std::mem::MaybeUninit::uninit();
+        let open4 = TcNat4V4SkelBuilder::default().open(&mut obj4).expect("open tc_nat4_v4");
+        crate::maps::assert_skel_map_matches(&open4.maps.frag4_cache_lan, &FRAG4_CACHE_LAN_SPEC);
+        crate::maps::assert_skel_map_matches(&open4.maps.frag4_cache_wan, &FRAG4_CACHE_WAN_SPEC);
+
+        let mut obj6 = std::mem::MaybeUninit::uninit();
+        let open6 = TcNat6SkelBuilder::default().open(&mut obj6).expect("open tc_nat6");
+        crate::maps::assert_skel_map_matches(&open6.maps.frag6_cache_lan, &FRAG6_CACHE_LAN_SPEC);
+        crate::maps::assert_skel_map_matches(&open6.maps.frag6_cache_wan, &FRAG6_CACHE_WAN_SPEC);
     }
 }

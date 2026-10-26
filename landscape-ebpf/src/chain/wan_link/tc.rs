@@ -99,7 +99,7 @@ impl WanLinkDataplane {
         let mut ingress_open_skel =
             bpf_ctx!(ingress_builder.open(ingress_obj), "open tc_wan_ingress_root")?;
 
-        // cb ferry hard limits: l3 lives in 8 bits, chain id in 16.
+        // chain cb hard limits: l3 lives in 8 bits, chain id in 16.
         assert!(l3_offset <= u8::MAX as u32, "l3 offset {l3_offset} exceeds cb slot");
 
         ingress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
@@ -110,23 +110,8 @@ impl WanLinkDataplane {
             &mut ingress_open_skel.maps.tc_pipe_exits_wan_ingress,
             &backbone.paths().tc_pipe_exits_wan_ingress_path(),
         )?;
-        pin_and_reuse_map(
-            &mut ingress_open_skel.maps.frag4_cache_lan,
-            &backbone.paths().frag4_cache_lan,
-        )?;
-        pin_and_reuse_map(
-            &mut ingress_open_skel.maps.frag4_cache_wan,
-            &backbone.paths().frag4_cache_wan,
-        )?;
-        pin_and_reuse_map(
-            &mut ingress_open_skel.maps.frag6_cache_lan,
-            &backbone.paths().frag6_cache_lan,
-        )?;
-        pin_and_reuse_map(
-            &mut ingress_open_skel.maps.frag6_cache_wan,
-            &backbone.paths().frag6_cache_wan,
-        )?;
-
+        // frag*_cache_* are no longer referenced by the roots: maps::init_path
+        // recreates/pins them at startup and the NAT stage loaders reuse them.
         let ingress_skel = bpf_ctx!(ingress_open_skel.load(), "load tc_wan_ingress_root")?;
 
         let ingress_root_fd = ingress_skel.progs.tc_wan_ingress_root.as_fd().as_raw_fd();
@@ -156,7 +141,7 @@ impl WanLinkDataplane {
         let mut egress_open_skel =
             bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
 
-        // cb ferry hard limit: l3 lives in 8 bits.
+        // chain cb hard limit: l3 lives in 8 bits.
         assert!(l3_offset <= u8::MAX as u32, "l3 offset {l3_offset} exceeds cb slot");
 
         egress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
@@ -165,23 +150,7 @@ impl WanLinkDataplane {
             &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
             &backbone.paths().tc_pipe_exits_wan_egress_path(),
         )?;
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.frag4_cache_lan,
-            &backbone.paths().frag4_cache_lan,
-        )?;
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.frag4_cache_wan,
-            &backbone.paths().frag4_cache_wan,
-        )?;
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.frag6_cache_lan,
-            &backbone.paths().frag6_cache_lan,
-        )?;
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.frag6_cache_wan,
-            &backbone.paths().frag6_cache_wan,
-        )?;
-
+        // See create_ingress_root: frag caches are initialized once by maps::init_path.
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 
         let egress_root_fd = egress_skel.progs.tc_wan_egress_root.as_fd().as_raw_fd();
