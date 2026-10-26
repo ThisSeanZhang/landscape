@@ -186,12 +186,22 @@ do_nptv6:
             return TC_ACT_SHOT;
         }
 #else
-        __be64 *error_sender_point;
-        if (VALIDATE_READ_DATA(skb, &error_sender_point, error_sender_offset,
-                               sizeof(*error_sender_point))) {
+        if ((u64)error_sender_offset + sizeof(old_sender_ip_prefix) > MAX_OFFSET)
             return TC_ACT_SHOT;
+        char *data = (char *)(long)skb->data;
+        char *data_end = (char *)(long)skb->data_end;
+        char *p = data + error_sender_offset;
+        barrier_var(p);
+        if (p + sizeof(old_sender_ip_prefix) > data_end) {
+            if (bpf_skb_pull_data(skb, error_sender_offset + sizeof(old_sender_ip_prefix)) != 0)
+                return TC_ACT_SHOT;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            p = data + error_sender_offset;
+            barrier_var(p);
+            if (p + sizeof(old_sender_ip_prefix) > data_end) return TC_ACT_SHOT;
         }
-        old_sender_ip_prefix = *error_sender_point;
+        old_sender_ip_prefix = *(__be64 *)p;
 #endif
         new_sender_ip_prefix =
             (old_sender_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -396,12 +406,22 @@ do_ingress_nptv6:
             return TC_ACT_SHOT;
         }
 #else
-        __be64 *old_inner_ip_point;
-        if (VALIDATE_READ_DATA(skb, &old_inner_ip_point, inner_l3_ip_src_offset,
-                               sizeof(*old_inner_ip_point))) {
+        if ((u64)inner_l3_ip_src_offset + sizeof(old_inner_ip_prefix) > MAX_OFFSET)
             return TC_ACT_SHOT;
+        char *data = (char *)(long)skb->data;
+        char *data_end = (char *)(long)skb->data_end;
+        char *p = data + inner_l3_ip_src_offset;
+        barrier_var(p);
+        if (p + sizeof(old_inner_ip_prefix) > data_end) {
+            if (bpf_skb_pull_data(skb, inner_l3_ip_src_offset + sizeof(old_inner_ip_prefix)) != 0)
+                return TC_ACT_SHOT;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            p = data + inner_l3_ip_src_offset;
+            barrier_var(p);
+            if (p + sizeof(old_inner_ip_prefix) > data_end) return TC_ACT_SHOT;
         }
-        old_inner_ip_prefix = *old_inner_ip_point;
+        old_inner_ip_prefix = *(__be64 *)p;
 #endif
 
         u32 inner_l4_checksum_offset = 0;

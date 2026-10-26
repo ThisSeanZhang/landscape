@@ -45,9 +45,20 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
     ret = current_pkg_type(skb, current_l3_offset, &is_ipv4);
     if (ret != TC_ACT_OK) return TC_ACT_OK;
 
+    char *data = (char *)(long)skb->data;
+    char *data_end = (char *)(long)skb->data_end;
+
     if (is_ipv4) {
-        struct iphdr *iph;
-        if (VALIDATE_READ_DATA(skb, &iph, current_l3_offset, sizeof(*iph))) return TC_ACT_OK;
+        if ((u64)current_l3_offset + sizeof(struct iphdr) > MAX_OFFSET) return TC_ACT_OK;
+        struct iphdr *iph = (struct iphdr *)(data + current_l3_offset);
+        if ((char *)(iph + 1) > data_end) {
+            __u32 need = current_l3_offset + sizeof(*iph);
+            if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_OK;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            iph = (struct iphdr *)(data + current_l3_offset);
+            if ((char *)(iph + 1) > data_end) return TC_ACT_OK;
+        }
 
         if (unlikely(is_broadcast_ip4(iph->daddr))) {
             return TC_ACT_OK;
@@ -55,8 +66,16 @@ int tc_wan_ingress_intro(struct __sk_buff *skb) {
 
         key64 = wan_trie_key_v4(iph->daddr);
     } else {
-        struct ipv6hdr *ip6h;
-        if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) return TC_ACT_OK;
+        if ((u64)current_l3_offset + sizeof(struct ipv6hdr) > MAX_OFFSET) return TC_ACT_OK;
+        struct ipv6hdr *ip6h = (struct ipv6hdr *)(data + current_l3_offset);
+        if ((char *)(ip6h + 1) > data_end) {
+            __u32 need = current_l3_offset + sizeof(*ip6h);
+            if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_OK;
+            data = (char *)(long)skb->data;
+            data_end = (char *)(long)skb->data_end;
+            ip6h = (struct ipv6hdr *)(data + current_l3_offset);
+            if ((char *)(ip6h + 1) > data_end) return TC_ACT_OK;
+        }
 
         if (unlikely(is_broadcast_ip6(ip6h->daddr.in6_u.u6_addr8))) {
             return TC_ACT_OK;

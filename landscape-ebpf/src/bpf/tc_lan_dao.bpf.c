@@ -87,12 +87,12 @@ static __always_inline void emit_ip6_dao_event(u32 ifindex, const u8 *ip, const 
 
 SEC("tc/ingress")
 int tc_lan_dao(struct __sk_buff *skb) {
-    void *data = (void *)(long)skb->data;
-    void *data_end = (void *)(long)skb->data_end;
+    char *data = (char *)(long)skb->data;
+    char *data_end = (char *)(long)skb->data_end;
 
     if (current_l3_offset > 0) {
-        struct ethhdr *eth = data;
-        if ((void *)(eth + 1) > data_end) return TC_ACT_UNSPEC;
+        struct ethhdr *eth = (struct ethhdr *)data;
+        if ((char *)(eth + 1) > data_end) return TC_ACT_UNSPEC;
         if (eth->h_proto != ETH_IPV6) return TC_ACT_UNSPEC;
     }
 
@@ -110,9 +110,15 @@ int tc_lan_dao(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
-    struct ipv6hdr *ip6h;
-    if (VALIDATE_READ_DATA(skb, &ip6h, current_l3_offset, sizeof(*ip6h))) {
-        return TC_ACT_UNSPEC;
+    if ((u64)current_l3_offset + sizeof(struct ipv6hdr) > MAX_OFFSET) return TC_ACT_UNSPEC;
+    struct ipv6hdr *ip6h = (struct ipv6hdr *)(data + current_l3_offset);
+    if ((char *)(ip6h + 1) > data_end) {
+        __u32 need = current_l3_offset + sizeof(*ip6h);
+        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_UNSPEC;
+        data = (char *)(long)skb->data;
+        data_end = (char *)(long)skb->data_end;
+        ip6h = (struct ipv6hdr *)(data + current_l3_offset);
+        if ((char *)(ip6h + 1) > data_end) return TC_ACT_UNSPEC;
     }
 
     u8 nexthdr = ip6h->nexthdr;
@@ -121,18 +127,30 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // Walk IPv6 extension headers (RFC 8200)
     for (int i = 0; i < LD_MAX_IPV6_EXT_NUM && nexthdr != NEXTHDR_ICMP; i++) {
         if (nexthdr == NEXTHDR_HOP || nexthdr == NEXTHDR_ROUTING || nexthdr == NEXTHDR_DEST) {
-            struct ipv6_opt_hdr *opthdr;
-            if (VALIDATE_READ_DATA(skb, &opthdr, l4_offset, sizeof(*opthdr))) {
-                return TC_ACT_UNSPEC;
+            if ((u64)l4_offset + sizeof(struct ipv6_opt_hdr) > MAX_OFFSET) return TC_ACT_UNSPEC;
+            struct ipv6_opt_hdr *opthdr = (struct ipv6_opt_hdr *)(data + l4_offset);
+            if ((char *)(opthdr + 1) > data_end) {
+                __u32 need = l4_offset + sizeof(*opthdr);
+                if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_UNSPEC;
+                data = (char *)(long)skb->data;
+                data_end = (char *)(long)skb->data_end;
+                opthdr = (struct ipv6_opt_hdr *)(data + l4_offset);
+                if ((char *)(opthdr + 1) > data_end) return TC_ACT_UNSPEC;
             }
             l4_offset += (opthdr->hdrlen + 1) * 8;
             nexthdr = opthdr->nexthdr;
             continue;
         }
         if (nexthdr == NEXTHDR_FRAGMENT) {
-            struct frag_hdr *frag_hdr;
-            if (VALIDATE_READ_DATA(skb, &frag_hdr, l4_offset, sizeof(*frag_hdr))) {
-                return TC_ACT_UNSPEC;
+            if ((u64)l4_offset + sizeof(struct frag_hdr) > MAX_OFFSET) return TC_ACT_UNSPEC;
+            struct frag_hdr *frag_hdr = (struct frag_hdr *)(data + l4_offset);
+            if ((char *)(frag_hdr + 1) > data_end) {
+                __u32 need = l4_offset + sizeof(*frag_hdr);
+                if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_UNSPEC;
+                data = (char *)(long)skb->data;
+                data_end = (char *)(long)skb->data_end;
+                frag_hdr = (struct frag_hdr *)(data + l4_offset);
+                if ((char *)(frag_hdr + 1) > data_end) return TC_ACT_UNSPEC;
             }
             u16 raw_off = bpf_ntohs(frag_hdr->frag_off);
             u16 frag_off = raw_off & IPV6_FRAG_OFFSET;
@@ -155,9 +173,15 @@ int tc_lan_dao(struct __sk_buff *skb) {
     // DAD NS uses the unspecified source address (RFC 4862)
     if (!is_unspecified_ip6(saddr)) return TC_ACT_UNSPEC;
 
-    struct icmp6hdr *icmp6h;
-    if (VALIDATE_READ_DATA(skb, &icmp6h, l4_offset, sizeof(*icmp6h))) {
-        return TC_ACT_UNSPEC;
+    if ((u64)l4_offset + sizeof(struct icmp6hdr) > MAX_OFFSET) return TC_ACT_UNSPEC;
+    struct icmp6hdr *icmp6h = (struct icmp6hdr *)(data + l4_offset);
+    if ((char *)(icmp6h + 1) > data_end) {
+        __u32 need = l4_offset + sizeof(*icmp6h);
+        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_UNSPEC;
+        data = (char *)(long)skb->data;
+        data_end = (char *)(long)skb->data_end;
+        icmp6h = (struct icmp6hdr *)(data + l4_offset);
+        if ((char *)(icmp6h + 1) > data_end) return TC_ACT_UNSPEC;
     }
     if (icmp6h->icmp6_type != ICMPV6_NEIGHBOR_SOLICIT || icmp6h->icmp6_code != 0) {
         return TC_ACT_UNSPEC;
@@ -205,10 +229,10 @@ int tc_lan_dao(struct __sk_buff *skb) {
     if (current_l3_offset == 0) return TC_ACT_UNSPEC;
 
     // Source link-layer address comes from the Ethernet header
-    data = (void *)(long)skb->data;
-    data_end = (void *)(long)skb->data_end;
-    struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end) return TC_ACT_UNSPEC;
+    data = (char *)(long)skb->data;
+    data_end = (char *)(long)skb->data_end;
+    struct ethhdr *eth = (struct ethhdr *)data;
+    if ((char *)(eth + 1) > data_end) return TC_ACT_UNSPEC;
     if (!is_target_solicited_node_mac(eth->h_dest, target)) return TC_ACT_UNSPEC;
 
     struct mac_key_v6 key = {0};

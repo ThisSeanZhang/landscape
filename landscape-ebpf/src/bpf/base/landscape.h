@@ -46,33 +46,6 @@
 
 #define MAX_OFFSET 20480
 
-static __always_inline int _validate_read(struct __sk_buff *skb, void **hdr_, u32 offset, u32 len) {
-    /* one 64-bit bound: the add cannot overflow, len is always sizeof()-small */
-    if (unlikely((u64)offset + len > MAX_OFFSET)) return 1;
-
-    void *data = (void *)(long)skb->data;
-    void *data_end = (void *)(long)skb->data_end;
-    void *hdr = data + offset;
-
-    barrier_var(hdr);
-    if (likely(hdr + len <= data_end)) {
-        *hdr_ = hdr;
-        return 0;
-    }
-
-    if (bpf_skb_pull_data(skb, offset + len)) return 1;
-
-    data = (void *)(long)skb->data;
-    hdr = data + offset;
-
-    if (hdr + len > (void *)(long)skb->data_end) return 1;
-
-    *hdr_ = hdr;
-    return 0;
-}
-
-#define VALIDATE_READ_DATA(skb, hdr, off, len) (_validate_read(skb, (void **)hdr, off, len))
-
 struct ipv4_lpm_key {
     __u32 prefixlen;
     __be32 addr;
@@ -147,11 +120,12 @@ static __always_inline bool is_zero_mac(const u8 *mac) {
 }
 
 static __always_inline int is_broadcast_mac(struct __sk_buff *skb) {
-    u8 *mac;
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    barrier_var(data);
+    if (data + 6 > data_end) return TC_ACT_UNSPEC;
 
-    if (VALIDATE_READ_DATA(skb, &mac, 0, 6)) {
-        return TC_ACT_UNSPEC;
-    }
+    u8 *mac = (u8 *)data;
 
     // 判断是否是广播地址 ff:ff:ff:ff:ff:ff
     bool is_broadcast = mac[0] == 0xff && mac[1] == 0xff && mac[2] == 0xff && mac[3] == 0xff &&
@@ -276,12 +250,15 @@ static __always_inline bool ip_addr_equal_x(const struct in6_addr *a, const stru
 
 static __always_inline int current_l3_protocol(struct __sk_buff *skb, u32 current_l3_offset,
                                                u8 *l3_protocol) {
-    if (current_l3_offset != 0) {
-        struct ethhdr *eth;
-        if (VALIDATE_READ_DATA(skb, &eth, 0, sizeof(*eth))) {
-            return TC_ACT_SHOT;
-        }
+    u32 need = current_l3_offset != 0 ? sizeof(struct ethhdr) : 1;
 
+    void *data = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    barrier_var(data);
+    if (data + need > data_end) return TC_ACT_SHOT;
+
+    if (current_l3_offset != 0) {
+        struct ethhdr *eth = (struct ethhdr *)data;
         if (eth->h_proto == ETH_IPV4) {
             *l3_protocol = LANDSCAPE_IPV4_TYPE;
         } else if (eth->h_proto == ETH_IPV6) {
@@ -290,11 +267,7 @@ static __always_inline int current_l3_protocol(struct __sk_buff *skb, u32 curren
             return TC_ACT_UNSPEC;
         }
     } else {
-        u8 *p_version;
-        if (VALIDATE_READ_DATA(skb, &p_version, 0, sizeof(*p_version))) {
-            return TC_ACT_SHOT;
-        }
-        u8 ip_version = (*p_version) >> 4;
+        u8 ip_version = (*(u8 *)data) >> 4;
         if (ip_version == 4) {
             *l3_protocol = LANDSCAPE_IPV4_TYPE;
         } else if (ip_version == 6) {
