@@ -11,12 +11,20 @@ use libbpf_rs::{
 use crate::maps::Inet6Bytes;
 use crate::tests::{
     helper::wire::TproxyPacketTestResult,
-    pkt::{build_ipv4_tcp_eth, build_ipv4_udp_eth, build_ipv6_tcp_eth, build_ipv6_udp_eth},
+    pkt::{
+        build_icmpv4_echo_eth, build_ipv4_tcp_eth, build_ipv4_udp_eth, build_ipv6_tcp_eth,
+        build_ipv6_udp_eth,
+    },
     test_tproxy_packet::TestTproxyPacketSkelBuilder,
 };
 use zerocopy::FromBytes;
 
 const MAP_KEY: u32 = 0;
+
+// `tproxy_ingress` cannot be exercised through `BPF_PROG_TEST_RUN`: the
+// kernel's `convert___skb_to_skb()` rejects non-zero `vlan_present` / `vlan_tci`
+// in `ctx_in`, so the landscape VLAN tag cannot be injected. These tests cover
+// the packet parser; ingress-level VLAN behaviour needs a live TC/veth test.
 
 fn run_tproxy_packet_test(payload: Vec<u8>) -> TproxyPacketTestResult {
     let builder = TestTproxyPacketSkelBuilder::default();
@@ -43,7 +51,9 @@ mod tests {
     use super::*;
 
     const TC_ACT_OK: i32 = 0;
+    const TC_ACT_UNSPEC: i32 = -1;
     const IPPROTO_TCP: u8 = 6;
+    const IPPROTO_ICMP: u8 = 1;
     const IPPROTO_UDP: u8 = 17;
     const LANDSCAPE_IPV4_TYPE: u8 = 0;
     const LANDSCAPE_IPV6_TYPE: u8 = 1;
@@ -96,5 +106,23 @@ mod tests {
         assert_eq!(result.view.l4_protocol, IPPROTO_UDP);
         assert_eq!(u16::from_be(result.pair.src_port), 5000);
         assert_eq!(u16::from_be(result.pair.dst_port), 6000);
+    }
+
+    #[test]
+    fn tproxy_packet_icmpv4_classified_without_inner_parse() {
+        let result = run_tproxy_packet_test(build_icmpv4_echo_eth());
+        assert_eq!(result.scan_ret, TC_ACT_OK);
+        assert_eq!(result.read_ret, TC_ACT_UNSPEC);
+        assert_eq!(result.view.l4_protocol, IPPROTO_ICMP);
+    }
+
+    #[test]
+    fn tproxy_packet_unsupported_protocol_returns_unspec() {
+        let mut pkt = build_icmpv4_echo_eth();
+        pkt[14 + 9] = 47;
+        let result = run_tproxy_packet_test(pkt);
+        assert_eq!(result.scan_ret, TC_ACT_OK);
+        assert_eq!(result.read_ret, TC_ACT_UNSPEC);
+        assert_eq!(result.view.l4_protocol, 47);
     }
 }
