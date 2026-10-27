@@ -2,6 +2,7 @@
 
 #include <bpf/bpf_helpers.h>
 
+#include "base/tproxy.h"
 #include "tproxy/tproxy_packet.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -36,4 +37,10 @@ int test_tproxy_packet(struct __sk_buff *skb) {
 
     bpf_map_update_elem(&tproxy_packet_test_result_map, &key, &result, BPF_ANY);
     return result.read_ret;
+}
+
+SEC("tc")
+int test_tproxy_vlan_push(struct __sk_buff *skb) {
+    int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, 0x0c23);
+    return ret ? TC_ACT_SHOT : TC_ACT_OK;
 }
