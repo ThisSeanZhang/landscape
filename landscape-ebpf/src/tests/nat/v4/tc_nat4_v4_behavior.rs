@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::AsRawFd;
 
 use etherparse::{
     IcmpEchoHeader, Icmpv4Type, IpFragOffset, IpHeaders, IpNumber, Ipv4Extensions, Ipv4Header,

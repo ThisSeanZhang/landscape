@@ -2,7 +2,7 @@ use std::mem::MaybeUninit;
 
 use etherparse::{
     Ethernet2Header, IcmpEchoHeader, Icmpv6Type, IpFragOffset, Ipv6FragmentHeader, Ipv6Header,
-    PacketBuilder, TcpHeader, TransportHeader, ether_type, ip_number,
+    PacketBuilder, TcpHeader, ether_type, ip_number,
 };
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,

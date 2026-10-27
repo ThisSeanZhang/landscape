@@ -1,6 +1,5 @@
 use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
-use std::os::fd::AsRawFd;
 
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
@@ -43,7 +42,6 @@ const UDP_TIMEOUT: u64 = 300_000_000_000;
 const DELETE_RETRY_INTERVAL: u64 = 100_000_000;
 const QUEUE_RETRY_INTERVAL: u64 = 500_000_000;
 
-const WAN_IP: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
 const LAN_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 100);
 const REMOTE_IP: Ipv4Addr = Ipv4Addr::new(50, 18, 88, 205);
 const LAN_PORT: u16 = 56186;
@@ -154,21 +152,6 @@ fn put_ct<M: MapCore>(map: &M, proto: u8, value: &types::napt_ct_value) {
     map.update(as_bytes(&key), as_bytes(value), MapFlags::ANY).unwrap();
 }
 
-fn push_queue<M: MapCore>(map: &M, port: u16, generation: u32) {
-    let mut slot = [0u8; 8];
-    slot[0..2].copy_from_slice(&port.to_be_bytes());
-    slot[4..8].copy_from_slice(&generation.to_ne_bytes());
-    let ret = unsafe {
-        libbpf_sys::bpf_map_update_elem(
-            map.as_fd().as_raw_fd(),
-            std::ptr::null(),
-            slot.as_ptr().cast(),
-            0,
-        )
-    };
-    assert_eq!(ret, 0, "queue push failed");
-}
-
 fn with_skel<R>(f: impl FnOnce(&TestNat4V4CtTimerSkel<'_>) -> R) -> R {
     let builder = TestNat4V4CtTimerSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
@@ -274,11 +257,6 @@ fn run_resolve(
 fn lookup_wan<M: MapCore>(map: &M, proto: u8) -> Option<types::napt_from_wan_value> {
     let key = wan_index(proto, NAT_PORT).to_ne_bytes();
     map.lookup(&key, MapFlags::ANY).unwrap().map(|bytes| read_unaligned(&bytes))
-}
-
-fn lookup_lan<M: MapCore>(map: &M, proto: u8) -> Option<types::napt_from_lan_value> {
-    let key = lan_key(proto);
-    map.lookup(as_bytes(&key), MapFlags::ANY).unwrap().map(|bytes| read_unaligned(&bytes))
 }
 
 fn assert_dynamic_mapping(skel: &TestNat4V4CtTimerSkel<'_>, state: u64, refs: u64) {

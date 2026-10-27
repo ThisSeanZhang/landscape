@@ -145,11 +145,26 @@ async fn doq_honours_bind_config_source_address() {
     assert_www_answer(&pool).await;
 }
 
+/// Pick a documentation-range source address that is not assigned locally.
+/// TEST-NET-1 can be present on a test host (landscape eBPF suites assign
+/// 192.0.2.0/24), so probe a few addresses and skip the test if every
+/// candidate is bound.
+fn unassignable_ipv4_source() -> Option<Ipv4Addr> {
+    [[192, 0, 2, 1], [192, 0, 2, 2], [198, 51, 100, 1], [203, 0, 113, 1]]
+        .into_iter()
+        .map(Ipv4Addr::from)
+        .find(|addr| std::net::UdpSocket::bind((*addr, 0)).is_err())
+}
+
 #[tokio::test]
 async fn doq_unassignable_bind_source_fails_fast() {
-    // 192.0.2.1 (TEST-NET-1) is not assigned to any local interface: the
-    // QUIC socket bind() fails locally, so the lookup must fail fast with a
-    // transport-level error instead of hanging or answering.
+    // An unassigned TEST-NET source makes the QUIC socket bind() fail
+    // locally, so the lookup must fail fast with a transport-level error
+    // instead of hanging or answering.
+    let Some(bind_addr) = unassignable_ipv4_source() else {
+        eprintln!("skipping: every TEST-NET probe address is assigned locally");
+        return;
+    };
     let tls = test_tls();
     let (port, _server) = spawn_tls_server(TlsProtocol::Quic, &tls).await;
     let upstream = DnsUpstreamConfig {
@@ -157,10 +172,7 @@ async fn doq_unassignable_bind_source_fails_fast() {
         mode: DnsUpstreamMode::Quic { domain: "ns.example.com".into() },
         ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
         port: Some(port),
-        bind_config: DnsBindConfig {
-            bind_addr4: Some(Ipv4Addr::new(192, 0, 2, 1)),
-            bind_addr6: None,
-        },
+        bind_config: DnsBindConfig { bind_addr4: Some(bind_addr), bind_addr6: None },
         ..Default::default()
     };
     let provider = MarkRuntimeProvider::new(0x8000, upstream.bind_config.clone());
