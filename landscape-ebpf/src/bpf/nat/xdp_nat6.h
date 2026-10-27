@@ -10,7 +10,7 @@
 #include "nat/nat_common.h"
 #include "nat/nat6_map_ops.h"
 #include "nat/nat6_ct_timer.h"
-#include "nat/nat_rodata.h"
+#include "nat/nat_rodata6.h"
 #include "nat/xdp_csum_helpers.h"
 #include "reader/xdp_nat_view.h"
 

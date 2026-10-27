@@ -1,13 +1,10 @@
-#ifndef __NAT_RODATA_H__
-#define __NAT_RODATA_H__
+#ifndef __NAT_RODATA6_H__
+#define __NAT_RODATA6_H__
 
 #include <vmlinux.h>
 
-// WAN-side address/prefix baked into the NAT objects at load time.
+// WAN-side prefix/address baked into the NAT objects at load time.
 // Zero means "unbound" and makes the lookup paths drop.
-
-// WAN IPv4 address, network byte order; 0 = unbound.
-const volatile u32 wan_ro_addr4 = 0;
 
 // First 8 bytes of the WAN IPv6 prefix, network order. A real prefix never
 // starts with 0, so b[0] == 0 means unbound.
@@ -32,4 +29,4 @@ const volatile union wan_addr6 wan_ro_addr6 = {{0}};
 // 0 means /64 or longer (see compute_npt_mask).
 const volatile u64 wan_ro_npt_mask = 0;
 
-#endif /* __NAT_RODATA_H__ */
+#endif /* __NAT_RODATA6_H__ */

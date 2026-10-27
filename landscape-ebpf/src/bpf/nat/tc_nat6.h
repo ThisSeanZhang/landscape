@@ -7,7 +7,7 @@
 #include "nat/nat_common.h"
 #include "nat/nat6_map_ops.h"
 #include "nat/nat6_ct_timer.h"
-#include "nat/nat_rodata.h"
+#include "nat/nat_rodata6.h"
 
 static __always_inline __u8 nat6_outer_protocol(const struct tc_nat_view *view) {
     return view->icmp_inner_l4_offset ? NEXTHDR_ICMP : view->l4_protocol;
@@ -329,10 +329,10 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(struct __sk_buf
             if (ct_value->is_allow_reuse == 0 && proto != NEXTHDR_ICMP) {
                 if (!ip_addr_equal_x(src_addr, &ct_value->trigger_addr) ||
                     view->sport != ct_value->trigger_port) {
-                    ld_from_wan_log("FLOW_ALLOW_REUSE MARK not set, DROP PACKET");
-                    ld_from_wan_log("src info: [%pI6]:%u", src_addr, bpf_ntohs(view->sport));
-                    ld_from_wan_log("trigger ip: [%pI6]:%u,", &ct_value->trigger_addr,
-                                    bpf_ntohs(ct_value->trigger_port));
+                    // ld_from_wan_log("FLOW_ALLOW_REUSE MARK not set, DROP PACKET");
+                    // ld_from_wan_log("src info: [%pI6]:%u", src_addr, bpf_ntohs(view->sport));
+                    // ld_from_wan_log("trigger ip: [%pI6]:%u,", &ct_value->trigger_addr,
+                    //                 bpf_ntohs(ct_value->trigger_port));
                     return TC_ACT_SHOT;
                 }
             }
