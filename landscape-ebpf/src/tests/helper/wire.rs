@@ -58,6 +58,25 @@ pub(crate) struct TcReadHead6Result {
     pub _pad: [u8; 1],
 }
 
+/// C side `xdp_reader_test_result` (test_xdp_read_head6).
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct XdpReadHead6Result {
+    pub read_ret: i32,
+    pub src_addr: [u8; 16],
+    pub dst_addr: [u8; 16],
+    pub l4_offset: u16,
+    pub sport: u16,
+    pub dport: u16,
+    pub icmp_inner_l4_offset: u16,
+    pub l4_protocol: u8,
+    pub tcp_phase: u8,
+    pub frag_code: u8,
+    pub ports_valid: u8,
+    pub icmp_inner_l4_protocol: u8,
+    pub _pad: [u8; 3],
+}
+
 // =============================================================================
 // tproxy / route packet
 // =============================================================================
@@ -331,5 +350,25 @@ mod tests {
         assert_field!(TcReadHead6Result, skel::reader_test_result, frag_code);
         assert_field!(TcReadHead6Result, skel::reader_test_result, ports_valid);
         assert_field!(TcReadHead6Result, skel::reader_test_result, icmp_inner_l4_protocol);
+    }
+
+    #[test]
+    #[cfg(feature = "test-reader")]
+    fn xdp_read_head6_result_layout_matches_skel() {
+        use crate::tests::test_xdp_read_head6_skel::types as skel;
+
+        assert_size!(XdpReadHead6Result, skel::xdp_reader_test_result);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, read_ret);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, src_addr);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, dst_addr);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, l4_offset);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, sport);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, dport);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, icmp_inner_l4_offset);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, l4_protocol);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, tcp_phase);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, frag_code);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, ports_valid);
+        assert_field!(XdpReadHead6Result, skel::xdp_reader_test_result, icmp_inner_l4_protocol);
     }
 }

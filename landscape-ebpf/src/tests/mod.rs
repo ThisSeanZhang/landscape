@@ -69,6 +69,11 @@ pub(crate) mod test_tc_read_head6_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tc_read_head6.skel.rs"));
 }
 
+#[cfg(feature = "test-reader")]
+pub(crate) mod test_xdp_read_head6_skel {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_read_head6.skel.rs"));
+}
+
 #[cfg(feature = "test-nat")]
 pub(crate) mod test_xdp_nat4_modify_skel {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_nat4_modify.skel.rs"));

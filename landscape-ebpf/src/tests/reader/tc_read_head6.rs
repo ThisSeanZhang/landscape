@@ -60,7 +60,7 @@ fn run_reader_seq(payloads: &[&[u8]], direction: u32) -> Vec<TcReadHead6Result> 
     results
 }
 
-fn run_reader(payload: &[u8], direction: u32) -> TcReadHead6Result {
+pub(super) fn run_reader(payload: &[u8], direction: u32) -> TcReadHead6Result {
     run_reader_seq(&[payload], direction).remove(0)
 }
 
