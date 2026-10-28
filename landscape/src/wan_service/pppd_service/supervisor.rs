@@ -6,23 +6,35 @@ use arc_swap::ArcSwap;
 use futures::FutureExt;
 use landscape_common::service::ServiceHandle;
 use landscape_common::service::ServiceStatus;
+use landscape_common::utils::time::now_ms;
 use landscape_common::wan_link::{
     LinkStateHandle, PppdRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
 };
 
 use super::env::{PppIpv4State, PppdChild, PppdEnv, PppdTimings};
 
-impl From<&PppIpv4State> for PppdRuntime {
-    fn from(state: &PppIpv4State) -> Self {
-        match state {
-            PppIpv4State::Missing => PppdRuntime::Spawning,
-            PppIpv4State::Partial { local, peer, .. } => {
-                PppdRuntime::WaitingAddr { local: *local, peer: *peer }
-            }
-            PppIpv4State::Ready { local, peer, .. } => {
-                PppdRuntime::Online { local_ip: *local, peer_ip: *peer }
-            }
+fn pppd_runtime(state: &PppIpv4State, connected_at: Option<u64>) -> PppdRuntime {
+    match state {
+        PppIpv4State::Missing => PppdRuntime::Spawning,
+        PppIpv4State::Partial { local, peer, .. } => {
+            PppdRuntime::WaitingAddr { local: *local, peer: *peer }
         }
+        PppIpv4State::Ready { local, peer, .. } => PppdRuntime::Online {
+            local_ip: *local,
+            peer_ip: *peer,
+            connected_at: connected_at.unwrap_or_else(now_ms),
+        },
+    }
+}
+
+fn log_session_end(iface_name: &str, connected_at: &mut Option<u64>, reason: &str) {
+    if let Some(started_at) = connected_at.take() {
+        tracing::info!(
+            iface = iface_name,
+            connected_secs = now_ms().saturating_sub(started_at) / 1000,
+            reason,
+            "PPPD session ended"
+        );
     }
 }
 
@@ -273,6 +285,7 @@ async fn supervise_loop(
 
         swap_if_changed(&v4_runtime, V4Runtime::Pppd(PppdRuntime::Spawning));
 
+        let mut session_started_at: Option<u64> = None;
         let mut should_stop = false;
         loop {
             tokio::select! {
@@ -287,23 +300,33 @@ async fn supervise_loop(
                 }
                 _ = ticker.tick() => {
                     let state = env.poll_addr(&ppp_iface_name).await;
-                    if state.is_ready() && state != last_state {
-                        env.on_addr_ready(&state, as_router, &ppp_iface_name).await;
-                        if let (Some(session), PppIpv4State::Ready { ifindex, local, .. }) =
-                            (session.as_ref(), &state)
-                        {
-                            session.session_up(
-                                SessionIface::new(*ifindex, ppp_iface_name.clone(), None),
-                                Some(WanV4Lease::new(*ifindex, *local)),
-                            );
+                    if state.is_ready() {
+                        if session_started_at.is_none() {
+                            session_started_at = Some(now_ms());
                         }
+                        if state != last_state {
+                            env.on_addr_ready(&state, as_router, &ppp_iface_name).await;
+                            if let (Some(session), PppIpv4State::Ready { ifindex, local, .. }) =
+                                (session.as_ref(), &state)
+                            {
+                                session.session_up(
+                                    SessionIface::new(*ifindex, ppp_iface_name.clone(), None),
+                                    Some(WanV4Lease::new(*ifindex, *local)),
+                                );
+                            }
+                        }
+                    } else if session_started_at.is_some() {
+                        log_session_end(&ppp_iface_name, &mut session_started_at, "address lost");
                     }
 
                     if health.observe(&state) {
                         retry.note_healthy();
                     }
                     last_state = state;
-                    swap_if_changed(&v4_runtime, V4Runtime::Pppd(PppdRuntime::from(&last_state)));
+                    swap_if_changed(
+                        &v4_runtime,
+                        V4Runtime::Pppd(pppd_runtime(&last_state, session_started_at)),
+                    );
 
                     if !health.is_healthy() && tokio::time::Instant::now() >= startup_deadline {
                         tracing::warn!(
@@ -318,6 +341,7 @@ async fn supervise_loop(
         }
 
         stop_pppd_process_async(child.as_mut(), &ppp_iface_name, &timings).await;
+        log_session_end(&ppp_iface_name, &mut session_started_at, "process exited");
 
         if let Some(session) = session.as_ref() {
             session.session_down();

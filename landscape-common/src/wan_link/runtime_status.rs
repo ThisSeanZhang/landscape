@@ -56,6 +56,9 @@ pub enum PppoeRuntime {
         #[cfg_attr(feature = "openapi", schema(value_type = String))]
         peer_ip: Ipv4Addr,
         session_id: u16,
+        /// Unix milliseconds when this session was established.
+        #[cfg_attr(feature = "openapi", schema(value_type = f64))]
+        connected_at: u64,
     },
     RedialBackoff {
         retry_count: u64,
@@ -85,6 +88,9 @@ pub enum PppdRuntime {
         local_ip: Ipv4Addr,
         #[cfg_attr(feature = "openapi", schema(value_type = String))]
         peer_ip: Ipv4Addr,
+        /// Unix milliseconds when this session was established.
+        #[cfg_attr(feature = "openapi", schema(value_type = f64))]
+        connected_at: u64,
     },
     RestartBackoff {
         failure_count: u32,

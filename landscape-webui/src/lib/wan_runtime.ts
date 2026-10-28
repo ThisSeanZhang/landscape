@@ -100,18 +100,19 @@ function formatPppoe(
   mask: RuntimeMask,
 ): RuntimeDisplay {
   const v = rt as unknown as {
-    online?: { local_ip: string; peer_ip: string; session_id: number };
+    online?: {
+      local_ip: string;
+      peer_ip: string;
+      session_id: number;
+      connected_at: number;
+    };
     redial_backoff?: { retry_count: number; retry_in_secs: number };
     dialing?: null;
     negotiating?: null;
   };
   if (v.online !== undefined) {
     return {
-      text: t("topology.panel.runtime_v4_pppoe_online", {
-        local: mask(v.online.local_ip),
-        peer: mask(v.online.peer_ip),
-        session: `0x${v.online.session_id.toString(16)}`,
-      }),
+      text: mask(v.online.local_ip),
       tone: "success",
     };
   }
@@ -140,16 +141,13 @@ function formatPppd(
 ): RuntimeDisplay {
   const v = rt as unknown as {
     waiting_addr?: { local: string | null; peer: string | null };
-    online?: { local_ip: string; peer_ip: string };
+    online?: { local_ip: string; peer_ip: string; connected_at: number };
     restart_backoff?: { failure_count: number; retry_in_secs: number };
     spawning?: null;
   };
   if (v.online !== undefined) {
     return {
-      text: t("topology.panel.runtime_v4_pppd_online", {
-        local: mask(v.online.local_ip),
-        peer: mask(v.online.peer_ip),
-      }),
+      text: mask(v.online.local_ip),
       tone: "success",
     };
   }

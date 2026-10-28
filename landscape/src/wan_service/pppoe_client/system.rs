@@ -30,6 +30,7 @@ pub(crate) struct SessionHandle {
     pub(crate) ipv6cp_client_linklocal: Option<std::net::Ipv6Addr>,
     prev_ipv6_linklocal: Option<std::net::Ipv6Addr>,
     iface_name: String,
+    connected_at: std::time::Instant,
 }
 
 impl SessionHandle {
@@ -92,7 +93,12 @@ impl SessionHandle {
         // the SKB fallback state automatically.
         drop(self._session_guard);
 
-        tracing::info!("PPPoE system state cleaned up for iface={}", self.iface_name);
+        tracing::info!(
+            iface = %self.iface_name,
+            %self.link_id,
+            connected_secs = self.connected_at.elapsed().as_secs(),
+            "PPPoE system state cleaned up"
+        );
     }
 }
 
@@ -299,6 +305,7 @@ pub(crate) async fn create_session(
         ipv6cp_client_linklocal: client_linklocal_v6,
         prev_ipv6_linklocal: prev_linklocal_v6,
         iface_name: iface_name.clone(),
+        connected_at: std::time::Instant::now(),
     })
 }
 

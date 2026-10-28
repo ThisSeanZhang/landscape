@@ -5,6 +5,7 @@ use tokio::time::{Duration, Instant, sleep};
 
 use landscape_common::net_proto::ppp::{PPPOption, PointToPoint};
 use landscape_common::service::{ServiceHandle, ServiceStatus};
+use landscape_common::utils::time::now_ms;
 use landscape_common::wan_link::{
     LinkStateHandle, PppoeRuntime, SessionIface, V4Runtime, WanV4Lease, swap_if_changed,
 };
@@ -265,6 +266,7 @@ pub async fn run(
                         local_ip: nego_result.client_ip,
                         peer_ip: nego_result.server_ip,
                         session_id: lcp_result.session_id,
+                        connected_at: now_ms(),
                     }),
                 );
                 if let Some(session) = session.as_ref() {
