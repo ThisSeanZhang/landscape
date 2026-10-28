@@ -22,7 +22,7 @@
   eBPF arena 所需的 `BPF_ADDR_SPACE_CAST`，内核 verifier 会以
   `Permission denied` 拒绝加载。
 
-系统依赖按 CI 安装（Debian 13）：
+系统依赖安装（Debian 13）：
 
 ```bash
 sudo apt-get update

@@ -18,22 +18,18 @@ env:
 jobs:
   linux-build:
     runs-on: ${{ matrix.settings.host }}
-    container:
-      image: rust:1.98.0-trixie
-    env:
-      CLANG: clang-19
     strategy:
       fail-fast: false
       matrix:
         settings:
-          - host: ubuntu-22.04
+          - host: ubuntu-24.04
             architecture: x86_64
             target: x86_64-unknown-linux-gnu
             toolchain: 1.98.0
             bindgen: false
             gateway: true
 
-          - host: ubuntu-22.04-arm
+          - host: ubuntu-24.04-arm
             architecture: aarch64
             target: aarch64-unknown-linux-gnu
             toolchain: 1.98.0
@@ -44,11 +40,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install pinned Clang 19 toolchain
-        run: ./scripts/setup_debian13_build.sh
+      - name: Install build toolchain
+        run: ./scripts/setup_ubuntu_build.sh
 
       - name: Configure sccache
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || 'on');
@@ -58,7 +54,7 @@ jobs:
       - name: Setup sccache
         run: |
           sccache_arch=${{ matrix.settings.architecture }}
-          wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
+          wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-${sccache_arch}-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
@@ -73,8 +69,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/registry
+            ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -136,10 +132,6 @@ jobs:
   linux-cross-build:
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/build-all'
     runs-on: ubuntu-24.04
-    container:
-      image: rust:1.98.0-trixie
-    env:
-      CLANG: clang-19
     strategy:
       fail-fast: false
       matrix:
@@ -178,11 +170,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install pinned Clang 19 toolchain
-        run: ./scripts/setup_debian13_build.sh
+      - name: Install build toolchain
+        run: ./scripts/setup_ubuntu_build.sh
 
       - name: Configure sccache
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || 'on');
@@ -191,7 +183,7 @@ jobs:
 
       - name: Setup sccache
         run: |
-          wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-x86_64-unknown-linux-musl.tar.gz | tar -xzf - -C /usr/local/bin/ --strip-components=1
+          wget -qO- https://github.com/mozilla/sccache/releases/download/${sccache_version}/sccache-${sccache_version}-x86_64-unknown-linux-musl.tar.gz | sudo tar -xzf - -C /usr/local/bin/ --strip-components=1
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
@@ -206,8 +198,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/registry
+            ~/.cargo/git
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -222,7 +214,8 @@ jobs:
 
       - name: Setup zig and cargo-zigbuild
         run: |
-          pip3 install --break-system-packages ziglang==0.16.0
+          python3 -m pip install --user --break-system-packages ziglang==0.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           cargo install --locked cargo-zigbuild --version 0.23.4
 
       - name: Build binaries

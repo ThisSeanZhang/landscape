@@ -22,7 +22,7 @@ Do not use `build.sh` for every edit. It rebuilds the frontend, ensures API bind
   BPF sources but do not emit `BPF_ADDR_SPACE_CAST`, so the kernel verifier
   rejects the resulting programs with `Permission denied`.
 
-Install the system packages used by CI (Debian 13):
+Install the system packages (Debian 13):
 
 ```bash
 sudo apt-get update
