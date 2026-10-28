@@ -1,12 +1,12 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
-use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig};
+use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies};
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::service::ServiceStatus;
@@ -27,7 +27,7 @@ use crate::{
     },
     server::{
         MetricSenderState,
-        flow_state::{FlowDnsEntry, FlowDnsPhase, FlowDnsRuntime},
+        flow_state::{FlowDependencySelector, FlowDnsEntry, FlowDnsPhase, FlowDnsRuntime},
         handler::{DnsRequestHandler, HandlerDeps},
     },
 };
@@ -168,7 +168,12 @@ impl LandscapeDnsServer {
             //(锁序 map → refresh;refresh 临界区内不取 map 锁,无死锁)
             let _refresh_guard = entry.refresh_lock.lock().await;
             let current = entry.snapshot();
-            entry.store(current.transition(FlowDnsPhase::Stopped, None, None));
+            entry.store(current.transition(
+                FlowDnsPhase::Stopped,
+                current.dependencies.clone(),
+                None,
+                None,
+            ));
         }
     }
 
@@ -200,6 +205,24 @@ impl LandscapeDnsServer {
         flow_server.values().any(|entry| {
             entry.snapshot().runtime.as_ref().is_some_and(|runtime| !runtime.token.is_cancelled())
         })
+    }
+
+    /// Flow ids currently tracked by the DNS runtime, including flows whose
+    /// listener is stopped or failed.
+    pub async fn tracked_flow_ids(&self) -> HashSet<u32> {
+        let flow_server = self.flow_dns_server.lock().await;
+        flow_server.keys().copied().collect()
+    }
+
+    /// Flow ids whose last applied configuration depends on the given resource.
+    pub async fn flows_matching_dependencies(&self, selector: &FlowDependencySelector) -> Vec<u32> {
+        let flow_server = self.flow_dns_server.lock().await;
+        flow_server
+            .iter()
+            .filter_map(|(flow_id, entry)| {
+                selector.matches(&entry.snapshot().dependencies).then_some(*flow_id)
+            })
+            .collect()
     }
 
     pub fn update_runtime_config(&self, cache_runtime: CacheRuntimeConfig) {
@@ -241,11 +264,13 @@ impl LandscapeDnsServer {
         flow_id: u32,
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
+        dependencies: FlowDnsDependencies,
     ) {
         self.refresh_flow_runtime_kind(
             flow_id,
             redirect_engine,
             resolve_engine,
+            dependencies,
             FlowRuntimeRefreshKind::Full,
         )
         .await;
@@ -256,6 +281,7 @@ impl LandscapeDnsServer {
         flow_id: u32,
         redirect_engine: RedirectEngine,
         resolve_engine: ResolveEngine,
+        dependencies: FlowDnsDependencies,
         kind: FlowRuntimeRefreshKind,
     ) {
         let entry = self.get_or_create_entry(flow_id).await;
@@ -278,7 +304,12 @@ impl LandscapeDnsServer {
                     runtime.handler.renew_redirect_rules(redirect_engine).await;
                 }
             }
-            entry.store(current.transition(FlowDnsPhase::Running, Some(runtime.clone()), None));
+            entry.store(current.transition(
+                FlowDnsPhase::Running,
+                dependencies,
+                Some(runtime.clone()),
+                None,
+            ));
             return;
         }
 
@@ -295,13 +326,14 @@ impl LandscapeDnsServer {
         );
         let Some(run) = self.current_run() else {
             tracing::debug!("[flow: {flow_id}]: dns service not running, skip listener build");
-            entry.store(current.transition(FlowDnsPhase::Stopped, None, None));
+            entry.store(current.transition(FlowDnsPhase::Stopped, dependencies, None, None));
             return;
         };
-        entry.store(current.transition(FlowDnsPhase::Starting, None, None));
+        entry.store(current.transition(FlowDnsPhase::Starting, dependencies.clone(), None, None));
         let Some(runtime) = self.build_flow_runtime(flow_id, handler, &run).await else {
             let failed = entry.snapshot().transition(
                 FlowDnsPhase::Failed,
+                dependencies,
                 None,
                 Some("failed to start DNS listener".to_string()),
             );
@@ -314,8 +346,12 @@ impl LandscapeDnsServer {
             return;
         };
 
-        let next =
-            entry.snapshot().transition(FlowDnsPhase::Running, Some(Arc::new(runtime)), None);
+        let next = entry.snapshot().transition(
+            FlowDnsPhase::Running,
+            dependencies,
+            Some(Arc::new(runtime)),
+            None,
+        );
         entry.store(next);
     }
 
@@ -477,6 +513,7 @@ mod tests {
             let runtime = FlowDnsRuntime { handler, token: CancellationToken::new() };
             entry.store(entry.snapshot().transition(
                 FlowDnsPhase::Running,
+                FlowDnsDependencies::default(),
                 Some(Arc::new(runtime)),
                 None,
             ));
@@ -525,6 +562,7 @@ mod tests {
                 flow_id,
                 RedirectEngine::default(),
                 ResolveEngine::default(),
+                FlowDnsDependencies::default(),
                 FlowRuntimeRefreshKind::Full,
             )
             .await;
@@ -547,12 +585,54 @@ mod tests {
                     1,
                     RedirectEngine::default(),
                     ResolveEngine::default(),
+                    FlowDnsDependencies::default(),
                     FlowRuntimeRefreshKind::ResolveOnly,
                 )
                 .await;
             let runtime = entry.snapshot().runtime.clone().unwrap();
             assert!(!runtime.token.is_cancelled());
             assert!(server.has_live_flow_runtime().await);
+        });
+    }
+
+    #[test]
+    fn flow_dependencies_are_stored_and_queryable() {
+        run_async_test(async {
+            let server = test_dns_server();
+            let upstream_id = uuid::Uuid::new_v4();
+            let dependencies = FlowDnsDependencies {
+                upstream_ids: HashSet::from([upstream_id]),
+                ..Default::default()
+            };
+
+            server
+                .refresh_flow_runtime_kind(
+                    1,
+                    RedirectEngine::default(),
+                    ResolveEngine::default(),
+                    dependencies.clone(),
+                    FlowRuntimeRefreshKind::Full,
+                )
+                .await;
+
+            assert_eq!(server.tracked_flow_ids().await, HashSet::from([1]));
+            assert_eq!(
+                server
+                    .flows_matching_dependencies(&FlowDependencySelector::Upstreams(HashSet::from(
+                        [upstream_id]
+                    )))
+                    .await,
+                vec![1]
+            );
+            assert!(
+                server
+                    .flows_matching_dependencies(&FlowDependencySelector::Upstreams(HashSet::from(
+                        [uuid::Uuid::new_v4()]
+                    )))
+                    .await
+                    .is_empty()
+            );
+            assert_eq!(server.get_entry(1).await.unwrap().snapshot().dependencies, dependencies);
         });
     }
 

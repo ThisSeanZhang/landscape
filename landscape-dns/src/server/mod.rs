@@ -12,6 +12,7 @@ pub(crate) mod snapshot;
 pub(crate) mod traits;
 
 pub use builder::EngineBuilder;
+pub use flow_state::FlowDependencySelector;
 pub use service::{DnsServiceDeps, FlowRuntimeRefreshKind, LandscapeDnsServer};
 
 pub(crate) type MetricSenderState = Arc<ArcSwapOption<mpsc::Sender<DnsMetricEvent>>>;

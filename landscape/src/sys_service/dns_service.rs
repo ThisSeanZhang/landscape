@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -10,7 +10,7 @@ use landscape_common::{
     config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
     dns::redirect::DynamicDnsRedirectScope,
-    dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies},
+    dns::{CacheRuntimeConfig, DohRuntimeConfig},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
     metric::dns::DnsMetricEvent,
@@ -25,7 +25,10 @@ use landscape_dns::{
     listener::{DohTimeouts, EffectiveDohListenerConfig},
     prepare_system_dns,
     resolve::LocalDnsAnswerProvider,
-    server::{DnsServiceDeps, EngineBuilder, FlowRuntimeRefreshKind, LandscapeDnsServer},
+    server::{
+        DnsServiceDeps, EngineBuilder, FlowDependencySelector, FlowRuntimeRefreshKind,
+        LandscapeDnsServer,
+    },
 };
 use rustls::server::ResolvesServerCert;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
@@ -82,7 +85,6 @@ pub struct LandscapeDnsService {
     dns_redirect_rule_service: DNSRedirectService,
     dns_upstream_service: DnsUpstreamService,
     engine_builder: EngineBuilder,
-    flow_dependencies: Arc<tokio::sync::RwLock<HashMap<u32, FlowDnsDependencies>>>,
 }
 
 impl LandscapeDnsService {
@@ -148,7 +150,6 @@ impl LandscapeDnsService {
             dns_redirect_rule_service,
             dns_upstream_service,
             engine_builder,
-            flow_dependencies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
         // 创建即视为进入运行状态(server::new 已初始化运行):直接刷新各
         // flow 监听;状态由 `status_summary` 从运行资源投影,无需另行汇报
@@ -191,22 +192,15 @@ impl LandscapeDnsService {
                             .await;
                     }
                     DnsEvent::DynamicRedirectsChanged { flow_id: None, source_id } => {
-                        let flow_ids = dns_service_clone
-                            .collect_dependent_flows(|deps| {
-                                deps.dynamic_redirect_sources.contains(&source_id)
-                            })
+                        let refreshed = dns_service_clone
+                            .refresh_dependent_flows(
+                                FlowDependencySelector::DynamicRedirectSource(source_id),
+                                FlowRuntimeRefreshKind::RedirectOnly,
+                            )
                             .await;
-
-                        if flow_ids.is_empty() {
+                        if refreshed == 0 {
                             dns_service_clone
                                 .refresh_all_flows_kind(FlowRuntimeRefreshKind::RedirectOnly)
-                                .await;
-                        } else {
-                            dns_service_clone
-                                .refresh_flow_ids_kind(
-                                    flow_ids,
-                                    FlowRuntimeRefreshKind::RedirectOnly,
-                                )
                                 .await;
                         }
                     }
@@ -215,25 +209,19 @@ impl LandscapeDnsService {
                         // Unconditionally drop pooled resolvers for the changed
                         // upstreams so the refresh below rebuilds them.
                         dns_service_clone.engine_builder.invalidate_upstreams(&upstream_ids);
-                        let flow_ids = dns_service_clone
-                            .collect_dependent_flows(|deps| {
-                                deps.upstream_ids
-                                    .iter()
-                                    .any(|upstream_id| upstream_ids.contains(upstream_id))
-                            })
-                            .await;
                         dns_service_clone
-                            .refresh_flow_ids_kind(flow_ids, FlowRuntimeRefreshKind::ResolveOnly)
+                            .refresh_dependent_flows(
+                                FlowDependencySelector::Upstreams(upstream_ids),
+                                FlowRuntimeRefreshKind::ResolveOnly,
+                            )
                             .await;
                     }
                     DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) } => {
-                        let flow_ids = dns_service_clone
-                            .collect_dependent_flows(|deps| {
-                                deps.geo_keys.iter().any(|key| changed_keys.contains(key))
-                            })
-                            .await;
                         dns_service_clone
-                            .refresh_flow_ids_kind(flow_ids, FlowRuntimeRefreshKind::Full)
+                            .refresh_dependent_flows(
+                                FlowDependencySelector::GeoKeys(changed_keys),
+                                FlowRuntimeRefreshKind::Full,
+                            )
                             .await;
                     }
                     DnsEvent::FlowUpdated => {
@@ -345,10 +333,7 @@ impl LandscapeDnsService {
                 DynamicDnsRedirectScope::Global => None,
             })
             .collect::<HashSet<_>>();
-        let tracked_flow_ids = {
-            let dependencies = self.flow_dependencies.read().await;
-            dependencies.keys().copied().collect::<HashSet<_>>()
-        };
+        let tracked_flow_ids = self.dns_service.tracked_flow_ids().await;
         let mut flow_ids = flow_rules.keys().copied().collect::<HashSet<_>>();
         flow_ids.extend(tracked_flow_ids);
         flow_ids.extend(redirect_flow_ids);
@@ -370,6 +355,17 @@ impl LandscapeDnsService {
         for flow_id in flow_ids {
             self.refresh_flow_kind(flow_id, kind).await;
         }
+    }
+
+    async fn refresh_dependent_flows(
+        &self,
+        selector: FlowDependencySelector,
+        kind: FlowRuntimeRefreshKind,
+    ) -> usize {
+        let flow_ids = self.dns_service.flows_matching_dependencies(&selector).await;
+        let count = flow_ids.len();
+        self.refresh_flow_ids_kind(flow_ids, kind).await;
+        count
     }
 
     async fn refresh_flow_kind(&self, flow_id: u32, kind: FlowRuntimeRefreshKind) {
@@ -403,30 +399,13 @@ impl LandscapeDnsService {
             )
             .await;
 
-        self.store_flow_dependencies(flow_id, dependencies).await;
         self.dns_service
-            .refresh_flow_runtime_kind(flow_id, redirect_engine, resolve_engine, kind)
+            .refresh_flow_runtime_kind(flow_id, redirect_engine, resolve_engine, dependencies, kind)
             .await;
         tracing::info!(
             "[flow_id: {flow_id}] build and refresh DNS runtime: {:?}ms",
             time.elapsed().as_millis()
         );
-    }
-
-    async fn store_flow_dependencies(&self, flow_id: u32, dependencies: FlowDnsDependencies) {
-        self.flow_dependencies.write().await.insert(flow_id, dependencies);
-    }
-
-    async fn collect_dependent_flows<F>(&self, predicate: F) -> Vec<u32>
-    where
-        F: Fn(&FlowDnsDependencies) -> bool,
-    {
-        self.flow_dependencies
-            .read()
-            .await
-            .iter()
-            .filter_map(|(flow_id, dependencies)| predicate(dependencies).then_some(*flow_id))
-            .collect()
     }
 }
 

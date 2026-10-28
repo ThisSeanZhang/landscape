@@ -33,10 +33,10 @@ async fn main() -> std::io::Result<()> {
         GeoCacheDatabase::site_mem().await,
     )));
     let builder = EngineBuilder::new(registry);
-    let (redirect_engine, resolve_engine, _) =
+    let (redirect_engine, resolve_engine, dependencies) =
         builder.build_flow(0, vec![default_rule], vec![], vec![], vec![upstream]).await;
     println!("=============================================");
-    server.refresh_flow_runtime(0, redirect_engine, resolve_engine).await;
+    server.refresh_flow_runtime(0, redirect_engine, resolve_engine, dependencies).await;
 
     let _ = tokio::signal::ctrl_c().await;
 

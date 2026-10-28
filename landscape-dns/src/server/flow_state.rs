@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use arc_swap::ArcSwap;
+use landscape_common::{config_service::geo::GeoFileCacheKey, dns::FlowDnsDependencies};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::server::handler::DnsRequestHandler;
 
@@ -36,6 +38,7 @@ pub(crate) struct FlowDnsRuntime {
 pub(crate) struct FlowDnsSnapshot {
     pub(crate) flow_id: u32,
     pub(crate) phase: FlowDnsPhase,
+    pub(crate) dependencies: FlowDnsDependencies,
     pub(crate) runtime: Option<Arc<FlowDnsRuntime>>,
     pub(crate) last_error: Option<String>,
     pub(crate) revision: u64,
@@ -46,6 +49,7 @@ impl FlowDnsSnapshot {
         Self {
             flow_id,
             phase: FlowDnsPhase::Idle,
+            dependencies: FlowDnsDependencies::default(),
             runtime: None,
             last_error: None,
             revision: 0,
@@ -55,15 +59,42 @@ impl FlowDnsSnapshot {
     pub(crate) fn transition(
         &self,
         phase: FlowDnsPhase,
+        dependencies: FlowDnsDependencies,
         runtime: Option<Arc<FlowDnsRuntime>>,
         last_error: Option<String>,
     ) -> Self {
         Self {
             flow_id: self.flow_id,
             phase,
+            dependencies,
             runtime,
             last_error,
             revision: self.revision.wrapping_add(1),
+        }
+    }
+}
+
+/// Selects the flows whose last applied configuration references a changed
+/// resource.
+#[derive(Debug, Clone)]
+pub enum FlowDependencySelector {
+    GeoKeys(HashSet<GeoFileCacheKey>),
+    Upstreams(HashSet<Uuid>),
+    DynamicRedirectSource(String),
+}
+
+impl FlowDependencySelector {
+    pub(crate) fn matches(&self, dependencies: &FlowDnsDependencies) -> bool {
+        match self {
+            Self::GeoKeys(changed_keys) => {
+                dependencies.geo_keys.iter().any(|key| changed_keys.contains(key))
+            }
+            Self::Upstreams(changed_ids) => {
+                dependencies.upstream_ids.iter().any(|id| changed_ids.contains(id))
+            }
+            Self::DynamicRedirectSource(source_id) => {
+                dependencies.dynamic_redirect_sources.contains(source_id)
+            }
         }
     }
 }
