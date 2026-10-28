@@ -5,6 +5,7 @@ use landscape_common::metric::dns::DnsMetricEvent;
 use tokio::sync::mpsc;
 
 pub mod builder;
+pub(crate) mod flow_state;
 pub(crate) mod handler;
 pub(crate) mod service;
 pub(crate) mod snapshot;

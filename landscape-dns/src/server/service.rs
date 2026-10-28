@@ -27,6 +27,7 @@ use crate::{
     },
     server::{
         MetricSenderState,
+        flow_state::{FlowDnsEntry, FlowDnsPhase, FlowDnsRuntime},
         handler::{DnsRequestHandler, HandlerDeps},
     },
 };
@@ -48,7 +49,7 @@ pub struct LandscapeDnsServer {
     /// 当前运行(None = 已停止):flow 监听任务据此决定是否可以建立
     run: Arc<ArcSwapOption<DnsServiceRun>>,
     // internal handlers
-    flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowServerEntry>>>>,
+    flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowDnsEntry>>>>,
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
     pub local_resolver: Arc<LocalResolver>,
     // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
@@ -64,32 +65,11 @@ pub struct LandscapeDnsServer {
     socket_registrar: Arc<dyn FlowSocketRegistrar>,
 }
 
-struct FlowServerRuntime {
-    handler: DnsRequestHandler,
-    /// 本 flow 的监听 token(服务运行 token 的 child):bind 失败自我取消,
-    /// 服务停止随父取消;`has_live_flow_runtime`/`status_summary` 以其判活
-    token: CancellationToken,
-}
-
-struct FlowServerEntry {
-    refresh_lock: Mutex<()>,
-    runtime: Arc<ArcSwapOption<FlowServerRuntime>>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlowRuntimeRefreshKind {
     Full,
     ResolveOnly,
     RedirectOnly,
-}
-
-impl FlowServerEntry {
-    fn new() -> Self {
-        Self {
-            refresh_lock: Mutex::new(()),
-            runtime: Arc::new(ArcSwapOption::new(None)),
-        }
-    }
 }
 
 pub struct DnsServiceDeps {
@@ -187,7 +167,8 @@ impl LandscapeDnsServer {
             // 消除"清扫完成后再落入死 runtime"的残留竞态
             //(锁序 map → refresh;refresh 临界区内不取 map 锁,无死锁)
             let _refresh_guard = entry.refresh_lock.lock().await;
-            entry.runtime.store(None);
+            let current = entry.snapshot();
+            entry.store(current.transition(FlowDnsPhase::Stopped, None, None));
         }
     }
 
@@ -204,7 +185,9 @@ impl LandscapeDnsServer {
             return ServiceStatus::Stop;
         }
         let live = flow_server.values().any(|entry| {
-            entry.runtime.load_full().is_some_and(|runtime| !runtime.token.is_cancelled())
+            let snapshot = entry.snapshot();
+            snapshot.phase == FlowDnsPhase::Running
+                && snapshot.runtime.as_ref().is_some_and(|runtime| !runtime.token.is_cancelled())
         });
         if live { ServiceStatus::Running } else { ServiceStatus::Failed }
     }
@@ -215,7 +198,7 @@ impl LandscapeDnsServer {
     pub async fn has_live_flow_runtime(&self) -> bool {
         let flow_server = self.flow_dns_server.lock().await;
         flow_server.values().any(|entry| {
-            entry.runtime.load_full().is_some_and(|runtime| !runtime.token.is_cancelled())
+            entry.snapshot().runtime.as_ref().is_some_and(|runtime| !runtime.token.is_cancelled())
         })
     }
 
@@ -231,7 +214,7 @@ impl LandscapeDnsServer {
 
         for entry in entries {
             let _refresh_guard = entry.refresh_lock.lock().await;
-            if let Some(runtime) = entry.runtime.load_full() {
+            if let Some(runtime) = entry.snapshot().runtime.clone() {
                 runtime.handler.renew_runtime_config(rebuild_cache).await;
             }
         }
@@ -278,10 +261,11 @@ impl LandscapeDnsServer {
         let entry = self.get_or_create_entry(flow_id).await;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
+        let current = entry.snapshot();
         // 仅存活 runtime 走就地更新;死 runtime(bind 失败/监听中途退出/
         // 停止清扫残留)视同不存在,落入下方重建路径整体替换
-        if let Some(runtime) = entry.runtime.load_full()
-            && !runtime.token.is_cancelled()
+        if let Some(runtime) =
+            current.runtime.as_ref().filter(|runtime| !runtime.token.is_cancelled())
         {
             match kind {
                 FlowRuntimeRefreshKind::Full => {
@@ -294,6 +278,7 @@ impl LandscapeDnsServer {
                     runtime.handler.renew_redirect_rules(redirect_engine).await;
                 }
             }
+            entry.store(current.transition(FlowDnsPhase::Running, Some(runtime.clone()), None));
             return;
         }
 
@@ -310,21 +295,36 @@ impl LandscapeDnsServer {
         );
         let Some(run) = self.current_run() else {
             tracing::debug!("[flow: {flow_id}]: dns service not running, skip listener build");
+            entry.store(current.transition(FlowDnsPhase::Stopped, None, None));
             return;
         };
+        entry.store(current.transition(FlowDnsPhase::Starting, None, None));
         let Some(runtime) = self.build_flow_runtime(flow_id, handler, &run).await else {
-            tracing::error!("[flow: {flow_id}]: DNS server start failed, runtime not registered");
+            let failed = entry.snapshot().transition(
+                FlowDnsPhase::Failed,
+                None,
+                Some("failed to start DNS listener".to_string()),
+            );
+            tracing::error!(
+                flow_id,
+                error = failed.last_error.as_deref().unwrap_or("unknown"),
+                "DNS server start failed, runtime not registered"
+            );
+            entry.store(failed);
             return;
         };
 
-        entry.runtime.store(Some(Arc::new(runtime)));
+        let next =
+            entry.snapshot().transition(FlowDnsPhase::Running, Some(Arc::new(runtime)), None);
+        entry.store(next);
     }
 
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
         let entry = self.get_entry(req.flow_id).await;
 
-        let handler = entry
-            .and_then(|entry| entry.runtime.load_full().map(|runtime| runtime.handler.clone()));
+        let handler = entry.and_then(|entry| {
+            entry.snapshot().runtime.clone().map(|runtime| runtime.handler.clone())
+        });
         if let Some(handler) = handler {
             let Ok(domain) = req.get_domain() else {
                 return CheckChainDnsResult::default();
@@ -349,7 +349,7 @@ impl LandscapeDnsServer {
 
         let _refresh_guard = entry.refresh_lock.lock().await;
         let runtime =
-            entry.runtime.load_full().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
+            entry.snapshot().runtime.clone().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let pd = ParsedDomain::new(&domain)?;
         runtime.handler.invalidate_cache_entry(&pd, query_type).await;
@@ -367,20 +367,20 @@ impl LandscapeDnsServer {
 
         let _refresh_guard = entry.refresh_lock.lock().await;
         let runtime =
-            entry.runtime.load_full().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
+            entry.snapshot().runtime.clone().ok_or(DnsServiceError::FlowNotFound(req.flow_id))?;
 
         let pd = ParsedDomain::new(&domain)?;
         runtime.handler.refresh_cache_entry(&pd, query_type, req.apply_filter).await
     }
 
-    async fn get_entry(&self, flow_id: u32) -> Option<Arc<FlowServerEntry>> {
+    async fn get_entry(&self, flow_id: u32) -> Option<Arc<FlowDnsEntry>> {
         let flow_server = self.flow_dns_server.lock().await;
         flow_server.get(&flow_id).cloned()
     }
 
-    async fn get_or_create_entry(&self, flow_id: u32) -> Arc<FlowServerEntry> {
+    async fn get_or_create_entry(&self, flow_id: u32) -> Arc<FlowDnsEntry> {
         let mut lock = self.flow_dns_server.lock().await;
-        lock.entry(flow_id).or_insert_with(|| Arc::new(FlowServerEntry::new())).clone()
+        lock.entry(flow_id).or_insert_with(|| Arc::new(FlowDnsEntry::new(flow_id))).clone()
     }
 
     async fn build_flow_runtime(
@@ -388,7 +388,7 @@ impl LandscapeDnsServer {
         flow_id: u32,
         handler: DnsRequestHandler,
         run: &DnsServiceRun,
-    ) -> Option<FlowServerRuntime> {
+    ) -> Option<FlowDnsRuntime> {
         let token = run.token.child_token();
         let started = self
             .start_runtime_listener(flow_id, handler.clone(), &token, run.tracker.clone())
@@ -397,7 +397,7 @@ impl LandscapeDnsServer {
             return None;
         }
 
-        Some(FlowServerRuntime { handler, token })
+        Some(FlowDnsRuntime { handler, token })
     }
 
     async fn start_runtime_listener(
@@ -460,9 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn flow_server_entry_runtime_reads_do_not_wait_on_refresh_lock() {
+    fn flow_dns_entry_runtime_reads_do_not_wait_on_refresh_lock() {
         run_async_test(async {
-            let entry = FlowServerEntry::new();
+            let entry = FlowDnsEntry::new(7);
             let handler = DnsRequestHandler::from_engines(
                 RedirectEngine::default(),
                 ResolveEngine::default(),
@@ -474,13 +474,15 @@ mod tests {
                     sink: Arc::new(NoopDnsResultSink),
                 },
             );
-            entry.runtime.store(Some(Arc::new(FlowServerRuntime {
-                handler,
-                token: CancellationToken::new(),
-            })));
+            let runtime = FlowDnsRuntime { handler, token: CancellationToken::new() };
+            entry.store(entry.snapshot().transition(
+                FlowDnsPhase::Running,
+                Some(Arc::new(runtime)),
+                None,
+            ));
 
             let _guard = entry.refresh_lock.lock().await;
-            let runtime = entry.runtime.load_full();
+            let runtime = entry.snapshot().runtime.clone();
 
             assert!(runtime.is_some());
             assert_eq!(runtime.unwrap().handler.flow_id, 7);
@@ -488,12 +490,14 @@ mod tests {
     }
 
     #[test]
-    fn flow_server_entry_allows_empty_runtime_while_refreshing() {
+    fn flow_dns_entry_allows_empty_runtime_while_refreshing() {
         run_async_test(async {
-            let entry = FlowServerEntry::new();
+            let entry = FlowDnsEntry::new(7);
             let _guard = entry.refresh_lock.lock().await;
 
-            assert!(entry.runtime.load_full().is_none());
+            let snapshot = entry.snapshot();
+            assert!(snapshot.runtime.is_none());
+            assert_eq!(snapshot.phase, FlowDnsPhase::Idle);
         });
     }
 
@@ -532,10 +536,10 @@ mod tests {
             let server = test_dns_server();
             refresh_full(&server, 1).await;
             let entry = server.get_entry(1).await.unwrap();
-            assert!(!entry.runtime.load_full().unwrap().token.is_cancelled());
+            assert!(!entry.snapshot().runtime.clone().unwrap().token.is_cancelled());
 
             // listener 死亡后,refresh 必须整体重建(新 token 存活)而非就地 renew
-            entry.runtime.load_full().unwrap().token.cancel();
+            entry.snapshot().runtime.clone().unwrap().token.cancel();
             assert!(!server.has_live_flow_runtime().await);
 
             server
@@ -546,7 +550,7 @@ mod tests {
                     FlowRuntimeRefreshKind::ResolveOnly,
                 )
                 .await;
-            let runtime = entry.runtime.load_full().unwrap();
+            let runtime = entry.snapshot().runtime.clone().unwrap();
             assert!(!runtime.token.is_cancelled());
             assert!(server.has_live_flow_runtime().await);
         });
@@ -567,7 +571,7 @@ mod tests {
             // 建立成功 → Running;listener 死亡 → Failed
             refresh_full(&server, 1).await;
             assert_eq!(server.status_summary().await, ServiceStatus::Running);
-            server.get_entry(1).await.unwrap().runtime.load_full().unwrap().token.cancel();
+            server.get_entry(1).await.unwrap().snapshot().runtime.clone().unwrap().token.cancel();
             assert_eq!(server.status_summary().await, ServiceStatus::Failed);
 
             // 停止 → Stop
@@ -582,10 +586,14 @@ mod tests {
             let server = test_dns_server();
             refresh_full(&server, 1).await;
             assert_eq!(server.status_summary().await, ServiceStatus::Running);
+            let entry = server.get_entry(1).await.unwrap();
+            assert_eq!(entry.snapshot().phase, FlowDnsPhase::Running);
 
             // 停止:runtime 被确定性清空
             server.stop_service().await;
-            assert!(server.get_entry(1).await.unwrap().runtime.load_full().is_none());
+            let entry = server.get_entry(1).await.unwrap();
+            assert!(entry.snapshot().runtime.is_none());
+            assert_eq!(entry.snapshot().phase, FlowDnsPhase::Stopped);
             assert_eq!(server.status_summary().await, ServiceStatus::Stop);
 
             // 重启:refresh 重建 listener 后恢复 Running
