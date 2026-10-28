@@ -73,6 +73,41 @@ pub fn del_route(prefix: Ipv6Addr, prefix_len: u8, iface_name: &str) {
     }
 }
 
+/// Deprecate an existing address without extending or recreating it.
+///
+/// Uses `ip addr change` (not `replace`) so a disappeared address is not
+/// resurrected just to be removed again later.
+pub fn deprecate_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str, valid_lifetime: u32) {
+    let args = vec![
+        "-6".to_string(),
+        "addr".to_string(),
+        "change".to_string(),
+        format!("{}/{}", ip, prefix),
+        "dev".to_string(),
+        iface_name.to_string(),
+        "valid_lft".to_string(),
+        valid_lifetime.to_string(),
+        "preferred_lft".to_string(),
+        "0".to_string(),
+    ];
+
+    match std::process::Command::new("ip").args(&args).output() {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            tracing::warn!(
+                iface = iface_name,
+                %ip,
+                prefix,
+                valid_lifetime,
+                status = ?output.status,
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "failed to deprecate IPv6 address"
+            );
+        }
+        Err(e) => tracing::error!(iface = iface_name, %ip, "{e:?}"),
+    }
+}
+
 pub fn del_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str) {
     let args = vec![
         "-6".to_string(),
