@@ -8,6 +8,7 @@ use crate::config::settings::{
     LandscapeUIConfig, MetricMode,
 };
 use crate::config::{cleanup_budget_secs_to_ms, metric_db_max_mb_to_bytes};
+use crate::dns::{CacheRuntimeConfig, DohRuntimeConfig};
 use crate::sys_service::gateway::settings::GatewayRuntimeConfig;
 use crate::sys_service::lan_hostname::LanHostnameConfig;
 use crate::{
@@ -260,6 +261,21 @@ impl MetricRuntimeConfig {
 }
 
 impl DnsRuntimeConfig {
+    pub fn cache_runtime(&self) -> CacheRuntimeConfig {
+        CacheRuntimeConfig {
+            cache_capacity: self.cache_capacity,
+            cache_ttl: self.cache_ttl,
+            negative_cache_ttl: self.negative_cache_ttl,
+        }
+    }
+
+    pub fn doh_runtime(&self) -> DohRuntimeConfig {
+        DohRuntimeConfig {
+            listen_port: self.doh_listen_port,
+            http_endpoint: self.doh_http_endpoint.clone(),
+        }
+    }
+
     pub fn update_from_file_config(&mut self, config: &LandscapeDnsConfig) {
         if let Some(v) = config.cache_capacity {
             self.cache_capacity = v;

@@ -1,3 +1,4 @@
+pub mod config_source;
 pub mod provider_profile_service;
 pub mod redirect_service;
 pub mod rule_service;

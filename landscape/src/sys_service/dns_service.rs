@@ -1,42 +1,32 @@
-use std::collections::HashSet;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::Arc;
-use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
-    concurrency::{spawn_task, task_label},
     config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
-    dns::redirect::DynamicDnsRedirectScope,
-    dns::{CacheRuntimeConfig, DohRuntimeConfig},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
     metric::dns::DnsMetricEvent,
-    service::{
-        ServiceStatus,
-        controller::{ConfigStoreController, ConfigStoreFlowController},
-    },
+    service::ServiceStatus,
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{
     CheckChainDnsResult, CheckDnsReq,
+    coordinator::DnsCoordinator,
     listener::{DohTimeouts, EffectiveDohListenerConfig},
     prepare_system_dns,
     resolve::LocalDnsAnswerProvider,
-    server::{
-        DnsServiceDeps, EngineBuilder, FlowDependencySelector, FlowRuntimeRefreshKind,
-        LandscapeDnsServer,
-    },
+    server::{DnsServiceDeps, FlowRuntimeRefreshKind, LandscapeDnsServer},
 };
 use rustls::server::ResolvesServerCert;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use tokio::sync::mpsc;
 
 use crate::dns::{
-    redirect_service::DNSRedirectService, rule_service::DNSRuleService,
-    upstream_service::DnsUpstreamService,
+    config_source::DbDnsConfigSource, redirect_service::DNSRedirectService,
+    rule_service::DNSRuleService, upstream_service::DnsUpstreamService,
 };
 use crate::{
     cert::order_service::CertService,
@@ -78,19 +68,14 @@ impl LocalDnsAnswerProvider for RouteLocalAnswerProvider {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct LandscapeDnsService {
-    dns_service: LandscapeDnsServer,
-    dns_rule_service: DNSRuleService,
-    dns_redirect_rule_service: DNSRedirectService,
-    dns_upstream_service: DnsUpstreamService,
-    engine_builder: EngineBuilder,
+    coordinator: Arc<DnsCoordinator>,
 }
 
 impl LandscapeDnsService {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        mut receiver: mpsc::Receiver<DnsEvent>,
+        receiver: mpsc::Receiver<DnsEvent>,
         dns_rule_service: DNSRuleService,
         dns_redirect_rule_service: DNSRedirectService,
         geo_site_service: GeoSiteService,
@@ -104,7 +89,8 @@ impl LandscapeDnsService {
         dns_result_sink: Arc<dyn DnsResultSink>,
         flow_socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
-        let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
+        let cache_runtime = dns_config.cache_runtime();
+        let doh_runtime = dns_config.doh_runtime();
         if prepare_system_dns() {
             tracing::info!("system DNS redirected to local DNS service");
         } else {
@@ -123,10 +109,10 @@ impl LandscapeDnsService {
             dns_hostname: None,
             http_endpoint: doh_runtime.http_endpoint.clone(),
         });
-        let dns_service = LandscapeDnsServer::new(DnsServiceDeps {
+        let server = LandscapeDnsServer::new(DnsServiceDeps {
             listen_port: 53,
             msg_tx,
-            cache_runtime: cache_runtime.clone(),
+            cache_runtime,
             doh,
             local_answer_provider: Some(Arc::new(RouteLocalAnswerProvider {
                 view: route_service.local_addr_view(),
@@ -139,115 +125,50 @@ impl LandscapeDnsService {
             result_sink: dns_result_sink,
             socket_registrar: flow_socket_registrar,
         });
-
-        // dns_service.restart(53).await;
-        // dns_service.update_flow_map(&flow_rule_service.list().await).await;
-        let engine_builder = EngineBuilder::new(geo_site_service.matcher_registry());
-
-        let dns_service = Self {
-            dns_service,
+        let source = Arc::new(DbDnsConfigSource::new(
             dns_rule_service,
             dns_redirect_rule_service,
             dns_upstream_service,
-            engine_builder,
-        };
+        ));
+        let coordinator =
+            Arc::new(DnsCoordinator::new(server, geo_site_service.matcher_registry(), source));
+
         // 创建即视为进入运行状态(server::new 已初始化运行):直接刷新各
         // flow 监听;状态由 `status_summary` 从运行资源投影,无需另行汇报
-        let flow_count = dns_service.refresh_all_flows().await;
-        let live = dns_service.dns_service.has_live_flow_runtime().await;
-        tracing::info!("DNS service started: flow_count: {flow_count}, live_runtime: {live}");
-        let dns_service_clone = dns_service.clone();
-        spawn_task(task_label::task::DNS_SERVICE_OBSERVER, async move {
-            while let Some(event) = receiver.recv().await {
-                match event {
-                    DnsEvent::RulesChanged { flow_id: None } => {
-                        dns_service_clone
-                            .refresh_all_flows_kind(FlowRuntimeRefreshKind::ResolveOnly)
-                            .await;
-                    }
-                    DnsEvent::RedirectsChanged { flow_id: None } => {
-                        dns_service_clone
-                            .refresh_all_flows_kind(FlowRuntimeRefreshKind::RedirectOnly)
-                            .await;
-                    }
-                    DnsEvent::RuntimeConfigChanged => {
-                        dns_service_clone.dns_service.renew_runtime_config(true).await;
-                    }
-                    DnsEvent::GeoSitesChanged { changed_keys: None } => {
-                        dns_service_clone.refresh_all_flows().await;
-                    }
-                    DnsEvent::RulesChanged { flow_id: Some(flow_id) } => {
-                        dns_service_clone
-                            .refresh_flow_kind(flow_id, FlowRuntimeRefreshKind::ResolveOnly)
-                            .await;
-                    }
-                    DnsEvent::RedirectsChanged { flow_id: Some(flow_id) } => {
-                        dns_service_clone
-                            .refresh_flow_kind(flow_id, FlowRuntimeRefreshKind::RedirectOnly)
-                            .await;
-                    }
-                    DnsEvent::DynamicRedirectsChanged { flow_id: Some(flow_id), .. } => {
-                        dns_service_clone
-                            .refresh_flow_kind(flow_id, FlowRuntimeRefreshKind::RedirectOnly)
-                            .await;
-                    }
-                    DnsEvent::DynamicRedirectsChanged { flow_id: None, source_id } => {
-                        let refreshed = dns_service_clone
-                            .refresh_dependent_flows(
-                                FlowDependencySelector::DynamicRedirectSource(source_id),
-                                FlowRuntimeRefreshKind::RedirectOnly,
-                            )
-                            .await;
-                        if refreshed == 0 {
-                            dns_service_clone
-                                .refresh_all_flows_kind(FlowRuntimeRefreshKind::RedirectOnly)
-                                .await;
-                        }
-                    }
-                    DnsEvent::UpstreamsChanged { upstream_ids } => {
-                        let upstream_ids = upstream_ids.into_iter().collect::<HashSet<_>>();
-                        // Unconditionally drop pooled resolvers for the changed
-                        // upstreams so the refresh below rebuilds them.
-                        dns_service_clone.engine_builder.invalidate_upstreams(&upstream_ids);
-                        dns_service_clone
-                            .refresh_dependent_flows(
-                                FlowDependencySelector::Upstreams(upstream_ids),
-                                FlowRuntimeRefreshKind::ResolveOnly,
-                            )
-                            .await;
-                    }
-                    DnsEvent::GeoSitesChanged { changed_keys: Some(changed_keys) } => {
-                        dns_service_clone
-                            .refresh_dependent_flows(
-                                FlowDependencySelector::GeoKeys(changed_keys),
-                                FlowRuntimeRefreshKind::Full,
-                            )
-                            .await;
-                    }
-                    DnsEvent::FlowUpdated => {
-                        // let flow_rules = flow_rule_service_clone.list().await;
-
-                        // dns_service_clone.update_flow_map(&flow_rules).await;
-                        // tracing::info!("update flow dispatch rule in DNS server");
-                    }
-                }
+        match coordinator.refresh_all(FlowRuntimeRefreshKind::Full).await {
+            Ok(flow_count) => {
+                let live = coordinator.server().has_live_flow_runtime().await;
+                tracing::info!(
+                    "DNS service started: flow_count: {flow_count}, live_runtime: {live}"
+                );
             }
-        });
-        dns_service
+            Err(error) => {
+                tracing::error!(%error, "DNS service initial refresh failed");
+            }
+        }
+        coordinator.spawn_event_loop(receiver);
+
+        Self { coordinator }
     }
 
     pub async fn get_status(&self) -> ServiceStatus {
-        self.dns_service.status_summary().await
+        self.coordinator.server().status_summary().await
     }
 
     /// 真启动:开启新的服务运行 → 重建各 flow 监听(停止时清空的
     /// runtime 会重新建立)→ 恢复系统解析器劫持。
     pub async fn start_dns_service(&self) {
         tracing::info!("starting DNS service");
-        self.dns_service.start_service();
+        self.coordinator.server().start_service();
 
-        let flow_count = self.refresh_all_flows().await;
-        tracing::info!("DNS service run started: flow_count: {flow_count}");
+        match self.coordinator.refresh_all(FlowRuntimeRefreshKind::Full).await {
+            Ok(flow_count) => {
+                tracing::info!("DNS service run started: flow_count: {flow_count}");
+            }
+            Err(error) => {
+                tracing::error!(%error, "DNS service refresh failed on start");
+            }
+        }
 
         if prepare_system_dns() {
             tracing::info!("system DNS redirected to local DNS service");
@@ -261,166 +182,37 @@ impl LandscapeDnsService {
     pub async fn stop(&self) {
         tracing::info!("stopping DNS service");
         landscape_dns::restore_resolver_conf();
-        self.dns_service.stop_service().await;
+        self.coordinator.server().stop_service().await;
         tracing::info!("DNS service stopped");
     }
 
     pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
-        self.dns_service.update_metric_sender(msg_tx);
+        self.coordinator.server().update_metric_sender(msg_tx);
     }
 
     pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
-        self.dns_service.update_lan_hostname_config(config);
+        self.coordinator.server().update_lan_hostname_config(config);
     }
 
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
-        self.dns_service.check_domain(req).await
+        self.coordinator.server().check_domain(req).await
     }
 
     pub async fn invalidate_domain_cache(
         &self,
         req: CheckDnsReq,
     ) -> Result<CheckChainDnsResult, DnsServiceError> {
-        self.dns_service.invalidate_domain_cache(req).await
+        self.coordinator.server().invalidate_domain_cache(req).await
     }
 
     pub async fn refresh_domain_cache(
         &self,
         req: CheckDnsReq,
     ) -> Result<CheckChainDnsResult, DnsServiceError> {
-        self.dns_service.refresh_domain_cache(req).await
+        self.coordinator.server().refresh_domain_cache(req).await
     }
 
     pub async fn apply_runtime_config(&self, dns_config: DnsRuntimeConfig) {
-        let (cache_runtime, doh_runtime) = split_dns_runtime_config(&dns_config);
-        let (previous_cache_runtime, startup_doh_runtime) =
-            self.dns_service.current_live_runtime_config();
-        if startup_doh_runtime.as_ref() != Some(&doh_runtime) {
-            // Product policy: cert/SNI domains hot-reload through the shared
-            // resolver, but DoH port/path are bound at process startup.
-            tracing::warn!(
-                "DoH listen_port/http_endpoint changes require process restart to take effect"
-            );
-        }
-        let rebuild_cache = previous_cache_runtime.cache_capacity != cache_runtime.cache_capacity
-            || previous_cache_runtime.cache_ttl != cache_runtime.cache_ttl;
-        self.dns_service.update_runtime_config(cache_runtime);
-        self.dns_service.renew_runtime_config(rebuild_cache).await;
+        self.coordinator.apply_runtime_config(dns_config).await;
     }
-
-    async fn refresh_all_flows(&self) -> usize {
-        self.refresh_all_flows_kind(FlowRuntimeRefreshKind::Full).await
-    }
-
-    async fn refresh_all_flows_kind(&self, kind: FlowRuntimeRefreshKind) -> usize {
-        let time = Instant::now();
-        let mut flow_rules = self.dns_rule_service.get_flow_hashmap().await.unwrap();
-        let redirect_flow_ids = self
-            .dns_redirect_rule_service
-            .list()
-            .await
-            .unwrap()
-            .into_iter()
-            .flat_map(|rule| rule.apply_flows)
-            .collect::<HashSet<_>>();
-        let dynamic_redirect_flow_ids = self
-            .dns_redirect_rule_service
-            .list_dynamic_batches()
-            .await
-            .into_iter()
-            .filter_map(|batch| match batch.scope {
-                DynamicDnsRedirectScope::Flow(flow_id) => Some(flow_id),
-                DynamicDnsRedirectScope::Global => None,
-            })
-            .collect::<HashSet<_>>();
-        let tracked_flow_ids = self.dns_service.tracked_flow_ids().await;
-        let mut flow_ids = flow_rules.keys().copied().collect::<HashSet<_>>();
-        flow_ids.extend(tracked_flow_ids);
-        flow_ids.extend(redirect_flow_ids);
-        flow_ids.extend(dynamic_redirect_flow_ids);
-
-        for flow_id in &flow_ids {
-            let rules = flow_rules.remove(flow_id).unwrap_or_default();
-            self.refresh_flow_with_rules_kind(*flow_id, rules, kind).await;
-        }
-        tracing::info!(
-            "refresh all dns flows: flow_count: {}, {:?}ms",
-            flow_ids.len(),
-            time.elapsed().as_millis()
-        );
-        flow_ids.len()
-    }
-
-    async fn refresh_flow_ids_kind(&self, flow_ids: Vec<u32>, kind: FlowRuntimeRefreshKind) {
-        for flow_id in flow_ids {
-            self.refresh_flow_kind(flow_id, kind).await;
-        }
-    }
-
-    async fn refresh_dependent_flows(
-        &self,
-        selector: FlowDependencySelector,
-        kind: FlowRuntimeRefreshKind,
-    ) -> usize {
-        let flow_ids = self.dns_service.flows_matching_dependencies(&selector).await;
-        let count = flow_ids.len();
-        self.refresh_flow_ids_kind(flow_ids, kind).await;
-        count
-    }
-
-    async fn refresh_flow_kind(&self, flow_id: u32, kind: FlowRuntimeRefreshKind) {
-        let flow_rules = self.dns_rule_service.list_flow_configs(flow_id).await.unwrap();
-        self.refresh_flow_with_rules_kind(flow_id, flow_rules, kind).await;
-    }
-
-    async fn refresh_flow_with_rules_kind(
-        &self,
-        flow_id: u32,
-        flow_dns_rules: Vec<landscape_common::dns::rule::DNSRuleConfig>,
-        kind: FlowRuntimeRefreshKind,
-    ) {
-        tracing::info!("refresh dns rule: flow_id: {flow_id}");
-        let time = Instant::now();
-        let upstream_ids = flow_dns_rules.iter().map(|rule| rule.upstream_id).collect();
-        let upstream_configs =
-            self.dns_upstream_service.find_ids(upstream_ids).await.unwrap_or_default();
-        let dns_redirect_rules =
-            self.dns_redirect_rule_service.list_flow_configs(flow_id).await.unwrap();
-        let dynamic_dns_redirects =
-            self.dns_redirect_rule_service.list_flow_dynamic_batches(flow_id).await;
-        let (redirect_engine, resolve_engine, dependencies) = self
-            .engine_builder
-            .build_flow(
-                flow_id,
-                flow_dns_rules,
-                dns_redirect_rules,
-                dynamic_dns_redirects,
-                upstream_configs,
-            )
-            .await;
-
-        self.dns_service
-            .refresh_flow_runtime_kind(flow_id, redirect_engine, resolve_engine, dependencies, kind)
-            .await;
-        tracing::info!(
-            "[flow_id: {flow_id}] build and refresh DNS runtime: {:?}ms",
-            time.elapsed().as_millis()
-        );
-    }
-}
-
-fn split_dns_runtime_config(
-    dns_config: &DnsRuntimeConfig,
-) -> (CacheRuntimeConfig, DohRuntimeConfig) {
-    (
-        CacheRuntimeConfig {
-            cache_capacity: dns_config.cache_capacity,
-            cache_ttl: dns_config.cache_ttl,
-            negative_cache_ttl: dns_config.negative_cache_ttl,
-        },
-        DohRuntimeConfig {
-            listen_port: dns_config.doh_listen_port,
-            http_endpoint: dns_config.doh_http_endpoint.clone(),
-        },
-    )
 }

@@ -82,8 +82,6 @@ impl FlowRuleService {
         };
 
         self.dataplane.sync_flow_matches(&runtime_configs);
-
-        let _ = self.dns_events_tx.send(DnsEvent::FlowUpdated).await;
     }
 
     /// Recompute every flow's WAN target slots from the current store
@@ -101,7 +99,6 @@ impl FlowRuleService {
         if let Some(old) = &old {
             let flow_id = old.flow_id;
             self.notify_deleted(old.clone()).await;
-            // DnsEvent::FlowUpdated is a no-op in the DNS service; only RulesChanged rebuilds the flow's rule group.
             let _ =
                 self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(flow_id) }).await;
             self.dataplane.set_dst_ip_marks(flow_id, vec![]);

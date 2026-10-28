@@ -2,6 +2,7 @@ pub use landscape_common::dns::check::{
     CheckChainDnsResult, CheckDnsReq, CheckDnsResult, LandscapeRecord as CommonRecord,
 };
 
+pub mod coordinator;
 pub(crate) mod domain;
 
 pub mod listener;
