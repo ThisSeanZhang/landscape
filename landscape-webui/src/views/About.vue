@@ -95,7 +95,12 @@ async function fetchAllPages<T>(
 
     if (!response.ok) throw new Error(`GitHub API returned ${response.status}`);
 
-    const pageItems: unknown = await response.json();
+    if (response.status === 204) return result;
+
+    const body = await response.text();
+    if (!body.trim()) return result;
+
+    const pageItems: unknown = JSON.parse(body);
     if (!Array.isArray(pageItems)) {
       throw new Error("GitHub API returned an invalid list");
     }
