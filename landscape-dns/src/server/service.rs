@@ -6,10 +6,12 @@ use std::{
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
-use landscape_common::dns::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies};
+use landscape_common::dns::{
+    CacheRuntimeConfig, DnsServicePhase, DnsServiceStatus, DohRuntimeConfig, FlowDnsDependencies,
+    FlowDnsPhase, FlowDnsStatus,
+};
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::metric::dns::DnsMetricEvent;
-use landscape_common::service::ServiceStatus;
 use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_core::lan_device::LanDeviceDirectory;
 use tokio::sync::{Mutex, mpsc};
@@ -27,7 +29,7 @@ use crate::{
     },
     server::{
         MetricSenderState,
-        flow_state::{FlowDependencySelector, FlowDnsEntry, FlowDnsPhase, FlowDnsRuntime},
+        flow_state::{FlowDependencySelector, FlowDnsEntry, FlowDnsRuntime},
         handler::{DnsRequestHandler, HandlerDeps},
     },
 };
@@ -177,24 +179,47 @@ impl LandscapeDnsServer {
         }
     }
 
-    /// 服务状态投影(无独立状态持有者,由运行资源派生):
-    /// - 无运行(未启动/已停止)或没有任何 flow → Stop
-    /// - 存在存活 flow 监听 → Running
-    /// - 配置过 flow 但全部死亡(bind 失败/监听退出)→ Failed
-    pub async fn status_summary(&self) -> ServiceStatus {
-        if self.current_run().is_none() {
-            return ServiceStatus::Stop;
+    /// Aggregate DNS health derived from the per-flow state snapshots.
+    pub async fn service_status(&self) -> DnsServiceStatus {
+        let running = self.current_run().is_some();
+        let phases = {
+            let flow_server = self.flow_dns_server.lock().await;
+            flow_server.values().map(|entry| entry.snapshot().effective_phase()).collect::<Vec<_>>()
+        };
+
+        let total_flows = phases.len() as u32;
+        let running_flows =
+            phases.iter().filter(|phase| **phase == FlowDnsPhase::Running).count() as u32;
+        let starting_flows =
+            phases.iter().filter(|phase| **phase == FlowDnsPhase::Starting).count() as u32;
+        let failed_flows =
+            phases.iter().filter(|phase| **phase == FlowDnsPhase::Failed).count() as u32;
+        let idle_flows = total_flows - running_flows - starting_flows - failed_flows;
+
+        let phase = if !running {
+            DnsServicePhase::Stopped
+        } else if total_flows == 0 {
+            DnsServicePhase::Idle
+        } else if starting_flows > 0 {
+            DnsServicePhase::Starting
+        } else if running_flows == total_flows {
+            DnsServicePhase::Running
+        } else if running_flows > 0 {
+            DnsServicePhase::Degraded
+        } else if failed_flows > 0 {
+            DnsServicePhase::Failed
+        } else {
+            DnsServicePhase::Idle
+        };
+
+        DnsServiceStatus {
+            phase,
+            total_flows,
+            running_flows,
+            starting_flows,
+            idle_flows,
+            failed_flows,
         }
-        let flow_server = self.flow_dns_server.lock().await;
-        if flow_server.is_empty() {
-            return ServiceStatus::Stop;
-        }
-        let live = flow_server.values().any(|entry| {
-            let snapshot = entry.snapshot();
-            snapshot.phase == FlowDnsPhase::Running
-                && snapshot.runtime.as_ref().is_some_and(|runtime| !runtime.token.is_cancelled())
-        });
-        if live { ServiceStatus::Running } else { ServiceStatus::Failed }
     }
 
     /// Returns whether at least one flow listener runtime is still serving.
@@ -212,6 +237,21 @@ impl LandscapeDnsServer {
     pub async fn tracked_flow_ids(&self) -> HashSet<u32> {
         let flow_server = self.flow_dns_server.lock().await;
         flow_server.keys().copied().collect()
+    }
+
+    /// Read-only snapshot of every tracked flow's DNS state.
+    pub async fn flow_statuses(&self) -> Vec<FlowDnsStatus> {
+        let mut statuses = {
+            let flow_server = self.flow_dns_server.lock().await;
+            flow_server.values().map(|entry| entry.snapshot().status()).collect::<Vec<_>>()
+        };
+        statuses.sort_by_key(|status| status.flow_id);
+        statuses
+    }
+
+    /// Read-only snapshot of one flow's DNS state.
+    pub async fn flow_status(&self, flow_id: u32) -> Option<FlowDnsStatus> {
+        self.get_entry(flow_id).await.map(|entry| entry.snapshot().status())
     }
 
     /// Flow ids whose last applied configuration depends on the given resource.
@@ -637,26 +677,60 @@ mod tests {
     }
 
     #[test]
-    fn status_summary_projection_phases() {
+    fn flow_status_projects_snapshot() {
+        run_async_test(async {
+            let server = test_dns_server();
+            assert!(server.flow_status(1).await.is_none());
+
+            refresh_full(&server, 1).await;
+            let status = server.flow_status(1).await.unwrap();
+
+            assert_eq!(status.flow_id, 1);
+            assert_eq!(status.phase, FlowDnsPhase::Running);
+            assert!(status.last_error.is_none());
+            assert!(status.revision > 0);
+            assert!(status.updated_at > 0.0);
+            assert_eq!(server.flow_statuses().await, vec![status]);
+        });
+    }
+
+    #[test]
+    fn service_status_projection() {
         run_async_test(async {
             let server = test_dns_server();
 
-            // 无任何 flow 条目 → Stop
-            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+            // 服务在跑但没有 flow → Idle
+            let status = server.service_status().await;
+            assert_eq!(status.phase, DnsServicePhase::Idle);
+            assert_eq!(status.total_flows, 0);
 
-            // 配置过 flow 但无存活 runtime → Failed
+            // 有 flow 但没有 runtime → Idle
             server.get_or_create_entry(1).await;
-            assert_eq!(server.status_summary().await, ServiceStatus::Failed);
+            let status = server.service_status().await;
+            assert_eq!(status.phase, DnsServicePhase::Idle);
+            assert_eq!(status.total_flows, 1);
+            assert_eq!(status.idle_flows, 1);
 
-            // 建立成功 → Running;listener 死亡 → Failed
+            // 建立成功 → Running
             refresh_full(&server, 1).await;
-            assert_eq!(server.status_summary().await, ServiceStatus::Running);
-            server.get_entry(1).await.unwrap().snapshot().runtime.clone().unwrap().token.cancel();
-            assert_eq!(server.status_summary().await, ServiceStatus::Failed);
+            let status = server.service_status().await;
+            assert_eq!(status.phase, DnsServicePhase::Running);
+            assert_eq!(status.running_flows, 1);
+            assert_eq!(status.idle_flows, 0);
 
-            // 停止 → Stop
+            // listener 死亡 → Failed
+            server.get_entry(1).await.unwrap().snapshot().runtime.clone().unwrap().token.cancel();
+            let status = server.service_status().await;
+            assert_eq!(status.phase, DnsServicePhase::Failed);
+            assert_eq!(status.failed_flows, 1);
+            assert_eq!(status.running_flows, 0);
+
+            // 停止 → Stopped
             server.stop_service().await;
-            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+            let status = server.service_status().await;
+            assert_eq!(status.phase, DnsServicePhase::Stopped);
+            assert_eq!(status.total_flows, 1);
+            assert_eq!(status.failed_flows, 0);
         });
     }
 
@@ -665,7 +739,7 @@ mod tests {
         run_async_test(async {
             let server = test_dns_server();
             refresh_full(&server, 1).await;
-            assert_eq!(server.status_summary().await, ServiceStatus::Running);
+            assert_eq!(server.service_status().await.phase, DnsServicePhase::Running);
             let entry = server.get_entry(1).await.unwrap();
             assert_eq!(entry.snapshot().phase, FlowDnsPhase::Running);
 
@@ -674,12 +748,12 @@ mod tests {
             let entry = server.get_entry(1).await.unwrap();
             assert!(entry.snapshot().runtime.is_none());
             assert_eq!(entry.snapshot().phase, FlowDnsPhase::Stopped);
-            assert_eq!(server.status_summary().await, ServiceStatus::Stop);
+            assert_eq!(server.service_status().await.phase, DnsServicePhase::Stopped);
 
             // 重启:refresh 重建 listener 后恢复 Running
             server.start_service();
             refresh_full(&server, 1).await;
-            assert_eq!(server.status_summary().await, ServiceStatus::Running);
+            assert_eq!(server.service_status().await.phase, DnsServicePhase::Running);
             assert!(server.has_live_flow_runtime().await);
         });
     }

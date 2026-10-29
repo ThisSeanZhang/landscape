@@ -3,19 +3,12 @@ import type {
   CheckDomainParams,
 } from "@landscape-router/types/api/schemas";
 import {
-  getDnsServiceStatus,
   startDnsService,
   stopDnsService,
   checkDomain,
   invalidateDomainCache,
   refreshDomainCache,
 } from "@landscape-router/types/api/dns-service/dns-service";
-import type { ServiceStatus } from "@/lib/services";
-
-export async function get_dns_status(): Promise<ServiceStatus> {
-  const data = await getDnsServiceStatus();
-  return data as ServiceStatus;
-}
 
 export async function start_dns_service(): Promise<void> {
   await startDnsService();

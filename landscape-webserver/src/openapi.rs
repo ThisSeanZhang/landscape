@@ -117,6 +117,10 @@ impl Modify for SecurityAddon {
         landscape_common::metric::dns::DnsSortKey,
         landscape_common::metric::dns::DnsOutcome,
         landscape_common::dns::rule::LandscapeDnsRecordType,
+        landscape_common::dns::FlowDnsPhase,
+        landscape_common::dns::FlowDnsStatus,
+        landscape_common::dns::DnsServicePhase,
+        landscape_common::dns::DnsServiceStatus,
         // WebSocket types (no endpoint, registered for ORVAL codegen)
         landscape_common::docker::image::ImgPullEvent,
         landscape_common::pty::LandscapePtySize,

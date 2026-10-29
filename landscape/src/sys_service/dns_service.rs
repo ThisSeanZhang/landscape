@@ -7,10 +7,10 @@ use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_common::{
     config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
+    dns::{DnsServiceStatus, FlowDnsStatus},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
     metric::dns::DnsMetricEvent,
-    service::ServiceStatus,
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{
@@ -151,8 +151,16 @@ impl LandscapeDnsService {
         Self { coordinator }
     }
 
-    pub async fn get_status(&self) -> ServiceStatus {
-        self.coordinator.server().status_summary().await
+    pub async fn get_status(&self) -> DnsServiceStatus {
+        self.coordinator.server().service_status().await
+    }
+
+    pub async fn flow_statuses(&self) -> Vec<FlowDnsStatus> {
+        self.coordinator.server().flow_statuses().await
+    }
+
+    pub async fn flow_status(&self, flow_id: u32) -> Option<FlowDnsStatus> {
+        self.coordinator.server().flow_status(flow_id).await
     }
 
     /// 真启动:开启新的服务运行 → 重建各 flow 监听(停止时清空的

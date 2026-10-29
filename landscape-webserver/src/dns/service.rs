@@ -1,7 +1,9 @@
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
+use landscape_common::config::FlowId;
 use landscape_common::dns::check::{CheckChainDnsResult, CheckDnsReq};
-use landscape_common::service::ServiceStatus;
+use landscape_common::dns::error::DnsServiceError;
+use landscape_common::dns::{DnsServiceStatus, FlowDnsStatus};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -12,6 +14,8 @@ use crate::{api::LandscapeApiResp, error::LandscapeApiResult};
 pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
     OpenApiRouter::new()
         .routes(routes!(get_dns_service_status, start_dns_service, stop_dns_service))
+        .routes(routes!(get_dns_flow_statuses))
+        .routes(routes!(get_dns_flow_status))
         .routes(routes!(check_domain, invalidate_domain_cache, refresh_domain_cache))
 }
 
@@ -20,12 +24,54 @@ pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
     path = "/service",
     tag = "DNS Service",
     operation_id = "get_dns_service_status",
-    responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
+    responses((status = 200, description = "Success", body = CommonApiResp<DnsServiceStatus>))
 )]
 async fn get_dns_service_status(
     State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<ServiceStatus> {
+) -> LandscapeApiResult<DnsServiceStatus> {
     LandscapeApiResp::success(state.dns_service.get_status().await)
+}
+
+#[utoipa::path(
+    get,
+    path = "/service/flows",
+    tag = "DNS Service",
+    operation_id = "get_dns_flow_statuses",
+    summary = "List per-flow DNS runtime status",
+    responses((
+        status = 200,
+        description = "Per-flow DNS runtime state",
+        body = CommonApiResp<Vec<FlowDnsStatus>>
+    ))
+)]
+async fn get_dns_flow_statuses(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<FlowDnsStatus>> {
+    LandscapeApiResp::success(state.dns_service.flow_statuses().await)
+}
+
+#[utoipa::path(
+    get,
+    path = "/service/flows/{flow_id}",
+    tag = "DNS Service",
+    operation_id = "get_dns_flow_status",
+    summary = "Get one flow's DNS runtime status",
+    params(("flow_id" = u32, Path, description = "Flow ID")),
+    responses(
+        (status = 200, description = "Per-flow DNS runtime state", body = CommonApiResp<FlowDnsStatus>),
+        (status = 404, description = "Flow not found")
+    )
+)]
+async fn get_dns_flow_status(
+    State(state): State<LandscapeApp>,
+    Path(flow_id): Path<FlowId>,
+) -> LandscapeApiResult<FlowDnsStatus> {
+    let status = state
+        .dns_service
+        .flow_status(flow_id)
+        .await
+        .ok_or(DnsServiceError::FlowNotFound(flow_id))?;
+    LandscapeApiResp::success(status)
 }
 
 #[utoipa::path(

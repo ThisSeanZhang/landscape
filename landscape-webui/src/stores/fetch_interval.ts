@@ -5,7 +5,6 @@ import { useSysInfo } from "./systeminfo";
 import { useIfaceNodeStore } from "./iface_node";
 import { useWanLinkStore } from "./wan_link";
 import { useDockerStore } from "./status_docker";
-import { useDnsStore } from "./status_dns";
 import { useLanIPv6Store } from "./status_lan_ipv6";
 import { useLanDeviceStore } from "./lan_device";
 import { useWifiConfigStore } from "./status_wifi";
@@ -21,7 +20,6 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const ifaceNodeStore = useIfaceNodeStore();
   const wanLinkStore = useWanLinkStore();
   const dockerStore = useDockerStore();
-  const dnsStore = useDnsStore();
   const lanIpv6Store = useLanIPv6Store();
   const lanDeviceStore = useLanDeviceStore();
   const wifiConfigStore = useWifiConfigStore();
@@ -40,7 +38,6 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
     try {
       await sysinfo.UPDATE_INFO();
       await dockerStore.UPDATE_INFO();
-      await dnsStore.UPDATE_INFO();
       await ifaceNodeStore.UPDATE_INFO();
       await wanLinkStore.UPDATE_INFO();
       await lanIpv6Store.UPDATE_INFO();

@@ -1,27 +1,16 @@
 use std::{collections::HashSet, sync::Arc};
 
 use arc_swap::ArcSwap;
-use landscape_common::{config_service::geo::GeoFileCacheKey, dns::FlowDnsDependencies};
+use landscape_common::{
+    config_service::geo::GeoFileCacheKey,
+    dns::{FlowDnsDependencies, FlowDnsPhase, FlowDnsStatus},
+    utils::time::get_f64_timestamp,
+};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::server::handler::DnsRequestHandler;
-
-/// Coarse lifecycle of one flow's DNS runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FlowDnsPhase {
-    /// The whole DNS service is stopped.
-    Stopped,
-    /// The service is running, but this flow has no listener yet.
-    Idle,
-    /// A listener is being built for this flow.
-    Starting,
-    /// The flow has a live listener runtime.
-    Running,
-    /// The last listener build attempt failed.
-    Failed,
-}
 
 /// The live part of one flow's DNS runtime: the query handler plus the token
 /// that owns its UDP/DoH listener tasks.
@@ -42,6 +31,7 @@ pub(crate) struct FlowDnsSnapshot {
     pub(crate) runtime: Option<Arc<FlowDnsRuntime>>,
     pub(crate) last_error: Option<String>,
     pub(crate) revision: u64,
+    pub(crate) updated_at: f64,
 }
 
 impl FlowDnsSnapshot {
@@ -53,6 +43,7 @@ impl FlowDnsSnapshot {
             runtime: None,
             last_error: None,
             revision: 0,
+            updated_at: get_f64_timestamp(),
         }
     }
 
@@ -70,6 +61,28 @@ impl FlowDnsSnapshot {
             runtime,
             last_error,
             revision: self.revision.wrapping_add(1),
+            updated_at: get_f64_timestamp(),
+        }
+    }
+
+    pub(crate) fn effective_phase(&self) -> FlowDnsPhase {
+        match self.phase {
+            FlowDnsPhase::Running
+                if self.runtime.as_ref().is_none_or(|runtime| runtime.token.is_cancelled()) =>
+            {
+                FlowDnsPhase::Failed
+            }
+            phase => phase,
+        }
+    }
+
+    pub(crate) fn status(&self) -> FlowDnsStatus {
+        FlowDnsStatus {
+            flow_id: self.flow_id,
+            phase: self.effective_phase(),
+            last_error: self.last_error.clone(),
+            revision: self.revision,
+            updated_at: self.updated_at,
         }
     }
 }
