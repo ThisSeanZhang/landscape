@@ -57,6 +57,7 @@ type SourceInputItem =
       target_id: string;
       wan_pd_link_id: string;
       family: "ipv6";
+      ipv6_ula_fallback: boolean;
     };
 const loading = ref(false);
 const showModal = ref(false);
@@ -182,6 +183,7 @@ function resetForm(item?: DdnsJob) {
           target_id: source.device_id,
           wan_pd_link_id: source.wan_pd_link_id,
           family: "ipv6" as const,
+          ipv6_ula_fallback: source.ipv6_ula_fallback ?? true,
         },
   ) ?? [
     {
@@ -464,6 +466,7 @@ function updateSourceKind(index: number, value: "wan" | "lan_device") {
       wan_pd_link_id:
         wanPdOptions.value.find((opt) => !opt.disabled)?.value ?? "",
       family: "ipv6",
+      ipv6_ula_fallback: true,
     };
   } else {
     sourceInputs.value[index] = {
@@ -525,6 +528,7 @@ async function save() {
           device_id: item.target_id,
           wan_pd_link_id: item.wan_pd_link_id,
           family: "ipv6" as const,
+          ipv6_ula_fallback: item.ipv6_ula_fallback,
         };
       });
 
@@ -913,46 +917,61 @@ onMounted(async () => {
             :on-create="createSourceInputItem"
           >
             <template #default="{ value, index }">
-              <n-flex style="width: 100%" :size="8" :wrap="false">
-                <n-select
-                  style="width: 110px"
-                  :value="value.kind"
-                  :options="sourceKindOptions"
-                  @update:value="updateSourceKind(index, $event)"
-                />
-                <n-select
-                  v-if="value.kind === 'wan'"
-                  style="flex: 1"
-                  :value="value.target_id"
-                  :options="ifaceOptions"
-                  @update:value="updateSourceTarget(index, $event)"
-                />
-                <template v-else>
+              <n-flex vertical style="width: 100%" :size="6">
+                <n-flex style="width: 100%" :size="8" :wrap="false">
                   <n-select
-                    style="width: 120px"
-                    :value="(value as any).wan_pd_link_id"
-                    :options="wanPdOptions"
-                    :placeholder="t('ddns.select_wan_pd')"
-                    @update:value="updateSourceWanPd(index, $event)"
+                    style="width: 110px"
+                    :value="value.kind"
+                    :options="sourceKindOptions"
+                    @update:value="updateSourceKind(index, $event)"
                   />
                   <n-select
+                    v-if="value.kind === 'wan'"
                     style="flex: 1"
                     :value="value.target_id"
-                    :options="deviceOptions"
-                    :placeholder="t('ddns.select_device')"
+                    :options="ifaceOptions"
                     @update:value="updateSourceTarget(index, $event)"
                   />
-                </template>
-                <n-select
-                  style="width: 75px"
-                  :value="value.family"
-                  :options="
-                    value.kind === 'wan'
-                      ? familyOptions
-                      : [{ label: 'IPv6', value: 'ipv6' }]
-                  "
-                  @update:value="updateSourceFamily(index, $event)"
-                />
+                  <template v-else>
+                    <n-select
+                      style="width: 120px"
+                      :value="(value as any).wan_pd_link_id"
+                      :options="wanPdOptions"
+                      :placeholder="t('ddns.select_wan_pd')"
+                      @update:value="updateSourceWanPd(index, $event)"
+                    />
+                    <n-select
+                      style="flex: 1"
+                      :value="value.target_id"
+                      :options="deviceOptions"
+                      :placeholder="t('ddns.select_device')"
+                      @update:value="updateSourceTarget(index, $event)"
+                    />
+                  </template>
+                  <n-select
+                    style="width: 75px"
+                    :value="value.family"
+                    :options="
+                      value.kind === 'wan'
+                        ? familyOptions
+                        : [{ label: 'IPv6', value: 'ipv6' }]
+                    "
+                    @update:value="updateSourceFamily(index, $event)"
+                  />
+                </n-flex>
+                <n-flex v-if="value.kind === 'lan_device'" vertical :size="4">
+                  <n-switch v-model:value="(value as any).ipv6_ula_fallback">
+                    <template #checked>{{
+                      t("ddns.ipv6_ula_fallback_on")
+                    }}</template>
+                    <template #unchecked>{{
+                      t("ddns.ipv6_ula_fallback_off")
+                    }}</template>
+                  </n-switch>
+                  <div class="ddns-form-hint">
+                    {{ t("ddns.ipv6_ula_fallback_hint") }}
+                  </div>
+                </n-flex>
               </n-flex>
             </template>
           </n-dynamic-input>

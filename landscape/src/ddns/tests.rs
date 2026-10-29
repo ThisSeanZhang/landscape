@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 
 use landscape_common::cert::order::DnsProviderConfig;
@@ -8,7 +8,9 @@ use landscape_common::ddns::{
 use landscape_common::dns::provider_profile::DnsProviderProfile;
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::sys_service::route_service::RouteOwner;
+use landscape_core::lan_device::AddressSourceV6;
 
+use super::job_sync::{dedup_and_sort_ips, is_global_unicast_ipv6, select_enrolled_device_ipv6};
 use super::runtime_state::{
     DdnsRecordCleanupTarget, apply_job_runtime_summary, cleanup_targets_from_runtime,
     effective_ddns_ttl, runtime_message_for_reason,
@@ -289,6 +291,7 @@ fn wan_event_matches_enrolled_device_source() {
         wan_pd_link_id: wan0,
         wan_pd_id: Some("wan0".to_string()),
         family: IpFamily::Ipv4,
+        ipv6_ula_fallback: true,
     }]);
 
     assert!(job_matches_wan_event(
@@ -324,6 +327,7 @@ fn wan_event_does_not_match_netns_owner_for_enrolled_device() {
         wan_pd_link_id: Uuid::nil(),
         wan_pd_id: None,
         family: IpFamily::Ipv4,
+        ipv6_ula_fallback: true,
     }]);
 
     assert!(!job_matches_wan_event(
@@ -344,12 +348,14 @@ fn config_change_pd_sync_ignores_missing_wan_pd_id_mirror() {
             wan_pd_link_id: Uuid::nil(),
             wan_pd_id: None,
             family: IpFamily::Ipv6,
+            ipv6_ula_fallback: true,
         },
         DdnsSource::EnrolledDevice {
             device_id: Uuid::nil(),
             wan_pd_link_id: Uuid::new_v4(),
             wan_pd_id: None,
             family: IpFamily::Ipv4,
+            ipv6_ula_fallback: true,
         },
     ]);
 
@@ -359,99 +365,84 @@ fn config_change_pd_sync_ignores_missing_wan_pd_id_mirror() {
 }
 
 #[test]
-fn ipv6_gua_and_ula_accepted_not_link_local() {
-    let gua = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+fn ipv6_global_unicast_only_segment_is_publishable() {
+    assert!(is_global_unicast_ipv6(&Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+    assert!(!is_global_unicast_ipv6(&Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)));
+    assert!(!is_global_unicast_ipv6(&Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
+    assert!(!is_global_unicast_ipv6(&Ipv6Addr::LOCALHOST));
+    assert!(!is_global_unicast_ipv6(&Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1)));
+}
+
+#[test]
+fn enrolled_device_gua_and_ula_yield_one_record() {
+    let pd_prefix = Ipv6Addr::new(0x240e, 0x1, 0x4a01, 0, 0, 0, 0, 0);
+    let pd_len = 56;
+    // Same interface identifier on the delegated prefix and inside the ULA
+    // range: the old loop published both, mirrored onto the same PD.
+    let gua = Ipv6Addr::new(0x240e, 0x1, 0x4a01, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20);
+    let ula = Ipv6Addr::new(0xfd00, 0, 0, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20);
+
+    let mut addrs = HashMap::new();
+    addrs.insert(ula, AddressSourceV6::Static);
+    addrs.insert(gua, AddressSourceV6::Slaac);
+
+    // A weaker GUA still beats a stronger ULA.
+    let selected = select_enrolled_device_ipv6(&addrs, true).expect("publishable address");
+    assert_eq!(selected, gua);
+
+    let suffix = extract_ipv6_suffix(selected, pd_len);
+    let published = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
+    assert_eq!(published, gua);
+    assert_eq!(dedup_and_sort_ips([IpAddr::V6(published), IpAddr::V6(published)]).len(), 1);
+}
+
+#[test]
+fn enrolled_device_ula_needs_the_fallback_switch() {
     let ula = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
     let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
-    let loopback = Ipv6Addr::LOCALHOST;
-    let multicast = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
-    let acceptable = |addr: Ipv6Addr| -> bool {
-        (addr.segments()[0] & 0xe000) == 0x2000 || addr.is_unique_local()
-    };
+    let mut addrs = HashMap::new();
+    addrs.insert(link_local, AddressSourceV6::Static);
+    addrs.insert(ula, AddressSourceV6::Dhcpv6);
 
-    assert!(acceptable(gua));
-    assert!(acceptable(ula));
-    assert!(!acceptable(link_local));
-    assert!(!acceptable(loopback));
-    assert!(!acceptable(multicast));
+    assert_eq!(select_enrolled_device_ipv6(&addrs, true), Some(ula));
+    assert_eq!(select_enrolled_device_ipv6(&addrs, false), None);
+
+    let mut link_local_only = HashMap::new();
+    link_local_only.insert(link_local, AddressSourceV6::Slaac);
+    assert_eq!(select_enrolled_device_ipv6(&link_local_only, true), None);
 }
 
 #[test]
-fn enrolled_device_suffix_dedup_produces_unique_ips() {
-    let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
-    let pd_len = 64;
+fn enrolled_device_selection_prefers_static_source() {
+    let static_ip = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 0x20);
+    let slaac_ip = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 0x10);
 
-    let device_ips = vec![
-        Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
-        Ipv6Addr::new(0x2001, 0xdb8, 0x2, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
-    ];
+    let mut addrs = HashMap::new();
+    addrs.insert(slaac_ip, AddressSourceV6::Slaac);
+    addrs.insert(static_ip, AddressSourceV6::Static);
 
-    let mut seen_suffixes = HashSet::new();
-    let mut result: Vec<IpAddr> = Vec::new();
-    for raw_ip in &device_ips {
-        if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
-            continue;
-        }
-        let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
-        if seen_suffixes.insert(suffix) {
-            let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
-            result.push(IpAddr::V6(ip));
-        }
-    }
-
-    assert_eq!(result.len(), 1);
-    assert_eq!(
-        result[0],
-        IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20))
-    );
+    assert_eq!(select_enrolled_device_ipv6(&addrs, true), Some(static_ip));
 }
 
 #[test]
-fn enrolled_device_different_suffixes_produce_multiple_ips() {
-    let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
-    let pd_len = 64;
+fn enrolled_device_selection_is_stable_for_equal_sources() {
+    let low = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 0x10);
+    let high = Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 0x20);
 
-    let device_ips = vec![
-        Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20),
-        Ipv6Addr::new(0xfd00, 0, 0, 0, 0x1234, 0x5678, 0x9abc, 0xdef0),
-    ];
+    let mut addrs = HashMap::new();
+    addrs.insert(high, AddressSourceV6::Dhcpv6);
+    addrs.insert(low, AddressSourceV6::Dhcpv6);
 
-    let mut seen_suffixes = HashSet::new();
-    let mut result: Vec<IpAddr> = Vec::new();
-    for raw_ip in &device_ips {
-        if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
-            continue;
-        }
-        let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
-        if seen_suffixes.insert(suffix) {
-            let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
-            result.push(IpAddr::V6(ip));
-        }
-    }
-
-    assert_eq!(result.len(), 2);
+    assert_eq!(select_enrolled_device_ipv6(&addrs, true), Some(low));
 }
 
 #[test]
-fn enrolled_device_fe80_is_filtered_out() {
-    let pd_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
-    let pd_len = 64;
+fn multi_source_resolution_dedups_and_sorts() {
+    let a = IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 9));
+    let b = IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 1));
+    let v6 = IpAddr::V6(Ipv6Addr::new(0x240e, 0, 0, 0, 0, 0, 0, 1));
 
-    let device_ips = vec![Ipv6Addr::new(0xfe80, 0, 0, 0, 0xde0c, 0xd570, 0x6ff0, 0xad20)];
-
-    let mut seen_suffixes = HashSet::new();
-    let mut result: Vec<IpAddr> = Vec::new();
-    for raw_ip in &device_ips {
-        if !((raw_ip.segments()[0] & 0xe000) == 0x2000) && !raw_ip.is_unique_local() {
-            continue;
-        }
-        let suffix = extract_ipv6_suffix(*raw_ip, pd_len);
-        if seen_suffixes.insert(suffix) {
-            let ip = combine_ipv6_prefix_suffix(pd_prefix, pd_len, suffix);
-            result.push(IpAddr::V6(ip));
-        }
-    }
-
-    assert!(result.is_empty());
+    let resolved = dedup_and_sort_ips([a, b, a, v6]);
+    assert_eq!(resolved, vec![b, a, v6]);
 }

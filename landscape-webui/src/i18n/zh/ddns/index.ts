@@ -25,6 +25,11 @@ export default {
   source_iface: "网卡",
   ip_family: "IP 类型",
   ttl: "TTL",
+  ipv6_ula_fallback: "IPv6 ULA 兜底",
+  ipv6_ula_fallback_on: "无公网地址时发布 ULA",
+  ipv6_ula_fallback_off: "仅发布公网地址",
+  ipv6_ula_fallback_hint:
+    "LAN 设备 IPv6 来源在每个 WAN 来源下只发布一个地址：有公网地址时发布公网地址，没有时在开启本项的情况下发布 ULA 地址。关闭后会等待公网地址，而不是把私网地址写入 DDNS 记录。",
   sync_now: "立即同步",
   cancel_sync: "取消同步",
   confirm_cancel_sync: "取消当前同步任务？",
