@@ -56,7 +56,11 @@ pub(super) async fn run(
         ) {
             Ok(handle) => handle,
             Err(err) => {
-                tracing::error!("failed to start nat4 for {}: {err}", iface.iface_name);
+                tracing::error!(
+                    "failed to start nat4 for {}: {}",
+                    iface.iface_name,
+                    landscape_ebpf::bpf_error::summarize_error_text(&err.to_string())
+                );
                 service_status.just_change_status(ServiceStatus::Failed);
                 swap_if_changed(&runtime, ServiceStatus::Failed);
                 return;
