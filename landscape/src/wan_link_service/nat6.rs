@@ -37,7 +37,11 @@ pub(super) async fn run(
         match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix, wan_addr) {
             Ok(handle) => handle,
             Err(err) => {
-                tracing::error!("failed to start nat6 for {}: {err}", iface.iface_name);
+                tracing::error!(
+                    "failed to start nat6 for {}: {}",
+                    iface.iface_name,
+                    landscape_ebpf::bpf_error::summarize_error_text(&err.to_string())
+                );
                 service_status.just_change_status(ServiceStatus::Failed);
                 swap_if_changed(&runtime, ServiceStatus::Failed);
                 return;
@@ -68,7 +72,11 @@ pub(super) async fn run(
         nat = match dataplane.attach_nat6(iface.ifindex, iface.has_eth_header(), prefix, wan_addr) {
             Ok(handle) => handle,
             Err(err) => {
-                tracing::error!("failed to re-attach nat6 for {}: {err}", iface.iface_name);
+                tracing::error!(
+                    "failed to re-attach nat6 for {}: {}",
+                    iface.iface_name,
+                    landscape_ebpf::bpf_error::summarize_error_text(&err.to_string())
+                );
                 service_status.just_change_status(ServiceStatus::Failed);
                 swap_if_changed(&runtime, ServiceStatus::Failed);
                 return;

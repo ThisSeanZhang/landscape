@@ -12,7 +12,10 @@ use landscape_common::wan_link::{
     WanLinkStatusHandle, WanV4Lease,
 };
 
-use super::{SectionRunner, SectionScope, SectionTag, config_change_tags, run_dependent_section};
+use super::{
+    SectionRunner, SectionScope, SectionTag, config_change_tags, next_failure_streak,
+    next_restart_delay, run_dependent_section,
+};
 
 fn link_config(nat_enable: bool) -> WanLinkConfig {
     serde_json::from_value(serde_json::json!({
@@ -379,6 +382,34 @@ async fn dead_section_run_is_retried_after_backoff() {
         .await
         .expect("supervisor did not stop")
         .unwrap();
+}
+
+#[test]
+fn restart_delay_escalates_and_saturates() {
+    let base = Duration::from_secs(5);
+    let delays: Vec<Duration> = (1..=6).map(|n| next_restart_delay(base, n)).collect();
+    let expected = [
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        Duration::from_secs(20),
+        Duration::from_secs(40),
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    ];
+    assert_eq!(
+        delays.as_slice(),
+        expected.as_slice(),
+        "a deterministic failure must back off to the cap instead of retrying every 5s"
+    );
+    assert_eq!(next_restart_delay(Duration::ZERO, 9), Duration::ZERO);
+}
+
+#[test]
+fn a_long_lived_run_restarts_the_failure_streak() {
+    assert_eq!(next_failure_streak(0, Duration::from_secs(1)), 1);
+    assert_eq!(next_failure_streak(3, Duration::from_secs(1)), 4);
+    // Staying up as long as the cap is not a rapid repeat.
+    assert_eq!(next_failure_streak(7, Duration::from_secs(90)), 1);
 }
 
 #[tokio::test]

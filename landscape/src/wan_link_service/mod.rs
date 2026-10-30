@@ -51,6 +51,28 @@ use self::probe::WanHealthProbe;
 
 /// Backoff before re-spawning a run that ended on its own.
 const DEFAULT_RESTART_BACKOFF: Duration = Duration::from_secs(5);
+/// Upper bound for that backoff. A run that keeps ending on its own is usually
+/// deterministic (an eBPF program the verifier rejects, for example), and
+/// retrying it every few seconds only burns CPU inside the kernel verifier and
+/// floods the log, so the delay grows until it reaches this cap.
+const MAX_RESTART_BACKOFF: Duration = Duration::from_secs(60);
+
+/// How many runs in a row have ended on their own. A run that stayed up at
+/// least as long as the cap is not a rapid repeat, so it restarts the streak
+/// instead of growing it.
+fn next_failure_streak(previous: u32, ran_for: Duration) -> u32 {
+    if ran_for >= MAX_RESTART_BACKOFF { 1 } else { previous.saturating_add(1) }
+}
+
+/// Delay before the next respawn after `consecutive_failures` runs in a row
+/// ended on their own: doubles from `base`, capped at [`MAX_RESTART_BACKOFF`].
+fn next_restart_delay(base: Duration, consecutive_failures: u32) -> Duration {
+    if base.is_zero() {
+        return base;
+    }
+    let doublings = consecutive_failures.saturating_sub(1).min(16);
+    base.saturating_mul(1u32 << doublings).min(MAX_RESTART_BACKOFF)
+}
 /// Cadence at which a running section samples its status into the display board.
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -760,6 +782,7 @@ async fn run_v4_supervisor(
     backoff: Duration,
 ) {
     let stop = link_status.stop_token();
+    let mut consecutive_failures: u32 = 0;
 
     loop {
         let cfg = cfg_rx.borrow_and_update().clone();
@@ -802,6 +825,7 @@ async fn run_v4_supervisor(
             },
         );
         tokio::pin!(join);
+        let run_started = std::time::Instant::now();
 
         let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
         let mut retry = false;
@@ -831,12 +855,15 @@ async fn run_v4_supervisor(
                     return;
                 }
                 Some(Step::Restart) => {
+                    consecutive_failures = 0;
                     link_state.session_down();
                     run.wait_stop().await;
                     board.set_session(ServiceStatus::Stop).await;
                     break;
                 }
                 Some(Step::Ended) => {
+                    consecutive_failures =
+                        next_failure_streak(consecutive_failures, run_started.elapsed());
                     link_state.session_down();
                     board.set_session(run.current()).await;
                     retry = true;
@@ -846,9 +873,10 @@ async fn run_v4_supervisor(
         }
 
         if retry {
+            let delay = next_restart_delay(backoff, consecutive_failures);
             tokio::select! {
                 _ = stop.cancelled() => return,
-                _ = tokio::time::sleep(backoff) => {}
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     }
@@ -871,6 +899,7 @@ async fn run_dependent_section(
     backoff: Duration,
 ) {
     let stop = link_status.stop_token();
+    let mut consecutive_failures: u32 = 0;
 
     loop {
         let cfg = cfg_rx.borrow_and_update().clone();
@@ -924,6 +953,7 @@ async fn run_dependent_section(
             runner(iface_child, cfg_child, run_child).await;
         });
         tokio::pin!(join);
+        let run_started = std::time::Instant::now();
 
         let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
         let mut retry = false;
@@ -955,11 +985,14 @@ async fn run_dependent_section(
                     return;
                 }
                 Some(Step::Restart) => {
+                    consecutive_failures = 0;
                     run.wait_stop().await;
                     board.set_section(kind, ServiceStatus::Stop).await;
                     break;
                 }
                 Some(Step::Ended) => {
+                    consecutive_failures =
+                        next_failure_streak(consecutive_failures, run_started.elapsed());
                     board.set_section(kind, run.current()).await;
                     retry = true;
                     break;
@@ -968,9 +1001,10 @@ async fn run_dependent_section(
         }
 
         if retry {
+            let delay = next_restart_delay(backoff, consecutive_failures);
             tokio::select! {
                 _ = stop.cancelled() => return,
-                _ = tokio::time::sleep(backoff) => {}
+                _ = tokio::time::sleep(delay) => {}
             }
         }
     }
