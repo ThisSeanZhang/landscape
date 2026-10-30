@@ -70,9 +70,15 @@ struct icmp6_error_meta {
     __u8 tcp_phase;
 };
 
-static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_offset,
-                                             __u32 l4_offset, __u32 packet_end,
-                                             struct icmp6_error_meta *meta) {
+/*
+ * Out of line on purpose. The extension-header walk below has three outcomes per
+ * iteration and runs up to eight times, so inlining it into every caller makes
+ * the verifier re-explore that whole tree from each caller's register state;
+ * tc_nat_wan_ingress_v6 grew past the 1M instruction complexity limit that way.
+ * As a subprogram the walk is verified once, from a canonical entry state.
+ */
+static __noinline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_offset, __u32 l4_offset,
+                                        __u32 packet_end, struct icmp6_error_meta *meta) {
     if (!meta || l4_offset < l3_offset || l4_offset > packet_end) return -1;
     if (l4_offset + sizeof(struct icmp6hdr) + sizeof(struct ipv6hdr) > packet_end) return -1;
     if (packet_end > skb->len || packet_end - l4_offset > ICMP6_ERROR_MAX_TOTAL_LEN) return -1;
@@ -104,35 +110,32 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     __u32 offset = l4_offset + sizeof(struct icmp6hdr) + IPV6_HDR_LEN;
     __u8 next = emb->nexthdr;
 
+    /* Read the chain headers from the skb instead of pulling them in: every
+     * bpf_skb_pull_data() invalidates the packet pointers, so doing it inside
+     * the walk forced the verifier to re-derive and re-check them once per
+     * iteration. load_bytes() leaves the frame untouched; the single pull for
+     * the payload below is still required before the packet is rewritten. */
     for (__u32 i = 0; i < 8U; i++) {
         if (next == IPV6_NH_FRAGMENT) {
-            need = offset + sizeof(struct frag_hdr);
-            if (need > packet_end || bpf_skb_pull_data(skb, need) != 0) return -1;
+            struct frag_hdr frag = {};
+            if (offset + sizeof(frag) > packet_end) return -1;
+            if (bpf_skb_load_bytes(skb, offset, &frag, sizeof(frag)) != 0) return -1;
+            if (ipv6_frag_offset(frag.frag_off) != 0) return -1;
 
-            data = (char *)(long)skb->data;
-            data_end = (char *)(long)skb->data_end;
-            struct frag_hdr *frag = (struct frag_hdr *)(data + offset);
-            if ((char *)(frag + 1) > data_end) return -1;
-            if (ipv6_frag_offset(frag->frag_off) != 0) return -1;
-
-            next = frag->nexthdr;
+            next = frag.nexthdr;
             offset += sizeof(struct frag_hdr);
             continue;
         }
 
         if (next == IPV6_NH_HOPOPTS || next == IPV6_NH_ROUTING || next == IPV6_NH_DSTOPTS) {
-            need = offset + sizeof(struct ipv6_opt_hdr);
-            if (need > packet_end || bpf_skb_pull_data(skb, need) != 0) return -1;
+            struct ipv6_opt_hdr ext = {};
+            if (offset + sizeof(ext) > packet_end) return -1;
+            if (bpf_skb_load_bytes(skb, offset, &ext, sizeof(ext)) != 0) return -1;
 
-            data = (char *)(long)skb->data;
-            data_end = (char *)(long)skb->data_end;
-            struct ipv6_opt_hdr *ext = (struct ipv6_opt_hdr *)(data + offset);
-            if ((char *)(ext + 1) > data_end) return -1;
-
-            __u32 ext_len = ipv6_opt_len(ext);
+            __u32 ext_len = ipv6_opt_len(&ext);
             if (ext_len < sizeof(struct ipv6_opt_hdr) || ext_len > packet_end - offset) return -1;
 
-            next = ext->nexthdr;
+            next = ext.nexthdr;
             offset += ext_len;
             continue;
         }
