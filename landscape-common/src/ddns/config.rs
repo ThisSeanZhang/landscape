@@ -14,6 +14,10 @@ pub enum IpFamily {
     Ipv6,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
@@ -38,6 +42,11 @@ pub enum DdnsSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         wan_pd_id: Option<String>,
         family: IpFamily,
+        /// Publish the device ULA address when it has no global unicast
+        /// address. A global address always wins when both exist; this only
+        /// controls the fallback. Defaults to the pre-selection behaviour.
+        #[serde(default = "default_true")]
+        ipv6_ula_fallback: bool,
     },
 }
 
@@ -274,5 +283,35 @@ mod tests {
             "t": "enrolled_device", "device_id": Uuid::nil(), "wan_pd_id": "ppp0", "family": "ipv6"
         }));
         assert!(enrolled.is_err(), "enrolled_device requires wan_pd_link_id");
+    }
+
+    #[test]
+    fn enrolled_device_ula_fallback_defaults_to_true_and_round_trips() {
+        let legacy: DdnsSource = serde_json::from_value(serde_json::json!({
+            "t": "enrolled_device",
+            "device_id": Uuid::nil(),
+            "wan_pd_link_id": Uuid::nil(),
+            "family": "ipv6"
+        }))
+        .expect("sources stored before the split must still deserialize");
+        match &legacy {
+            DdnsSource::EnrolledDevice { ipv6_ula_fallback, .. } => assert!(*ipv6_ula_fallback),
+            other => panic!("expected enrolled_device source, got {other:?}"),
+        }
+        let stored = serde_json::to_value(&legacy).unwrap();
+        assert_eq!(stored["ipv6_ula_fallback"], serde_json::json!(true));
+
+        let disabled: DdnsSource = serde_json::from_value(serde_json::json!({
+            "t": "enrolled_device",
+            "device_id": Uuid::nil(),
+            "wan_pd_link_id": Uuid::nil(),
+            "family": "ipv6",
+            "ipv6_ula_fallback": false
+        }))
+        .unwrap();
+        match disabled {
+            DdnsSource::EnrolledDevice { ipv6_ula_fallback, .. } => assert!(!ipv6_ula_fallback),
+            other => panic!("expected enrolled_device source, got {other:?}"),
+        }
     }
 }

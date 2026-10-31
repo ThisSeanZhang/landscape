@@ -9,6 +9,10 @@ fn default_enable() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// API view of [`DdnsSource`]: the iface-name mirrors are server-internal
 /// (DB write-back for downgraded binaries) and never cross the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +29,8 @@ pub enum ApiDdnsSource {
         #[cfg_attr(feature = "openapi", schema(value_type = String))]
         wan_pd_link_id: Uuid,
         family: IpFamily,
+        #[serde(default = "default_true")]
+        ipv6_ula_fallback: bool,
     },
 }
 
@@ -34,9 +40,18 @@ impl From<DdnsSource> for ApiDdnsSource {
             DdnsSource::LocalWan { link_id, family, .. } => {
                 ApiDdnsSource::LocalWan { link_id, family }
             }
-            DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family, .. } => {
-                ApiDdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family }
-            }
+            DdnsSource::EnrolledDevice {
+                device_id,
+                wan_pd_link_id,
+                family,
+                ipv6_ula_fallback,
+                ..
+            } => ApiDdnsSource::EnrolledDevice {
+                device_id,
+                wan_pd_link_id,
+                family,
+                ipv6_ula_fallback,
+            },
         }
     }
 }
@@ -47,9 +62,18 @@ impl From<ApiDdnsSource> for DdnsSource {
             ApiDdnsSource::LocalWan { link_id, family } => {
                 DdnsSource::LocalWan { link_id, iface_name: String::new(), family }
             }
-            ApiDdnsSource::EnrolledDevice { device_id, wan_pd_link_id, family } => {
-                DdnsSource::EnrolledDevice { device_id, wan_pd_link_id, wan_pd_id: None, family }
-            }
+            ApiDdnsSource::EnrolledDevice {
+                device_id,
+                wan_pd_link_id,
+                family,
+                ipv6_ula_fallback,
+            } => DdnsSource::EnrolledDevice {
+                device_id,
+                wan_pd_link_id,
+                wan_pd_id: None,
+                family,
+                ipv6_ula_fallback,
+            },
         }
     }
 }

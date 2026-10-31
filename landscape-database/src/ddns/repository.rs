@@ -160,6 +160,7 @@ mod tests {
                 wan_pd_link_id: pppd_id,
                 wan_pd_id: Some("stale".to_string()),
                 family: IpFamily::Ipv6,
+                ipv6_ula_fallback: true,
             },
         ]);
         cfg.provider_profile_id = profile_id;
@@ -205,6 +206,7 @@ mod tests {
                 wan_pd_link_id: Uuid::new_v4(),
                 wan_pd_id: Some("ppp0".to_string()),
                 family: IpFamily::Ipv6,
+                ipv6_ula_fallback: true,
             }]))
             .await;
         assert!(result.is_err(), "an unknown wan_pd_link_id must be rejected");

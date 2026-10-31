@@ -25,6 +25,11 @@ export default {
   source_iface: "Interface",
   ip_family: "IP Family",
   ttl: "TTL",
+  ipv6_ula_fallback: "IPv6 ULA Fallback",
+  ipv6_ula_fallback_on: "Publish ULA without GUA",
+  ipv6_ula_fallback_off: "Global address only",
+  ipv6_ula_fallback_hint:
+    "A LAN device IPv6 source publishes a single address per WAN source: its global address when it has one, otherwise its ULA address while this stays on. Turn it off to wait for a global address instead of publishing a private one.",
   sync_now: "Sync Now",
   cancel_sync: "Cancel Sync",
   confirm_cancel_sync: "Cancel the in-flight sync task?",
