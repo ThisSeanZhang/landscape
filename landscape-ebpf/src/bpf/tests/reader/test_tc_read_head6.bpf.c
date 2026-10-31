@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "frag/frag.h"
-#include "reader/tc_nat_view.h"
 #include "reader/tc_nat_read6.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -45,23 +44,25 @@ int test_tc_read_head6(struct __sk_buff *skb) {
 
     __builtin_memset(r, 0, sizeof(*r));
 
-    struct tc_nat_view view = {};
+    struct ip6_scan_offsets off = {};
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
+    __be16 sport = 0;
+    __be16 dport = 0;
 
-    r->read_ret =
-        tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, (__u8)current_direction);
+    r->read_ret = tc_nat_read6(skb, current_l3_offset, (__u8)current_direction, &off, &src_addr,
+                               &dst_addr, &sport, &dport);
     r->src_addr = src_addr;
     r->dst_addr = dst_addr;
-    r->l3_offset = view.l3_offset;
-    r->l4_offset = view.l4_offset;
-    r->sport = view.sport;
-    r->dport = view.dport;
-    r->icmp_inner_l4_offset = view.icmp_inner_l4_offset;
-    r->l4_protocol = view.l4_protocol;
-    r->tcp_phase = view.tcp_phase;
-    r->frag_code = view.frag_code;
-    r->ports_valid = view.ports_valid;
-    r->icmp_inner_l4_protocol = view.icmp_inner_l4_protocol;
+    r->l3_offset = off.l3_offset;
+    r->l4_offset = off.l4_offset;
+    r->sport = sport;
+    r->dport = dport;
+    r->icmp_inner_l4_offset = off.icmp_inner_l4_offset;
+    r->l4_protocol = off.l4_protocol;
+    r->tcp_phase = off.tcp_phase;
+    r->frag_code = off.frag_code;
+    r->ports_valid = off.ports_valid;
+    r->icmp_inner_l4_protocol = off.icmp_inner_l4_protocol;
     return 0;
 }

@@ -9,7 +9,6 @@
 #include "chain/tc_stage.h"
 #include "chain/tc_wan_exit_maps.h"
 #include "nat/tc_nat6.h"
-#include "reader/tc_nat_view.h"
 #include "reader/tc_nat_read6.h"
 
 char LICENSE[] SEC("license") = "GPL";
@@ -17,41 +16,47 @@ char LICENSE[] SEC("license") = "GPL";
 const volatile u32 current_l3_offset = 14;
 
 static __always_inline int tc_nat_v6_egress_do(struct __sk_buff *skb, u32 ifindex) {
-    struct tc_nat_view view = {};
+    struct ip6_scan_offsets off = {};
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
+    __be16 sport = 0;
+    __be16 dport = 0;
     int ret = 0;
 
-    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN))
+    if (!tc_nat_read6(skb, current_l3_offset, LAND_FRAG_FROM_LAN, &off, &src_addr, &dst_addr,
+                      &sport, &dport))
         return TC_ACT_OK;
 
-    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;
+    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&off)))) return TC_ACT_OK;
     if (unlikely(is_broadcast_ip6(src_addr.in6_u.u6_addr8) ||
                  is_broadcast_ip6(dst_addr.in6_u.u6_addr8)))
         return TC_ACT_OK;
-    if (unlikely(!view.ports_valid)) return TC_ACT_SHOT;
+    if (unlikely(!off.ports_valid)) return TC_ACT_SHOT;
 
-    ret = ipv6_egress_prefix_check_and_replace(skb, &view, &src_addr, &dst_addr, current_l3_offset,
+    ret = ipv6_egress_prefix_check_and_replace(skb, &off, &src_addr, &dst_addr, sport, dport,
                                                ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 }
 
 static __always_inline int tc_nat_v6_ingress_do(struct __sk_buff *skb, u32 ifindex) {
-    struct tc_nat_view view = {};
+    struct ip6_scan_offsets off = {};
     struct in6_addr src_addr = {};
     struct in6_addr dst_addr = {};
+    __be16 sport = 0;
+    __be16 dport = 0;
     int ret = 0;
 
-    if (!tc_nat_read6(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN))
+    if (!tc_nat_read6(skb, current_l3_offset, LAND_FRAG_FROM_WAN, &off, &src_addr, &dst_addr,
+                      &sport, &dport))
         return TC_ACT_OK;
 
-    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&view)))) return TC_ACT_OK;
+    if (unlikely(should_nat_skip_protocol(nat6_outer_protocol(&off)))) return TC_ACT_OK;
     if (unlikely(is_broadcast_ip6(src_addr.in6_u.u6_addr8) ||
                  is_broadcast_ip6(dst_addr.in6_u.u6_addr8)))
         return TC_ACT_OK;
-    if (unlikely(!view.ports_valid)) return TC_ACT_SHOT;
+    if (unlikely(!off.ports_valid)) return TC_ACT_SHOT;
 
-    ret = ipv6_ingress_prefix_check_and_replace(skb, &view, &src_addr, &dst_addr, current_l3_offset,
+    ret = ipv6_ingress_prefix_check_and_replace(skb, &off, &src_addr, &dst_addr, sport, dport,
                                                 ifindex);
     return ret == TC_ACT_SHOT ? TC_ACT_SHOT : TC_ACT_OK;
 }

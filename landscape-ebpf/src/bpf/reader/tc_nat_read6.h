@@ -12,79 +12,89 @@
 #include "base/tcp_phase.h"
 #include "frag/frag.h"
 #include "frag/tc_frag6.h"
-#include "reader/tc_ip6_walk.h"
-#include "tc_nat_view.h"
 
 /*
- * NAT IPv6 reader: use the shared IPv6 walker for L3 navigation, then resolve
- * the transport tuple and the first-fragment cache. Addresses are written
- * through `src_addr`/`dst_addr`; everything else is packed into `view`.
- * ICMPv6 Echo stores its identifier in both sport and dport.
+ * NAT IPv6 reader: scan the packet once, write the final offsets into
+ * `off`, and expose the address/ports as separate values. The NAT modify
+ * path consumes those results directly; it never re-parses the packet.
  */
 
-static __always_inline int tc_nat_read6_icmp_error(struct __sk_buff *skb, struct tc_nat_view *view,
-                                                   struct in6_addr *src_addr,
-                                                   struct in6_addr *dst_addr, __u32 l3_offset,
-                                                   __u32 l4_offset, __u32 packet_end) {
+static __always_inline int
+tc_nat_read6_icmp_error(struct __sk_buff *skb, __u32 l3_offset, __u32 l4_offset, __u32 packet_end,
+                        struct ip6_scan_offsets *off, struct in6_addr *src_addr,
+                        struct in6_addr *dst_addr, __be16 *sport, __be16 *dport) {
     struct icmp6_error_meta meta = {};
-    if (!view || !src_addr || !dst_addr || l4_offset < l3_offset ||
-        icmp6_parse_error(skb, l3_offset, l4_offset, packet_end, &meta) < 0)
-        return -1;
+    if (icmp6_parse_error(skb, l3_offset, l4_offset, packet_end, &meta) < 0) return -1;
 
     *src_addr = meta.src_addr;
     *dst_addr = meta.dst_addr;
-    view->sport = meta.src_port;
-    view->dport = meta.dst_port;
-    view->l4_protocol = meta.proto;
-    view->tcp_phase = meta.tcp_phase;
-    view->icmp_inner_l4_offset = (__u16)meta.inner_l4_offset;
-    view->icmp_inner_l4_protocol = meta.proto;
-    view->ports_valid = 1;
+    *sport = meta.src_port;
+    *dport = meta.dst_port;
+
+    off->icmp_error_l3_offset = (__u16)meta.inner_l3_offset;
+    off->icmp_inner_l4_offset = (__u16)meta.inner_l4_offset;
+    off->icmp_inner_l4_protocol = meta.proto;
+    off->l4_protocol = meta.proto;
+    off->tcp_phase = meta.tcp_phase;
+    off->ports_valid = 1;
     return 0;
 }
 
-static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_view *view,
-                                        struct in6_addr *src_addr, struct in6_addr *dst_addr,
-                                        __u32 l3_offset, __u8 direction) {
-    if (!view || !src_addr || !dst_addr) return 0;
+static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, __u8 direction,
+                                        struct ip6_scan_offsets *off, struct in6_addr *src_addr,
+                                        struct in6_addr *dst_addr, __be16 *sport, __be16 *dport) {
+    if (!off || !src_addr || !dst_addr || !sport || !dport ||
+        (l3_offset != 0 && l3_offset != sizeof(struct ethhdr)))
+        return 0;
 
-    __u8 next = 0;
-    __u8 frag = 0;
-    __u8 frag_next = 0;
+    *sport = 0;
+    *dport = 0;
+    off->tcp_phase = NAPT_TCP_PHASE_NONE;
+    off->ports_valid = 0;
+    off->icmp_error_l3_offset = 0;
+    off->icmp_inner_l4_offset = 0;
+    off->icmp_inner_l4_protocol = 0;
+
+    char *data = ip6_skb_data(skb);
+    char *data_end = ip6_skb_data_end(skb);
+    struct ipv6hdr *iph = (struct ipv6hdr *)(data + l3_offset);
+    if ((char *)(iph + 1) > data_end) {
+        if (bpf_skb_pull_data(skb, l3_offset + IPV6_HDR_LEN) != 0) return 0;
+        data = ip6_skb_data(skb);
+        data_end = ip6_skb_data_end(skb);
+        iph = (struct ipv6hdr *)(data + l3_offset);
+        if ((char *)(iph + 1) > data_end) return 0;
+    }
+    struct in6_addr src_tmp = iph->saddr;
+    struct in6_addr dst_tmp = iph->daddr;
+
     __be32 frag_id = 0;
+    __u8 frag_next = 0;
     __u32 packet_end = 0;
-    int hlen = tc_ip6_hdrlen(skb, l3_offset, &next, &frag, &packet_end, &frag_id, &frag_next, 0, 0,
-                             src_addr, dst_addr);
-    if (hlen < 0) return 0;
+    if (ip6_scan_ext(skb, l3_offset, IP6_SCAN_MAX_EXT, off, &frag_id, &frag_next, &packet_end) < 0)
+        return 0;
+    if (packet_end > skb->len || off->l4_offset > packet_end) return 0;
 
-    __u32 l4_offset = l3_offset + (__u32)hlen;
+    *src_addr = src_tmp;
+    *dst_addr = dst_tmp;
 
-    view->l3_offset = (__u8)l3_offset;
-    view->l4_offset = 0;
-    view->l4_protocol = 0;
-    view->tcp_phase = NAPT_TCP_PHASE_NONE;
-    view->sport = 0;
-    view->dport = 0;
-    view->ports_valid = 0;
-    view->icmp_inner_l4_offset = 0;
-    view->icmp_inner_l4_protocol = 0;
-    view->frag_code = frag;
-
-    if (frag == LAND_FRAG_NON_INITIAL) {
+    if (off->frag_code == LAND_FRAG_NON_INITIAL) {
         struct frag6_cache_value value = {};
-        view->l4_protocol = frag_next;
+
+        off->l4_offset = 0;
+        off->l4_protocol = frag_next;
         if (frag6_cache_lookup(src_addr, dst_addr, frag_id, frag_next, direction, &value)) {
-            view->sport = value.src_port;
-            view->dport = value.dst_port;
-            view->ports_valid = (value.flags & NPTV6_FRAG_FLAG_HAS_PORTS) ? 1 : 0;
-            view->l4_protocol = value.proto;
+            *sport = value.src_port;
+            *dport = value.dst_port;
+            off->ports_valid = (value.flags & NPTV6_FRAG_FLAG_HAS_PORTS) ? 1 : 0;
+            off->l4_protocol = value.proto;
         }
         return 1;
     }
 
+    __u32 l4_offset = off->l4_offset;
     __u32 payload = packet_end - l4_offset;
-    view->l4_offset = (__u16)l4_offset;
-    view->l4_protocol = next;
+    __u8 next = off->l4_protocol;
 
     __u32 pull_len;
     if (next == IPV6_NH_TCP)
@@ -99,8 +109,9 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
     if (pull_len > packet_end) pull_len = packet_end;
     if (pull_len > skb->len) pull_len = skb->len;
     if (bpf_skb_pull_data(skb, pull_len) != 0) return 0;
-    char *data = (char *)(long)skb->data;
-    char *data_end = (char *)(long)skb->data_end;
+
+    data = ip6_skb_data(skb);
+    data_end = ip6_skb_data_end(skb);
 
     int has_ports = 0;
     if (next == IPV6_NH_TCP) {
@@ -110,9 +121,9 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
 
         if (tcp_doff_bytes(tcp) < sizeof(*tcp)) return 0;
 
-        view->sport = tcp->source;
-        view->dport = tcp->dest;
-        view->tcp_phase = napt_tcp_phase_from_flags(tcp_hdr_flags(tcp));
+        *sport = tcp->source;
+        *dport = tcp->dest;
+        off->tcp_phase = napt_tcp_phase_from_flags(tcp_hdr_flags(tcp));
         has_ports = 1;
     } else if (next == IPV6_NH_UDP) {
         if (payload < sizeof(struct udphdr)) return 0;
@@ -120,10 +131,11 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
         if ((char *)(udp + 1) > data_end) return 0;
 
         __u32 udp_len = bpf_ntohs(udp->len);
-        if (udp_len < sizeof(*udp) || (frag != LAND_FRAG_FIRST && udp_len > payload)) return 0;
+        if (udp_len < sizeof(*udp) || (off->frag_code != LAND_FRAG_FIRST && udp_len > payload))
+            return 0;
 
-        view->sport = udp->source;
-        view->dport = udp->dest;
+        *sport = udp->source;
+        *dport = udp->dest;
         has_ports = 1;
     } else if (next == IPV6_NH_ICMPV6) {
         if (payload < sizeof(struct icmp6hdr)) return 0;
@@ -131,23 +143,23 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, struct tc_nat_vie
         if ((char *)(icmp + 1) > data_end) return 0;
 
         if (icmp->icmp6_type == ICMPV6_ECHO_REQUEST || icmp->icmp6_type == ICMPV6_ECHO_REPLY) {
-            view->sport = icmp->icmp6_dataun.u_echo.identifier;
-            view->dport = view->sport;
+            *sport = icmp->icmp6_dataun.u_echo.identifier;
+            *dport = *sport;
             has_ports = 1;
         } else if (icmp->icmp6_type == ICMPV6_DEST_UNREACH ||
                    icmp->icmp6_type == ICMPV6_PKT_TOOBIG ||
                    icmp->icmp6_type == ICMPV6_TIME_EXCEED || icmp->icmp6_type == ICMPV6_PARAMPROB) {
-            if (frag == LAND_FRAG_FIRST) return 0;
-            if (tc_nat_read6_icmp_error(skb, view, src_addr, dst_addr, l3_offset, l4_offset,
-                                        packet_end) < 0)
+            if (off->frag_code == LAND_FRAG_FIRST) return 0;
+            if (tc_nat_read6_icmp_error(skb, l3_offset, l4_offset, packet_end, off, src_addr,
+                                        dst_addr, sport, dport) < 0)
                 return 0;
         }
     }
 
-    if (has_ports) view->ports_valid = 1;
+    if (has_ports) off->ports_valid = 1;
 
-    if (frag == LAND_FRAG_FIRST && has_ports)
-        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, view->sport, view->dport, 1,
+    if (off->frag_code == LAND_FRAG_FIRST && has_ports)
+        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, *sport, *dport, 1,
                           direction);
     return 1;
 }
