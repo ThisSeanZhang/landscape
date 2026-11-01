@@ -19,6 +19,7 @@ pub struct Model {
     pub zone_name: String,
     pub provider_profile_id: DBId,
     pub ttl: Option<u32>,
+    pub max_ips_per_record: u32,
     pub records: DBJson,
     pub update_at: DBTimestamp,
 }
@@ -49,6 +50,7 @@ impl From<Model> for DdnsJob {
             zone_name: entity.zone_name,
             provider_profile_id: entity.provider_profile_id,
             ttl: entity.ttl,
+            max_ips_per_record: entity.max_ips_per_record,
             records: serde_json::from_value(entity.records).unwrap_or_default(),
             update_at: entity.update_at,
         }
@@ -71,6 +73,7 @@ impl UpdateActiveModel<ActiveModel> for DdnsJob {
         active.zone_name = Set(self.zone_name);
         active.provider_profile_id = Set(self.provider_profile_id);
         active.ttl = Set(self.ttl);
+        active.max_ips_per_record = Set(self.max_ips_per_record);
         active.records = Set(serde_json::to_value(self.records).unwrap());
         active.update_at = Set(self.update_at);
     }

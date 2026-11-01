@@ -75,6 +75,7 @@ const form = ref<DdnsJob>({
   sources: [],
   zone_name: "",
   provider_profile_id: "",
+  max_ips_per_record: 1,
   records: [],
 });
 
@@ -167,8 +168,10 @@ function resetForm(item?: DdnsJob) {
         sources: [],
         zone_name: "",
         provider_profile_id: providerProfiles.value[0]?.id ?? "",
+        max_ips_per_record: 1,
         records: [],
       };
+  form.value.max_ips_per_record = form.value.max_ips_per_record ?? 1;
   editingId.value = item?.id ?? null;
   sourceInputs.value = item?.sources?.map((source) =>
     source.t === "local_wan"
@@ -991,6 +994,20 @@ onMounted(async () => {
                   ? `${t("ddns.follow_profile_ttl_hint")} ${selectedProviderDefaultTtl}`
                   : t("ddns.custom_ttl_hint")
               }}
+            </div>
+          </n-flex>
+        </n-form-item>
+        <n-form-item :label="t('ddns.max_ips_per_record')">
+          <n-flex vertical style="width: 100%" :size="8">
+            <n-input-number
+              :value="form.max_ips_per_record ?? 1"
+              :min="1"
+              :precision="0"
+              style="width: 100%"
+              @update:value="form.max_ips_per_record = $event ?? 1"
+            />
+            <div class="ddns-form-hint">
+              {{ t("ddns.max_ips_per_record_hint") }}
             </div>
           </n-flex>
         </n-form-item>

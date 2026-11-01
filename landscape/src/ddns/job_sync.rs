@@ -10,6 +10,7 @@ use landscape_common::ddns::{
 };
 use landscape_common::lan_service::lan_ipv6::{combine_ipv6_prefix_suffix, extract_ipv6_suffix};
 use landscape_common::sys_service::route_service::RouteOwner;
+use landscape_core::lan_device::AddressSourceV6;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -29,6 +30,29 @@ struct ResolveRecordIpError {
     detail: String,
     retryable: bool,
     next_retry_at: Option<f64>,
+}
+
+fn is_usable_ipv6(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xe000) == 0x2000 || ip.is_unique_local()
+}
+
+fn ipv6_scope_rank(ip: &Ipv6Addr) -> u8 {
+    if ip.is_unique_local() {
+        1
+    } else if (ip.segments()[0] & 0xe000) == 0x2000 {
+        0
+    } else {
+        2
+    }
+}
+
+fn sort_ipv6_candidates(candidates: &mut [(Ipv6Addr, AddressSourceV6)]) {
+    candidates.sort_by_key(|(ip, source)| (ipv6_scope_rank(ip), source.rank(), *ip));
+}
+
+fn limit_ips(mut ips: Vec<IpAddr>, limit: usize) -> Vec<IpAddr> {
+    ips.truncate(limit);
+    ips
 }
 
 impl DdnsService {
@@ -297,7 +321,8 @@ impl DdnsService {
                     break 'records;
                 }
 
-                let current_ips = self.resolve_record_ip(&job.sources, family).await;
+                let current_ips =
+                    self.resolve_record_ip(&job.sources, family, job.max_ips_per_record).await;
                 step += 1;
                 self.tasks.update_phase(
                     job.id,
@@ -333,7 +358,9 @@ impl DdnsService {
         &self,
         sources: &[DdnsSource],
         wanted_family: IpFamily,
+        max_ips_per_record: u32,
     ) -> Result<Vec<IpAddr>, ResolveRecordIpError> {
+        let limit = max_ips_per_record.max(1) as usize;
         let ts = landscape_common::utils::time::get_f64_timestamp();
         let mut last_error = None;
         for source in sources {
@@ -363,7 +390,7 @@ impl DdnsService {
                             });
                             continue;
                         }
-                        return Ok(vec![route.iface_ip]);
+                        return Ok(limit_ips(vec![route.iface_ip], limit));
                     }
                     last_error = Some(ResolveRecordIpError {
                         status: DdnsJobStatus::Idle,
@@ -378,11 +405,16 @@ impl DdnsService {
                 {
                     match wanted_family {
                         IpFamily::Ipv6 => {
-                            let raw_ips: Vec<Ipv6Addr> = match self
+                            let mut candidates: Vec<(Ipv6Addr, AddressSourceV6)> = match self
                                 .directory
                                 .entry_by_device_id(device_id)
                             {
-                                Some(entry) => entry.ipv6_addrs.keys().copied().collect(),
+                                Some(entry) => entry
+                                    .ipv6_addrs
+                                    .iter()
+                                    .filter(|(ip, _)| is_usable_ipv6(**ip))
+                                    .map(|(ip, source)| (*ip, *source))
+                                    .collect(),
                                 None => {
                                     last_error = Some(ResolveRecordIpError {
                                         status: DdnsJobStatus::Idle,
@@ -413,15 +445,11 @@ impl DdnsService {
                                 }
                             };
 
+                            sort_ipv6_candidates(&mut candidates);
                             let mut seen_suffixes = HashSet::new();
                             let mut result = Vec::new();
-                            for raw_ip in &raw_ips {
-                                if !((raw_ip.segments()[0] & 0xe000) == 0x2000)
-                                    && !raw_ip.is_unique_local()
-                                {
-                                    continue;
-                                }
-                                let suffix = extract_ipv6_suffix(*raw_ip, pd.prefix_len);
+                            for (raw_ip, _) in candidates {
+                                let suffix = extract_ipv6_suffix(raw_ip, pd.prefix_len);
                                 if seen_suffixes.insert(suffix) {
                                     let ip = combine_ipv6_prefix_suffix(
                                         pd.prefix_ip,
@@ -445,7 +473,7 @@ impl DdnsService {
                                 continue;
                             }
 
-                            return Ok(result);
+                            return Ok(limit_ips(result, limit));
                         }
                         IpFamily::Ipv4 => {
                             let ipv4 = self
@@ -464,7 +492,7 @@ impl DdnsService {
                                 });
                                 continue;
                             };
-                            return Ok(vec![IpAddr::V4(ipv4)]);
+                            return Ok(limit_ips(vec![IpAddr::V4(ipv4)], limit));
                         }
                     }
                 }
@@ -571,5 +599,64 @@ impl DdnsService {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ipv6(prefix: u16, suffix: u16) -> Ipv6Addr {
+        Ipv6Addr::new(prefix, 0, 0, 0, 0, 0, 0, suffix)
+    }
+
+    #[test]
+    fn ipv6_candidates_prefer_gua_then_source_then_address() {
+        let gua_static_low = ipv6(0x2001, 1);
+        let gua_static_high = ipv6(0x2001, 2);
+        let gua_dhcpv6 = ipv6(0x2001, 3);
+        let gua_slaac = ipv6(0x2001, 4);
+        let ula_static = ipv6(0xfd00, 1);
+        let ula_dhcpv6 = ipv6(0xfd00, 2);
+        let ula_slaac = ipv6(0xfd00, 3);
+
+        let mut candidates = vec![
+            (ula_slaac, AddressSourceV6::Slaac),
+            (gua_slaac, AddressSourceV6::Slaac),
+            (ula_dhcpv6, AddressSourceV6::Dhcpv6),
+            (gua_static_high, AddressSourceV6::Static),
+            (ula_static, AddressSourceV6::Static),
+            (gua_dhcpv6, AddressSourceV6::Dhcpv6),
+            (gua_static_low, AddressSourceV6::Static),
+        ];
+
+        sort_ipv6_candidates(&mut candidates);
+
+        let ordered: Vec<Ipv6Addr> = candidates.into_iter().map(|(ip, _)| ip).collect();
+        assert_eq!(
+            ordered,
+            vec![
+                gua_static_low,
+                gua_static_high,
+                gua_dhcpv6,
+                gua_slaac,
+                ula_static,
+                ula_dhcpv6,
+                ula_slaac,
+            ]
+        );
+    }
+
+    #[test]
+    fn limit_ips_keeps_only_the_first_n() {
+        let ips = vec![
+            IpAddr::V6(ipv6(0x2001, 1)),
+            IpAddr::V6(ipv6(0x2001, 2)),
+            IpAddr::V6(ipv6(0x2001, 3)),
+        ];
+
+        assert_eq!(limit_ips(ips.clone(), 1), ips[..1].to_vec());
+        assert_eq!(limit_ips(ips.clone(), 2), ips[..2].to_vec());
+        assert_eq!(limit_ips(ips, 10).len(), 3);
     }
 }

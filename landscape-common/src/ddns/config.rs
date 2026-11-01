@@ -64,6 +64,9 @@ pub struct DdnsJob {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub ttl: Option<u32>,
+    #[serde(default = "default_max_ips_per_record")]
+    #[cfg_attr(feature = "openapi", schema(minimum = 1))]
+    pub max_ips_per_record: u32,
     #[serde(default)]
     pub records: Vec<DdnsRecordConfig>,
     #[serde(default = "get_f64_timestamp")]
@@ -73,6 +76,10 @@ pub struct DdnsJob {
 
 fn default_enable() -> bool {
     true
+}
+
+fn default_max_ips_per_record() -> u32 {
+    1
 }
 
 impl LandscapeDBStore<Uuid> for DdnsJob {
@@ -112,6 +119,9 @@ impl DdnsJob {
             && ttl == 0
         {
             return Err("ttl must be greater than 0 when provided".to_string());
+        }
+        if self.max_ips_per_record < 1 {
+            return Err("max_ips_per_record must be greater than 0".to_string());
         }
         if self.records.is_empty() {
             return Err("at least one DDNS record is required".to_string());
@@ -224,6 +234,7 @@ mod tests {
             zone_name: " Example.COM. ".to_string(),
             provider_profile_id: Uuid::nil(),
             ttl: Some(120),
+            max_ips_per_record: 1,
             records: vec![DdnsRecordConfig { name: "WWW.".to_string(), enable: true }],
             update_at: 0.0,
         };
@@ -255,12 +266,39 @@ mod tests {
             zone_name: "example.com".to_string(),
             provider_profile_id: Uuid::nil(),
             ttl: Some(120),
+            max_ips_per_record: 1,
             records: vec![DdnsRecordConfig { name: "www".to_string(), enable: true }],
             update_at: 0.0,
         };
 
         let err = job.validate().unwrap_err();
         assert!(err.contains("duplicate DDNS source"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_ips_per_record() {
+        let mut job = DdnsJob {
+            id: Uuid::nil(),
+            name: "test".to_string(),
+            enable: true,
+            sources: vec![DdnsSource::LocalWan {
+                link_id: Uuid::nil(),
+                iface_name: "wan0".to_string(),
+                family: IpFamily::Ipv4,
+            }],
+            zone_name: "example.com".to_string(),
+            provider_profile_id: Uuid::nil(),
+            ttl: Some(120),
+            max_ips_per_record: 0,
+            records: vec![DdnsRecordConfig { name: "www".to_string(), enable: true }],
+            update_at: 0.0,
+        };
+
+        let err = job.validate().unwrap_err();
+        assert!(err.contains("max_ips_per_record"));
+
+        job.max_ips_per_record = 1;
+        assert!(job.validate().is_ok());
     }
 
     #[test]

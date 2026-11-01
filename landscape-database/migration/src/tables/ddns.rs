@@ -11,6 +11,7 @@ pub enum DdnsJobs {
     ZoneName,
     ProviderProfileId,
     Ttl,
+    MaxIpsPerRecord,
     Records,
     UpdateAt,
 }

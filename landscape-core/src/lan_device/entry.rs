@@ -120,7 +120,7 @@ pub enum AddressSourceV6 {
 impl AddressSourceV6 {
     /// Evidence strength: the lower the rank, the stronger the claim in
     /// address arbitration (`claim_ipv6`).
-    pub(super) fn rank(self) -> u8 {
+    pub fn rank(self) -> u8 {
         match self {
             Self::Static => 0,
             Self::Dhcpv6 => 1,

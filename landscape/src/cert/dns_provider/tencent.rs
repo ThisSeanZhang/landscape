@@ -438,8 +438,7 @@ impl DnsRecordUpdater for TencentSolver {
         let existing_set: std::collections::HashSet<&str> =
             existing_with_value.iter().map(|(_, v)| *v).collect();
 
-        // Cap at 2 records (Tencent free-tier subdomain load-balance limit)
-        let desired_vec: Vec<&str> = desired_values.iter().map(|s| s.as_str()).take(2).collect();
+        let desired_vec: Vec<&str> = desired_values.iter().map(|s| s.as_str()).collect();
         let desired_set: std::collections::HashSet<&str> = desired_vec.iter().copied().collect();
 
         let mut unmatched: Vec<&str> =

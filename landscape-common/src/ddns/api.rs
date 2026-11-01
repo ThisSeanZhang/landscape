@@ -9,6 +9,10 @@ fn default_enable() -> bool {
     true
 }
 
+fn default_max_ips_per_record() -> u32 {
+    1
+}
+
 /// API view of [`DdnsSource`]: the iface-name mirrors are server-internal
 /// (DB write-back for downgraded binaries) and never cross the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +74,9 @@ pub struct ApiDdnsJob {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub ttl: Option<u32>,
+    #[serde(default = "default_max_ips_per_record")]
+    #[cfg_attr(feature = "openapi", schema(minimum = 1))]
+    pub max_ips_per_record: u32,
     #[serde(default)]
     pub records: Vec<DdnsRecordConfig>,
     #[serde(default = "get_f64_timestamp")]
@@ -87,6 +94,7 @@ impl From<DdnsJob> for ApiDdnsJob {
             zone_name: value.zone_name,
             provider_profile_id: value.provider_profile_id,
             ttl: value.ttl,
+            max_ips_per_record: value.max_ips_per_record,
             records: value.records,
             update_at: value.update_at,
         }
@@ -103,6 +111,7 @@ impl From<ApiDdnsJob> for DdnsJob {
             zone_name: value.zone_name,
             provider_profile_id: value.provider_profile_id,
             ttl: value.ttl,
+            max_ips_per_record: value.max_ips_per_record,
             records: value.records,
             update_at: value.update_at,
         }

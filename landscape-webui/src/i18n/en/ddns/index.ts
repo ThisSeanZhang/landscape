@@ -25,6 +25,9 @@ export default {
   source_iface: "Interface",
   ip_family: "IP Family",
   ttl: "TTL",
+  max_ips_per_record: "Max IPs per Subdomain",
+  max_ips_per_record_hint:
+    "Maximum addresses published for the same subdomain and IP type. Default is 1 (one IPv4 plus one IPv6 per subdomain). Provider limits for reference: Tencent free plan 2, Aliyun free plan 10 per domain/line, Cloudflare limited by the zone record quota.",
   sync_now: "Sync Now",
   cancel_sync: "Cancel Sync",
   confirm_cancel_sync: "Cancel the in-flight sync task?",

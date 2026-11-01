@@ -114,6 +114,7 @@ mod tests {
             zone_name: "example.com".to_string(),
             provider_profile_id: Uuid::new_v4(),
             ttl: Some(300),
+            max_ips_per_record: 1,
             records: vec![DdnsRecordConfig { name: "www".to_string(), enable: true }],
             update_at: 0.0,
         }

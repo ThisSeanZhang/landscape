@@ -25,6 +25,9 @@ export default {
   source_iface: "网卡",
   ip_family: "IP 类型",
   ttl: "TTL",
+  max_ips_per_record: "每子域名发布上限",
+  max_ips_per_record_hint:
+    "同一子域名、同一 IP 类型最多发布多少个地址；默认 1（即每个子域名最多 1 个 IPv4 + 1 个 IPv6）。服务商限制参考：腾讯云免费版 2 条、阿里云免费版单域名单线路 10 条、Cloudflare 受 zone 总记录数限制。",
   sync_now: "立即同步",
   cancel_sync: "取消同步",
   confirm_cancel_sync: "取消当前同步任务？",

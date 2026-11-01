@@ -159,6 +159,7 @@ fn test_job(sources: Vec<DdnsSource>) -> DdnsJob {
         zone_name: "example.com".to_string(),
         provider_profile_id: Uuid::nil(),
         ttl: Some(120),
+        max_ips_per_record: 1,
         records: vec![landscape_common::ddns::DdnsRecordConfig {
             name: "@".to_string(),
             enable: true,
