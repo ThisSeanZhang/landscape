@@ -8,8 +8,14 @@
 //! * `cache.rs` — verdict cache inner-map lifecycle
 
 pub mod cache;
+mod connection;
+pub use connection::*;
+mod binding;
 mod init;
 mod lan;
+pub use binding::sync_bound_wan_routes;
+mod router;
+pub use router::sync_router_wan_policy;
 mod trace;
 pub(crate) mod types;
 mod wan;

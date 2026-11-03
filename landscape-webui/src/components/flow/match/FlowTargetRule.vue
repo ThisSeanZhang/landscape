@@ -11,6 +11,7 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
+const props = defineProps<{ failover?: boolean }>();
 
 const target_rules = defineModel<WeightedFlowTarget[]>("target_rules", {
   required: true,
@@ -55,6 +56,8 @@ function onCreate(): WeightedFlowTarget {
 }
 
 function target_type_option(): any[] {
+  if (props.failover)
+    return [{ label: t("flow.target_rule.type_wan"), value: "interface" }];
   return [
     {
       label: t("flow.target_rule.type_wan"),
@@ -102,38 +105,72 @@ function handleUpdateValue(value: FlowTarget["t"], index: number) {
       {{ t("flow.target_rule.add_target_rule") }}
     </template>
     <template #default="{ value, index }">
-      <n-input-group>
-        <n-select
-          :style="{ width: '24%' }"
-          v-model:value="value.target.t"
-          @update:value="handleUpdateValue($event, index)"
-          :options="target_type_option()"
-        />
+      <n-flex vertical style="width: 100%">
+        <n-flex v-if="failover" align="center" justify="space-between">
+          <n-text>{{
+            index === 0
+              ? t("flow.failover.primary")
+              : t("flow.failover.backup", { index })
+          }}</n-text>
+          <n-flex :size="4">
+            <n-button
+              size="tiny"
+              :disabled="index === 0"
+              @click="
+                [target_rules[index - 1], target_rules[index]] = [
+                  target_rules[index],
+                  target_rules[index - 1],
+                ]
+              "
+              >{{ t("flow.failover.move_up") }}</n-button
+            >
+            <n-button
+              size="tiny"
+              :disabled="index === target_rules.length - 1"
+              @click="
+                [target_rules[index + 1], target_rules[index]] = [
+                  target_rules[index],
+                  target_rules[index + 1],
+                ]
+              "
+              >{{ t("flow.failover.move_down") }}</n-button
+            >
+          </n-flex>
+        </n-flex>
+        <n-input-group>
+          <n-select
+            :style="{ width: '24%' }"
+            v-model:value="value.target.t"
+            @update:value="handleUpdateValue($event, index)"
+            :options="target_type_option()"
+          />
 
-        <n-select
-          v-if="value.target.t == 'interface'"
-          v-model:value="value.target.link_id"
-          :style="{ width: '56%' }"
-          :options="wan_link_opts"
-          :placeholder="t('flow.target_rule.iface_placeholder')"
-        />
-        <n-select
-          v-else-if="value.target.t == 'netns'"
-          v-model:value="value.target.container_name"
-          :style="{ width: '56%' }"
-          :options="docker_options"
-          :placeholder="t('flow.target_rule.container_placeholder')"
-        />
+          <n-select
+            v-if="value.target.t == 'interface'"
+            v-model:value="value.target.link_id"
+            :style="{ width: failover ? '76%' : '56%' }"
+            :options="wan_link_opts"
+            :placeholder="t('flow.target_rule.iface_placeholder')"
+          />
+          <n-select
+            v-else-if="value.target.t == 'netns'"
+            v-model:value="value.target.container_name"
+            :style="{ width: failover ? '76%' : '56%' }"
+            :options="docker_options"
+            :placeholder="t('flow.target_rule.container_placeholder')"
+          />
 
-        <n-input-number
-          v-model:value="value.weight"
-          :style="{ width: '20%' }"
-          :min="0"
-          :step="1"
-          :show-button="false"
-          :placeholder="t('flow.target_rule.weight_placeholder')"
-        />
-      </n-input-group>
+          <n-input-number
+            v-if="!failover"
+            v-model:value="value.weight"
+            :style="{ width: '20%' }"
+            :min="0"
+            :step="1"
+            :show-button="false"
+            :placeholder="t('flow.target_rule.weight_placeholder')"
+          />
+        </n-input-group>
+      </n-flex>
     </template>
   </n-dynamic-input>
 </template>

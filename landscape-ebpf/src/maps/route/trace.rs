@@ -362,22 +362,27 @@ fn trace_cache_check_v4(
         let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = Route4CacheKey::default();
-        cache_key.local_addr = src_ip.to_bits().to_be();
-        cache_key.remote_addr = dst_ip.to_bits().to_be();
-
-        match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
-            Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<Route4CacheValue>() {
-                    return Some((false, None, true));
-                }
-                let val = Route4CacheValue::read_from_bytes(&val_bytes).ok()?;
-                let cached_mark_value = val.mark_value;
-                let consistent = cached_mark_value == expected_cache_mark;
-                Some((true, Some(cached_mark_value), consistent))
+        // The trace UI accepts IP pairs, while caches now distinguish ports.
+        // Inspect every matching tuple and prefer an inconsistent mark so a
+        // stale connection cannot be hidden by another matching connection.
+        let mut matching = None;
+        for key_bytes in inner.keys() {
+            let Some(key) = Route4CacheKey::read_from_bytes(&key_bytes).ok() else { continue };
+            if key.local_addr != src_ip.to_bits().to_be()
+                || key.remote_addr != dst_ip.to_bits().to_be()
+            {
+                continue;
             }
-            _ => Some((false, None, true)),
+            let Some(bytes) = inner.lookup(&key_bytes, MapFlags::ANY).ok().flatten() else {
+                continue;
+            };
+            let Some(value) = Route4CacheValue::read_from_bytes(&bytes).ok() else { continue };
+            if value.mark_value != expected_cache_mark {
+                return Some((true, Some(value.mark_value), false));
+            }
+            matching = Some(value.mark_value);
         }
+        Some((matching.is_some(), matching, true))
     })();
 
     result.unwrap_or((false, None, true))
@@ -397,22 +402,27 @@ fn trace_cache_check_v6(
         let index_key = cache_index.as_bytes();
         let inner = lookup_inner_map(&outer, index_key)?;
 
-        let mut cache_key = Route6CacheKey::default();
-        cache_key.local_addr = src_ip.to_bits().to_be_bytes();
-        cache_key.remote_addr = dst_ip.to_bits().to_be_bytes();
-
-        match inner.lookup(cache_key.as_bytes(), MapFlags::ANY) {
-            Ok(Some(val_bytes)) => {
-                if val_bytes.len() < size_of::<Route6CacheValue>() {
-                    return Some((false, None, true));
-                }
-                let val = Route6CacheValue::read_from_bytes(&val_bytes).ok()?;
-                let cached_mark_value = val.mark_value;
-                let consistent = cached_mark_value == expected_cache_mark;
-                Some((true, Some(cached_mark_value), consistent))
+        // The trace UI accepts IP pairs, while caches now distinguish ports.
+        // Inspect every matching tuple and prefer an inconsistent mark so a
+        // stale connection cannot be hidden by another matching connection.
+        let mut matching = None;
+        for key_bytes in inner.keys() {
+            let Some(key) = Route6CacheKey::read_from_bytes(&key_bytes).ok() else { continue };
+            if key.local_addr != src_ip.to_bits().to_be_bytes()
+                || key.remote_addr != dst_ip.to_bits().to_be_bytes()
+            {
+                continue;
             }
-            _ => Some((false, None, true)),
+            let Some(bytes) = inner.lookup(&key_bytes, MapFlags::ANY).ok().flatten() else {
+                continue;
+            };
+            let Some(value) = Route6CacheValue::read_from_bytes(&bytes).ok() else { continue };
+            if value.mark_value != expected_cache_mark {
+                return Some((true, Some(value.mark_value), false));
+            }
+            matching = Some(value.mark_value);
         }
+        Some((matching.is_some(), matching, true))
     })();
 
     result.unwrap_or((false, None, true))

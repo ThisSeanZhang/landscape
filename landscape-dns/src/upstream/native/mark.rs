@@ -9,7 +9,7 @@ use landscape_common::dns::bind::DnsBindConfig;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
 
-use crate::upstream::socket::set_socket_mark;
+use crate::upstream::socket::{bind_wan_device, set_socket_mark};
 
 /// Creates marked / source-bound sockets for upstream connections.
 ///
@@ -22,6 +22,7 @@ pub struct MarkRuntimeProvider {
     mark_value: u32,
     bind_addr4: Option<Ipv4Addr>,
     bind_addr6: Option<Ipv6Addr>,
+    bind_config: DnsBindConfig,
 }
 
 impl fmt::Debug for MarkRuntimeProvider {
@@ -34,8 +35,14 @@ impl MarkRuntimeProvider {
     /// Create a provider applying `mark_value` (SO_MARK) and the optional
     /// source-address bindings to every socket it creates.
     pub fn new(mark_value: u32, bind_config: DnsBindConfig) -> Self {
-        let DnsBindConfig { bind_addr4, bind_addr6 } = bind_config;
-        MarkRuntimeProvider { mark_value, bind_addr4, bind_addr6 }
+        let mark_value = bind_config.socket_mark(mark_value);
+        let bind_addr4 = bind_config
+            .source_addr(false)
+            .and_then(|ip| if let IpAddr::V4(ip) = ip { Some(ip) } else { None });
+        let bind_addr6 = bind_config
+            .source_addr(true)
+            .and_then(|ip| if let IpAddr::V6(ip) = ip { Some(ip) } else { None });
+        MarkRuntimeProvider { mark_value, bind_addr4, bind_addr6, bind_config }
     }
 
     /// The local address a socket for `server_addr` should bind to: the
@@ -78,6 +85,7 @@ impl MarkRuntimeProvider {
         socket.bind(bind_addr)?;
 
         socket.set_nodelay(true)?;
+        bind_wan_device(socket.as_raw_fd(), server_addr, &self.bind_config)?;
         set_socket_mark(socket.as_raw_fd(), self.mark_value)?;
 
         let future = socket.connect(server_addr);
@@ -111,6 +119,7 @@ impl MarkRuntimeProvider {
         }
 
         let socket = TokioUdpSocket::bind(bind_addr).await?;
+        bind_wan_device(socket.as_raw_fd(), server_addr, &self.bind_config)?;
         set_socket_mark(socket.as_raw_fd(), self.mark_value)?;
         socket.connect(server_addr).await?;
         Ok(socket)
@@ -131,6 +140,7 @@ impl MarkRuntimeProvider {
     fn bind_quic_socket(&self, server_addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
         let bind_addr = self.bind_addr(server_addr);
         let socket = std::net::UdpSocket::bind(bind_addr)?;
+        bind_wan_device(socket.as_raw_fd(), server_addr, &self.bind_config)?;
         set_socket_mark(socket.as_raw_fd(), self.mark_value)?;
         Ok(socket)
     }
@@ -220,5 +230,79 @@ mod tests {
             }
         };
         assert_eq!(read_socket_mark(socket.as_raw_fd()), 0x8005);
+    }
+    #[tokio::test]
+    async fn followed_flow_without_selected_family_never_uses_os_default() {
+        let provider = MarkRuntimeProvider::new(
+            0x8001,
+            DnsBindConfig { follow_flow: Some(7), ..Default::default() },
+        );
+        for server in ["127.0.0.1:53", "[::1]:53"] {
+            let server = server.parse().unwrap();
+            assert_eq!(
+                provider.bind_udp(server).await.unwrap_err().kind(),
+                io::ErrorKind::NetworkUnreachable
+            );
+            assert_eq!(
+                provider.connect_tcp(server, None).await.unwrap_err().kind(),
+                io::ErrorKind::NetworkUnreachable
+            );
+            assert_eq!(
+                provider.bind_quic_socket(server).unwrap_err().kind(),
+                io::ErrorKind::NetworkUnreachable
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn followed_flow_applies_device_source_and_mark_to_all_socket_types() {
+        use landscape_common::dns::bind::DnsWanBinding;
+        if std::env::var("LANDSCAPE_PRIVILEGED_CI").as_deref() != Ok("1") {
+            return;
+        }
+        let provider = MarkRuntimeProvider::new(
+            0x8001,
+            DnsBindConfig {
+                follow_flow: Some(7),
+                resolved_wan: Some(DnsWanBinding {
+                    ipv4: Some(("lo".into(), Ipv4Addr::LOCALHOST)),
+                    ipv6: Some(("lo".into(), Ipv6Addr::LOCALHOST)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        let verify = |fd: RawFd| {
+            assert_eq!(read_socket_mark(fd), 0x8007);
+            let mut device = [0_u8; 16];
+            let mut len = device.len() as libc::socklen_t;
+            // SAFETY: the provided fd is live and device/len are valid writable buffers.
+            assert_eq!(
+                unsafe {
+                    libc::getsockopt(
+                        fd,
+                        libc::SOL_SOCKET,
+                        libc::SO_BINDTODEVICE,
+                        device.as_mut_ptr().cast(),
+                        &mut len,
+                    )
+                },
+                0
+            );
+            assert_eq!(&device[..3], b"lo\0");
+        };
+        for ip in [IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)] {
+            let listener = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
+            let server = listener.local_addr().unwrap();
+            let tcp = provider.connect_tcp(server, None).await.unwrap();
+            verify(tcp.as_raw_fd());
+            assert_eq!(tcp.local_addr().unwrap().ip(), ip);
+            let udp = provider.bind_udp(server).await.unwrap();
+            verify(udp.as_raw_fd());
+            assert_eq!(udp.local_addr().unwrap().ip(), ip);
+            let quic = provider.bind_quic_socket(server).unwrap();
+            verify(quic.as_raw_fd());
+            assert_eq!(quic.local_addr().unwrap().ip(), ip);
+        }
     }
 }

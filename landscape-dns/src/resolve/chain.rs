@@ -11,6 +11,7 @@ use hickory_proto::{
     },
 };
 use landscape_common::{
+    dns::check::DnsCheckError,
     dns::error::{DnsResult, DnsServiceError},
     dns::rule::FilterResult,
     flow::DnsResultSink,
@@ -49,10 +50,25 @@ enum RuleLookupOutcome {
     /// FormErr, ServFail, ...). The code is passed through to the client.
     ErrorCode(ResponseCode),
     /// Unrecoverable upstream failure (timeout, ServFail, ...).
-    Failed,
+    Failed(DnsCheckError),
 }
 
 impl RuleLookupOutcome {
+    fn fill_diagnostic(&self, result: &mut CheckChainDnsResult) {
+        match self {
+            Self::NoError { .. } => result.response_code = Some(ResponseCode::NoError.into()),
+            Self::NxDomain => {
+                result.response_code = Some(ResponseCode::NXDomain.into());
+                result.records = Some(vec![]);
+            }
+            Self::ErrorCode(code) => {
+                result.response_code = Some((*code).into());
+                result.error = Some(DnsCheckError::UpstreamResponse);
+            }
+            Self::Failed(error) => result.error = Some(*error),
+        }
+    }
+
     /// The (records, response code) pair to cache for this outcome, if any.
     /// `NxDomain` caches an empty (negative) answer, explicit error codes and
     /// failures nothing.
@@ -62,7 +78,7 @@ impl RuleLookupOutcome {
                 Some((records.clone(), ResponseCode::NoError))
             }
             RuleLookupOutcome::NxDomain => Some((vec![], ResponseCode::NXDomain)),
-            RuleLookupOutcome::ErrorCode(_) | RuleLookupOutcome::Failed => None,
+            RuleLookupOutcome::ErrorCode(_) | RuleLookupOutcome::Failed(_) => None,
         }
     }
 }
@@ -241,7 +257,7 @@ impl<'a> ResolveChain<'a> {
                     outcome: DnsOutcome::Error,
                     response_code: code,
                 },
-                RuleLookupOutcome::Failed => DnsQueryAnswer {
+                RuleLookupOutcome::Failed(_) => DnsQueryAnswer {
                     records: vec![],
                     outcome: DnsOutcome::Error,
                     response_code: response_code_for(DnsOutcome::Error),
@@ -289,9 +305,14 @@ impl<'a> ResolveChain<'a> {
             } else {
                 // Read-only: no cache writes here, the cache report below
                 // shows what a client would currently see.
-                if let RuleLookupOutcome::NoError { records } =
-                    self.stage_rule(domain, query_type, resolver, CacheWritePolicy::ReadOnly).await
-                {
+                let outcome =
+                    self.stage_rule(domain, query_type, resolver, CacheWritePolicy::ReadOnly).await;
+                outcome.fill_diagnostic(&mut result);
+                if let Some(error) = result.error {
+                    tracing::warn!(flow_id = self.flow_id, rule_id = %resolver.get_config_id(),
+                        ?error, response_code = ?result.response_code, "DNS diagnostic lookup failed");
+                }
+                if let RuleLookupOutcome::NoError { records } = outcome {
                     result.records = Some(crate::to_common_records(if apply_filter {
                         filter_result(records, &filter)
                     } else {
@@ -299,6 +320,8 @@ impl<'a> ResolveChain<'a> {
                     }));
                 }
             }
+        } else {
+            result.error = Some(DnsCheckError::NoMatchingRule);
         }
 
         // (4) Cache report
@@ -370,10 +393,11 @@ impl<'a> ResolveChain<'a> {
             ..Default::default()
         };
 
-        match self
+        let outcome = self
             .stage_rule(domain, query_type, resolver, CacheWritePolicy::Write { query_filtered })
-            .await
-        {
+            .await;
+        outcome.fill_diagnostic(&mut result);
+        match outcome {
             RuleLookupOutcome::NoError { records } => {
                 result.records = Some(if apply_filter {
                     crate::to_common_records(filter_result(records, &filter))
@@ -392,7 +416,7 @@ impl<'a> ResolveChain<'a> {
                     return Err(DnsServiceError::RefreshFailed(domain.raw().to_string()));
                 }
             }
-            RuleLookupOutcome::Failed => {
+            RuleLookupOutcome::Failed(_) => {
                 // Filtered queries are served an empty answer, so a
                 // failure is not an error here; anything else cannot be
                 // resolved at all.
@@ -501,7 +525,9 @@ fn rule_lookup_outcome_from_error(err: &DnsServiceError) -> RuleLookupOutcome {
             RuleLookupOutcome::NoError { records: vec![] }
         }
         DnsServiceError::Protocol(code) => RuleLookupOutcome::ErrorCode(*code),
-        _ => RuleLookupOutcome::Failed,
+        DnsServiceError::Timeout => RuleLookupOutcome::Failed(DnsCheckError::UpstreamTimeout),
+        DnsServiceError::Io(_) => RuleLookupOutcome::Failed(DnsCheckError::UpstreamNetwork),
+        _ => RuleLookupOutcome::Failed(DnsCheckError::UpstreamFailure),
     }
 }
 
@@ -636,11 +662,11 @@ mod tests {
         ));
         assert!(matches!(
             rule_lookup_outcome_from_error(&DnsServiceError::Timeout),
-            RuleLookupOutcome::Failed
+            RuleLookupOutcome::Failed(_)
         ));
         assert!(matches!(
             rule_lookup_outcome_from_error(&DnsServiceError::Internal("boom".into())),
-            RuleLookupOutcome::Failed
+            RuleLookupOutcome::Failed(_)
         ));
 
         let no_error = RuleLookupOutcome::NoError { records: vec![] };
@@ -655,7 +681,7 @@ mod tests {
 
         // Explicit upstream error codes are never cached, like failures.
         assert!(RuleLookupOutcome::ErrorCode(ResponseCode::Refused).cache_write().is_none());
-        assert!(RuleLookupOutcome::Failed.cache_write().is_none());
+        assert!(RuleLookupOutcome::Failed(DnsCheckError::UpstreamTimeout).cache_write().is_none());
     }
 
     #[test]

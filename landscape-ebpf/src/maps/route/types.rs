@@ -44,6 +44,10 @@ pub(crate) struct Route6LanInfo {
 pub(crate) struct Route4CacheKey {
     pub local_addr: u32,
     pub remote_addr: u32,
+    pub local_port: u16,
+    pub remote_port: u16,
+    pub protocol: u8,
+    pub _pad: [u8; 3],
 }
 
 #[repr(C)]
@@ -51,6 +55,10 @@ pub(crate) struct Route4CacheKey {
 pub(crate) struct Route6CacheKey {
     pub local_addr: [u8; 16],
     pub remote_addr: [u8; 16],
+    pub local_port: u16,
+    pub remote_port: u16,
+    pub protocol: u8,
+    pub _pad: [u8; 3],
 }
 
 #[repr(C)]

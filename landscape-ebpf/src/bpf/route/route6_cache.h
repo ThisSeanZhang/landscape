@@ -8,6 +8,10 @@
 struct route6_cache_key {
     struct in6_addr local_addr;
     struct in6_addr remote_addr;
+    __be16 local_port;
+    __be16 remote_port;
+    u8 protocol;
+    u8 _pad[3];
 } _route6_cache_key;
 
 struct route6_cache_value {

@@ -42,6 +42,8 @@ use std::time::{Duration, Instant};
 // difference never turns into copies.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum LandscapeResolver {
+    /// Keep the matching rule active and fail closed when its WAN has no DNS servers.
+    Unavailable,
     /// hickory's built-in name server pool.
     Legacy(Resolver<MarkConnectionProvider>),
     /// Experimental self-managed engine, see `exp_pool`.
@@ -64,6 +66,9 @@ impl LandscapeResolver {
         // though the wire name is valid.
         let name = domain.as_dns_name();
         match self {
+            Self::Unavailable => {
+                Err(NetError::from("no DNS servers configured for the active WAN"))
+            }
             Self::Legacy(resolver) => resolver.lookup(name.clone(), query_type).await,
             #[cfg(feature = "pool-exp")]
             Self::Pooled(resolver) => resolver.lookup_name(name.clone(), query_type).await,
@@ -115,6 +120,7 @@ fn map_native_error(query: Query, err: native::UpstreamError) -> NetError {
 impl fmt::Debug for LandscapeResolver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Unavailable => f.write_str("Unavailable WAN DNS"),
             Self::Legacy(resolver) => fmt::Debug::fmt(resolver, f),
             #[cfg(feature = "pool-exp")]
             Self::Pooled(resolver) => fmt::Debug::fmt(resolver, f),
@@ -127,10 +133,19 @@ impl fmt::Debug for LandscapeResolver {
 pub(crate) fn create_resolver(
     flow_id: u32,
     mark_value: u32,
-    config: DnsUpstreamConfig,
+    mut config: DnsUpstreamConfig,
 ) -> Option<LandscapeResolver> {
+    if !config.bind_config.wan_servers.is_empty() {
+        config.ips = config.bind_config.server_ips(&config.ips);
+        if config.ips.is_empty() {
+            tracing::warn!(flow_id, upstream_id = %config.id, "no DNS servers for active WAN; failing closed");
+            return Some(LandscapeResolver::Unavailable);
+        }
+    }
     // Opt-in gate: only explicitly opted-in upstreams use the self-managed pool.
-    if config.use_experimental_pool.unwrap_or(false) {
+    if config.use_experimental_pool.unwrap_or(false)
+        && (cfg!(feature = "pool-native") || config.bind_config.follow_flow.is_none())
+    {
         #[cfg(feature = "pool-native")]
         {
             let provider =

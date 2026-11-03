@@ -34,6 +34,8 @@ pub fn gen_default_dns_rule_and_upstream() -> (DNSRuleConfig, DnsUpstreamConfig)
         flow_id: default_flow_id(),
         update_at: get_f64_timestamp(),
         upstream_id: upstream.id,
+        wan_upstreams: vec![],
+        resolved_wan: None,
     };
     (rule, upstream)
 }

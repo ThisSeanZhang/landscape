@@ -47,12 +47,12 @@ struct CurrentSchemaState {
 // reached via the manual step-based rollback path.
 pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
     ReleaseBoundary {
-        version: "0.25.1",
-        terminal_migration: "m20260927_000000_add_use_experimental_pool_to_dns_upstream",
+        version: "0.27.3",
+        terminal_migration: "m20261008_240001_wan_link_health_check",
     },
     ReleaseBoundary {
-        version: "0.26.0",
-        terminal_migration: "m20261008_240001_wan_link_health_check",
+        version: "0.28.0",
+        terminal_migration: "m20261102_010000_dns_wan_upstreams",
     },
 ];
 
@@ -515,7 +515,7 @@ mod tests {
         let target = build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
             .unwrap()
             .into_iter()
-            .find(|target| target.version == "0.25.1")
+            .find(|target| target.version == RELEASE_BOUNDARIES[0].version)
             .unwrap();
         let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
 

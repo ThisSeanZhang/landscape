@@ -129,6 +129,7 @@ async fn doq_honours_bind_config_source_address() {
         bind_config: DnsBindConfig {
             bind_addr4: Some(Ipv4Addr::LOCALHOST),
             bind_addr6: None,
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -172,7 +173,11 @@ async fn doq_unassignable_bind_source_fails_fast() {
         mode: DnsUpstreamMode::Quic { domain: "ns.example.com".into() },
         ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
         port: Some(port),
-        bind_config: DnsBindConfig { bind_addr4: Some(bind_addr), bind_addr6: None },
+        bind_config: DnsBindConfig {
+            bind_addr4: Some(bind_addr),
+            bind_addr6: None,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let provider = MarkRuntimeProvider::new(0x8000, upstream.bind_config.clone());

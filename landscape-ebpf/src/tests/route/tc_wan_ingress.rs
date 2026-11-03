@@ -39,7 +39,7 @@ use crate::tests::{
     helper::map::{
         LAN_CACHE, LAN_ROUTE_TYPE, ROUTE_TYPE_NEXTHOP, TARGET_IFINDEX, WAN_CACHE, WAN_IFINDEX,
         WAN_ROUTE_TYPE, as_bytes, create_route4_cache_inner_map, insert_ip_mac_v4,
-        insert_route4_lan_entry, lookup_rt4_cache_value, put_rt4_cache_value,
+        insert_route4_lan_entry, lookup_rt4_reverse_cache_value, put_rt4_reverse_cache_value,
     },
     isolated_pin_root,
     pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn},
@@ -134,8 +134,13 @@ fn wan_ingress_own_address_goes_to_stack_without_cache() {
     assert_eq!(ret, RET_UNSPEC, "daddr == wan ingress address must go to the stack");
     assert_eq!(out, pkt);
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, wan_self_addr(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            wan_self_addr(),
+            public_src()
+        )
+        .is_none(),
         "self-addressed traffic must never be cached"
     );
 }
@@ -159,8 +164,13 @@ fn wan_ingress_lan_redirect_without_static_mark_skips_cache() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "cache write is gated on INGRESS_STATIC_MARK"
     );
 }
@@ -183,17 +193,26 @@ fn wan_ingress_lan_redirect_with_static_mark_writes_reverse_wan_cache() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_REDIRECT);
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("reverse WAN-cache entry must be written");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("reverse WAN-cache entry must be written");
     // The cached ifindex is skb->ifindex (the ingress wan device) and
     // has_mac derives from l3_offset > 0.
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
     assert_eq!(cache.has_mac, 1);
     // forward-direction key must not exist
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, public_src(), lan_client())
-            .is_none()
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            public_src(),
+            lan_client()
+        )
+        .is_none()
     );
 }
 
@@ -207,8 +226,13 @@ fn wan_ingress_no_lan_entry_passes_with_static_mark() {
 
     assert_eq!(ret, RET_OK, "no lan entry → continue through the wan pipe");
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "no redirect → no cache write"
     );
 }
@@ -232,8 +256,13 @@ fn wan_ingress_wan_typed_self_entry_hands_to_stack() {
 
     assert_eq!(ret, RET_UNSPEC, "WAN-typed entry whose addr is the daddr itself");
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none()
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none()
     );
 }
 
@@ -287,9 +316,13 @@ fn wan_ingress_has_mac_entry_rewrites_header_then_redirects() {
     assert_eq!(&out[6..12], &entry_mac);
     assert_eq!(&out[12..14], &[0x08, 0x00]);
 
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("static mark must still cache the reverse path");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("static mark must still cache the reverse path");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
 }
 
@@ -315,8 +348,13 @@ fn wan_ingress_lan_entry_same_iface_hands_to_stack() {
     assert_eq!(ret, RET_UNSPEC, "entry pointing at the incoming device itself");
     assert_eq!(out, reply_pkt());
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "no redirect → no cache write"
     );
 }
@@ -397,9 +435,13 @@ fn wan_ingress_raw_l3_frame_prepends_mac_and_redirects() {
     assert_eq!(&written[12..14], &[0x08, 0x00]);
     assert_eq!(&written[14..], raw, "L3 payload must be untouched");
 
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("static mark must cache the reverse path");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("static mark must cache the reverse path");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
     assert_eq!(cache.has_mac, 0, "l3_offset == 0 must record has_mac = 0");
 }
@@ -411,7 +453,7 @@ fn wan_ingress_reverse_entry_in_lan_cache_blocks_wan_write() {
     load_skel!("tc-wan-in-flow-lancache", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_value(
+    put_rt4_reverse_cache_value(
         &skel.maps.rt4_cache_map,
         LAN_CACHE,
         lan_client(),
@@ -435,8 +477,13 @@ fn wan_ingress_reverse_entry_in_lan_cache_blocks_wan_write() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "lan-cache hit must suppress the wan cache write"
     );
 }
@@ -447,7 +494,7 @@ fn wan_ingress_existing_wan_cache_entry_updated_in_place() {
     // ifindex / has_mac / xdp flag refreshed while the mark stays untouched.
     load_skel!("tc-wan-in-flow-cacheupd", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
-    put_rt4_cache_value(
+    put_rt4_reverse_cache_value(
         &skel.maps.rt4_cache_map,
         WAN_CACHE,
         lan_client(),
@@ -470,9 +517,13 @@ fn wan_ingress_existing_wan_cache_entry_updated_in_place() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_REDIRECT);
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("reverse entry must survive");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("reverse entry must survive");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX, "ifindex refreshed to skb->ifindex");
     assert_eq!(cache.has_mac, 1, "l3_offset 14 must flip has_mac to 1");
     assert_eq!(cache.xdp_redirect_able, 0, "no xdp target in the harness");
@@ -485,7 +536,7 @@ fn wan_ingress_existing_wan_cache_entry_xdp_flag_refreshed() {
     // xdp_redirect_able map keyed by skb->ifindex (TRUE row).
     load_skel!("tc-wan-in-flow-cacheupd-xdp", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
-    put_rt4_cache_value(
+    put_rt4_reverse_cache_value(
         &skel.maps.rt4_cache_map,
         WAN_CACHE,
         lan_client(),
@@ -513,9 +564,13 @@ fn wan_ingress_existing_wan_cache_entry_xdp_flag_refreshed() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_REDIRECT);
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("reverse entry must survive");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("reverse entry must survive");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
     assert_eq!(cache.xdp_redirect_able, 1, "update row must refresh the xdp flag to 1");
 }
@@ -561,9 +616,13 @@ fn wan_ingress_non_matching_wan_binding_continues_to_lan_redirect() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_REDIRECT, "non-matching binding must not swallow the packet");
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("redirect under static mark must still cache the reverse path");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("redirect under static mark must still cache the reverse path");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
 }
 
@@ -609,8 +668,13 @@ fn wan_ingress_lan_typed_own_addr_hands_to_stack() {
     assert_eq!(ret, RET_UNSPEC, "LAN-typed entry for the daddr itself");
     assert_eq!(out, reply_pkt());
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "no redirect → no cache write"
     );
 }
@@ -770,9 +834,13 @@ fn wan_ingress_static_mark_with_flow_bits_still_writes_cache() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(0x0305_0001));
 
     assert_eq!(ret, RET_REDIRECT);
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("low mask byte 1 must satisfy the cache gate");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("low mask byte 1 must satisfy the cache gate");
     assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
 }
 
@@ -788,8 +856,13 @@ fn wan_ingress_zero_low_mask_byte_skips_cache() {
 
     assert_eq!(ret, RET_REDIRECT);
     assert!(
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .is_none(),
+        lookup_rt4_reverse_cache_value(
+            &skel.maps.rt4_cache_map,
+            WAN_CACHE,
+            lan_client(),
+            public_src()
+        )
+        .is_none(),
         "cache write is gated on the low mask byte only"
     );
 }
@@ -814,9 +887,13 @@ fn wan_ingress_static_mark_insert_sets_xdp_flag_when_able() {
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
     assert_eq!(ret, RET_REDIRECT);
-    let cache =
-        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
-            .expect("reverse WAN-cache entry must be written");
+    let cache = lookup_rt4_reverse_cache_value(
+        &skel.maps.rt4_cache_map,
+        WAN_CACHE,
+        lan_client(),
+        public_src(),
+    )
+    .expect("reverse WAN-cache entry must be written");
     assert_eq!(
         cache.xdp_redirect_able, 1,
         "insert row must consult xdp_redirect_able[skb ifindex]"

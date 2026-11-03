@@ -45,6 +45,27 @@ export default {
     clamp_value: "Clamp Value",
   },
   health_check: {
+    ipv4_probe: "Enable IPv4 probes",
+    ipv6_probe: "Enable IPv6 probes",
+    family_hint:
+      "Enabled families are evaluated independently. A disabled family inherits the other verdict but still needs its own route. Keep at least one usable probe family. Legacy Ping / DNS / HTTP probes are IPv4-only; use grouped probes for IPv6.",
+    follow_family:
+      "{follower} sends no probes and inherits {source} health. Failures affecting only {follower} cannot be detected.",
+
+    dns_ip: "Upstream DNS IPv4 / IPv6 address",
+    multi: "Multiple targets / IPv4 + IPv6",
+    multi_hint:
+      "Each group must meet its quorum. All groups within an address family must pass. Use one address family per group. With both probe switches on, families switch independently. Turning one off preserves its targets but sends no probes and follows the other family's result.",
+    group_name: "Group name",
+    quorum: "Required successful targets",
+
+    method: "Probe method",
+    application_hint:
+      "Probes stay on this WAN. HTTP success/redirect responses pass; DNS must return IPv4 answers. HTTP resolution also uses the specified upstream DNS server.",
+    http_url: "Probe URL",
+    dns_server: "Upstream DNS IPv4 address",
+    dns_domain: "Query domain",
+
     title: "WAN Link Health Check",
     targets: "Probe Targets (IPv4)",
     targets_tooltip:

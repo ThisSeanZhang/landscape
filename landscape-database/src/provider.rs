@@ -198,6 +198,7 @@ macro_rules! define_store {
             where
                 F: FnOnce() -> Result<(), DbError>,
             {
+                crate::dns_wan_validation::validate_network_snapshot(&config)?;
                 let txn = self.database.begin().await?;
                 let result = async {
                     Self::import_init_config_in_transaction(&txn, config).await?;

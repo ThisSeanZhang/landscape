@@ -36,7 +36,10 @@ arc-swap = { workspace = true }
 dashmap = { workspace = true }
 reqwest = { workspace = true }
 rcgen = { workspace = true }
+url = { workspace = true }
 rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
 rustls-pki-types = { workspace = true }
 pem = { workspace = true }
 instant-acme = { workspace = true }

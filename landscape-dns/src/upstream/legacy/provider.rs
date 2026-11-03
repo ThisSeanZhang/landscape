@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
 
-use crate::upstream::socket::set_socket_mark;
+use crate::upstream::socket::{bind_wan_device, set_socket_mark};
 
 pub type MarkConnectionProvider = HickoryMarkProvider;
 
@@ -30,6 +30,7 @@ pub struct HickoryMarkProvider {
     mark_value: u32,
     bind_addr4: Option<Ipv4Addr>,
     bind_addr6: Option<Ipv6Addr>,
+    bind_config: DnsBindConfig,
     quic_binder: MarkQuicSocketBinder,
 }
 
@@ -45,13 +46,20 @@ impl fmt::Debug for HickoryMarkProvider {
 impl HickoryMarkProvider {
     /// Create a Tokio runtime with a specific mark value
     pub fn new(mark_value: u32, bind_config: DnsBindConfig) -> Self {
-        let DnsBindConfig { bind_addr4, bind_addr6 } = bind_config;
+        let mark_value = bind_config.socket_mark(mark_value);
+        let bind_addr4 = bind_config
+            .source_addr(false)
+            .and_then(|ip| if let IpAddr::V4(ip) = ip { Some(ip) } else { None });
+        let bind_addr6 = bind_config
+            .source_addr(true)
+            .and_then(|ip| if let IpAddr::V6(ip) = ip { Some(ip) } else { None });
         HickoryMarkProvider {
             handler: TokioHandle::default(),
             mark_value,
             bind_addr4,
             bind_addr6,
-            quic_binder: MarkQuicSocketBinder { mark_value },
+            quic_binder: MarkQuicSocketBinder { mark_value, bind_config: bind_config.clone() },
+            bind_config,
         }
     }
 }
@@ -73,6 +81,7 @@ impl RuntimeProvider for HickoryMarkProvider {
         wait_for: Option<Duration>,
     ) -> Pin<Box<dyn Send + Future<Output = io::Result<Self::Tcp>>>> {
         let mark_value = self.mark_value;
+        let bind_config = self.bind_config.clone();
 
         let (debug, bind_addr) = if server_addr.is_ipv4() {
             let bind_addr =
@@ -105,6 +114,7 @@ impl RuntimeProvider for HickoryMarkProvider {
 
             socket.set_nodelay(true)?;
             let fd = socket.as_raw_fd();
+            bind_wan_device(fd, server_addr, &bind_config)?;
             set_socket_mark(fd, mark_value)?;
 
             let future = socket.connect(server_addr);
@@ -127,6 +137,7 @@ impl RuntimeProvider for HickoryMarkProvider {
         server_addr: SocketAddr,
     ) -> Pin<Box<dyn Send + Future<Output = std::io::Result<Self::Udp>>>> {
         let mark_value = self.mark_value;
+        let bind_config = self.bind_config.clone();
 
         let (debug, socket_addr) = if server_addr.is_ipv4() {
             let socket_addr = self
@@ -155,6 +166,7 @@ impl RuntimeProvider for HickoryMarkProvider {
 
             let socket = TokioUdpSocket::bind(socket_addr).await?;
             let fd = socket.as_raw_fd();
+            bind_wan_device(fd, server_addr, &bind_config)?;
             set_socket_mark(fd, mark_value)?;
             socket.connect(server_addr).await?;
 
@@ -170,16 +182,23 @@ impl RuntimeProvider for HickoryMarkProvider {
 #[derive(Clone)]
 struct MarkQuicSocketBinder {
     mark_value: u32,
+    bind_config: DnsBindConfig,
 }
 
 impl QuicSocketBinder for MarkQuicSocketBinder {
     fn bind_quic(
         &self,
         local_addr: SocketAddr,
-        _server_addr: SocketAddr,
+        server_addr: SocketAddr,
     ) -> Result<Arc<dyn quinn::AsyncUdpSocket>, io::Error> {
         use quinn::Runtime;
+        let local_addr = self
+            .bind_config
+            .source_addr(server_addr.is_ipv6())
+            .map(|ip| SocketAddr::new(ip, local_addr.port()))
+            .unwrap_or(local_addr);
         let socket = std::net::UdpSocket::bind(local_addr)?;
+        bind_wan_device(socket.as_raw_fd(), server_addr, &self.bind_config)?;
         set_socket_mark(socket.as_raw_fd(), self.mark_value)?;
         quinn::TokioRuntime.wrap_udp_socket(socket)
     }

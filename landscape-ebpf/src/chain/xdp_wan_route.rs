@@ -108,6 +108,14 @@ pub fn init_xdp_wan_route(
         "tc_wan_egress_route pin rt4_slot_map"
     )?;
     crate::bpf_ctx!(
+        pin_and_reuse_map(&mut egress_route_open_skel.maps.rt_conn_policy, &paths.rt_conn_policy,),
+        "tc_wan_egress_route pin rt_conn_policy"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut egress_route_open_skel.maps.rt_connections, &paths.rt_connections,),
+        "tc_wan_egress_route pin rt_connections"
+    )?;
+    crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
         "tc_wan_egress_route pin rt6_slot_map"
     )?;

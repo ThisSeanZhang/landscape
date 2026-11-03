@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { get_all_wan_links } from "@/api/service_wan_link";
+import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
 import { useMessage } from "naive-ui";
 import { isIP } from "is-ip";
 import { computed } from "vue";
@@ -30,6 +32,17 @@ const origin_rule_json = ref<string>("");
 const rule = ref<DnsUpstreamConfig>();
 
 const commit_spin = ref(false);
+const wanOptions = ref<{ label: string; value: string }[]>([]);
+const wanServersEnabled = computed({
+  get: () => !!rule.value?.bind_config?.wan_servers?.length,
+  set: (enabled: boolean) => {
+    if (!rule.value?.bind_config) return;
+    rule.value.bind_config.wan_servers = enabled
+      ? wanOptions.value.map((wan) => ({ link_id: wan.value, ips: [] }))
+      : [];
+  },
+});
+const flowOptions = ref<{ label: string; value: number }[]>([]);
 const isModified = computed(() => {
   return JSON.stringify(rule.value) !== origin_rule_json.value;
 });
@@ -48,6 +61,28 @@ async function enter() {
       use_experimental_pool: false,
     };
   }
+  rule.value.bind_config ??= {};
+  const [flows, links] = await Promise.all([
+    getFlowRules(),
+    get_all_wan_links(),
+  ]);
+  wanOptions.value = links.map((wan) => ({
+    label: wan.name || wan.attach_iface_name,
+    value: wan.id,
+  }));
+  flowOptions.value = [
+    { label: t("dns.upstream_edit.default_flow"), value: 0 },
+    ...flows
+      .filter(
+        (f) =>
+          f.enable &&
+          (f.failover?.enable || f.failover?.mode === "primary_backup"),
+      )
+      .map((f) => ({
+        label: `${f.name || f.remark || "Flow"} (${f.flow_id})`,
+        value: f.flow_id,
+      })),
+  ];
   origin_rule_json.value = JSON.stringify(rule.value);
 }
 
@@ -66,6 +101,7 @@ const rules = {
   ips: {
     trigger: ["blur", "change"],
     validator(_: unknown, value: string[]) {
+      if (wanServersEnabled.value) return true;
       if (!value || value.length === 0) {
         return new Error(t("dns.upstream_edit.err_ips_required"));
       }
@@ -107,6 +143,21 @@ async function saveRule() {
   if (rule.value) {
     try {
       await formRef.value?.validate();
+      if (wanServersEnabled.value) {
+        const servers = rule.value.bind_config!.wan_servers!;
+        if (
+          new Set(servers.map((wan) => wan.link_id)).size !== servers.length ||
+          servers.some(
+            (wan) =>
+              !wan.link_id ||
+              !wan.ips.length ||
+              wan.ips.some((ip) => !isIP(ip)),
+          )
+        ) {
+          message.error(t("dns.upstream_edit.wan_servers_invalid"));
+          return;
+        }
+      }
       // 如果是 HTTPS 模式且 endpoint 为空
       if (
         rule.value.mode.t === DnsUpstreamModeTsEnum.Https &&
@@ -222,7 +273,68 @@ async function import_rules() {
           </n-switch>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="8" :label="t('dns.upstream_edit.preset_fill')">
+        <n-form-item-gi
+          v-if="rule.bind_config"
+          :span="8"
+          :label="t('dns.upstream_edit.follow_flow')"
+        >
+          <n-flex vertical style="width: 100%">
+            <n-select
+              v-model:value="rule.bind_config.follow_flow"
+              :options="flowOptions"
+              clearable
+              :placeholder="t('dns.upstream_edit.follow_flow_off')"
+              @update:value="
+                rule.bind_config.bind_addr4 = undefined;
+                rule.bind_config.bind_addr6 = undefined;
+                if (rule.bind_config.follow_flow == null)
+                  rule.bind_config.wan_servers = [];
+              "
+            />
+            <n-text depth="3">{{
+              t("dns.upstream_edit.follow_flow_hint")
+            }}</n-text>
+          </n-flex>
+        </n-form-item-gi>
+        <n-form-item-gi
+          v-if="rule.bind_config?.follow_flow != null"
+          :span="8"
+          :label="t('dns.upstream_edit.wan_servers')"
+        >
+          <n-flex vertical style="width: 100%">
+            <n-switch
+              v-model:value="wanServersEnabled"
+              :disabled="!wanOptions.length"
+            />
+            <n-text depth="3">{{
+              t("dns.upstream_edit.wan_servers_hint")
+            }}</n-text>
+            <n-dynamic-input
+              v-if="wanServersEnabled && rule.bind_config"
+              v-model:value="rule.bind_config.wan_servers"
+              :on-create="() => ({ link_id: '', ips: [] })"
+            >
+              <template #default="{ value }">
+                <n-flex vertical style="width: 100%">
+                  <n-select
+                    v-model:value="value.link_id"
+                    :options="wanOptions"
+                    :placeholder="t('dns.upstream_edit.wan_select')"
+                  />
+                  <n-dynamic-input
+                    v-model:value="value.ips"
+                    :placeholder="t('dns.upstream_edit.enter_ip_v46')"
+                  />
+                </n-flex>
+              </template>
+            </n-dynamic-input>
+          </n-flex>
+        </n-form-item-gi>
+        <n-form-item-gi
+          v-if="!wanServersEnabled"
+          :span="8"
+          :label="t('dns.upstream_edit.preset_fill')"
+        >
           <DefaultUpstream v-model:rule="rule"></DefaultUpstream>
         </n-form-item-gi>
 
@@ -290,6 +402,7 @@ async function import_rules() {
 
         <n-form-item-gi
           :span="8"
+          v-if="!wanServersEnabled"
           :label="t('dns.upstream_edit.server_ips')"
           path="ips"
         >
