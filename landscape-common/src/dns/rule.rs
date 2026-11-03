@@ -11,6 +11,14 @@ use crate::config_service::geo::GeoConfigKey;
 pub use super::error::DnsRuleError;
 pub use super::runtime::DNSRuntimeRule;
 
+/// An independently managed upstream selected when this WAN carries DNS traffic.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DnsWanUpstream {
+    pub link_id: Uuid,
+    pub upstream_id: Uuid,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DNSRuleConfig {
@@ -24,6 +32,13 @@ pub struct DNSRuleConfig {
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub filter: FilterResult,
     pub upstream_id: Uuid,
+    /// Empty keeps the single-upstream behavior. Otherwise the owning flow's
+    /// selected WAN chooses one independent upstream; no static fallback.
+    #[serde(default)]
+    pub wan_upstreams: Vec<DnsWanUpstream>,
+    #[serde(skip)]
+    #[cfg_attr(feature = "openapi", schema(ignore))]
+    pub resolved_wan: Option<super::bind::DnsWanBinding>,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub mark: FlowMark,
@@ -101,4 +116,42 @@ pub enum LandscapeDnsRecordType {
     HTTPS,
 }
 
-crate::impl_trivial_validatable!(DNSRuleConfig);
+impl crate::database::validator::ValidatableConfig for DNSRuleConfig {
+    fn validate(&self) -> Result<(), crate::service::ServiceConfigError> {
+        let mut links = std::collections::HashSet::new();
+        for mapping in &self.wan_upstreams {
+            if mapping.link_id.is_nil()
+                || mapping.upstream_id.is_nil()
+                || !links.insert(mapping.link_id)
+            {
+                return Err(crate::service::ServiceConfigError::InvalidConfig {
+                    reason: "WAN DNS groups require unique WAN IDs and nonempty upstream IDs"
+                        .into(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wan_group_tests {
+    use super::*;
+    use crate::database::validator::ValidatableConfig;
+
+    #[test]
+    fn legacy_rules_default_empty_and_runtime_binding_cannot_be_injected() {
+        let value = serde_json::json!({"name":"legacy","index":10,"enable":true,"upstream_id":Uuid::new_v4(),"resolved_wan":{"ipv4":["evil","192.0.2.1"]}});
+        let mut rule: DNSRuleConfig = serde_json::from_value(value).unwrap();
+        assert!(rule.wan_upstreams.is_empty());
+        assert!(rule.resolved_wan.is_none());
+        assert!(serde_json::to_value(&rule).unwrap().get("resolved_wan").is_none());
+        rule.wan_upstreams = vec![DnsWanUpstream {
+            link_id: Uuid::new_v4(),
+            upstream_id: Uuid::new_v4(),
+        }];
+        assert!(rule.validate().is_ok());
+        rule.wan_upstreams.push(rule.wan_upstreams[0].clone());
+        assert!(rule.validate().is_err());
+    }
+}

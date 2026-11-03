@@ -601,6 +601,7 @@ fn flow_config(flow_id: u32, enable: bool, targets: Vec<WeightedFlowTarget>) -> 
         id: Uuid::nil(),
         enable,
         flow_id,
+        failover: Default::default(),
         flow_match_rules: vec![],
         flow_targets: targets,
         name: String::new(),
@@ -798,12 +799,14 @@ fn collect_refresh_multiple_flows_independent() {
 // Kernel default-route sync
 // ─────────────────────────────────────────────────────────────────────────
 
-/// No-op dataplane recording every `sync_kernel_default_ipv4` payload;
-/// `set_fail_next` makes the next sync report failure.
+/// In-memory WAN slots and every `sync_kernel_default_ipv4` payload;
+/// `set_fail_next` makes the next kernel sync report failure.
 #[derive(Default)]
 struct RecordingRouteDataplane {
     calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
     fail_next: std::sync::atomic::AtomicBool,
+    slots: std::sync::Mutex<HashMap<(FlowId, bool), Vec<(WanRouteTarget, u32)>>>,
+    generations: std::sync::Mutex<HashMap<(FlowId, bool), u64>>,
 }
 
 impl RecordingRouteDataplane {
@@ -813,6 +816,10 @@ impl RecordingRouteDataplane {
 
     fn set_fail_next(&self) {
         self.fail_next.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn slots(&self, flow_id: FlowId, ipv6: bool) -> Vec<(WanRouteTarget, u32)> {
+        self.slots.lock().unwrap().get(&(flow_id, ipv6)).cloned().unwrap_or_default()
     }
 }
 
@@ -824,13 +831,30 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
 
     fn del_lan_route(&self, _info: LanRouteInfo) {}
 
-    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
+    fn replace_wan_slots_v4(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]) {
+        self.slots.lock().unwrap().insert((flow_id, false), targets.to_vec());
+    }
 
-    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
+    fn replace_wan_slots_v6(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]) {
+        self.slots.lock().unwrap().insert((flow_id, true), targets.to_vec());
+    }
 
-    fn del_wan_slots_v4(&self, _flow_id: FlowId) {}
+    fn del_wan_slots_v4(&self, flow_id: FlowId) {
+        self.slots.lock().unwrap().remove(&(flow_id, false));
+    }
 
-    fn del_wan_slots_v6(&self, _flow_id: FlowId) {}
+    fn del_wan_slots_v6(&self, flow_id: FlowId) {
+        self.slots.lock().unwrap().remove(&(flow_id, true));
+    }
+
+    fn set_connection_generation(&self, flow_id: FlowId, ipv6: bool, generation: Option<u64>) {
+        let mut generations = self.generations.lock().unwrap();
+        if let Some(generation) = generation {
+            generations.insert((flow_id, ipv6), generation);
+        } else {
+            generations.remove(&(flow_id, ipv6));
+        }
+    }
 
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool {
         self.calls.lock().unwrap().push(nexthops.to_vec());
@@ -838,6 +862,72 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
     }
 
     fn invalidate_lan_cache(&self) {}
+}
+
+async fn default_owner_dataplane_fixture(
+    legacy_ipv4: bool,
+    legacy_ipv6: bool,
+) -> (IpRouteService, Arc<RecordingRouteDataplane>, FlowConfig) {
+    let dataplane = Arc::new(RecordingRouteDataplane::default());
+    let service = IpRouteService::new(dataplane.clone());
+    for name in ["wan-legacy", "wan-selected"] {
+        let mut v4 = ipv4_wan_route(name, Ipv4Addr::new(192, 0, 2, 10));
+        v4.info.default_route = name == "wan-legacy" && legacy_ipv4;
+        service.insert_ipv4_wan_route(&link_owner(name), v4).await;
+        let mut v6 = ipv6_wan_default_route(name);
+        v6.info.default_route = name == "wan-legacy" && legacy_ipv6;
+        service.insert_ipv6_wan_route(&link_owner(name), v6).await;
+    }
+    let mut config = flow_config(9, true, vec![iface_target("wan-selected", 1)]);
+    config.failover.mode = landscape_common::flow::FlowTargetMode::PrimaryBackup;
+    config.failover.bind_default_flow = true;
+    config.failover.bind_router_traffic = true;
+    service.sync_flow_wan_targets(std::slice::from_ref(&config)).await;
+    for ipv6 in [false, true] {
+        assert_eq!(dataplane.slots(0, ipv6)[0].0.info.iface_name, "wan-selected");
+        assert!(dataplane.generations.lock().unwrap().contains_key(&(0, ipv6)));
+    }
+    (service, dataplane, config)
+}
+
+#[tokio::test]
+async fn deleting_default_owner_restores_legacy_slots_in_each_address_family() {
+    // Include asymmetric cases: the two families may have different fallback availability.
+    for (legacy_ipv4, legacy_ipv6) in [(true, true), (true, false), (false, true), (false, false)] {
+        let (service, dataplane, config) =
+            default_owner_dataplane_fixture(legacy_ipv4, legacy_ipv6).await;
+        service.clear_flow_wan_targets(config.flow_id).await;
+        for (ipv6, has_legacy) in [(false, legacy_ipv4), (true, legacy_ipv6)] {
+            let slots = dataplane.slots(0, ipv6);
+            if has_legacy {
+                assert_eq!(slots.len(), 1);
+                assert_eq!(slots[0].0.info.iface_name, "wan-legacy");
+            } else {
+                assert!(slots.is_empty(), "Flow 0 must not retain the deleted owner's WAN");
+            }
+            assert!(dataplane.slots(config.flow_id, ipv6).is_empty());
+            let generations = dataplane.generations.lock().unwrap();
+            assert!(!generations.contains_key(&(0, ipv6)));
+            assert!(!generations.contains_key(&(config.flow_id, ipv6)));
+        }
+        assert!(service.router_wan_policy.read().await.is_none());
+        assert!(service.get_flow_wan_statuses().await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn deleting_another_flow_preserves_default_owner_slots_and_connection_generation() {
+    let (service, dataplane, default) = default_owner_dataplane_fixture(true, true).await;
+    let other = flow_config(10, true, vec![iface_target("wan-legacy", 1)]);
+    service.sync_flow_wan_targets(&[default, other.clone()]).await;
+    let before = dataplane.generations.lock().unwrap().clone();
+    service.clear_flow_wan_targets(other.flow_id).await;
+    for ipv6 in [false, true] {
+        assert!(dataplane.slots(other.flow_id, ipv6).is_empty());
+        assert_eq!(dataplane.slots(0, ipv6)[0].0.info.iface_name, "wan-selected");
+        assert_eq!(dataplane.generations.lock().unwrap().get(&(0, ipv6)), before.get(&(0, ipv6)));
+    }
+    assert!(service.router_wan_policy.read().await.is_some());
 }
 
 #[test]

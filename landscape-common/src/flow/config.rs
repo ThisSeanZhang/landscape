@@ -25,9 +25,10 @@ pub struct FlowConfig {
     pub flow_id: u32,
     /// 匹配规则
     pub flow_match_rules: Vec<FlowEntryRule>,
-    /// 处理流量目标网卡, 目前只取第一个
-    /// 暂定, 可能会移动到具体的网卡上进行设置
+    /// Weighted exits, or primary/backup order when failover is enabled.
     pub flow_targets: Vec<WeightedFlowTarget>,
+    #[serde(default)]
+    pub failover: FlowFailoverConfig,
     /// 名称 (用于展示的简短标识, 为空时回退到 remark)
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
@@ -38,6 +39,117 @@ pub struct FlowConfig {
     #[serde(default = "get_f64_timestamp")]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub update_at: f64,
+}
+
+/// Opt-in ordered WAN failover. Legacy flows remain in weighted mode.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct FlowFailoverConfig {
+    /// Probe verdicts or acquired link routes decide automatic eligibility.
+    #[serde(default)]
+    pub trigger: FlowFailoverTrigger,
+    /// Ordered mode remains selected when automatic switching is turned off.
+    #[serde(default)]
+    pub mode: FlowTargetMode,
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default = "default_auto_failback")]
+    pub auto_failback: bool,
+    /// Keep a route during startup/reconfiguration while probes have no verdict.
+    #[serde(default = "default_unknown_grace_secs")]
+    pub unknown_grace_secs: u16,
+    /// After grace, allow an unknown (never a known failed) configured WAN.
+    #[serde(default)]
+    pub fail_open_on_unknown: bool,
+    /// Higher-priority WAN must remain healthy this long before failback.
+    #[serde(default = "default_failback_delay_secs")]
+    pub failback_delay_secs: u16,
+    /// Minimum time between non-emergency switches; failures bypass this hold.
+    #[serde(default = "default_switch_hold_secs")]
+    pub switch_hold_secs: u16,
+    #[serde(default = "default_failure_connection_policy")]
+    pub failure_connection_policy: FlowConnectionPolicy,
+    #[serde(default)]
+    pub recovery_connection_policy: FlowConnectionPolicy,
+    /// Apply this ordered policy to packets using the reserved default flow.
+    #[serde(default)]
+    pub bind_default_flow: bool,
+    /// Also choose the kernel source/route for unmarked router-originated traffic.
+    #[serde(default)]
+    pub bind_router_traffic: bool,
+}
+
+fn default_unknown_grace_secs() -> u16 {
+    30
+}
+fn default_failback_delay_secs() -> u16 {
+    30
+}
+fn default_switch_hold_secs() -> u16 {
+    5
+}
+fn default_failure_connection_policy() -> FlowConnectionPolicy {
+    FlowConnectionPolicy::ResetExisting
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FlowConnectionPolicy {
+    #[default]
+    NewConnectionsOnly,
+    ResetExisting,
+}
+
+fn default_auto_failback() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FlowFailoverTrigger {
+    #[default]
+    HealthCheck,
+    LinkState,
+}
+
+impl Default for FlowFailoverConfig {
+    fn default() -> Self {
+        Self {
+            trigger: FlowFailoverTrigger::HealthCheck,
+            mode: FlowTargetMode::Weighted,
+            enable: false,
+            auto_failback: true,
+            unknown_grace_secs: default_unknown_grace_secs(),
+            fail_open_on_unknown: false,
+            failback_delay_secs: default_failback_delay_secs(),
+            switch_hold_secs: default_switch_hold_secs(),
+            failure_connection_policy: default_failure_connection_policy(),
+            recovery_connection_policy: FlowConnectionPolicy::NewConnectionsOnly,
+            bind_default_flow: false,
+            bind_router_traffic: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FlowTargetMode {
+    #[default]
+    Weighted,
+    PrimaryBackup,
+}
+
+impl FlowFailoverConfig {
+    pub fn requires_health_checks(&self) -> bool {
+        self.enable && self.trigger == FlowFailoverTrigger::HealthCheck
+    }
+
+    pub fn ordered_targets(&self) -> bool {
+        self.enable || self.mode == FlowTargetMode::PrimaryBackup
+    }
 }
 
 impl LandscapeDBStore<Uuid> for FlowConfig {
@@ -64,11 +176,22 @@ impl crate::database::validator::ValidatableConfig for FlowConfig {
                 ),
             });
         }
+        if self.flow_id > u32::from(u8::MAX) {
+            return Err(ServiceConfigError::FlowIdOutOfRange { flow_id: self.flow_id });
+        }
+        if (self.failover.bind_default_flow && !self.failover.ordered_targets())
+            || (self.failover.bind_router_traffic && !self.failover.bind_default_flow)
+        {
+            return Err(ServiceConfigError::InvalidConfig { reason: "default/router WAN binding requires an ordered flow; router binding also requires default flow binding".into() });
+        }
         for rule in &self.flow_match_rules {
             rule.validate()?;
         }
 
-        if !self.flow_targets.is_empty() && self.flow_targets.iter().all(|t| t.weight == 0) {
+        if !self.failover.ordered_targets()
+            && !self.flow_targets.is_empty()
+            && self.flow_targets.iter().all(|t| t.weight == 0)
+        {
             return Err(ServiceConfigError::InvalidConfig {
                 reason: "flow targets must not all have zero weight".to_string(),
             });
@@ -79,6 +202,30 @@ impl crate::database::validator::ValidatableConfig for FlowConfig {
             });
         }
 
+        if self.failover.ordered_targets() {
+            if self.failover.unknown_grace_secs > 600
+                || self.failover.failback_delay_secs > 3600
+                || self.failover.switch_hold_secs > 3600
+            {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: "WAN grace must be <= 600s and failback/hold must be <= 3600s".into(),
+                });
+            }
+            let mut links = std::collections::HashSet::new();
+            let min_targets = if self.failover.enable { 2 } else { 1 };
+            if self.flow_targets.len() < min_targets
+                || self.flow_targets.iter().any(|target| match &target.target {
+                    FlowTarget::Interface { link_id, .. } => !links.insert(*link_id),
+                    FlowTarget::Netns { .. } => true,
+                })
+            {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "WAN primary/backup mode requires at least {min_targets} distinct WAN links, ordered primary first"
+                    ),
+                });
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for rule in &self.flow_match_rules {
             if !seen.insert(&rule.mode) {
@@ -313,6 +460,7 @@ mod tests {
             id: Uuid::nil(),
             enable: true,
             flow_id: DEFAULT_FLOW_ID,
+            failover: Default::default(),
             flow_match_rules: vec![],
             flow_targets: vec![],
             name: String::new(),
@@ -323,6 +471,51 @@ mod tests {
         let result = crate::database::validator::ValidatableConfig::validate(&config);
 
         assert!(result.is_err(), "flow_id 0 is reserved for the default flow");
+    }
+
+    #[test]
+    fn rejects_flow_ids_that_alias_another_dataplane_flow() {
+        use crate::database::validator::ValidatableConfig;
+        let mut config: FlowConfig = serde_json::from_value(serde_json::json!({
+            "enable": true, "flow_id": 255, "flow_match_rules": [],
+            "flow_targets": [], "remark": "last supported flow"
+        }))
+        .unwrap();
+        assert!(config.validate().is_ok());
+        for id in [256, 300, u32::MAX] {
+            config.flow_id = id;
+            assert!(
+                matches!(config.validate(), Err(ServiceConfigError::FlowIdOutOfRange { flow_id }) if flow_id == id)
+            );
+        }
+    }
+
+    #[test]
+    fn failover_defaults_and_validation() {
+        use crate::database::validator::ValidatableConfig;
+        let mut config: FlowConfig = serde_json::from_value(serde_json::json!({
+            "enable": true, "flow_id": 1, "flow_match_rules": [],
+            "flow_targets": [], "remark": "legacy"
+        }))
+        .unwrap();
+        assert!(!config.failover.enable);
+        assert_eq!(config.failover.trigger, FlowFailoverTrigger::HealthCheck);
+        assert!(config.failover.auto_failback);
+        config.failover.enable = true;
+        assert!(config.validate().is_err());
+        let target = |id| {
+            WeightedFlowTarget::new(
+                FlowTarget::Interface { link_id: Uuid::from_u128(id), name: String::new() },
+                0,
+            )
+        };
+        config.flow_targets = vec![target(1), target(1)];
+        assert!(config.validate().is_err());
+        config.flow_targets = vec![target(1), target(2)];
+        assert!(config.validate().is_ok(), "weights are ignored for ordered failover");
+        config.flow_targets[1] =
+            WeightedFlowTarget::new(FlowTarget::Netns { container_name: "proxy".into() }, 1);
+        assert!(config.validate().is_err());
     }
 
     #[test]

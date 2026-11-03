@@ -44,6 +44,8 @@ impl DNSRuleRepository {
         let (writer, config) = (&writer, &config);
         txn_retry_loop!(self, |txn| async move {
             Self::ensure_flow_exists(txn, config.flow_id).await?;
+            crate::dns_wan_validation::ensure_redirect_flow_exists(txn, config.mark).await?;
+            Self::ensure_wan_upstreams(txn, config).await?;
             writer.upsert_inner(txn, config.clone(), true).await
         })
     }
@@ -60,6 +62,8 @@ impl DNSRuleRepository {
         txn_retry_loop!(self, |txn| async move {
             for config in configs.iter() {
                 Self::ensure_flow_exists(txn, config.flow_id).await?;
+                crate::dns_wan_validation::ensure_redirect_flow_exists(txn, config.mark).await?;
+                Self::ensure_wan_upstreams(txn, config).await?;
             }
             writer.upsert_many_inner(txn, configs, true).await
         })
@@ -102,6 +106,51 @@ impl DNSRuleRepository {
                 },
             )));
         }
+        Ok(())
+    }
+
+    async fn ensure_wan_upstreams(
+        txn: &DatabaseTransaction,
+        config: &DNSRuleConfig,
+    ) -> Result<(), UpsertErr> {
+        use crate::dns_upstream::entity::DnsUpstreamConfigEntity;
+        use crate::wan_link::entity::WanLinkConfigEntity;
+        use landscape_common::dns::config::DnsUpstreamConfig;
+        use landscape_common::{flow::config::FlowConfig, wan_link::WanLinkConfig};
+        if config.wan_upstreams.is_empty() {
+            if DnsUpstreamConfigEntity::find_by_id(config.upstream_id).one(txn).await?.is_none() {
+                return Err(UpsertErr::Database(DbError::Validation(
+                    ServiceConfigError::InvalidConfig {
+                        reason: format!("DNS upstream {} does not exist", config.upstream_id),
+                    },
+                )));
+            }
+            return Ok(());
+        }
+        let flows: Vec<_> = FlowConfigEntity::find()
+            .filter(FlowConfigColumn::FlowId.eq(config.flow_id))
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(FlowConfig::from)
+            .collect();
+        let links: Vec<_> = WanLinkConfigEntity::find()
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(WanLinkConfig::from)
+            .collect();
+        let upstreams: Vec<_> = DnsUpstreamConfigEntity::find()
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(DnsUpstreamConfig::from)
+            .collect();
+        crate::dns_wan_validation::validate_rule_wan_flow(config, &flows)
+            .and_then(|()| {
+                crate::dns_wan_validation::validate_rule_wan_refs(config, &links, &upstreams)
+            })
+            .map_err(|error| UpsertErr::Database(DbError::Validation(error)))?;
         Ok(())
     }
 }
@@ -163,6 +212,7 @@ mod flow_existence_tests {
             id: Uuid::new_v4(),
             enable: true,
             flow_id,
+            failover: Default::default(),
             flow_match_rules: vec![],
             flow_targets: vec![],
             name: String::new(),
@@ -179,6 +229,8 @@ mod flow_existence_tests {
             enable: true,
             filter: FilterResult::default(),
             upstream_id: Uuid::new_v4(),
+            wan_upstreams: vec![],
+            resolved_wan: None,
             mark: Default::default(),
             source: vec![],
             flow_id,
@@ -186,12 +238,23 @@ mod flow_existence_tests {
         }
     }
 
+    async fn rule_with_upstream(
+        provider: &LandscapeDBServiceProvider,
+        flow_id: FlowId,
+    ) -> DNSRuleConfig {
+        let mut rule = dns_rule(flow_id);
+        let upstream = landscape_common::dns::config::DnsUpstreamConfig::default();
+        rule.upstream_id = upstream.id;
+        provider.dns_upstream_config_store().upsert(upstream).await.unwrap();
+        rule
+    }
+
     #[tokio::test]
     async fn upsert_flow_rule_succeeds_when_flow_exists() {
         let provider = LandscapeDBServiceProvider::mem_test_db().await;
         provider.flow_rule_store().upsert(flow(7)).await.unwrap();
 
-        let rule = dns_rule(7);
+        let rule = rule_with_upstream(&provider, 7).await;
         provider.dns_rule_store().checked_upsert_flow_rule(rule.clone()).await.unwrap();
 
         let stored = provider.dns_rule_store().find_by_id(rule.id).await.unwrap();
@@ -202,7 +265,7 @@ mod flow_existence_tests {
     async fn upsert_flow_rule_rejects_missing_flow() {
         let provider = LandscapeDBServiceProvider::mem_test_db().await;
 
-        let rule = dns_rule(99);
+        let rule = rule_with_upstream(&provider, 99).await;
         let result = provider.dns_rule_store().checked_upsert_flow_rule(rule.clone()).await;
 
         assert!(matches!(result, Err(DbError::Validation(_))));
@@ -213,7 +276,7 @@ mod flow_existence_tests {
     async fn default_flow_rule_succeeds_without_flow_config() {
         let provider = LandscapeDBServiceProvider::mem_test_db().await;
 
-        let rule = dns_rule(landscape_common::config::DEFAULT_FLOW_ID);
+        let rule = rule_with_upstream(&provider, landscape_common::config::DEFAULT_FLOW_ID).await;
         provider.dns_rule_store().checked_upsert_flow_rule(rule.clone()).await.unwrap();
 
         let stored = provider.dns_rule_store().find_by_id(rule.id).await.unwrap();
@@ -225,8 +288,8 @@ mod flow_existence_tests {
         let provider = LandscapeDBServiceProvider::mem_test_db().await;
         provider.flow_rule_store().upsert(flow(7)).await.unwrap();
 
-        let good = dns_rule(7);
-        let bad = dns_rule(99);
+        let good = rule_with_upstream(&provider, 7).await;
+        let bad = rule_with_upstream(&provider, 99).await;
         let result =
             provider.dns_rule_store().checked_upsert_flow_rules(vec![good.clone(), bad]).await;
 

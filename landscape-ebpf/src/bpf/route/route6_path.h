@@ -6,6 +6,7 @@
 
 #include "base/landscape.h"
 #include "route/wan_ip.h"
+#include "route/connection.h"
 
 #include "route/flow6_maps.h"
 #include "route/route6_cache.h"
@@ -391,7 +392,7 @@ static __always_inline int route6_pick_wan_and_send_by_flow_id(struct __sk_buff 
         .flow_id = resolved_flow_id,
         .slot = route6_target_slot(&context->daddr),
     };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    struct route6_target_info *target_info = route6_select_connection(context, &slot_key);
 
     // 找不到转发的 target 按照原有计划进行处理
     if (target_info == NULL) {
@@ -535,6 +536,9 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
     int ret = 0;
     u32 key = WAN_CACHE;
     struct route6_cache_key search_key = {0};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     struct mac_key_v6 mac_key = {0};
     struct mac_value_v6 *mac_value = NULL;
     struct route6_cache_value *target = NULL;
@@ -600,7 +604,7 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
         target = bpf_map_lookup_elem(lan_cache, &search_key);
         if (target) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
+            if (target->ifindex != 0 && !route_policy(get_flow_id(target->mark_value), true)) {
                 return route6_redirect_by_cached_target(skb, current_l3_offset, target);
             }
             return route6_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
@@ -615,8 +619,14 @@ static __always_inline int route6_set_cache_in_wan(const struct route6_context *
                                                    u32 current_l3_offset, u32 ifindex,
                                                    u32 link_chain_id) {
     struct route6_cache_key search_key = {0};
+    search_key.local_port = context->dst_port;
+    search_key.remote_port = context->src_port;
+    search_key.protocol = context->l4_protocol;
     struct route6_cache_value *target = NULL;
 
+    struct route_conn_key conn_key = {};
+    route6_connection_key(context, &conn_key, true);
+    if (bpf_map_lookup_elem(&rt_connections, &conn_key)) return TC_ACT_OK;
     u32 key = LAN_CACHE;
     __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
@@ -673,6 +683,9 @@ static __always_inline int route6_set_cache_in_wan(const struct route6_context *
 static __always_inline int route6_set_cache_in_lan(const struct route6_context *context,
                                                    u32 flow_mark) {
     struct route6_cache_key search_key = {0};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     struct route6_cache_value *target = NULL;
     u32 key = WAN_CACHE;
 
@@ -699,7 +712,7 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
                 .flow_id = resolved_flow_id,
                 .slot = route6_target_slot(&context->daddr),
             };
-            struct route6_target_info *slot_target = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+            struct route6_target_info *slot_target = route6_select_connection(context, &slot_key);
 
             struct route6_cache_value new_target_cache = {0};
             new_target_cache.mark_value = flow_mark;

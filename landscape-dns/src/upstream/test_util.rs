@@ -133,6 +133,8 @@ pub(crate) enum ScriptedAction {
     Truncate,
     /// An explicit error-code answer (SERVFAIL, REFUSED, ...).
     Code(ResponseCode),
+    /// A code-only response with no answer records (NXDOMAIN / NODATA).
+    EmptyCode(ResponseCode),
     /// For one received query, first send two spoof attempts — a frame with
     /// an unmatched message id and a frame with the right id but a foreign
     /// question, each carrying an alluring answer (6.6.6.6) — and then the
@@ -412,6 +414,12 @@ async fn respond_scripted(query: &[u8], action: ScriptedAction) -> Option<Vec<Ve
         )]),
         ScriptedAction::Code(code) => {
             Some(vec![answer_for(&message, code, false, message.metadata.id, None, [1, 2, 3, 4])])
+        }
+        ScriptedAction::EmptyCode(code) => {
+            let mut response = Message::response(message.metadata.id, OpCode::Query);
+            response.queries.clone_from(&message.queries);
+            response.metadata.response_code = code;
+            Some(vec![response.to_vec().unwrap()])
         }
         ScriptedAction::SpoofThenAnswer => {
             let spoof_ip = [6, 6, 6, 6];

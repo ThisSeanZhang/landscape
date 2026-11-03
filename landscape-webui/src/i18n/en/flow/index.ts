@@ -1,4 +1,81 @@
 export default {
+  failover: {
+    trigger: "Automatic failover trigger",
+    trigger_health: "Internet health probes",
+    trigger_link: "PPPoE session / link state",
+    link_online: "Session / egress route available",
+    link_hint:
+      "Switch only when the session disconnects or this address family loses its egress route. DNS/HTTP probes are advisory; an online session with an Internet outage keeps its exit.",
+
+    cause: {
+      available_wan: "Usable exit became available",
+      manual_primary: "Automatic switching disabled; use primary",
+      priority_changed: "Primary/backup order changed",
+      link_unavailable: "Previous link or route unavailable",
+      health_failure: "Previous exit failed health checks",
+      health_unknown: "Previous exit unknown; reselect exit",
+      unknown_grace_expired: "Unknown-state grace expired",
+      recovery: "Higher-priority WAN recovered and stabilized",
+    },
+    health: {
+      healthy: "Healthy",
+      unhealthy: "Probe failed",
+      unknown: "Checking",
+      disconnected: "Disconnected",
+    },
+
+    bind_default: "Apply this policy to the default Flow",
+    bind_router: "Also route host traffic through the selected WAN",
+    binding_hint:
+      "Only one flow may own the default policy. Host binding preserves LAN and more specific routes. Bind DNS upstreams separately in DNS settings.",
+
+    advanced: "Advanced failover settings",
+    unknown_grace: "Unknown-state grace (seconds)",
+    fail_open: "Allow unknown exits after grace expires",
+    failback_delay: "Continuous healthy time before failback (seconds)",
+    switch_hold: "Minimum interval between non-emergency switches (seconds)",
+    failure_connection_policy: "Connections on failure",
+    recovery_connection_policy: "Connections on recovery",
+    new_connections_only: "New connections only; preserve existing exits",
+    reset_existing:
+      "Reselect existing exits (applications may need to reconnect)",
+    router_applied: "Host routing policy applied",
+    router_failed: "Host routing policy failed; retrying",
+    router_pending: "Host routing policy awaiting application",
+    router_cleanup_pending:
+      "Removing host routing policy; awaiting original routing",
+    router_cleanup_failed:
+      "Host routing policy removal failed; retrying. Old rules may still apply",
+    connection_limits:
+      "TCP/UDP exits follow the five-tuple, expiring after 2 hours of TCP idle time or 120 seconds of UDP idle time. Restart or cache eviction also drops bindings. Reselection sends no TCP RST and does not clear NAT; applications may need to reconnect.",
+    failed_connection_warning:
+      "Preserved sessions can stay on a failed WAN. Active DNS or game UDP sessions may keep failing until they become idle long enough to expire or their exit is reselected.",
+    active: "Active exit",
+    no_exit: "No available exit",
+    status_unavailable: "Exit status unavailable",
+    remaining: "{seconds} seconds remaining",
+    history: "Recent switches (cleared on restart)",
+    reason: {
+      manual_primary: "Fixed primary",
+      healthy: "Healthy exit",
+      startup_grace: "Unknown; grace period",
+      unknown_fail_open: "Unknown; fail open",
+      waiting_failback: "Waiting for stable recovery",
+      sticky_backup: "Keep current healthy exit",
+      no_available_wan: "No available WAN",
+    },
+
+    restore_weighted: "Restore weighted routing mode",
+    enable: "Enable WAN failover",
+    auto_failback: "Return to primary WAN after recovery",
+    hint: "Order exits from primary to backups. For health-probe mode, enable health checks on every WAN first; enabled probe families require targets; a disabled family inherits the other health verdict. Unknown exits follow the grace/fail-open settings. When automatic switching is off, traffic stays on the primary even if it cannot reach the Internet. Existing connections may need to reconnect.",
+    invalid_targets:
+      "Failover requires at least two distinct WAN links and does not support container exits.",
+    primary: "Primary WAN",
+    backup: "Backup WAN {index}",
+    move_up: "Move up",
+    move_down: "Move down",
+  },
   default_card: {
     title: "Default Flow",
     target_ip: "Destination IP",

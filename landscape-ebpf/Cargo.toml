@@ -74,3 +74,7 @@ bpf-test = [
 # # autoconf automake libtool pkg-config m4 make cmake clang llvm autopoint gawk
 # apt-get install musl-tools musl-dev libargp-dev
 static = ["libbpf-sys/static", "libbpf-sys/vendored"]
+
+[dev-dependencies]
+landscape-core = { path = "../landscape-core" }
+uuid = { workspace = true }

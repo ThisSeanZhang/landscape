@@ -1,10 +1,14 @@
+mod application_probe;
 mod firewall;
 mod health_check;
 mod mss;
+mod multi_probe;
 mod nat4;
 mod nat6;
 mod pd;
 pub mod probe;
+#[cfg(test)]
+mod probe_netns_tests;
 mod v4;
 
 use std::collections::HashMap;
@@ -31,9 +35,8 @@ use landscape_common::service::{
 };
 use landscape_common::wan_link::{
     LinkState, LinkStateHandle, RuntimeWanLinkConfig, SectionKind, SessionIface, SessionPhase,
-    SessionState, V4Runtime, WanHealthProbeConfig, WanLinkConfig, WanLinkRuntimeStatusStore,
-    WanLinkSectionsSnapshot, WanLinkSectionsStatus, WanLinkStatus, WanLinkStatusHandle,
-    WanLinkStatusStore,
+    SessionState, V4Runtime, WanLinkConfig, WanLinkRuntimeStatusStore, WanLinkSectionsSnapshot,
+    WanLinkSectionsStatus, WanLinkStatus, WanLinkStatusHandle, WanLinkStatusStore,
 };
 use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
 use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, LDIAPrefix};
@@ -480,7 +483,7 @@ impl ServiceStarterTrait for WanLinkService {
             SectionKind::HealthCheck,
             task_label::task::WAN_LINK_HEALTH_CHECK,
             health_check_enabled,
-            |state| state.has_v4_lease(),
+            |state| state.has_v4_lease() || state.has_v6_prefix(),
             SectionScope::SessionAndLease,
             {
                 let probe = self.health_probe.clone();
@@ -517,8 +520,9 @@ impl ServiceStarterTrait for WanLinkService {
 
 /// Health check needs something to probe: explicit targets or the gateway.
 fn health_check_enabled(cfg: &WanLinkConfig) -> bool {
-    let WanHealthProbeConfig::Icmp { targets, probe_gateway } = &cfg.health_check.probe;
-    cfg.health_check.enable && (!targets.is_empty() || *probe_gateway)
+    let health = &cfg.health_check;
+    let (v4, v6) = health.probe_families();
+    health.enable && (health.ipv4_probe_enabled && v4 || health.ipv6_probe_enabled && v6)
 }
 
 impl WanLinkService {
@@ -1028,7 +1032,7 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         &self,
         id: Self::Id,
     ) -> Result<Option<ServiceStatus>, DbError> {
-        let old = self.get_store().delete_and_get(id).await?;
+        let old = self.get_store().delete_unreferenced(id).await?;
         let Some(old) = old else { return Ok(None) };
         let status = self.get_service().stop_service(id.to_string()).await;
         // The whole link is gone: stopping the service above reaps its

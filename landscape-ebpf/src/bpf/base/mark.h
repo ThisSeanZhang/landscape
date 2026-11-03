@@ -14,6 +14,7 @@
 //             layouts, always 0 for now)
 #define MARK_TYPE_NORMAL 0
 #define MARK_TYPE_HOST_DIRECT 1
+#define MARK_TYPE_HOST_PROBE 2
 
 #define MARK_TYPE_MASK 0xFF000000
 #define FLOW_ACTION_MASK 0x00007F00
@@ -80,6 +81,12 @@ static __always_inline u8 get_mark_type(u32 original) { return (original & MARK_
 // Whether the mark uses the HostDirect layout
 static __always_inline bool is_host_direct(u32 original) {
     return get_mark_type(original) == MARK_TYPE_HOST_DIRECT;
+}
+
+// Both host layouts carry a chain id. Probes retain NAT/firewall processing;
+// only HostDirect bypasses those stages (e.g. DHCPv6 control packets).
+static __always_inline bool is_host_chain(u32 original) {
+    return is_host_direct(original) || get_mark_type(original) == MARK_TYPE_HOST_PROBE;
 }
 
 // Whether the mark does NOT use the HostDirect layout

@@ -47,6 +47,14 @@ impl ConfigStoreController for DnsUpstreamService {
         &self.store
     }
 
+    async fn delete(&self, id: Uuid) -> Result<Option<DnsUpstreamConfig>, DbError> {
+        let old = self.store.delete_unreferenced(id).await?;
+        if let Some(old) = &old {
+            self.notify_deleted(old.clone()).await;
+        }
+        Ok(old)
+    }
+
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         let upstream_ids = changes.into_iter().map(|change| change.new.id).collect();
         let _ = self.dns_events_tx.send(DnsEvent::UpstreamsChanged { upstream_ids }).await;

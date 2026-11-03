@@ -29,6 +29,144 @@ impl FlowConfigRepository {
         Self { db }
     }
 
+    async fn check_wan_dns_transaction(
+        &self,
+        txn: &sea_orm::DatabaseTransaction,
+        changes: &[FlowConfig],
+    ) -> Result<(), crate::writer::UpsertErr> {
+        use crate::{
+            dns_upstream::entity::DnsUpstreamConfigEntity, wan_link::entity::WanLinkConfigEntity,
+            writer::UpsertErr,
+        };
+        use landscape_common::{
+            dns::{config::DnsUpstreamConfig, rule::DNSRuleConfig},
+            service::ServiceConfigError,
+            wan_link::WanLinkConfig,
+        };
+        let invalid = |error| UpsertErr::Database(DbError::Validation(error));
+        let previous: Vec<_> =
+            FlowConfigEntity::find().all(txn).await?.into_iter().map(FlowConfig::from).collect();
+        let mut flows = previous.clone();
+        for change in changes {
+            flows.retain(|flow| flow.id != change.id);
+            flows.push(change.clone());
+        }
+        if flows.iter().filter(|flow| flow.enable && flow.failover.bind_default_flow).count() > 1 {
+            return Err(invalid(ServiceConfigError::InvalidConfig {
+                reason: "only one enabled flow may control the default WAN policy".into(),
+            }));
+        }
+        let rules: Vec<_> = DNSRuleConfigEntity::find()
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(DNSRuleConfig::from)
+            .collect();
+        let upstreams: Vec<_> = DnsUpstreamConfigEntity::find()
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(DnsUpstreamConfig::from)
+            .collect();
+        let links: Vec<_> = WanLinkConfigEntity::find()
+            .all(txn)
+            .await?
+            .into_iter()
+            .map(WanLinkConfig::from)
+            .collect();
+        for change in changes {
+            if let Some(old) = previous.iter().find(|flow| flow.id == change.id) {
+                if change.flow_id != old.flow_id {
+                    Self::ensure_no_rule_references(txn, old.flow_id, false).await?;
+                }
+                if (!change.enable
+                    || !change.failover.ordered_targets()
+                    || change.flow_id != old.flow_id)
+                    && upstreams
+                        .iter()
+                        .any(|upstream| upstream.bind_config.follow_flow == Some(old.flow_id))
+                {
+                    return Err(invalid(ServiceConfigError::InvalidConfig { reason: "change DNS upstream WAN bindings before disabling, renumbering or leaving primary/backup mode on their followed flow".into() }));
+                }
+                for rule in rules.iter().filter(|rule| {
+                    rule.enable && rule.flow_id == old.flow_id && !rule.wan_upstreams.is_empty()
+                }) {
+                    if change.flow_id != old.flow_id {
+                        return Err(invalid(ServiceConfigError::WanDnsFlowUnsupported {
+                            flow_id: old.flow_id,
+                        }));
+                    }
+                    crate::dns_wan_validation::validate_rule_wan_flow(rule, &flows)
+                        .map_err(invalid)?;
+                }
+            }
+            for target in &change.flow_targets {
+                if let FlowTarget::Interface { link_id, .. } = target.target {
+                    let Some(link) = links.iter().find(|link| link.id == link_id) else {
+                        return Err(invalid(ServiceConfigError::InvalidConfig {
+                            reason: format!("flow target references unknown wan link {link_id}"),
+                        }));
+                    };
+                    if change.enable && change.failover.requires_health_checks() {
+                        link.validate_failover_health().map_err(invalid)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_no_rule_references(
+        txn: &sea_orm::DatabaseTransaction,
+        flow_id: FlowId,
+        deleting: bool,
+    ) -> Result<(), crate::writer::UpsertErr> {
+        use landscape_common::{
+            dns::rule::DNSRuleConfig, flow::ip_mark::WanIpRuleConfig, service::ServiceConfigError,
+        };
+        let mut references = Vec::new();
+        for rule in DNSRuleConfigEntity::find().all(txn).await?.into_iter().map(DNSRuleConfig::from)
+        {
+            // Delete cascades the owner's rules. Renumbering does not, so it
+            // must also reject rules that would be stranded on the old ID.
+            if deleting && rule.flow_id == flow_id {
+                continue;
+            }
+            if (!deleting && rule.flow_id == flow_id)
+                || rule.mark.redirect_flow_id() == Some(flow_id)
+            {
+                references.push(format!(
+                    "分流 {} 的 DNS 规则“{}” ({})",
+                    rule.flow_id, rule.name, rule.id
+                ));
+            }
+        }
+        for rule in
+            DstIpRuleConfigEntity::find().all(txn).await?.into_iter().map(WanIpRuleConfig::from)
+        {
+            if deleting && rule.flow_id == flow_id {
+                continue;
+            }
+            if (!deleting && rule.flow_id == flow_id)
+                || rule.mark.redirect_flow_id() == Some(flow_id)
+            {
+                references.push(format!(
+                    "分流 {} 的 IP 规则“{}” ({})",
+                    rule.flow_id,
+                    rule.name.as_deref().unwrap_or(&rule.remark),
+                    rule.id
+                ));
+            }
+        }
+        references.sort();
+        if !references.is_empty() {
+            return Err(crate::writer::UpsertErr::Database(DbError::Validation(
+                ServiceConfigError::FlowReferenced { flow_id, references: references.join("、") },
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn list_runtime_configs(&self) -> Result<Vec<RuntimeFlowConfig>, DbError> {
         let configs = self.list().await?;
         let devices = self.load_devices_for_configs(&configs).await?;
@@ -80,6 +218,22 @@ impl FlowConfigRepository {
                 return Ok::<_, crate::writer::UpsertErr>(None);
             };
             let flow_id = model.flow_id;
+            let upstreams =
+                crate::dns_upstream::entity::DnsUpstreamConfigEntity::find().all(txn).await?;
+            if upstreams.iter().any(|upstream| {
+                upstream.bind_config["follow_flow"].as_u64() == Some(u64::from(flow_id))
+            }) {
+                return Err(crate::writer::UpsertErr::Database(DbError::Validation(
+                    landscape_common::service::ServiceConfigError::InvalidConfig {
+                        reason:
+                            "change DNS upstream WAN bindings before deleting their followed flow"
+                                .into(),
+                    },
+                )));
+            }
+
+            Self::ensure_no_rule_references(txn, flow_id, true).await?;
+
             DNSRuleConfigEntity::delete_many()
                 .filter(DNSRuleConfigColumn::FlowId.eq(flow_id))
                 .exec(txn)
@@ -408,7 +562,8 @@ crate::impl_repository!(
     FlowConfigEntity,
     FlowConfigActiveModel,
     FlowConfig,
-    DBId
+    DBId,
+    transactional_check = check_wan_dns_transaction
 );
 
 crate::impl_flow_store!(FlowConfigRepository, FlowConfigModel, FlowConfigEntity);
@@ -432,6 +587,68 @@ impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowC
             landscape_common::service::ServiceConfigError::InvalidConfig { reason: e.to_string() }
         }
 
+        if let Some(previous) = self
+            .find_by_id(config.id)
+            .await
+            .map_err(landscape_common::service::ServiceConfigError::internal)?
+            && (!config.enable
+                || !config.failover.ordered_targets()
+                || previous.flow_id != config.flow_id)
+        {
+            let upstreams =
+                crate::dns_upstream::repository::DnsUpstreamRepository::new(self.db.clone())
+                    .list()
+                    .await
+                    .map_err(landscape_common::service::ServiceConfigError::internal)?;
+            if upstreams
+                .iter()
+                .any(|upstream| upstream.bind_config.follow_flow == Some(previous.flow_id))
+            {
+                return Err(landscape_common::service::ServiceConfigError::InvalidConfig { reason: "change DNS upstream WAN bindings before disabling, renumbering or leaving primary/backup mode on their followed flow".into() });
+            }
+        }
+
+        if let Some(previous) = self
+            .find_by_id(config.id)
+            .await
+            .map_err(landscape_common::service::ServiceConfigError::internal)?
+            && (previous.flow_id != config.flow_id
+                || !crate::dns_wan_validation::supports_wan_dns(config))
+        {
+            let rules = crate::dns_rule::repository::DNSRuleRepository::new(self.db.clone())
+                .list()
+                .await
+                .map_err(landscape_common::service::ServiceConfigError::internal)?;
+            let mut references: Vec<_> = rules
+                .iter()
+                .filter(|rule| {
+                    rule.enable
+                        && rule.flow_id == previous.flow_id
+                        && !rule.wan_upstreams.is_empty()
+                })
+                .map(|rule| format!("“{}” ({})", rule.name, rule.id))
+                .collect();
+            references.sort();
+            if !references.is_empty() {
+                return Err(landscape_common::service::ServiceConfigError::WanDnsFlowUnsupported {
+                    flow_id: previous.flow_id,
+                });
+            }
+        }
+
+        if config.enable && config.failover.bind_default_flow {
+            let configs = self
+                .list()
+                .await
+                .map_err(landscape_common::service::ServiceConfigError::internal)?;
+            if configs.iter().any(|other| {
+                other.id != config.id && other.enable && other.failover.bind_default_flow
+            }) {
+                return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                    reason: "only one enabled flow may control the default WAN policy".into(),
+                });
+            }
+        }
         // Interface targets reference wan links by uuid; resolve strictly
         // and refresh the net-iface name mirror.
         if config.flow_targets.iter().any(|t| matches!(t.target, FlowTarget::Interface { .. })) {
@@ -448,6 +665,25 @@ impl landscape_common::database::validator::StoreValidator<FlowConfig> for FlowC
                     )?;
                     if name != iface {
                         *name = iface.to_string();
+                    }
+                }
+            }
+        }
+
+        if config.enable && config.failover.requires_health_checks() {
+            let store = crate::wan_link::repository::WanLinkRepository::new(self.db.clone());
+            for target in &config.flow_targets {
+                if let FlowTarget::Interface { link_id, .. } = target.target {
+                    let link = store
+                        .find_by_id(link_id)
+                        .await
+                        .map_err(landscape_common::service::ServiceConfigError::internal)?;
+                    if let Some(link) = link {
+                        link.validate_failover_health()?;
+                    } else {
+                        return Err(landscape_common::service::ServiceConfigError::InvalidConfig {
+                            reason: "enable health checks on every primary/backup WAN before enabling failover".into(),
+                        });
                     }
                 }
             }
@@ -519,6 +755,7 @@ mod wan_link_ref_tests {
             id: Uuid::new_v4(),
             enable: true,
             flow_id: 1,
+            failover: Default::default(),
             flow_match_rules: vec![],
             flow_targets: vec![WeightedFlowTarget::new(
                 FlowTarget::Interface { link_id, name: name.to_string() },
@@ -535,6 +772,162 @@ mod wan_link_ref_tests {
         let id = Uuid::new_v4();
         provider.wan_link_store().upsert(link(id, "eth1", pppd("ppp0"))).await.unwrap();
         (provider, id)
+    }
+
+    #[tokio::test]
+    async fn independent_wan_groups_roundtrip_and_reject_conflicting_bindings() {
+        use landscape_common::dns::{config::DnsUpstreamConfig, rule::DnsWanUpstream};
+        let (provider, link_id) = setup().await;
+        let group = DnsUpstreamConfig::default();
+        provider.dns_upstream_config_store().checked_upsert(group.clone()).await.unwrap();
+        let mut rule: landscape_common::dns::rule::DNSRuleConfig = serde_json::from_value(serde_json::json!({
+            "name":"independent groups", "index":10, "enable":true, "flow_id":0, "upstream_id":group.id
+        })).unwrap();
+        rule.upstream_id = group.id;
+        rule.wan_upstreams = vec![DnsWanUpstream { link_id, upstream_id: group.id }];
+        let saved =
+            provider.dns_rule_store().checked_upsert_flow_rule(rule.clone()).await.unwrap().new;
+        let read = provider.dns_rule_store().find_by_id(rule.id).await.unwrap().unwrap();
+        assert_eq!(read.wan_upstreams, rule.wan_upstreams);
+        assert!(read.resolved_wan.is_none());
+        let mut invalid = saved.clone();
+        invalid.wan_upstreams[0].upstream_id = Uuid::new_v4();
+        assert!(provider.dns_rule_store().checked_upsert_flow_rule(invalid).await.is_err());
+        let mut invalid = saved.clone();
+        invalid.wan_upstreams[0].link_id = Uuid::new_v4();
+        assert!(provider.dns_rule_store().checked_upsert_flow_rule(invalid).await.is_err());
+        let mut invalid = saved;
+        invalid.wan_upstreams.push(invalid.wan_upstreams[0].clone());
+        assert!(provider.dns_rule_store().checked_upsert_flow_rule(invalid).await.is_err());
+        let mut ambiguous =
+            provider.dns_upstream_config_store().find_by_id(group.id).await.unwrap().unwrap();
+        ambiguous.bind_config.follow_flow = Some(0);
+        assert!(provider.dns_upstream_config_store().checked_upsert(ambiguous).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn per_wan_dns_servers_roundtrip_and_reject_missing_links() {
+        let (provider, link_id) = setup().await;
+        let mut upstream = landscape_common::dns::config::DnsUpstreamConfig::default();
+        upstream.bind_config.follow_flow = Some(0);
+        upstream.bind_config.wan_servers = vec![landscape_common::dns::bind::DnsWanServers {
+            link_id,
+            ips: vec!["202.96.128.86".parse().unwrap()],
+        }];
+        provider.dns_upstream_config_store().checked_upsert(upstream.clone()).await.unwrap();
+        let saved =
+            provider.dns_upstream_config_store().find_by_id(upstream.id).await.unwrap().unwrap();
+        assert_eq!(saved.bind_config.wan_servers, upstream.bind_config.wan_servers);
+        upstream.bind_config.wan_servers[0].link_id = Uuid::new_v4();
+        assert!(provider.dns_upstream_config_store().checked_upsert(upstream).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn followed_dns_flow_cannot_be_disabled_renumbered_or_deleted() {
+        use landscape_common::database::validator::StoreValidator;
+        let (provider, link_id) = setup().await;
+        let mut flow = flow_config(link_id, "ppp0");
+        flow.failover.mode = landscape_common::flow::FlowTargetMode::PrimaryBackup;
+        provider.flow_rule_store().upsert(flow.clone()).await.unwrap();
+        let mut upstream = landscape_common::dns::config::DnsUpstreamConfig::default();
+        upstream.bind_config.follow_flow = Some(flow.flow_id);
+        provider.dns_upstream_config_store().checked_upsert(upstream.clone()).await.unwrap();
+        flow.enable = false;
+        assert!(provider.flow_rule_store().validate_cross(&mut flow).await.is_err());
+        flow.enable = true;
+        flow.flow_id = 2;
+        assert!(provider.flow_rule_store().validate_cross(&mut flow).await.is_err());
+        flow.flow_id = 1;
+        assert!(provider.flow_rule_store().validate_cross(&mut flow).await.is_ok());
+        assert!(provider.flow_rule_store().delete_flow_with_rules(flow.id).await.is_err());
+        upstream.bind_config.follow_flow = None;
+        provider.dns_upstream_config_store().upsert(upstream).await.unwrap();
+        assert!(
+            provider.flow_rule_store().delete_flow_with_rules(flow.id).await.unwrap().is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn default_wan_binding_has_one_enabled_owner() {
+        use landscape_common::database::validator::StoreValidator;
+        let (provider, link_id) = setup().await;
+        let mut owner = flow_config(link_id, "ppp0");
+        owner.failover.mode = landscape_common::flow::FlowTargetMode::PrimaryBackup;
+        owner.failover.bind_default_flow = true;
+        provider.flow_rule_store().upsert(owner.clone()).await.unwrap();
+        let mut candidate = owner.clone();
+        candidate.id = Uuid::new_v4();
+        candidate.flow_id = 2;
+        assert!(provider.flow_rule_store().validate_cross(&mut candidate).await.is_err());
+        assert!(provider.flow_rule_store().validate_cross(&mut owner).await.is_ok());
+        owner.enable = false;
+        provider.flow_rule_store().upsert(owner).await.unwrap();
+        assert!(provider.flow_rule_store().validate_cross(&mut candidate).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn health_check_cannot_be_disabled_while_failover_references_it() {
+        use landscape_common::database::validator::StoreValidator;
+        let (provider, link_id) = setup().await;
+        let mut flow = flow_config(link_id, "ppp0");
+        flow.failover.enable = true;
+        provider.flow_rule_store().upsert(flow.clone()).await.unwrap();
+        let mut wan = provider.wan_link_store().find_by_id(link_id).await.unwrap().unwrap();
+        wan.v4.enable = true;
+        wan.health_check.enable = false;
+        let error = provider.wan_link_store().validate_cross(&mut wan).await.unwrap_err();
+        assert!(error.to_string().contains("health"));
+        flow.failover.enable = false;
+        provider.flow_rule_store().upsert(flow).await.unwrap();
+        assert!(provider.wan_link_store().validate_cross(&mut wan).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dual_stack_failover_requires_both_probe_families_on_flow_and_wan_edits() {
+        use landscape_common::database::validator::StoreValidator;
+        let (provider, link_id) = setup().await;
+        let mut wan = provider.wan_link_store().find_by_id(link_id).await.unwrap().unwrap();
+        wan.v4.enable = true;
+        wan.pd.enable = true;
+        wan.health_check.enable = true;
+        wan.health_check.probe = serde_json::from_value(serde_json::json!({
+            "t": "multi", "groups": [{"name": "test", "quorum": 1, "targets": [
+                {"t": "icmp", "address": "192.0.2.1"}
+            ]}]
+        }))
+        .unwrap();
+        provider.wan_link_store().upsert(wan.clone()).await.unwrap();
+        let mut flow = flow_config(link_id, "ppp0");
+        flow.failover.enable = true;
+        let error = provider.flow_rule_store().validate_cross(&mut flow).await.unwrap_err();
+        assert!(error.to_string().contains("IPv6 probe: false"));
+        let v4_only = wan.health_check.probe.clone();
+        wan.health_check.probe = serde_json::from_value(serde_json::json!({
+            "t": "multi", "groups": [
+                {"name": "test", "quorum": 1, "targets": [{"t": "icmp", "address": "192.0.2.1"}]},
+                {"name": "test", "quorum": 1, "targets": [{"t": "icmp", "address": "2001:db8::1"}]}
+            ]
+        }))
+        .unwrap();
+        provider.wan_link_store().upsert(wan.clone()).await.unwrap();
+        assert!(provider.flow_rule_store().validate_cross(&mut flow).await.is_ok());
+        provider.flow_rule_store().upsert(flow.clone()).await.unwrap();
+        assert!(provider.wan_link_store().validate_cross(&mut wan).await.is_ok());
+        wan.health_check.probe = v4_only;
+        let error = provider.wan_link_store().validate_cross(&mut wan).await.unwrap_err();
+        assert!(error.to_string().contains("IPv6 probe: false"));
+        // Explicitly opting out of IPv6 probing is valid for both save paths.
+        wan.health_check.ipv6_probe_enabled = false;
+        assert!(provider.wan_link_store().validate_cross(&mut wan).await.is_ok());
+        provider.wan_link_store().upsert(wan.clone()).await.unwrap();
+        assert!(provider.flow_rule_store().validate_cross(&mut flow).await.is_ok());
+        wan.health_check.ipv4_probe_enabled = false;
+        assert!(provider.wan_link_store().validate_cross(&mut wan).await.is_err());
+        wan.health_check.ipv4_probe_enabled = true;
+        // Once automatic failover is off, the WAN can use a legacy IPv4-only probe.
+        flow.failover.enable = false;
+        provider.flow_rule_store().upsert(flow).await.unwrap();
+        assert!(provider.wan_link_store().validate_cross(&mut wan).await.is_ok());
     }
 
     #[tokio::test]
@@ -580,6 +973,7 @@ mod cascade_delete_tests {
             id,
             enable: true,
             flow_id,
+            failover: Default::default(),
             flow_match_rules: vec![],
             flow_targets: vec![],
             name: String::new(),
@@ -596,6 +990,8 @@ mod cascade_delete_tests {
             enable: true,
             filter: FilterResult::default(),
             upstream_id: Uuid::new_v4(),
+            wan_upstreams: vec![],
+            resolved_wan: None,
             mark: Default::default(),
             source: vec![],
             flow_id,
@@ -650,6 +1046,35 @@ mod cascade_delete_tests {
         assert!(provider.dst_ip_rule_store().find_by_flow_id(7).await.unwrap().is_empty());
         assert_eq!(provider.dns_rule_store().find_by_flow_id(8).await.unwrap().len(), 1);
         assert_eq!(provider.dst_ip_rule_store().find_by_flow_id(8).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn persists_failover_settings_and_exit_order() {
+        use landscape_common::flow::{FlowFailoverConfig, FlowTarget, WeightedFlowTarget};
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let id = Uuid::new_v4();
+        let mut config = flow(id, 7);
+        config.failover = FlowFailoverConfig {
+            enable: true,
+            auto_failback: false,
+            ..Default::default()
+        };
+        config.flow_targets = [2, 1]
+            .into_iter()
+            .map(|id| {
+                WeightedFlowTarget::new(
+                    FlowTarget::Interface { link_id: Uuid::from_u128(id), name: String::new() },
+                    1,
+                )
+            })
+            .collect();
+        provider.flow_rule_store().upsert(config.clone()).await.unwrap();
+        let loaded = provider.flow_rule_store().find_by_id(id).await.unwrap().unwrap();
+        assert_eq!(loaded.failover, config.failover);
+        assert_eq!(
+            serde_json::to_value(loaded.flow_targets).unwrap(),
+            serde_json::to_value(config.flow_targets).unwrap()
+        );
     }
 
     #[tokio::test]

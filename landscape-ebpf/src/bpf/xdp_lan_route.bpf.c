@@ -6,6 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "route/connection.h"
 #include "route/wan_ip.h"
 
 #include "chain/xdp_meta.h"
@@ -215,7 +216,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
         .flow_id = resolved_flow_id,
         .slot = route4_target_slot(context->daddr),
     };
-    struct route4_target_info *info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+    struct route4_target_info *info = route4_select_connection(context, &slot_key);
     if (info == NULL) {
         if (resolved_flow_id == 0) return 0;
         return XDP_DROP;
@@ -238,6 +239,9 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
     bool already_cached = false;
     struct route4_cache_key cache_key = {.local_addr = context->saddr,
                                          .remote_addr = context->daddr};
+    cache_key.local_port = context->src_port;
+    cache_key.remote_port = context->dst_port;
+    cache_key.protocol = context->l4_protocol;
 
     u32 wan_key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &wan_key);
@@ -305,7 +309,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
         .flow_id = resolved_flow_id,
         .slot = route6_target_slot(&context->daddr),
     };
-    struct route6_target_info *info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    struct route6_target_info *info = route6_select_connection(context, &slot_key);
     if (info == NULL) {
         if (resolved_flow_id == 0) {
             return 0;
@@ -331,6 +335,9 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
 
     bool already_cached = false;
     struct route6_cache_key cache_key = {};
+    cache_key.local_port = context->src_port;
+    cache_key.remote_port = context->dst_port;
+    cache_key.protocol = context->l4_protocol;
     __builtin_memcpy(cache_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(cache_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
@@ -533,6 +540,9 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                                                           u32 *flow_mark) {
     struct route4_cache_key search_key = {.local_addr = context->saddr,
                                           .remote_addr = context->daddr};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     u32 key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (wan_cache) {
@@ -591,7 +601,7 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
         struct route4_cache_value *target = bpf_map_lookup_elem(lan_cache, &search_key);
         if (target) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
+            if (target->ifindex != 0 && !route_policy(get_flow_id(target->mark_value), false)) {
                 if (target->is_docker) {
                     xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                     return XDP_PASS;
@@ -636,6 +646,9 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                                                           const struct route6_context *context,
                                                           u32 *flow_mark) {
     struct route6_cache_key search_key = {};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
@@ -701,7 +714,7 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
         struct route6_cache_value *target = bpf_map_lookup_elem(lan_cache, &search_key);
         if (target) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
+            if (target->ifindex != 0 && !route_policy(get_flow_id(target->mark_value), true)) {
                 if (target->is_docker) {
                     xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                     return XDP_PASS;

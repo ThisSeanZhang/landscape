@@ -14,13 +14,14 @@ const FLOW_DROP: u8 = 2;
 const FLOW_REDIRECT: u8 = 3;
 
 /// Full SocketMark bit layout (32 bits):
-///   bits 24-31  mark layout-type tag (Normal = 0, HostDirect = 1)
+///   bits 24-31  mark layout-type tag (Normal = 0, HostDirect = 1, HostProbe = 2)
 ///   bits 16-23  trace_mark (reserved for observability, carried by both
 ///               layouts, always 0 for now)
-///   bits 0-15   payload (Normal: FlowMark | HostDirect: chain_id)
+///   bits 0-15   payload (Normal: FlowMark | HostDirect/HostProbe: chain_id)
 const MARK_TYPE_MASK: u32 = 0xFF00_0000;
 const TRACE_MARK_MASK: u32 = 0x00FF_0000;
 const MARK_TYPE_HOST_DIRECT: u32 = 1;
+const MARK_TYPE_HOST_PROBE: u32 = 2;
 
 /// The full socket mark (the `skb->mark` / `SO_MARK` field).
 ///
@@ -35,7 +36,7 @@ pub struct SocketMark {
     trace_mark: u8,
 }
 
-/// Mark layout type, discriminated by the bits 24-31 tag; the two layouts
+/// Mark layout type, discriminated by the bits 24-31 tag; the layouts
 /// are mutually exclusive
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkType {
@@ -43,6 +44,8 @@ pub enum MarkType {
     Normal(FlowMark),
     /// tag = 1: bits 0-15 are the chain_id as a whole
     HostDirect { chain_id: u16 },
+    /// tag = 2: pin a health probe to its WAN chain while retaining NAT/firewall state.
+    HostProbe { chain_id: u16 },
 }
 
 impl SocketMark {
@@ -87,6 +90,12 @@ pub struct FlowMark {
 impl FlowMark {
     pub const fn new(action: FlowMarkAction, flow_id: u8, allow_reuse_port: bool) -> Self {
         FlowMark { action, allow_reuse_port, flow_id }
+    }
+
+    /// Only Redirect references another flow; stray IDs on other actions do
+    /// not affect routing and must not acquire reference constraints.
+    pub fn redirect_flow_id(&self) -> Option<u32> {
+        matches!(self.action, FlowMarkAction::Redirect).then_some(u32::from(self.flow_id))
     }
 
     /// Whether a DNS answer carrying this mark should be registered with the
@@ -148,10 +157,10 @@ impl From<u32> for SocketMark {
         let trace_mark = ((value & TRACE_MARK_MASK) >> 16) as u8;
         // Unknown tags (>1) fall back to Normal, matching FlowMarkAction's
         // lenient style
-        let mark_type = if (value & MARK_TYPE_MASK) >> 24 == MARK_TYPE_HOST_DIRECT {
-            MarkType::HostDirect { chain_id: value as u16 }
-        } else {
-            MarkType::Normal(FlowMark::from(value as u16))
+        let mark_type = match (value & MARK_TYPE_MASK) >> 24 {
+            MARK_TYPE_HOST_DIRECT => MarkType::HostDirect { chain_id: value as u16 },
+            MARK_TYPE_HOST_PROBE => MarkType::HostProbe { chain_id: value as u16 },
+            _ => MarkType::Normal(FlowMark::from(value as u16)),
         };
         SocketMark { mark_type, trace_mark }
     }
@@ -166,6 +175,9 @@ impl From<SocketMark> for u32 {
             // guarantees no other layout is possible
             MarkType::HostDirect { chain_id } => {
                 raw | (MARK_TYPE_HOST_DIRECT << 24) | chain_id as u32
+            }
+            MarkType::HostProbe { chain_id } => {
+                raw | (MARK_TYPE_HOST_PROBE << 24) | chain_id as u32
             }
         }
     }
@@ -214,6 +226,15 @@ impl From<FlowMarkAction> for u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_redirect_actions_reference_a_flow() {
+        for action in [FlowMarkAction::KeepGoing, FlowMarkAction::Direct, FlowMarkAction::Drop] {
+            assert_eq!(FlowMark::new(action, 42, true).redirect_flow_id(), None);
+        }
+        assert_eq!(FlowMark::new(FlowMarkAction::Redirect, 0, false).redirect_flow_id(), Some(0));
+        assert_eq!(FlowMark::new(FlowMarkAction::Redirect, 42, true).redirect_flow_id(), Some(42));
+    }
 
     #[test]
     fn test_from_u16() {
@@ -294,10 +315,17 @@ mod tests {
     }
 
     #[test]
+    fn test_socket_mark_host_probe_roundtrip() {
+        let sm = SocketMark::new(MarkType::HostProbe { chain_id: 7 }, 0x56);
+        assert_eq!(u32::from(sm), 0x0256_0007);
+        assert_eq!(SocketMark::from(0x0256_0007), sm);
+    }
+
+    #[test]
     fn test_socket_mark_unknown_tag_falls_back_to_normal() {
-        // tag = 2 is undefined -> fall back to the Normal layout, decoding
+        // tag = 3 is undefined -> fall back to the Normal layout, decoding
         // the low 16 bits
-        let sm = SocketMark::from(0x0200_0305);
+        let sm = SocketMark::from(0x0300_0305);
         assert_eq!(
             sm,
             SocketMark::new(MarkType::Normal(FlowMark::new(FlowMarkAction::Redirect, 5, false)), 0)

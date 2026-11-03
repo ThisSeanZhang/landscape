@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage, type FormInst, type FormRules } from "naive-ui";
 import { HelpCircleOutline } from "@vicons/ionicons5";
+import ProbeGroupsEditor from "./ProbeGroupsEditor.vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
 import { is_ipv4 } from "@/lib/common";
@@ -38,6 +39,7 @@ const form_rules: FormRules = {
     trigger: ["blur", "input"],
     validator: () => {
       const health = link.value.health_check;
+      if (health.probe.t !== "icmp") return true;
       if (health.probe.targets.some((target) => !is_ipv4(target))) {
         return new Error(t("network.health_check.invalid_target"));
       }
@@ -61,6 +63,40 @@ const form_rules: FormRules = {
     },
   },
 };
+
+function setProbeMethod(method: "icmp" | "http" | "dns" | "multi") {
+  link.value.health_check.probe =
+    method === "multi"
+      ? {
+          t: "multi",
+          groups: [
+            {
+              name: "IPv4 DNS",
+              quorum: 1,
+              targets: [
+                { t: "dns", server: "223.5.5.5", domain: "www.baidu.com" },
+              ],
+            },
+            {
+              name: "IPv6 DNS",
+              quorum: 1,
+              targets: [
+                { t: "dns", server: "2400:3200::1", domain: "www.baidu.com" },
+              ],
+            },
+          ],
+        }
+      : method === "icmp"
+        ? { t: "icmp", targets: [], probe_gateway: false }
+        : method === "dns"
+          ? { t: "dns", server: "223.5.5.5", domain: "www.baidu.com" }
+          : {
+              t: "http",
+              url: "https://www.baidu.com",
+              dns_server: "223.5.5.5",
+            };
+  link.value.health_check.reliability = 1;
+}
 
 async function save_config() {
   try {
@@ -93,34 +129,118 @@ async function save_config() {
     @after-enter="on_modal_enter"
   >
     <n-form ref="form_ref" :model="link.health_check" :rules="form_rules">
-      <n-form-item path="probe.targets">
-        <template #label>
-          {{ t("network.health_check.targets") }}
-          <n-tooltip trigger="hover" style="cursor: help">
-            <template #trigger>
-              <n-icon size="14" color="#888">
-                <HelpCircleOutline />
-              </n-icon>
-            </template>
-            {{ t("network.health_check.targets_tooltip") }}
-          </n-tooltip>
-        </template>
-        <n-dynamic-input
-          v-model:value="link.health_check.probe.targets"
-          :on-create="() => ''"
-          :max="MAX_HEALTH_TARGETS"
-          :placeholder="t('network.health_check.target_placeholder')"
-        >
-          <template #create-button-default>
-            {{ t("network.health_check.add_target") }}
+      <n-form-item :label="t('network.health_check.ipv4_probe')">
+        <n-switch
+          v-model:value="link.health_check.ipv4_probe_enabled"
+          :disabled="
+            link.health_check.enable &&
+            link.health_check.ipv4_probe_enabled &&
+            !link.health_check.ipv6_probe_enabled
+          "
+        />
+      </n-form-item>
+      <n-form-item :label="t('network.health_check.ipv6_probe')">
+        <n-switch
+          v-model:value="link.health_check.ipv6_probe_enabled"
+          :disabled="
+            link.health_check.enable &&
+            link.health_check.ipv6_probe_enabled &&
+            !link.health_check.ipv4_probe_enabled
+          "
+        />
+      </n-form-item>
+      <n-alert type="info" :show-icon="false" style="margin-bottom: 12px">
+        {{ t("network.health_check.family_hint") }}
+      </n-alert>
+      <n-alert
+        v-if="
+          link.health_check.ipv4_probe_enabled !==
+          link.health_check.ipv6_probe_enabled
+        "
+        type="warning"
+        :show-icon="false"
+        style="margin-bottom: 12px"
+      >
+        {{
+          t("network.health_check.follow_family", {
+            follower: link.health_check.ipv4_probe_enabled ? "IPv6" : "IPv4",
+            source: link.health_check.ipv4_probe_enabled ? "IPv4" : "IPv6",
+          })
+        }}
+      </n-alert>
+      <n-form-item :label="t('network.health_check.method')">
+        <n-select
+          :value="link.health_check.probe.t"
+          @update:value="setProbeMethod"
+          :options="[
+            { label: 'Ping (ICMP)', value: 'icmp' },
+            { label: 'HTTP / HTTPS', value: 'http' },
+            { label: 'DNS', value: 'dns' },
+            { label: t('network.health_check.multi'), value: 'multi' },
+          ]"
+        />
+      </n-form-item>
+      <n-alert type="info" :show-icon="false" style="margin-bottom: 16px">{{
+        t("network.health_check.application_hint")
+      }}</n-alert>
+      <ProbeGroupsEditor
+        v-if="link.health_check.probe.t === 'multi'"
+        v-model="link.health_check.probe.groups"
+      />
+      <template v-if="link.health_check.probe.t === 'http'">
+        <n-form-item :label="t('network.health_check.http_url')"
+          ><n-input
+            v-model:value="link.health_check.probe.url"
+            placeholder="https://www.baidu.com"
+        /></n-form-item>
+        <n-form-item :label="t('network.health_check.dns_server')"
+          ><n-input
+            v-model:value="link.health_check.probe.dns_server"
+            placeholder="223.5.5.5"
+        /></n-form-item>
+      </template>
+      <template v-if="link.health_check.probe.t === 'dns'">
+        <n-form-item :label="t('network.health_check.dns_server')"
+          ><n-input
+            v-model:value="link.health_check.probe.server"
+            placeholder="223.5.5.5"
+        /></n-form-item>
+        <n-form-item :label="t('network.health_check.dns_domain')"
+          ><n-input
+            v-model:value="link.health_check.probe.domain"
+            placeholder="www.baidu.com"
+        /></n-form-item>
+      </template>
+      <template v-if="link.health_check.probe.t === 'icmp'">
+        <n-form-item path="probe.targets">
+          <template #label>
+            {{ t("network.health_check.targets") }}
+            <n-tooltip trigger="hover" style="cursor: help">
+              <template #trigger>
+                <n-icon size="14" color="#888">
+                  <HelpCircleOutline />
+                </n-icon>
+              </template>
+              {{ t("network.health_check.targets_tooltip") }}
+            </n-tooltip>
           </template>
-        </n-dynamic-input>
-      </n-form-item>
-      <n-form-item :label="t('network.health_check.probe_gateway')">
-        <n-checkbox v-model:checked="link.health_check.probe.probe_gateway">
-          {{ t("network.health_check.probe_gateway_hint") }}
-        </n-checkbox>
-      </n-form-item>
+          <n-dynamic-input
+            v-model:value="link.health_check.probe.targets"
+            :on-create="() => ''"
+            :max="MAX_HEALTH_TARGETS"
+            :placeholder="t('network.health_check.target_placeholder')"
+          >
+            <template #create-button-default>
+              {{ t("network.health_check.add_target") }}
+            </template>
+          </n-dynamic-input>
+        </n-form-item>
+        <n-form-item :label="t('network.health_check.probe_gateway')">
+          <n-checkbox v-model:checked="link.health_check.probe.probe_gateway">
+            {{ t("network.health_check.probe_gateway_hint") }}
+          </n-checkbox>
+        </n-form-item>
+      </template>
       <n-grid :cols="2" :x-gap="12">
         <n-form-item-gi path="interval_secs">
           <template #label>
@@ -198,7 +318,10 @@ async function save_config() {
             :max="100"
           />
         </n-form-item-gi>
-        <n-form-item-gi path="reliability">
+        <n-form-item-gi
+          v-if="link.health_check.probe.t === 'icmp'"
+          path="reliability"
+        >
           <template #label>
             {{ t("network.health_check.reliability") }}
             <n-tooltip trigger="hover" style="cursor: help">

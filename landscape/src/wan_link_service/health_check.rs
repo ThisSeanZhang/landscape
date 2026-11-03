@@ -11,7 +11,7 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::sys_service::route_service::RouteOwner;
-use landscape_common::wan_link::{HealthCheckRuntime, HealthProbeStatus};
+use landscape_common::wan_link::{HealthCheckRuntime, HealthFamilyRuntime, HealthProbeStatus};
 use landscape_common::wan_link::{
     HealthEvaluator, LinkStateHandle, RuntimeWanHealthProbe, RuntimeWanLinkHealthCheckConfig,
     SessionIface, TargetProbe, WanLinkHealthInfo, WanLinkHealthState, swap_if_changed,
@@ -37,6 +37,48 @@ enum RoundOutcome {
     Blind { errored: usize },
 }
 
+/// Only an explicitly disabled family inherits evidence. Missing/erroring
+/// probes in an enabled family must remain Unknown, never silently fail open.
+pub(super) async fn sync_followed_family(
+    routes: &IpRouteService,
+    link_id: Uuid,
+    cfg: &RuntimeWanLinkHealthCheckConfig,
+) {
+    let (source_v6, follower_v6) = match (cfg.ipv4_probe_enabled, cfg.ipv6_probe_enabled) {
+        (true, false) => (false, true),
+        (false, true) => (true, false),
+        _ => return,
+    };
+    if let Some(info) = routes.get_link_health_for_family(link_id, source_v6).await {
+        routes.update_link_health_for_family(info, follower_v6).await;
+    } else {
+        routes.clear_link_health_for_family(link_id, follower_v6).await;
+    }
+}
+
+pub(super) fn runtime_snapshot(
+    cfg: &RuntimeWanLinkHealthCheckConfig,
+    v4: Option<&WanLinkHealthInfo>,
+    v6: Option<&WanLinkHealthInfo>,
+    probes: Vec<HealthProbeStatus>,
+) -> HealthCheckRuntime {
+    let family = |enabled: bool, probe_enabled: bool, own, other| {
+        enabled.then(|| {
+            let info: Option<&WanLinkHealthInfo> = if probe_enabled { own } else { other };
+            HealthFamilyRuntime {
+                state: info.map_or(WanLinkHealthState::Unknown, |i| i.state),
+                probe_enabled,
+                rtt_ewma_ms: info.and_then(|i| i.rtt_ewma_ms),
+            }
+        })
+    };
+    HealthCheckRuntime::running(
+        family(cfg.ipv4_enabled, cfg.ipv4_probe_enabled, v4, v6),
+        family(cfg.ipv6_enabled, cfg.ipv6_probe_enabled, v6, v4),
+        probes,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     link_id: Uuid,
@@ -48,6 +90,27 @@ pub(super) async fn run(
     route_service: IpRouteService,
     runtime: Arc<ArcSwap<HealthCheckRuntime>>,
 ) {
+    if let RuntimeWanHealthProbe::Multi { groups } = &config.probe {
+        let groups = groups.clone();
+        return super::multi_probe::run(
+            link_id,
+            iface,
+            link_state,
+            config,
+            service_status,
+            probe,
+            route_service,
+            runtime,
+            groups,
+        )
+        .await;
+    }
+    if !config.ipv4_probe_enabled {
+        route_service.clear_link_health(link_id).await;
+        service_status.just_change_status(ServiceStatus::Failed);
+        swap_if_changed(&runtime, HealthCheckRuntime::Stopped);
+        return;
+    }
     let stop = service_status.stop_token();
 
     // This section runs with SectionScope::SessionAndLease: the framework
@@ -59,7 +122,12 @@ pub(super) async fn run(
         return;
     };
 
-    let RuntimeWanHealthProbe::Icmp { targets, probe_gateway } = config.probe;
+    let targets = match &config.probe {
+        RuntimeWanHealthProbe::Multi { .. } => unreachable!("multi probe has its own runner"),
+        RuntimeWanHealthProbe::Icmp { targets, .. } => targets.clone(),
+        RuntimeWanHealthProbe::Dns { server, .. } => vec![*server],
+        RuntimeWanHealthProbe::Http { dns_server, .. } => vec![*dns_server],
+    };
     let mut evaluator = HealthEvaluator::new(
         link_id,
         config.failure_threshold,
@@ -69,18 +137,20 @@ pub(super) async fn run(
 
     // Silent init push (Unknown -> Unknown never broadcasts).
     route_service.update_link_health(evaluator.info().clone()).await;
+    sync_followed_family(&route_service, link_id, &config).await;
 
     service_status.just_change_status(ServiceStatus::Running);
     swap_if_changed(
         &runtime,
-        HealthCheckRuntime::Running {
-            state: evaluator.info().state,
-            rtt_ewma_ms: evaluator.info().rtt_ewma_ms,
-            probes: targets
+        runtime_snapshot(
+            &config,
+            Some(evaluator.info()),
+            None,
+            targets
                 .iter()
-                .map(|target| HealthProbeStatus { target: *target, rtt_ms: None })
+                .map(|target| HealthProbeStatus { target: (*target).into(), rtt_ms: None })
                 .collect(),
-        },
+        ),
     );
 
     let mut ticker = tokio::time::interval(Duration::from_secs(config.interval_secs.max(1).into()));
@@ -93,14 +163,29 @@ pub(super) async fn run(
         tokio::select! {
             _ = stop.cancelled() => break,
             _ = ticker.tick() => {
+                let probe_gateway = matches!(&config.probe, RuntimeWanHealthProbe::Icmp { probe_gateway: true, .. });
                 let round_targets =
                     round_targets(&route_service, link_id, &targets, probe_gateway).await;
                 if round_targets.is_empty() {
                     continue;
                 }
-                match probe_round(&probe, &iface.iface_name, src, &round_targets, config.timeout_ms)
-                    .await
-                {
+                let round = async {
+                    match &config.probe {
+                        RuntimeWanHealthProbe::Icmp { .. } => probe_round(&probe, &iface.iface_name, src, &round_targets, config.timeout_ms, config.socket_mark).await,
+                        method => match super::application_probe::probe(&iface.iface_name, src, method, Duration::from_millis(config.timeout_ms.into()), config.socket_mark).await {
+                            Ok(rtt) => RoundOutcome::Evidence(vec![TargetProbe { target: round_targets[0].into(), rtt }]),
+                            Err(error) => {
+                                tracing::warn!(%link_id, %error, "application health probe failed locally");
+                                RoundOutcome::Blind { errored: 1 }
+                            }
+                        },
+                    }
+                };
+                let outcome = tokio::select! {
+                    _ = stop.cancelled() => break,
+                    outcome = round => outcome,
+                };
+                match outcome {
                     RoundOutcome::Evidence(results) => {
                         blind_rounds = 0;
                         if let Some(transition) = evaluator.apply_round(&results) {
@@ -121,8 +206,10 @@ pub(super) async fn run(
                             }
                         }
                         route_service.update_link_health(evaluator.info().clone()).await;
+                        sync_followed_family(&route_service, link_id, &config).await;
                         publish_round(
                             &runtime,
+                            &config,
                             evaluator.info(),
                             &round_targets,
                             Some(&results),
@@ -141,7 +228,7 @@ pub(super) async fn run(
                             failed = true;
                             break;
                         }
-                        publish_round(&runtime, evaluator.info(), &round_targets, None);
+                        publish_round(&runtime, &config, evaluator.info(), &round_targets, None);
                     }
                 }
             }
@@ -159,6 +246,7 @@ pub(super) async fn run(
 
 fn publish_round(
     runtime: &Arc<ArcSwap<HealthCheckRuntime>>,
+    cfg: &RuntimeWanLinkHealthCheckConfig,
     info: &WanLinkHealthInfo,
     attempted: &[Ipv4Addr],
     evidence: Option<&Vec<TargetProbe>>,
@@ -166,22 +254,15 @@ fn publish_round(
     let probes = attempted
         .iter()
         .map(|target| HealthProbeStatus {
-            target: *target,
+            target: (*target).into(),
             rtt_ms: evidence.and_then(|ev| {
                 ev.iter()
-                    .find(|p| p.target == *target)
+                    .find(|p| p.target == IpAddr::V4(*target))
                     .and_then(|p| p.rtt.map(|rtt| rtt.as_millis() as u64))
             }),
         })
         .collect();
-    swap_if_changed(
-        runtime,
-        HealthCheckRuntime::Running {
-            state: info.state,
-            rtt_ewma_ms: info.rtt_ewma_ms,
-            probes,
-        },
-    );
+    swap_if_changed(runtime, runtime_snapshot(cfg, Some(info), None, probes));
 }
 
 /// The round's target list: configured targets plus the link's current
@@ -212,14 +293,15 @@ async fn probe_round(
     src: Ipv4Addr,
     targets: &[Ipv4Addr],
     timeout_ms: u16,
+    mark: u32,
 ) -> RoundOutcome {
     let timeout = Duration::from_millis(timeout_ms.into());
     let rounds = join_all(targets.iter().map(|&target| {
         let probe = probe.clone();
         let dev = dev.to_string();
         async move {
-            match probe.ping_v4(&dev, src, target, timeout).await {
-                Ok(rtt) => Some(TargetProbe { target, rtt }),
+            match probe.ping_v4_marked(&dev, src, target, timeout, mark).await {
+                Ok(rtt) => Some(TargetProbe { target: target.into(), rtt }),
                 Err(err) => {
                     tracing::warn!(iface = %dev, target = %target, error = %err, "health-check probe error");
                     None

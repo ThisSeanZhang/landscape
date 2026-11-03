@@ -10,6 +10,7 @@ pub enum DNSRuleConfigs {
     Filter,
     ResolveMode,
     UpstreamId,
+    WanUpstreams,
     Mark,
     Source,
     BindConfig,

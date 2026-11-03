@@ -1,5 +1,13 @@
 export default {
   rule_edit: {
+    wan_groups: "Select independent DNS groups by WAN",
+    wan_groups_hint:
+      "Choose one independent upstream per WAN. DNS follows this flow’s active WAN. Groups contain their own server IPs without flow/source bindings. Missing mappings fail closed.",
+    wan_group_select: "Choose independent DNS upstream",
+    wan_group_add: "Add WAN mapping",
+    wan_groups_invalid:
+      "Select an upstream for each WAN and remove duplicate WANs.",
+
     title: "Rule Editor",
     priority: "Priority",
     remark: "Remark",
@@ -64,6 +72,19 @@ export default {
     err_match_rules_required: "At least one domain match rule is required",
   },
   upstream_edit: {
+    wan_servers: "Separate DNS servers for each WAN",
+    wan_select: "Select WAN",
+    wan_servers_hint:
+      "Enter each carrier’s DNS servers. WAN changes switch both destination servers and socket bindings. Missing servers fail closed, without another carrier or public DNS fallback. IPv4 DNS servers can also resolve AAAA records. All groups share the protocol and port below.",
+    wan_servers_invalid:
+      "Choose each WAN only once and enter at least one valid DNS IP for every group.",
+
+    follow_flow: "Follow one specified flow",
+    follow_flow_off: "Existing routing / fixed source address",
+    default_flow: "Default Flow (0)",
+    follow_flow_hint:
+      "Every rule using this upstream follows the flow selected here, binding sockets to its WAN address and device and rebuilding connections on changes. It does not follow each rule's owning flow. For separate carrier DNS selection per flow, enable 'Select independent DNS groups by WAN' in each DNS rule. Unavailable address families fail without falling back to another exit.",
+
     title: "DNS Upstream Config",
     copy: "Copy",
     paste: "Paste",
@@ -131,6 +152,24 @@ export default {
     confirm_import: "Confirm import from clipboard?",
   },
   check_domain: {
+    error_upstream_timeout:
+      "Upstream DNS lookup timed out. Check reachability through this Flow or add a DNS server reachable through that WAN. Cached records do not indicate success for this lookup.",
+    error_upstream_network:
+      "Upstream DNS connection failed. Check the WAN, source binding and routes.",
+    error_upstream_failure:
+      "Upstream DNS lookup failed. See service logs for transport details.",
+    error_upstream_response: "The DNS upstream returned an error response.",
+    error_no_matching_rule:
+      "No matching DNS upstream rule. Existing cached records do not indicate a successful upstream lookup.",
+    error_flow_unavailable:
+      "The DNS service for this Flow is stopped or does not exist.",
+    error_invalid_domain: "Invalid domain name.",
+    nxdomain:
+      "The upstream confirmed that this domain does not exist (NXDOMAIN).",
+    no_data:
+      "The lookup succeeded but returned no records of this type (NODATA).",
+    response_code: "DNS response code: {code}",
+
     enter_domain: "Enter domain to query",
     test_flow_query: "Test flow: {flow_id} domain query (results not cached)",
     query_instruction:

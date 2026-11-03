@@ -6,6 +6,7 @@
 
 #include "base/landscape.h"
 #include "route/wan_ip.h"
+#include "route/connection.h"
 
 #include "route/flow4_maps.h"
 #include "route/route4_cache.h"
@@ -394,7 +395,7 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
         .flow_id = resolved_flow_id,
         .slot = route4_target_slot(context->daddr),
     };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+    struct route4_target_info *target_info = route4_select_connection(context, &slot_key);
 
     // 找不到转发的 target 按照原有计划进行处理
     if (target_info == NULL) {
@@ -538,6 +539,9 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
     int ret = 0;
     u32 key = WAN_CACHE;
     struct route4_cache_key search_key = {0};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     struct mac_value_v4 *mac_value = NULL;
     search_key.local_addr = context->saddr;
     search_key.remote_addr = context->daddr;
@@ -597,7 +601,7 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
         struct route4_cache_value *target = bpf_map_lookup_elem(lan_cache, &search_key);
         if (target) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
+            if (target->ifindex != 0 && !route_policy(get_flow_id(target->mark_value), false)) {
                 return route4_redirect_by_cached_target(skb, current_l3_offset, target);
             }
             return route4_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
@@ -612,8 +616,14 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
                                                    u32 current_l3_offset, u32 ifindex,
                                                    u32 link_chain_id) {
     struct route4_cache_key search_key = {0};
+    search_key.local_port = context->dst_port;
+    search_key.remote_port = context->src_port;
+    search_key.protocol = context->l4_protocol;
     struct route4_cache_value *target = NULL;
 
+    struct route_conn_key conn_key = {};
+    route4_connection_key(context, &conn_key, true);
+    if (bpf_map_lookup_elem(&rt_connections, &conn_key)) return TC_ACT_OK;
     u32 key = LAN_CACHE;
     search_key.local_addr = context->daddr;
     search_key.remote_addr = context->saddr;
@@ -679,6 +689,9 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
 static __always_inline int route4_set_cache_in_lan(const struct route4_context *context,
                                                    u32 flow_mark) {
     struct route4_cache_key search_key = {0};
+    search_key.local_port = context->src_port;
+    search_key.remote_port = context->dst_port;
+    search_key.protocol = context->l4_protocol;
     struct route4_cache_value *target = NULL;
     u32 key = WAN_CACHE;
 
@@ -705,7 +718,7 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
                 .flow_id = resolved_flow_id,
                 .slot = route4_target_slot(context->daddr),
             };
-            struct route4_target_info *slot_target = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+            struct route4_target_info *slot_target = route4_select_connection(context, &slot_key);
 
             struct route4_cache_value new_target_cache = {0};
             new_target_cache.mark_value = flow_mark;

@@ -96,6 +96,21 @@ async function saveRule() {
     return;
   }
 
+  if (rule.value.wan_upstreams?.length) {
+    const seen = new Set<string>();
+    for (const mapping of rule.value.wan_upstreams) {
+      if (
+        !mapping.link_id ||
+        !mapping.upstream_id ||
+        seen.has(mapping.link_id)
+      ) {
+        message.warning(t("dns.rule_edit.wan_groups_invalid"));
+        return;
+      }
+      seen.add(mapping.link_id);
+    }
+    rule.value.upstream_id = rule.value.wan_upstreams[0].upstream_id;
+  }
   try {
     commit_spin.value = true;
     await addDnsRules(rule.value);
@@ -212,7 +227,14 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
 
-        <n-form-item-gi :span="2" :label="t('dns.rule_edit.upstream_select')">
+        <n-form-item-gi :span="5">
+          <WanUpstreamMapping v-model="rule.wan_upstreams" />
+        </n-form-item-gi>
+        <n-form-item-gi
+          v-if="!rule.wan_upstreams?.length"
+          :span="5"
+          :label="t('dns.rule_edit.upstream_select')"
+        >
           <SelectUpstream v-model:upstream_id="rule.upstream_id">
           </SelectUpstream>
         </n-form-item-gi>

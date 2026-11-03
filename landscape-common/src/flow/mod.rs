@@ -3,6 +3,7 @@ pub mod config;
 pub mod dataplane;
 pub mod dns_result_sink;
 pub mod error;
+pub mod failover;
 pub mod flow_socket_registrar;
 pub mod ip_mark;
 pub mod mark;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FlowWanStatus from "./FlowWanStatus.vue";
 import { ref } from "vue";
 import { ModelBuilder } from "@vicons/carbon";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
@@ -66,6 +67,7 @@ async function clear_route_cache() {
       </template>
     </n-empty>
 
+    <FlowWanStatus :flow-id="0" style="margin-top: 12px" />
     <DnsRuleDrawer v-model:show="show_dns_rule" :flow_id="0"> </DnsRuleDrawer>
     <WanIpRuleDrawer v-model:show="show_ip_rule" :flow_id="0" />
     <RouteTraceDrawer v-model:show="show_route_trace" />

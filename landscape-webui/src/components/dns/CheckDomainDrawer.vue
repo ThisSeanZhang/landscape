@@ -51,6 +51,22 @@ function createEmptyResult(): CheckChainDnsResult {
 }
 
 const result = ref<CheckChainDnsResult>(createEmptyResult());
+const diagnosticMessage = computed(() => {
+  if (result.value.error) {
+    return t(`dns.check_domain.error_${result.value.error}`);
+  }
+  if (result.value.response_code === 3) {
+    return t("dns.check_domain.nxdomain");
+  }
+  if (
+    result.value.response_code === 0 &&
+    result.value.records?.length === 0 &&
+    !result.value.query_filtered
+  ) {
+    return t("dns.check_domain.no_data");
+  }
+  return "";
+});
 
 async function init_req(isEnter = false) {
   req.value = {
@@ -320,6 +336,21 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
             style="margin-top: 10px"
           >
             {{ t("dns.check_domain.query_filtered_hint") }}
+          </n-alert>
+          <n-alert
+            v-if="diagnosticMessage"
+            :type="result.error ? 'error' : 'info'"
+            :show-icon="false"
+            style="margin-top: 10px"
+          >
+            {{ diagnosticMessage }}
+            <div v-if="result.response_code != null">
+              {{
+                t("dns.check_domain.response_code", {
+                  code: result.response_code,
+                })
+              }}
+            </div>
           </n-alert>
         </n-spin>
 

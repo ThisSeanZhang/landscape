@@ -3,6 +3,7 @@ import type {
   PdRuntime,
   ServiceStatus,
   V4Runtime,
+  WanLinkHealthState,
 } from "@landscape-router/types/api/schemas";
 import { describe, expect, it } from "vitest";
 import {
@@ -10,6 +11,7 @@ import {
   formatPdRuntime,
   formatServiceStatus,
   formatV4Runtime,
+  mergeHealthStates,
 } from "@/lib/wan_runtime";
 
 const t = (key: string, params?: Record<string, unknown>) => {
@@ -222,7 +224,48 @@ describe("formatServiceStatus", () => {
   });
 });
 
+describe("mergeHealthStates", () => {
+  it("does not let the last address family overwrite a failure", () => {
+    const states: WanLinkHealthState[] = ["healthy", "unknown", "unhealthy"];
+    for (const [i, first] of states.entries()) {
+      for (const [j, second] of states.entries()) {
+        expect(mergeHealthStates(first, second)).toBe(states[Math.max(i, j)]);
+      }
+      expect(mergeHealthStates(undefined, first)).toBe(first);
+    }
+  });
+});
+
 describe("formatHealthRuntime", () => {
+  it("shows each family's verdict and identifies inherited health", () => {
+    const status: HealthCheckRuntime = {
+      running: {
+        state: "unhealthy",
+        rtt_ewma_ms: 7,
+        probes: [],
+        ipv4: { state: "healthy", probe_enabled: true, rtt_ewma_ms: 7 },
+        ipv6: { state: "unhealthy", probe_enabled: true, rtt_ewma_ms: null },
+      },
+    };
+    const result = formatHealthRuntime(status, t);
+    expect(result.verdict.tone).toBe("error");
+    expect(result.details).toEqual([
+      'IPv4 · runtime_health_healthy · runtime_health_independent · runtime_health_avg {"ms":7}',
+      "IPv6 · runtime_health_unhealthy · runtime_health_independent",
+    ]);
+    status.running.state = "healthy";
+    status.running.ipv6 = {
+      state: "healthy",
+      probe_enabled: false,
+      rtt_ewma_ms: 7,
+    };
+    expect(formatHealthRuntime(status, t).details[1]).toContain(
+      'runtime_health_follow {"family":"IPv4"}',
+    );
+    status.running.ipv6 = undefined;
+    expect(formatHealthRuntime(status, t).details).toHaveLength(1);
+  });
+
   it("maps idle and stopped", () => {
     expect(formatHealthRuntime("idle", t)).toEqual({
       verdict: { text: "runtime_health_idle", tone: "default" },

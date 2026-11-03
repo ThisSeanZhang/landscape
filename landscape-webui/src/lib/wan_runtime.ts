@@ -256,6 +256,17 @@ export function formatHealthState(
   }
 }
 
+/** One healthy address family must not hide the other family's failure. */
+export function mergeHealthStates(
+  first: WanLinkHealthState | undefined,
+  second: WanLinkHealthState,
+): WanLinkHealthState {
+  if (first === undefined) return second;
+  if (first === "unhealthy" || second === "unhealthy") return "unhealthy";
+  if (first === "unknown" || second === "unknown") return "unknown";
+  return "healthy";
+}
+
 export interface HealthRuntimeDisplay {
   verdict: RuntimeDisplay;
   details: string[];
@@ -285,12 +296,33 @@ export function formatHealthRuntime(
     };
   }
   const verdict = formatHealthState(rt.running.state, t);
-  const details = rt.running.probes.map((probe) =>
-    probe.rtt_ms === null
-      ? `${mask(probe.target)} · ${t("topology.panel.runtime_health_timeout")}`
-      : `${mask(probe.target)} · ${probe.rtt_ms}ms`,
+  const details: string[] = [];
+  for (const [name, family, other] of [
+    ["IPv4", rt.running.ipv4, "IPv6"],
+    ["IPv6", rt.running.ipv6, "IPv4"],
+  ] as const) {
+    if (!family) continue;
+    const source = family.probe_enabled
+      ? t("topology.panel.runtime_health_independent")
+      : t("topology.panel.runtime_health_follow", { family: other });
+    const avg =
+      family.rtt_ewma_ms == null
+        ? ""
+        : ` · ${t("topology.panel.runtime_health_avg", {
+            ms: Math.round(family.rtt_ewma_ms * 10) / 10,
+          })}`;
+    details.push(
+      `${name} · ${formatHealthState(family.state, t).text} · ${source}${avg}`,
+    );
+  }
+  details.push(
+    ...rt.running.probes.map((probe) =>
+      probe.rtt_ms === null
+        ? `${mask(probe.target)} · ${t("topology.panel.runtime_health_timeout")}`
+        : `${mask(probe.target)} · ${probe.rtt_ms}ms`,
+    ),
   );
-  if (rt.running.rtt_ewma_ms !== null) {
+  if (!rt.running.ipv4 && !rt.running.ipv6 && rt.running.rtt_ewma_ms !== null) {
     details.push(
       t("topology.panel.runtime_health_avg", {
         ms: Math.round(rt.running.rtt_ewma_ms * 10) / 10,

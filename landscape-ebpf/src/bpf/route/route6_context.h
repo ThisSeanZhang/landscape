@@ -5,6 +5,7 @@
 #include <bpf/bpf_endian.h>
 
 #include "base/landscape.h"
+#include "base/ipv6.h"
 #include "route/route_common.h"
 
 struct route6_context {
@@ -14,9 +15,11 @@ struct route6_context {
     u8 l4_protocol;
     // tos value
     u8 tos;
-    // TODO
-    // u16 dst_port;
+    __be16 src_port;
+    __be16 dst_port;
     u8 smac[6];
+    u8 tcp_syn;
+    __be32 tcp_syn_seq;
 };
 
 static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
@@ -41,8 +44,25 @@ static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
 
     COPY_ADDR_FROM(context->saddr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
     COPY_ADDR_FROM(context->daddr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
-    context->l4_protocol = 0;
     context->tos = 0;
+    struct ip6_scan_offsets off = {};
+    if (ip6_scan_ext(skb, l3_offset, IP6_SCAN_MAX_EXT, &off, NULL, NULL, NULL) == 0 &&
+        off.frag_code == LAND_FRAG_NONE && (off.l4_protocol == 6 || off.l4_protocol == 17)) {
+        __be16 ports[2];
+        if (bpf_skb_load_bytes(skb, off.l4_offset, ports, sizeof(ports)) == 0) {
+            context->src_port = ports[0];
+            context->dst_port = ports[1];
+            context->l4_protocol = off.l4_protocol;
+            if (context->l4_protocol == 6) {
+                struct tcphdr tcp;
+                if (bpf_skb_load_bytes(skb, off.l4_offset, &tcp, sizeof(tcp)) == 0 && tcp.syn &&
+                    !tcp.ack) {
+                    context->tcp_syn = 1;
+                    context->tcp_syn_seq = tcp.seq;
+                }
+            }
+        }
+    }
     return TC_ACT_OK;
 }
 

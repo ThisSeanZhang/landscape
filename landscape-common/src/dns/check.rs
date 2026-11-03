@@ -22,9 +22,29 @@ pub struct CheckDnsResult {
     pub cache_records: Option<Vec<LandscapeRecord>>,
 }
 
+/// Stable diagnostic categories; raw transport errors stay in server logs.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum DnsCheckError {
+    UpstreamTimeout,
+    UpstreamNetwork,
+    UpstreamFailure,
+    UpstreamResponse,
+    NoMatchingRule,
+    FlowUnavailable,
+    InvalidDomain,
+}
+
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CheckChainDnsResult {
+    /// Failure of this diagnostic lookup, independent of any cached answer.
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub error: Option<DnsCheckError>,
+    /// DNS result code retained by the resolver. Absent on transport failure.
+    #[cfg_attr(feature = "openapi", schema(nullable = false))]
+    pub response_code: Option<u16>,
     /// Matched redirect rule id, if this query was answered by redirect logic.
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub redirect_id: Option<Uuid>,

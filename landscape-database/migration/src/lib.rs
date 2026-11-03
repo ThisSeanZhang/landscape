@@ -1,3 +1,5 @@
+mod m20261102_000000_flow_failover;
+mod m20261102_010000_dns_wan_upstreams;
 pub use sea_orm_migration::prelude::*;
 
 pub mod runner;
@@ -124,6 +126,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20261008_235359_wan_link_chain_id::Migration),
             Box::new(m20261008_240001_wan_link_health_check::Migration),
             Box::new(m20261031_053957_ddns_per_record_limit::Migration),
+            Box::new(m20261102_000000_flow_failover::Migration),
+            Box::new(m20261102_010000_dns_wan_upstreams::Migration),
         ]
     }
 }

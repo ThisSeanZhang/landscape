@@ -197,7 +197,7 @@ impl IpRouteService {
         // A link without its v4 WAN route has nothing to probe; its health
         // verdict is stale.
         if let RouteOwner::Link(link_id) = owner {
-            self.clear_link_health(*link_id).await;
+            self.clear_link_health_for_family(*link_id, false).await;
         }
         if had_removed {
             self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Removed);
@@ -208,6 +208,9 @@ impl IpRouteService {
         let removed = self.ipv6_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
         self.apply_removed_ipv6_wan_route(removed).await;
+        if let RouteOwner::Link(link_id) = owner {
+            self.clear_link_health_for_family(*link_id, true).await;
+        }
         if had_removed {
             self.notify_wan_route_change(owner, IpFamily::Ipv6, WanRouteEventKind::Removed);
         }
@@ -250,6 +253,13 @@ impl IpRouteService {
     }
 
     pub async fn refresh_default_router(&self) {
+        // Same writer lock as flow selection: a route event cannot overwrite an
+        // opt-in default-flow policy with the legacy first-default-WAN choice.
+        let selections = self.failover_selections.lock().await;
+        if selections.default_owner.is_some() {
+            self.kernel_default_notify.notify_one();
+            return;
+        }
         let ipv4_default = self
             .ipv4_wan_ifaces
             .read()
@@ -312,9 +322,32 @@ impl IpRouteService {
                         _ = ticker.tick() => {}
                     }
                     service.reconcile_kernel_default_ipv4().await;
+                    service.reconcile_bound_wan_routes().await;
+                    service.reconcile_router_wan_policy().await;
                 }
             },
         );
+    }
+
+    async fn reconcile_bound_wan_routes(&self) {
+        let mut targets: Vec<_> = self.clone_ipv4_wan_infos().await.into_values().collect();
+        targets.extend(self.clone_ipv6_wan_infos().await.into_values());
+        if let Err(error) = self.dataplane.sync_bound_wan_routes(&targets).await {
+            tracing::error!(%error, "bound WAN gateway sync failed; retrying on next reconcile");
+        }
+    }
+
+    pub(crate) async fn reconcile_router_wan_policy(&self) {
+        let policy = self.router_wan_policy.read().await;
+        let error = self.dataplane.sync_router_wan_policy(policy.as_ref()).await.err();
+        if let Some(error) = &error {
+            tracing::error!(%error, "router WAN binding sync failed; retrying on next reconcile");
+        }
+        *self.router_policy_applied.write().await = Some(super::RouterPolicyApplyState {
+            policy: policy.clone(),
+            error,
+            checked_at_ms: landscape_common::utils::time::now_ms(),
+        });
     }
 
     /// Drop every docker-owned WAN route, refresh the default router, and

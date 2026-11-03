@@ -6,6 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "route/connection.h"
 #include "route/wan_ip.h"
 #include "base/dummy.h"
 
@@ -215,6 +216,12 @@ static __always_inline void xdp_route4_set_cache_in_wan(struct xdp_md *ctx,
         .remote_addr = context->saddr,
     };
 
+    cache_key.local_port = context->dst_port;
+    cache_key.remote_port = context->src_port;
+    cache_key.protocol = context->l4_protocol;
+    struct route_conn_key conn_key = {};
+    route4_connection_key(context, &conn_key, true);
+    if (bpf_map_lookup_elem(&rt_connections, &conn_key)) return;
     u32 key = LAN_CACHE;
     void *lan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (lan_cache) {
@@ -257,6 +264,12 @@ static __always_inline void xdp_route6_set_cache_in_wan(struct xdp_md *ctx,
     __builtin_memcpy(cache_key.local_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(cache_key.remote_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
 
+    cache_key.local_port = context->dst_port;
+    cache_key.remote_port = context->src_port;
+    cache_key.protocol = context->l4_protocol;
+    struct route_conn_key conn_key = {};
+    route6_connection_key(context, &conn_key, true);
+    if (bpf_map_lookup_elem(&rt_connections, &conn_key)) return;
     u32 key = LAN_CACHE;
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache) {
