@@ -19,6 +19,68 @@ use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;
 use tracing_subscriber::filter::LevelFilter;
 
+/// Legacy `ethtool` ioctls still supported by the kernel; using them here
+/// avoids pulling the full `landscape` crate (and its netlink helpers) into
+/// the edge binary.
+const SIOCETHTOOL: libc::c_ulong = 0x8946;
+const ETHTOOL_STSO: u32 = 0x0000_001f;
+const ETHTOOL_SGSO: u32 = 0x0000_0024;
+
+#[repr(C)]
+struct EthtoolValue {
+    cmd: u32,
+    data: u32,
+}
+
+/// `struct ifreq` from `linux/if.h`: 16-byte name, then the union
+/// (pointer sized on 64-bit); the trailing bytes keep the total at 40.
+#[repr(C)]
+struct IfReq {
+    ifr_name: [libc::c_char; libc::IFNAMSIZ],
+    ifr_data: *mut libc::c_void,
+    _pad: [u8; 16],
+}
+
+fn set_iface_offload(ifname: &str, cmd: u32, enable: bool) -> io::Result<()> {
+    if ifname.is_empty() || ifname.len() >= libc::IFNAMSIZ {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid interface name"));
+    }
+
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut req: IfReq = unsafe { std::mem::zeroed() };
+    for (slot, byte) in req.ifr_name.iter_mut().zip(ifname.as_bytes()) {
+        *slot = *byte as libc::c_char;
+    }
+
+    let mut value = EthtoolValue { cmd, data: u32::from(enable) };
+    req.ifr_data = std::ptr::addr_of_mut!(value).cast();
+
+    let rc = unsafe { libc::ioctl(fd, SIOCETHTOOL, &mut req) };
+    let err = io::Error::last_os_error();
+    unsafe { libc::close(fd) };
+
+    if rc < 0 { Err(err) } else { Ok(()) }
+}
+
+/// Native PPPoE adds the PPPoE header from the WAN TC egress program, before
+/// the stack/driver performs GSO segmentation. A GSO skb produced inside this
+/// netns can then no longer be segmented after the `0x8864` header is added,
+/// so the batch is dropped and upload throughput collapses to a few KB/s
+/// (see landscape issue #218). Turning TSO/GSO off here makes the local stack
+/// segment at MSS before egress, which fits the PPPoE MTU.
+fn disable_gso_offloads(ifname: &str) {
+    for (label, cmd) in [("TSO", ETHTOOL_STSO), ("GSO", ETHTOOL_SGSO)] {
+        match set_iface_offload(ifname, cmd, false) {
+            Ok(()) => tracing::info!("disabled {label} on {ifname} for native PPPoE egress"),
+            Err(err) => tracing::warn!("failed to disable {label} on {ifname}: {err}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ValueEnum, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum HandleMode {
@@ -56,6 +118,12 @@ pub struct CmdParams {
 
     #[arg(long = "log-level", default_value_t = LevelFilter::INFO, env = "LAND_REDIRECT_LOG_LEVEL")]
     log_level: LevelFilter,
+
+    /// Keep TSO/GSO offloads on the flow interface. Only useful when the WAN
+    /// is not native PPPoE; otherwise uploads through this container can be
+    /// limited to a few KB/s (landscape issue #218).
+    #[arg(long = "keep-offloads", default_value_t = false, env = "LAND_KEEP_OFFLOADS")]
+    keep_offloads: bool,
 }
 
 // fn bump_memlock_rlimit() {
@@ -91,6 +159,10 @@ async fn main() {
     };
 
     tracing::info!("attach at: {ifname}, ifindex: {ifindex}, peer_ifindex: {peer_ifindex}");
+
+    if !params.keep_offloads {
+        disable_gso_offloads(&ifname);
+    }
 
     let proxy_addr: u32 = params.tproxy_server_address.into();
     let proxy_ipv6_addr: u128 = params.tproxy_server_address_v6.into();
@@ -276,4 +348,16 @@ fn extract_container_id_from_path(path: &str) -> Option<String> {
     // Matches a 64-bit or 12-bit hexadecimal ID
     let re = Regex::new(r"([a-f0-9]{64}|[a-f0-9]{12})").ok()?;
     re.captures(path).and_then(|cap| cap.get(1)).map(|m| m.as_str().to_string())
+}
+
+#[cfg(test)]
+mod offload_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_interface_names() {
+        assert!(set_iface_offload("", ETHTOOL_STSO, false).is_err());
+        let too_long = "x".repeat(libc::IFNAMSIZ);
+        assert!(set_iface_offload(&too_long, ETHTOOL_SGSO, false).is_err());
+    }
 }
