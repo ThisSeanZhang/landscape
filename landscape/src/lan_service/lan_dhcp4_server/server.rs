@@ -295,16 +295,7 @@ async fn handle_dhcp_message(
                         .ok();
                 }
 
-                let addr = if payload.flags().broadcast() {
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 68)
-                } else {
-                    let ip = if payload.ciaddr().is_unspecified() {
-                        IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255))
-                    } else {
-                        IpAddr::V4(payload.ciaddr())
-                    };
-                    SocketAddr::new(ip, msg_addr.port())
-                };
+                let addr = ack_dest(&payload, &dhcp, dhcp_server.server_ip, msg_addr);
 
                 let payload = encode_dhcpv4(&payload);
 
@@ -383,6 +374,44 @@ async fn handle_dhcp_message(
         }
     }
     false
+}
+
+/// Destination of the DHCPACK/DHCPNAK sent in reply to a DHCPREQUEST.
+///
+/// RFC 2131 §4.1: broadcast when the client set the broadcast flag, or when
+/// `ciaddr` is unspecified; otherwise unicast to `ciaddr`.
+///
+/// Compatibility exception: some embedded clients stay in SELECTING while
+/// sending a REQUEST that already carries the offered address in `ciaddr`
+/// (option 54 + option 50 present, broadcast flag clear). The address is not
+/// configured yet and the client cannot answer ARP for it, so a unicast ACK
+/// is dropped by neighbour resolution. Only that exact request shape is sent
+/// to the broadcast address; normal RENEWING/REBINDING keeps unicast ACKs.
+fn ack_dest(
+    reply: &DhcpV4Message,
+    request: &DhcpV4Message,
+    server_ip: Ipv4Addr,
+    msg_addr: SocketAddr,
+) -> SocketAddr {
+    let broadcast = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)), 68);
+
+    if reply.flags().broadcast() || reply.ciaddr().is_unspecified() {
+        return broadcast;
+    }
+
+    let selecting_for_this_server =
+        matches!(
+            has_option(request, 54),
+            Some(DhcpV4Option::ServerIdentifier(id)) if id == server_ip
+        ) && matches!(has_option(request, 50), Some(DhcpV4Option::RequestedIpAddress(_)));
+    if selecting_for_this_server
+        && !request.ciaddr().is_unspecified()
+        && reply.ciaddr() == reply.yiaddr()
+    {
+        return broadcast;
+    }
+
+    SocketAddr::new(IpAddr::V4(reply.ciaddr()), msg_addr.port())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -855,7 +884,7 @@ mod tests {
 
     use arc_swap::ArcSwap;
     use landscape_common::lan_service::mac_binding::NoopMacBindingDataplane;
-    use landscape_common::net_proto::udp::dhcp::v4::{Opcode, OptionCode};
+    use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
     use landscape_common::net_proto::udp::dhcp::{
         Decodable, Decoder, DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder,
     };
@@ -872,7 +901,7 @@ mod tests {
 
     use super::{
         DHCPV4_DOMAIN_NAME_OPTION_CODE, DHCPV4_DOMAIN_SEARCH_OPTION_CODE, DHCPv4Server,
-        DhcpV4DnrRuntimeContext, LanHostnameConfig, client_chaddr, gen_ack, gen_offer,
+        DhcpV4DnrRuntimeContext, LanHostnameConfig, ack_dest, client_chaddr, gen_ack, gen_offer,
         handle_dhcp_message,
     };
 
@@ -1230,5 +1259,146 @@ mod tests {
         assert!(nak.opts().get(OptionCode::AddressLeaseTime).is_none());
         assert!(nak.opts().get(OptionCode::SubnetMask).is_none());
         assert!(nak.opts().get(OptionCode::Router).is_none());
+    }
+
+    fn reply_with(ciaddr: Ipv4Addr, yiaddr: Ipv4Addr, broadcast: bool) -> DhcpV4Message {
+        let mut reply = DhcpV4Message::default();
+        reply.set_ciaddr(ciaddr).set_yiaddr(yiaddr);
+        if broadcast {
+            reply.set_flags(Flags::from(0x8000u16));
+        }
+        reply
+    }
+
+    const TEST_SERVER_IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+
+    fn request_with(
+        ciaddr: Ipv4Addr,
+        server_id: Option<Ipv4Addr>,
+        with_requested_ip: Option<Ipv4Addr>,
+        broadcast: bool,
+    ) -> DhcpV4Message {
+        let mut req = DhcpV4Message::default();
+        req.set_ciaddr(ciaddr);
+        if let Some(id) = server_id {
+            req.opts_mut().insert(DhcpV4Option::ServerIdentifier(id));
+        }
+        if let Some(ip) = with_requested_ip {
+            req.opts_mut().insert(DhcpV4Option::RequestedIpAddress(ip));
+        }
+        if broadcast {
+            req.set_flags(Flags::from(0x8000u16));
+        }
+        req
+    }
+
+    fn unspecified_port68() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 68)
+    }
+
+    #[test]
+    fn ack_dest_broadcasts_nonstandard_selecting_with_ciaddr() {
+        let offered = Ipv4Addr::new(192, 168, 1, 183);
+        let request = request_with(offered, Some(TEST_SERVER_IP), Some(offered), false);
+        let reply = reply_with(offered, offered, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_keeps_unicast_for_normal_renew() {
+        let assigned = Ipv4Addr::new(192, 168, 1, 150);
+        let request = request_with(assigned, None, None, false);
+        let reply = reply_with(assigned, assigned, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(assigned), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_keeps_unicast_when_requested_ip_differs_from_ciaddr() {
+        let ciaddr = Ipv4Addr::new(192, 168, 1, 150);
+        let requested = Ipv4Addr::new(192, 168, 1, 151);
+        let request = request_with(ciaddr, Some(TEST_SERVER_IP), Some(requested), false);
+        let reply = reply_with(ciaddr, requested, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(ciaddr), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_broadcasts_when_client_sets_broadcast_flag() {
+        let assigned = Ipv4Addr::new(192, 168, 1, 150);
+        let request = request_with(assigned, None, None, true);
+        let reply = reply_with(assigned, assigned, true);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_broadcasts_when_ciaddr_is_unspecified() {
+        let offered = Ipv4Addr::new(192, 168, 1, 183);
+        let request =
+            request_with(Ipv4Addr::UNSPECIFIED, Some(TEST_SERVER_IP), Some(offered), false);
+        let reply = reply_with(Ipv4Addr::UNSPECIFIED, offered, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_broadcasts_nak_to_lan_client() {
+        // RFC 2131 §4.1: NAK is broadcast when giaddr is zero; gen_ack leaves
+        // both ciaddr and yiaddr unspecified for a NAK.
+        let request =
+            request_with(Ipv4Addr::new(10, 99, 99, 99), Some(TEST_SERVER_IP), None, false);
+        let reply = reply_with(Ipv4Addr::UNSPECIFIED, Ipv4Addr::UNSPECIFIED, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::BROADCAST), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_unicasts_for_other_server_id() {
+        let offered = Ipv4Addr::new(192, 168, 1, 183);
+        let other = Ipv4Addr::new(192, 0, 2, 99);
+        let request = request_with(offered, Some(other), Some(offered), false);
+        let reply = reply_with(offered, offered, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(offered), 68),
+            "a request that selected another server must not get the compatibility broadcast"
+        );
+    }
+
+    #[test]
+    fn ack_dest_unicasts_when_only_server_id_is_present() {
+        let offered = Ipv4Addr::new(192, 168, 1, 183);
+        let request = request_with(offered, Some(TEST_SERVER_IP), None, false);
+        let reply = reply_with(offered, offered, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(offered), 68)
+        );
+    }
+
+    #[test]
+    fn ack_dest_unicasts_rebinding_with_requested_ip_only() {
+        let assigned = Ipv4Addr::new(192, 168, 1, 150);
+        let request = request_with(assigned, None, Some(assigned), false);
+        let reply = reply_with(assigned, assigned, false);
+        assert_eq!(
+            ack_dest(&reply, &request, TEST_SERVER_IP, unspecified_port68()),
+            SocketAddr::new(IpAddr::V4(assigned), 68),
+            "REBINDING with only option 50 must stay on the normal unicast path"
+        );
     }
 }
