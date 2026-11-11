@@ -49,7 +49,7 @@
 
 ```bash
 ./fmt.sh --rust      # 仅格式化 Rust（cargo fmt）
-./fmt.sh --c         # 仅格式化 C/eBPF（clang-format-18）
+./fmt.sh --c         # 仅格式化 C/eBPF（clang-format-19）
 ./fmt.sh --frontend  # 仅格式化前端（prettier）
 ```
 
@@ -85,7 +85,7 @@ pnpm --filter landscape-webui build
 
 ### C / eBPF
 
-- 使用 `./fmt.sh --c` 或 `clang-format-18` 格式化。项目配置了 [`.clang-format`](./.clang-format)。
+- 使用 `./fmt.sh --c` 或 `clang-format-19` 格式化。项目配置了 [`.clang-format`](./.clang-format)。
 - eBPF 程序位于 `landscape-ebpf/src/bpf/`。不要格式化自动生成的 `vmlinux.h`。
 - 确保 BPF 程序兼容 [BUILD.zh.md](./BUILD.zh.md) 中记录的内核版本。
 

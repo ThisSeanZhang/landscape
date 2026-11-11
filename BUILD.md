@@ -26,7 +26,7 @@ Install the system packages (Debian 13):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake clang-19 lld-19 llvm-19 libclang-19-dev \
+sudo apt-get install -y cmake clang-19 clang-format-19 lld-19 llvm-19 libclang-19-dev \
   gcc g++ make pkg-config libelf-dev libzstd-dev zlib1g-dev
 export CLANG=clang-19
 ```

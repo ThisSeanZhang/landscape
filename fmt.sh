@@ -13,7 +13,7 @@ usage() {
     echo "  -a, --all         Format all (Rust + C + Frontend) and run clippy, same as no options"
     echo "  -r, --rust        Format Rust code only (cargo fmt)"
     echo "  -l, --clippy      Run clippy check only (same as CI: cargo clippy -D warnings)"
-    echo "  -c, --c           Format C/eBPF code only (clang-format-18)"
+    echo "  -c, --c           Format C/eBPF code only (clang-format-19)"
     echo "  -f, --frontend    Format Frontend code only (prettier)"
 }
 
@@ -57,21 +57,21 @@ fi
 if $FORMAT_ALL || $FORMAT_C; then
     echo "Formatting C/eBPF code..."
     CLANG_FORMAT=""
-    if command -v clang-format-18 &>/dev/null; then
-        CLANG_FORMAT="clang-format-18"
+    if command -v clang-format-19 &>/dev/null; then
+        CLANG_FORMAT="clang-format-19"
     elif command -v clang-format &>/dev/null; then
         CF_VERSION=$(clang-format --version | grep -oP '\d+' | head -1)
-        if [ "$CF_VERSION" = "18" ]; then
+        if [ "$CF_VERSION" = "19" ]; then
             CLANG_FORMAT="clang-format"
         else
-            echo "Error: clang-format version $CF_VERSION found, but version 18 is required." >&2
-            echo "CI uses clang-format-18, other versions may produce different results." >&2
-            echo "Install: apt install clang-format-18" >&2
+            echo "Error: clang-format version $CF_VERSION found, but version 19 is required." >&2
+            echo "CI uses clang-format-19, other versions may produce different results." >&2
+            echo "Install: apt install clang-format-19" >&2
             exit 1
         fi
     else
-        echo "Error: clang-format not found. Install clang-format-18:" >&2
-        echo "  apt install clang-format-18" >&2
+        echo "Error: clang-format not found. Install clang-format-19:" >&2
+        echo "  apt install clang-format-19" >&2
         exit 1
     fi
     echo "Using $($CLANG_FORMAT --version)"

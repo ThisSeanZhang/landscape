@@ -146,21 +146,21 @@ jobs:
         run: cargo fmt -- --check
 
   c-format-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format-18
+        run: sudo apt-get update && sudo apt-get install -y clang-format-19
 
       - name: Check C code formatting
         run: |
-          clang-format-18 --version
+          clang-format-19 --version
           find landscape-ebpf/src/bpf -type f \( -name '*.c' -o -name '*.h' \) \
             ! -name 'vmlinux.h' \
-            -print0 | xargs -0 clang-format-18 --dry-run --Werror
+            -print0 | xargs -0 clang-format-19 --dry-run --Werror
 
   frontend-format-check:
     runs-on: ubuntu-latest
