@@ -60,6 +60,7 @@ fn run_async_test(test: impl std::future::Future<Output = ()>) {
 async fn test_coordinator(source: Arc<dyn DnsConfigSource>) -> Arc<DnsCoordinator> {
     let server = LandscapeDnsServer::new(DnsServiceDeps {
         listen_port: 0,
+        tcp_enabled: false,
         msg_tx: None,
         cache_runtime: CacheRuntimeConfig::default(),
         doh: None,
@@ -89,6 +90,7 @@ fn apply_runtime_config_updates_cache_settings() {
                 negative_cache_ttl: 15,
                 doh_listen_port: 443,
                 doh_http_endpoint: "/dns-query".to_string(),
+                tcp_enabled: true,
             })
             .await;
 

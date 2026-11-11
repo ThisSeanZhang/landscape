@@ -89,6 +89,8 @@ pub struct DnsRuntimeConfig {
     pub negative_cache_ttl: u32,
     pub doh_listen_port: u16,
     pub doh_http_endpoint: String,
+    /// Plain DNS-over-TCP on the DNS/UDP port. Defaults to enabled.
+    pub tcp_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -269,6 +271,11 @@ impl DnsRuntimeConfig {
         }
     }
 
+    /// Whether the plain DNS/TCP listener is enabled.
+    pub fn dns_tcp_enabled(&self) -> bool {
+        self.tcp_enabled
+    }
+
     pub fn doh_runtime(&self) -> DohRuntimeConfig {
         DohRuntimeConfig {
             listen_port: self.doh_listen_port,
@@ -291,6 +298,9 @@ impl DnsRuntimeConfig {
         }
         if let Some(v) = &config.doh_http_endpoint {
             self.doh_http_endpoint = v.clone();
+        }
+        if let Some(v) = config.tcp_enabled {
+            self.tcp_enabled = v;
         }
     }
 }

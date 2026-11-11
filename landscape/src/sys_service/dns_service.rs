@@ -97,20 +97,33 @@ impl LandscapeDnsService {
             tracing::error!("failed to redirect system DNS to local DNS service");
         }
         let api_tls_resolver = cert_service.api_tls_resolver();
-        let doh = Some(EffectiveDohListenerConfig {
-            addr: SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::UNSPECIFIED,
-                doh_runtime.listen_port,
-                0,
-                0,
-            )),
-            timeouts: DohTimeouts::default(),
-            server_cert_resolver: Arc::new(api_tls_resolver.clone()) as Arc<dyn ResolvesServerCert>,
-            dns_hostname: None,
-            http_endpoint: doh_runtime.http_endpoint.clone(),
+        if doh_runtime.listen_port == landscape_common::DNS_LISTEN_PORT {
+            // Port 53 belongs to DNS/UDP + DNS/TCP; one reuseport group cannot
+            // host two dispatcher programs. Refuse DoH instead of silently
+            // dropping one of the listeners.
+            tracing::error!(
+                "DoH listen_port must not be {}; DoH listener disabled for this run",
+                landscape_common::DNS_LISTEN_PORT
+            );
+        }
+        let doh = (doh_runtime.listen_port != landscape_common::DNS_LISTEN_PORT).then(|| {
+            EffectiveDohListenerConfig {
+                addr: SocketAddr::V6(SocketAddrV6::new(
+                    Ipv6Addr::UNSPECIFIED,
+                    doh_runtime.listen_port,
+                    0,
+                    0,
+                )),
+                timeouts: DohTimeouts::default(),
+                server_cert_resolver: Arc::new(api_tls_resolver.clone())
+                    as Arc<dyn ResolvesServerCert>,
+                dns_hostname: None,
+                http_endpoint: doh_runtime.http_endpoint.clone(),
+            }
         });
         let server = LandscapeDnsServer::new(DnsServiceDeps {
-            listen_port: 53,
+            listen_port: landscape_common::DNS_LISTEN_PORT,
+            tcp_enabled: dns_config.dns_tcp_enabled(),
             msg_tx,
             cache_runtime,
             doh,
