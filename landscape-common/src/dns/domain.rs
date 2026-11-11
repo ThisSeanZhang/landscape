@@ -16,9 +16,7 @@ pub fn normalize_domain_name(domain: &str) -> Result<String, DnsServiceError> {
         && no_dot.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
-                && label
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
     {
         return Ok(no_dot.to_ascii_lowercase());
