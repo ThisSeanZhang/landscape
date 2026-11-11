@@ -569,7 +569,7 @@ impl UpstreamPool {
         domain: &str,
         query_type: RecordType,
     ) -> Result<LookupAnswer, UpstreamError> {
-        let name = match Name::from_str(domain) {
+        let name = match crate::domain::name_from_domain_text(domain) {
             Ok(name) => name,
             Err(e) => return Err(UpstreamError::Internal(format!("invalid domain: {e}"))),
         };
