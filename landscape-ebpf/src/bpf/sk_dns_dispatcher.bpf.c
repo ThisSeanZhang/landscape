@@ -11,6 +11,10 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Set per loaded skeleton before load. One reuseport group serves exactly
+ * one listener role (UDP, DoH, or plain DNS/TCP). */
+volatile const __u32 dns_listener_role_id = DNS_LISTENER_ROLE_INVALID;
+
 SEC("sk_reuseport/migrate")
 int reuseport_dns_dispatcher(struct sk_reuseport_md *reuse_md) {
     // struct bpf_sock *sk;
@@ -19,6 +23,13 @@ int reuseport_dns_dispatcher(struct sk_reuseport_md *reuse_md) {
     struct flow_match_key match_key = {0};
     int ret = 0;
     __u32 flow_id = 0;
+
+    /* Unset or out-of-range role (e.g. the INVALID default) must never be
+     * treated as a valid role, otherwise it would alias a real key space. */
+    if (dns_listener_role_id > DNS_LISTENER_ROLE_TCP) {
+        ld_log("reuseport_dns_dispatcher, invalid listener role");
+        return SK_DROP;
+    }
 
     ret = bpf_skb_load_bytes_relative(reuse_md, 6, &match_key.mac.mac, 6, BPF_HDR_START_MAC);
     if (!ret) {
@@ -62,12 +73,9 @@ int reuseport_dns_dispatcher(struct sk_reuseport_md *reuse_md) {
         flow_id = *flow_id_ptr;
     }
 
-    // keep UDP/TCP sockets in separate key spaces:
-    // key = (flow_id << 1) | proto_bit, where UDP=0, TCP=1
-    __u32 flow_sock_key = (flow_id << 1);
-    if (reuse_md->ip_protocol == IPPROTO_TCP) {
-        flow_sock_key |= 1;
-    }
+    // Keep UDP, DoH, and plain TCP sockets in separate key spaces:
+    // key = (listener_role << 8) | flow_id.
+    __u32 flow_sock_key = (dns_listener_role_id << DNS_FLOW_KEY_ROLE_SHIFT) | flow_id;
 
     // ld_log("find flow_id: %d, key: %d", flow_id, flow_sock_key);
     ret = bpf_sk_select_reuseport(reuse_md, &dns_flow_socks, &flow_sock_key, 0);

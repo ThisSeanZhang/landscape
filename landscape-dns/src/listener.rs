@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
 use landscape_common::dns::DohRuntimeConfig;
-use landscape_common::flow::FlowSocketRegistrar;
+use landscape_common::flow::{DnsListenerRole, DnsSocketRegisterError, FlowSocketRegistrar};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
@@ -144,14 +144,16 @@ pub(crate) fn create_tcp_listener(
     Ok((listener, fd))
 }
 
-/// 启动单个 flow 的 DNS 监听(UDP + 可选 DoH)。
+/// Start a flow's UDP and optional DoH DNS listeners.
 ///
-/// `token` 为服务运行 token 的 child:父 token 取消(服务停止)时本 flow
-/// 监听随之终止;自身 bind 失败时自我取消以向上游标记失败。两个顶级任务
-/// (UDP serve / DoH handler)均注册进 `tracker`,供停止侧确定性等待。
+/// `token` is a child of the service token: stopping the service tears the
+/// listeners down, and UDP bind/registration failure cancels it so the flow is
+/// marked failed. Both top-level tasks are tracked in `tracker`.
 ///
-/// UDP 与 DoH 共用同一 token(同生共死):任一侧的致命错误都会取消整个
-/// flow token 使另一半一并退出,由上层 refresh 感知死亡并整体重建。
+/// DoH startup failure (bind or sockmap registration) is best-effort: log it,
+/// drop the DoH listener, and keep UDP serving. DoH is not retried until this
+/// flow runtime is rebuilt. Unrecoverable runtime socket errors still cancel
+/// the shared token so the whole flow is rebuilt.
 pub(crate) async fn start_flow_dns_listener(
     flow_id: u32,
     addr: SocketAddr,
@@ -167,7 +169,15 @@ pub(crate) async fn start_flow_dns_listener(
         return token;
     };
 
-    attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, false);
+    if let Err(e) =
+        attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, DnsListenerRole::Udp)
+    {
+        tracing::error!("[flow: {flow_id}]: register UDP DNS socket error: {e}");
+        // Keep the unregistered listener closed so reuseport cannot send any
+        // flow traffic to it. Mark the flow runtime failed as well.
+        token.cancel();
+        return token;
+    }
 
     udp::spawn_udp_listener(flow_id, udp, handler.clone(), token.clone(), tracker.clone());
 
@@ -216,7 +226,15 @@ fn register_doh_listener(
 ) {
     match create_tcp_listener(doh.addr) {
         Ok((listener, sock_fd)) => {
-            attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, true);
+            if let Err(e) =
+                attach_dns_socket(socket_registrar.as_ref(), flow_id, sock_fd, DnsListenerRole::Doh)
+            {
+                tracing::error!("[flow: {flow_id}]: register DoH DNS socket error: {e}");
+                // Drop the unregistered listener so reuseport cannot dispatch
+                // DoH traffic to it; keep the flow alive on UDP. DoH is retried
+                // only after the flow runtime is rebuilt.
+                return;
+            }
             doh::spawn_doh_listener(
                 flow_id,
                 listener,
@@ -232,6 +250,7 @@ fn register_doh_listener(
             );
         }
         Err(e) => {
+            // Best-effort DoH: log and keep UDP serving; retried only on rebuild.
             tracing::error!("[flow: {flow_id}]: create DoH listener error: {e}");
         }
     }
@@ -241,14 +260,34 @@ fn attach_dns_socket(
     socket_registrar: &dyn FlowSocketRegistrar,
     flow_id: u32,
     sock_fd: i32,
-    is_tcp: bool,
-) {
-    socket_registrar.register_dns_socket(flow_id, sock_fd, is_tcp)
+    role: DnsListenerRole,
+) -> Result<(), DnsSocketRegisterError> {
+    socket_registrar.register_dns_socket(flow_id, sock_fd, role)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_unrecoverable_socket_error;
+    use super::{attach_dns_socket, is_unrecoverable_socket_error};
+    use landscape_common::flow::{DnsListenerRole, DnsSocketRegisterError, FlowSocketRegistrar};
+
+    struct FailingRegistrar;
+
+    impl FlowSocketRegistrar for FailingRegistrar {
+        fn register_dns_socket(
+            &self,
+            _flow_id: u32,
+            _sock_fd: i32,
+            _role: DnsListenerRole,
+        ) -> Result<(), DnsSocketRegisterError> {
+            Err(DnsSocketRegisterError::MapUpdate("test failure".to_string()))
+        }
+    }
+
+    #[test]
+    fn dns_socket_registration_errors_are_propagated() {
+        let err = attach_dns_socket(&FailingRegistrar, 7, -1, DnsListenerRole::Udp).unwrap_err();
+        assert!(matches!(err, DnsSocketRegisterError::MapUpdate(_)));
+    }
 
     #[test]
     fn classifies_unrecoverable_socket_errors() {

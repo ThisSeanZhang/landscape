@@ -15,13 +15,14 @@ use crate::maps::{MapCreateSpec, ensure_pinned_map};
 pub(crate) const DNS_FLOW_SOCKS_PIN: &str = "dns_flow_socks";
 
 /// `dns_flow_socks`: `BPF_MAP_TYPE_SOCKMAP`, key `u32`, value `u64`,
-/// 512 entries.
+/// 1024 entries. The key packs a DNS listener role in bits 31..8 and the
+/// flow id in bits 7..0, leaving room for up to 1024 flow/role listeners.
 pub(crate) const DNS_FLOW_SOCKS_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::Sockmap,
     name: DNS_FLOW_SOCKS_PIN,
     key_size: 4,
     value_size: 8,
-    max_entries: 512,
+    max_entries: 1024,
     map_flags: 0,
     inner: None,
 };

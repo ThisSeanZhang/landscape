@@ -35,6 +35,22 @@ pub enum FlowRuleError {
     Internal(#[from] DbError),
 }
 
+/// Error returned when a DNS listener socket cannot be inserted into the
+/// datapath map. Callers must close the listener on error so the kernel cannot
+/// distribute traffic to a socket that is missing from the reuseport map.
+///
+/// Reuseport dispatcher attach failures are intentionally not represented
+/// here: all listeners of a role share one reuseport group, so only the first
+/// attach takes effect and later ones are logged and ignored.
+#[derive(Debug, thiserror::Error)]
+pub enum DnsSocketRegisterError {
+    #[error("DNS flow id {flow_id} exceeds the supported 0..={max} range")]
+    InvalidFlowId { flow_id: u32, max: u32 },
+
+    #[error("failed to update dns_flow_socks: {0}")]
+    MapUpdate(String),
+}
+
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum DstIpRuleError {

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 ///   bits 0-7   flow_id
 ///   bits 8-14  action
 ///   bit  15    allow_reuse_port
-const FLOW_ID_MASK: u16 = 0x00FF;
+pub const FLOW_ID_MASK: u16 = 0x00FF;
 const FLOW_ACTION_MASK: u16 = 0x7F00;
 const FLOW_ALLOW_REUSE_PORT_MASK: u16 = 0x8000;
 

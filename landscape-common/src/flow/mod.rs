@@ -12,6 +12,6 @@ pub mod trace;
 
 pub use config::*;
 pub use dns_result_sink::{DnsResultSink, NoopDnsResultSink};
-pub use error::{DstIpRuleError, FlowRuleError};
-pub use flow_socket_registrar::{FlowSocketRegistrar, NoopFlowSocketRegistrar};
+pub use error::{DnsSocketRegisterError, DstIpRuleError, FlowRuleError};
+pub use flow_socket_registrar::{DnsListenerRole, FlowSocketRegistrar, NoopFlowSocketRegistrar};
 pub use runtime::*;

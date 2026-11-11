@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use landscape_common::flow::FlowSocketRegistrar;
+use landscape_common::flow::{
+    DnsListenerRole, DnsSocketRegisterError, FlowSocketRegistrar, MAX_FLOW_ID,
+};
 
 use crate::dns_dispatcher::attach_reuseport_ebpf;
 use crate::maps::{LandscapeMapPath, dns};
@@ -18,14 +20,29 @@ impl EbpfFlowSocketRegistrar {
 }
 
 impl FlowSocketRegistrar for EbpfFlowSocketRegistrar {
-    fn register_dns_socket(&self, flow_id: u32, sock_fd: i32, is_tcp: bool) {
-        if is_tcp {
-            dns::setting_dns_sock_map_tcp(&self.paths, sock_fd, flow_id);
-        } else {
-            dns::setting_dns_sock_map(&self.paths, sock_fd, flow_id);
+    fn register_dns_socket(
+        &self,
+        flow_id: u32,
+        sock_fd: i32,
+        role: DnsListenerRole,
+    ) -> Result<(), DnsSocketRegisterError> {
+        if flow_id > MAX_FLOW_ID {
+            return Err(DnsSocketRegisterError::InvalidFlowId { flow_id, max: MAX_FLOW_ID });
         }
-        if let Err(e) = attach_reuseport_ebpf(&self.paths, sock_fd) {
+
+        dns::setting_dns_sock_map(&self.paths, sock_fd, flow_id, role)
+            .map_err(|e| DnsSocketRegisterError::MapUpdate(e.to_string()))?;
+
+        // Every listener of a role shares one reuseport group, and the kernel
+        // accepts only a single dispatcher program per group. Attaching a
+        // freshly loaded program to a later socket therefore fails with
+        // EINVAL. The already-attached dispatcher serves the whole group
+        // through the sockmap, so keep the listener running instead of
+        // failing the flow.
+        if let Err(e) = attach_reuseport_ebpf(&self.paths, sock_fd, role) {
             tracing::error!("[flow: {flow_id}]: attach reuseport eBPF error: {e:?}");
         }
+
+        Ok(())
     }
 }

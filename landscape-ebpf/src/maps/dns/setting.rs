@@ -1,63 +1,79 @@
-use libbpf_rs::{MapCore, MapFlags};
+use std::io;
 
+use landscape_common::flow::{DnsListenerRole, MAX_FLOW_ID};
+use libbpf_rs::{MapCore, MapFlags, MapHandle};
+
+use crate::bpf_error::{LandscapeEbpfError, LdEbpfResult};
 use crate::maps::LandscapeMapPath;
 
-const DNS_FLOW_PROTO_UDP: u8 = 17;
-const DNS_FLOW_PROTO_TCP: u8 = 6;
-
-#[inline]
-fn dns_flow_key(flow_id: u32, proto: u8) -> u32 {
-    let proto_bit = if proto == DNS_FLOW_PROTO_TCP { 1 } else { 0 };
-    (flow_id << 1) | proto_bit
+/// Pack a DNS listener role and flow id into the `dns_flow_socks` key.
+///
+/// The map key is:
+///
+/// ```text
+/// bits 31..8: role (UDP/DoH/TCP)
+/// bits  7..0: flow_id
+/// ```
+///
+/// This mirrors the key construction in `sk_dns_dispatcher.bpf.c`.
+pub fn dns_flow_key(flow_id: u32, role: DnsListenerRole) -> LdEbpfResult<u32> {
+    if flow_id > MAX_FLOW_ID {
+        return Err(LandscapeEbpfError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("DNS flow id {flow_id} exceeds supported maximum {MAX_FLOW_ID}"),
+        )));
+    }
+    Ok(role.socket_key(flow_id))
 }
 
 fn setting_dns_sock_map_inner<T: MapCore>(
     dns_flow_socks: &T,
     sock_fd: i32,
     flow_id: u32,
-    proto: u8,
-) {
-    let key = dns_flow_key(flow_id, proto).to_le_bytes();
+    role: DnsListenerRole,
+) -> LdEbpfResult<()> {
+    let key = dns_flow_key(flow_id, role)?.to_le_bytes();
     let value = (sock_fd as u64).to_le_bytes();
-    if let Err(e) = dns_flow_socks.update(&key, &value, MapFlags::ANY) {
-        tracing::error!("update dns_flow_socks error: {e:?}");
-    }
+    dns_flow_socks.update(&key, &value, MapFlags::ANY).map_err(|source| {
+        LandscapeEbpfError::Context {
+            context: format!("update dns_flow_socks for flow_id={flow_id} role={role:?}"),
+            source,
+        }
+    })?;
+    Ok(())
 }
 
-pub fn setting_dns_sock_map(paths: &LandscapeMapPath, sock_fd: i32, flow_id: u32) {
-    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&paths.dns_flow_socks) else {
-        tracing::warn!(
-            "dns_flow_socks map not found at {:?}, skip dns sock map update",
-            paths.dns_flow_socks
-        );
-        return;
-    };
+/// Register a DNS listener socket for one flow and listener role.
+///
+/// A missing map is an error rather than a silent no-op: leaving a listener
+/// out of the reuseport map would let the kernel distribute traffic to the
+/// wrong per-flow socket.
+pub fn setting_dns_sock_map(
+    paths: &LandscapeMapPath,
+    sock_fd: i32,
+    flow_id: u32,
+    role: DnsListenerRole,
+) -> LdEbpfResult<()> {
+    let dns_flow_socks = MapHandle::from_pinned_path(&paths.dns_flow_socks).map_err(|source| {
+        LandscapeEbpfError::Context {
+            context: format!("open dns_flow_socks at {}", paths.dns_flow_socks.display()),
+            source,
+        }
+    })?;
 
-    setting_dns_sock_map_inner(&dns_flow_socks, sock_fd, flow_id, DNS_FLOW_PROTO_UDP);
-}
-
-pub fn setting_dns_sock_map_tcp(paths: &LandscapeMapPath, sock_fd: i32, flow_id: u32) {
-    let Ok(dns_flow_socks) = libbpf_rs::MapHandle::from_pinned_path(&paths.dns_flow_socks) else {
-        tracing::warn!(
-            "dns_flow_socks map not found at {:?}, skip dns sock map update",
-            paths.dns_flow_socks
-        );
-        return;
-    };
-
-    setting_dns_sock_map_inner(&dns_flow_socks, sock_fd, flow_id, DNS_FLOW_PROTO_TCP);
+    setting_dns_sock_map_inner(&dns_flow_socks, sock_fd, flow_id, role)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libbpf_rs::{MapHandle, MapType};
+    use libbpf_rs::MapType;
     use std::net::UdpSocket;
     use std::os::fd::AsRawFd;
     use std::time::{Duration, Instant};
 
     /// Creates an unnamed temporary SOCKMAP mirroring the `dns_flow_socks`
-    /// layout (key u32, value u64, 512 entries). Returns `None` (skip) when
+    /// layout (key u32, value u64, 1024 entries). Returns `None` (skip) when
     /// the environment cannot create BPF maps, e.g. no CAP_BPF.
     fn create_test_sockmap() -> Option<MapHandle> {
         #[allow(clippy::needless_update)]
@@ -65,7 +81,7 @@ mod tests {
             sz: std::mem::size_of::<libbpf_sys::bpf_map_create_opts>() as libbpf_sys::size_t,
             ..Default::default()
         };
-        match MapHandle::create(MapType::Sockmap, None::<String>, 4, 8, 512, &opts) {
+        match MapHandle::create(MapType::Sockmap, None::<String>, 4, 8, 1024, &opts) {
             Ok(map) => Some(map),
             Err(e) => {
                 eprintln!("skipping sockmap test: cannot create BPF sockmap: {e:?}");
@@ -84,12 +100,19 @@ mod tests {
             .map(|value| u64::from_le_bytes(value[..8].try_into().unwrap()))
     }
 
-    /// Sanity: the proto bit is packed into the lowest key bit.
     #[test]
-    fn dns_flow_key_packs_proto_bit() {
-        assert_eq!(dns_flow_key(5, DNS_FLOW_PROTO_UDP), 10);
-        assert_eq!(dns_flow_key(5, DNS_FLOW_PROTO_TCP), 11);
-        assert_ne!(dns_flow_key(5, DNS_FLOW_PROTO_UDP), dns_flow_key(5, DNS_FLOW_PROTO_TCP));
+    fn dns_flow_key_packs_role_and_flow_id() {
+        assert_eq!(dns_flow_key(5, DnsListenerRole::Udp).unwrap(), 5);
+        assert_eq!(dns_flow_key(5, DnsListenerRole::Doh).unwrap(), 261);
+        assert_eq!(dns_flow_key(5, DnsListenerRole::Tcp).unwrap(), 517);
+        assert_eq!(dns_flow_key(255, DnsListenerRole::Udp).unwrap(), 255);
+        assert_eq!(dns_flow_key(255, DnsListenerRole::Doh).unwrap(), 511);
+        assert_eq!(dns_flow_key(255, DnsListenerRole::Tcp).unwrap(), 767);
+    }
+
+    #[test]
+    fn dns_flow_key_rejects_out_of_range_flow_ids() {
+        assert!(dns_flow_key(MAX_FLOW_ID + 1, DnsListenerRole::Udp).is_err());
     }
 
     /// Guards the kernel behavior the no-deregistration design relies on:
@@ -101,9 +124,11 @@ mod tests {
         let Some(map) = create_test_sockmap() else { return };
         let sock = bound_udp_socket();
         let flow_id = 21;
-        let key = dns_flow_key(flow_id, DNS_FLOW_PROTO_UDP).to_le_bytes();
+        let role = DnsListenerRole::Udp;
+        let key = dns_flow_key(flow_id, role).unwrap().to_le_bytes();
 
-        setting_dns_sock_map_inner(&map, sock.as_raw_fd(), flow_id, DNS_FLOW_PROTO_UDP);
+        setting_dns_sock_map_inner(&map, sock.as_raw_fd(), flow_id, role)
+            .expect("register listener in test sockmap");
         // guard against a vacuous pass: the registration must have taken effect
         assert!(sockmap_value(&map, key).is_some());
 

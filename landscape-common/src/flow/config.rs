@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::config::DEFAULT_FLOW_ID;
 use crate::config_service::geo::GeoConfigKey;
 use crate::database::repository::LandscapeDBStore;
-use crate::flow::mark::FlowMark;
+use crate::flow::mark::{FLOW_ID_MASK, FlowMark};
 use crate::net::MacAddr;
 use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
@@ -55,6 +55,9 @@ impl LandscapeDBStore<Uuid> for FlowConfig {
 /// Maximum number of targets a flow rule may reference.
 pub const MAX_FLOW_TARGETS: usize = 16;
 
+/// Maximum `flow_id` value representable in the low byte of `FlowMark`.
+pub const MAX_FLOW_ID: u32 = FLOW_ID_MASK as u32;
+
 impl crate::database::validator::ValidatableConfig for FlowConfig {
     fn validate(&self) -> Result<(), ServiceConfigError> {
         if self.flow_id == DEFAULT_FLOW_ID {
@@ -62,6 +65,11 @@ impl crate::database::validator::ValidatableConfig for FlowConfig {
                 reason: format!(
                     "flow_id {DEFAULT_FLOW_ID} is reserved for the default flow and cannot be used by a flow config"
                 ),
+            });
+        }
+        if self.flow_id > MAX_FLOW_ID {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!("flow_id {} must be <= {MAX_FLOW_ID}", self.flow_id),
             });
         }
         for rule in &self.flow_match_rules {
@@ -323,6 +331,37 @@ mod tests {
         let result = crate::database::validator::ValidatableConfig::validate(&config);
 
         assert!(result.is_err(), "flow_id 0 is reserved for the default flow");
+    }
+
+    fn empty_flow_config(flow_id: u32) -> FlowConfig {
+        FlowConfig {
+            id: Uuid::nil(),
+            enable: true,
+            flow_id,
+            flow_match_rules: vec![],
+            flow_targets: vec![],
+            name: String::new(),
+            remark: String::new(),
+            update_at: 0.0,
+        }
+    }
+
+    #[test]
+    fn rejects_flow_id_above_mark_capacity() {
+        let result = crate::database::validator::ValidatableConfig::validate(&empty_flow_config(
+            MAX_FLOW_ID + 1,
+        ));
+
+        assert!(result.is_err(), "flow_id must fit in the FlowMark low byte");
+    }
+
+    #[test]
+    fn accepts_max_flow_id() {
+        let result = crate::database::validator::ValidatableConfig::validate(&empty_flow_config(
+            MAX_FLOW_ID,
+        ));
+
+        assert!(result.is_ok());
     }
 
     #[test]
