@@ -113,6 +113,10 @@ pub const DEFAULT_DNS_CACHE_CAPACITY: u32 = 4096;
 pub const DEFAULT_DNS_CACHE_TTL: u32 = 24 * 60 * 60;
 pub const DEFAULT_DNS_NEGATIVE_CACHE_TTL: u32 = 120;
 pub const DEFAULT_DNS_DOH_LISTEN_PORT: u16 = 6053;
+/// Port shared by plain DNS/UDP and DNS/TCP.
+pub const DNS_LISTEN_PORT: u16 = 53;
+/// Plain DNS-over-TCP listener on the same port as DNS/UDP.
+pub const DEFAULT_DNS_TCP_ENABLE: bool = true;
 pub const DEFAULT_LAN_HOSTNAME_ENABLE: bool = true;
 pub const DEFAULT_DNS_LAN_SUFFIX: &str = "lan";
 

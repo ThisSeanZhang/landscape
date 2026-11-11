@@ -217,6 +217,7 @@ impl RuntimeConfig {
                 .doh_http_endpoint
                 .clone()
                 .unwrap_or_else(|| "/dns-query".to_string()),
+            tcp_enabled: config.dns.tcp_enabled.unwrap_or(crate::DEFAULT_DNS_TCP_ENABLE),
         };
 
         let lan_hostname = match config.lan_hostname.clone().normalized() {

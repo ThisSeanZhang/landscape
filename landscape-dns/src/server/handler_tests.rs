@@ -125,6 +125,16 @@ pub(crate) fn redirect_test_handler(
     addr: IpAddr,
     ttl_secs: u32,
 ) -> DnsRequestHandler {
+    redirect_test_handler_with_addrs(domain, vec![addr], ttl_secs)
+}
+
+/// Same as [`redirect_test_handler`], with several answers so listener tests
+/// can produce responses larger than the 512-byte UDP limit.
+pub(crate) fn redirect_test_handler_with_addrs(
+    domain: &str,
+    addrs: Vec<IpAddr>,
+    ttl_secs: u32,
+) -> DnsRequestHandler {
     DnsRequestHandler::new(
         ChainDnsServerInitInfo {
             dns_rules: vec![],
@@ -136,7 +146,7 @@ pub(crate) fn redirect_test_handler(
                     match_type: DomainMatchType::Full,
                     value: domain.to_string(),
                 }],
-                result_info: vec![addr],
+                result_info: addrs,
                 ttl_secs,
                 block_metadata_queries: true,
             }],
