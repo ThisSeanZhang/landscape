@@ -70,9 +70,10 @@ async fn observer_listen() -> Result<(), String> {
     connection.socket_mut().socket_mut().bind(&addr).expect("failed to bind");
     tokio::spawn(connection);
 
+    let mut filter = landscape::observer::LinkEventFilter::default();
     while let Some((message, _)) = messages.next().await {
         // println!("Route change message - {message:?}");
-        let result = landscape::observer::filter_message_status(message);
+        let result = filter.filter_message_status(message);
         println!("result - {result:?}");
         // match message.payload {
         //     NetlinkPayload::InnerMessage(inner_message) => {

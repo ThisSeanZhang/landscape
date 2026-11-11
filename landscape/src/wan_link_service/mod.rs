@@ -562,6 +562,36 @@ impl WanLinkService {
     }
 }
 
+/// Refresh the carrier snapshot for the WAN attach interface.
+///
+/// Clears the carrier when the interface is absent. When the ifindex is
+/// unchanged, `set_carrier` does not notify the supervisors, so an explicit
+/// `SectionTag::V4` is sent to restart the WAN IP configuration (admin up,
+/// cable insertion, or event-stream resync).
+async fn refresh_carrier(
+    link_state: &LinkStateHandle,
+    attach_iface: &str,
+    reconfig_tx: &broadcast::Sender<SectionTag>,
+) {
+    let Some(iface) = get_iface_by_name(attach_iface).await else {
+        link_state.set_carrier(None);
+        return;
+    };
+
+    let same_ifindex =
+        link_state.snapshot().carrier.as_ref().is_some_and(|old| old.index == iface.index);
+
+    link_state.set_carrier(Some(iface));
+
+    if same_ifindex {
+        tracing::info!(
+            iface = %attach_iface,
+            "iface up/carrier insertion; restarting WAN IP configuration"
+        );
+        let _ = reconfig_tx.send(SectionTag::V4);
+    }
+}
+
 /// Maintains the link's carrier and broadcasts `SectionTag`s on config change.
 async fn run_environment(
     link_status: ServiceHandle,
@@ -585,23 +615,19 @@ async fn run_environment(
         tokio::select! {
             _ = stop.cancelled() => break,
             event = iface_rx.recv() => match event {
-                Ok(IfaceObserverAction::Up(name)) => {
-                    if name == attach_iface
-                        && let Some(iface) = get_iface_by_name(&attach_iface).await
-                    {
-                        link_state.set_carrier(Some(iface));
-                    }
-                }
-                Ok(IfaceObserverAction::Down(name)) => {
+                Ok(IfaceObserverAction::Up(name) | IfaceObserverAction::CarrierUp(name)) => {
                     if name == attach_iface {
-                        link_state.set_carrier(None);
+                        refresh_carrier(&link_state, &attach_iface, &reconfig_tx).await;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    match get_iface_by_name(&attach_iface).await {
-                        Some(iface) => link_state.set_carrier(Some(iface)),
-                        None => link_state.set_carrier(None),
-                    }
+                Ok(IfaceObserverAction::Down(_)) => {}
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!(
+                        iface = %attach_iface,
+                        missed,
+                        "iface event stream lagged; resyncing WAN link carrier"
+                    );
+                    refresh_carrier(&link_state, &attach_iface, &reconfig_tx).await;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },

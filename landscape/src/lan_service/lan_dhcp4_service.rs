@@ -333,21 +333,16 @@ impl DHCPv4ServerManagerService {
         let service_clone = service.clone();
         spawn_task(task_label::task::DHCP_V4_SERVICE_OBSERVER, async move {
             while let Ok(msg) = dev_observer.recv().await {
-                match msg {
-                    IfaceObserverAction::Up(iface_name) => {
-                        tracing::info!("restart {iface_name} Firewall service");
-                        let service_config = if let Some(service_config) =
-                            store.find_by_id(iface_name.clone()).await.unwrap()
-                        {
-                            service_config
-                        } else {
-                            continue;
-                        };
+                let IfaceObserverAction::Up(iface_name) = msg else {
+                    continue;
+                };
+                tracing::info!("restart {iface_name} Firewall service");
+                let Some(service_config) = store.find_by_id(iface_name.clone()).await.unwrap()
+                else {
+                    continue;
+                };
 
-                        let _ = service_clone.update_service(service_config).await;
-                    }
-                    IfaceObserverAction::Down(_) => {}
-                }
+                let _ = service_clone.update_service(service_config).await;
             }
         });
 
