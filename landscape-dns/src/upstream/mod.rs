@@ -63,7 +63,10 @@ impl LandscapeResolver {
             Self::Unavailable => {
                 Err(NetError::from("no DNS servers configured for the active WAN"))
             }
-            Self::Legacy(resolver) => resolver.lookup(domain, query_type).await,
+            Self::Legacy(resolver) => {
+                let name = crate::domain::name_from_domain_text(domain)?;
+                resolver.lookup(name, query_type).await
+            }
             #[cfg(feature = "pool-exp")]
             Self::Pooled(resolver) => resolver.lookup(domain, query_type).await,
             #[cfg(feature = "pool-native")]
