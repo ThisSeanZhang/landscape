@@ -655,6 +655,10 @@ impl IpRouteService {
             selections.remove(0);
             self.dataplane.set_connection_generation(0, false, None);
             self.dataplane.set_connection_generation(0, true, None);
+            // Flow 0 slots mirror the deleted default binding; without this
+            // they would keep routing default traffic over the removed policy.
+            self.dataplane.del_wan_slots_v4(0);
+            self.dataplane.del_wan_slots_v6(0);
             *self.router_wan_policy.write().await = None;
             self.kernel_default_notify.notify_one();
         }
