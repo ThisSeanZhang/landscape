@@ -75,6 +75,7 @@ export default {
     runtime_svc_stop: "已停止",
     runtime_svc_disabled: "已禁用",
     runtime_svc_failed: "失败",
+    runtime_svc_retrying: "重试中",
     runtime_health_healthy: "健康",
     runtime_health_unhealthy: "异常",
     runtime_health_unknown: "未知",

@@ -33,7 +33,7 @@ use landscape_common::wan_link::{
     LinkState, LinkStateHandle, RuntimeWanLinkConfig, SectionKind, SessionIface, SessionPhase,
     SessionState, V4Runtime, WanHealthProbeConfig, WanLinkConfig, WanLinkRuntimeStatusStore,
     WanLinkSectionsSnapshot, WanLinkSectionsStatus, WanLinkStatus, WanLinkStatusHandle,
-    WanLinkStatusStore,
+    WanLinkStatusStore, swap_if_changed,
 };
 use landscape_common::wan_service::ipv6_pd::config::DEFAULT_EXPECTED_PD_LEN;
 use landscape_common::wan_service::ipv6_pd::{IPV6PDPrefixStatus, LDIAPrefix};
@@ -56,12 +56,43 @@ const DEFAULT_RESTART_BACKOFF: Duration = Duration::from_secs(5);
 /// retrying it every few seconds only burns CPU inside the kernel verifier and
 /// floods the log, so the delay grows until it reaches this cap.
 const MAX_RESTART_BACKOFF: Duration = Duration::from_secs(60);
+/// A run that stayed up at least this long is not a rapid repeat, so it resets
+/// the failure streak instead of growing it.
+const STABLE_RUN_RESET: Duration = Duration::from_secs(60);
+/// Retries attempted after the initial run before a section is marked `Failed`.
+/// A deterministic failure then stops respawning until a session/config event
+/// gives it a fresh reason to try again.
+const MAX_RAPID_RETRIES: u32 = 3;
 
-/// How many runs in a row have ended on their own. A run that stayed up at
-/// least as long as the cap is not a rapid repeat, so it restarts the streak
-/// instead of growing it.
+/// How many runs in a row have ended on their own. A run that stayed up long
+/// enough is not a rapid repeat, so it restarts the streak instead of growing
+/// it.
 fn next_failure_streak(previous: u32, ran_for: Duration) -> u32 {
-    if ran_for >= MAX_RESTART_BACKOFF { 1 } else { previous.saturating_add(1) }
+    if ran_for >= STABLE_RUN_RESET { 1 } else { previous.saturating_add(1) }
+}
+
+/// True once the retry budget is exhausted: the section is parked in `Failed`
+/// instead of being respawned again.
+fn is_terminal_failure(consecutive_failures: u32) -> bool {
+    consecutive_failures > MAX_RAPID_RETRIES
+}
+
+/// Status shown on the link board while a ended run is waiting to be retried.
+fn retry_status(consecutive_failures: u32) -> ServiceStatus {
+    if is_terminal_failure(consecutive_failures) {
+        ServiceStatus::Failed
+    } else {
+        ServiceStatus::Retrying
+    }
+}
+
+/// Mirror the supervisor's board status into the section runtime slot used by
+/// the topology detail panel. PD/health-check slots carry different runtime
+/// types, so they pass `None`.
+fn set_section_runtime_status(slot: &Option<Arc<ArcSwap<ServiceStatus>>>, status: ServiceStatus) {
+    if let Some(slot) = slot {
+        swap_if_changed(slot, status);
+    }
 }
 
 /// Delay before the next respawn after `consecutive_failures` runs in a row
@@ -360,6 +391,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            Some(sections.nat4_slot()),
         );
 
         self.spawn_section(
@@ -387,6 +419,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            Some(sections.nat6_slot()),
         );
 
         self.spawn_section(
@@ -413,6 +446,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            Some(sections.mss_slot()),
         );
 
         self.spawn_section(
@@ -440,6 +474,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            Some(sections.firewall_slot()),
         );
 
         self.spawn_section(
@@ -490,6 +525,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            None,
         );
 
         self.spawn_section(
@@ -529,6 +565,7 @@ impl ServiceStarterTrait for WanLinkService {
                     })
                 })
             },
+            None,
         );
 
         link_status.just_change_status(ServiceStatus::Running);
@@ -559,6 +596,7 @@ impl WanLinkService {
         ready: fn(&SessionState) -> bool,
         scope: SectionScope,
         runner: SectionRunner,
+        runtime_status: Option<Arc<ArcSwap<ServiceStatus>>>,
     ) {
         let status = link_status.clone();
         let task_status = status.clone();
@@ -577,6 +615,7 @@ impl WanLinkService {
                 ready,
                 scope,
                 runner,
+                runtime_status,
                 DEFAULT_RESTART_BACKOFF,
             )
             .await;
@@ -794,6 +833,50 @@ async fn wait_section_invalidated(
     }
 }
 
+/// Park a terminal v4 failure until something makes a retry meaningful:
+/// stop, carrier change, or a config update. Returns `false` when the
+/// supervisor must exit.
+async fn wait_v4_rearm(
+    stop: &CancellationToken,
+    state_rx: &mut watch::Receiver<LinkState>,
+    run_ifindex: u32,
+    cfg_rx: &mut watch::Receiver<WanLinkConfig>,
+    reconfig_rx: &mut broadcast::Receiver<SectionTag>,
+) -> bool {
+    tokio::select! {
+        _ = stop.cancelled() => false,
+        _ = wait_carrier_invalidated(state_rx, run_ifindex) => true,
+        changed = cfg_rx.changed() => changed.is_ok(),
+        event = reconfig_rx.recv() => match event {
+            Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => true,
+            Err(broadcast::error::RecvError::Closed) => false,
+        },
+    }
+}
+
+/// Park a terminal section failure until the session is re-anchored, the
+/// config changes, or a section/config event arrives. `cfg_rx` matters for
+/// nat6: it has no reconfig tag of its own, so a nat config change must still
+/// wake it. Returns `false` when the supervisor must exit.
+async fn wait_section_rearm(
+    stop: &CancellationToken,
+    state_rx: &mut watch::Receiver<LinkState>,
+    scope: SectionScope,
+    anchor: &SectionAnchor,
+    cfg_rx: &mut watch::Receiver<WanLinkConfig>,
+    reconfig_rx: &mut broadcast::Receiver<SectionTag>,
+) -> bool {
+    tokio::select! {
+        _ = stop.cancelled() => false,
+        _ = wait_section_invalidated(state_rx, scope, anchor) => true,
+        changed = cfg_rx.changed() => changed.is_ok(),
+        event = reconfig_rx.recv() => match event {
+            Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => true,
+            Err(broadcast::error::RecvError::Closed) => false,
+        },
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_v4_supervisor(
     link_status: ServiceHandle,
@@ -855,6 +938,7 @@ async fn run_v4_supervisor(
 
         let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
         let mut retry = false;
+        let mut give_up = false;
 
         loop {
             let mut step: Option<Step> = None;
@@ -891,11 +975,26 @@ async fn run_v4_supervisor(
                     consecutive_failures =
                         next_failure_streak(consecutive_failures, run_started.elapsed());
                     link_state.session_down();
-                    board.set_session(run.current()).await;
-                    retry = true;
+                    board.set_session(retry_status(consecutive_failures)).await;
+                    if is_terminal_failure(consecutive_failures) {
+                        give_up = true;
+                    } else {
+                        retry = true;
+                    }
                     break;
                 }
             }
+        }
+
+        if give_up {
+            if !wait_v4_rearm(&stop, &mut state_rx, run_ifindex, &mut cfg_rx, &mut reconfig_rx)
+                .await
+            {
+                board.set_session(ServiceStatus::Stop).await;
+                return;
+            }
+            consecutive_failures = 0;
+            continue;
         }
 
         if retry {
@@ -922,6 +1021,7 @@ async fn run_dependent_section(
     ready: fn(&SessionState) -> bool,
     scope: SectionScope,
     runner: SectionRunner,
+    runtime_status: Option<Arc<ArcSwap<ServiceStatus>>>,
     backoff: Duration,
 ) {
     let stop = link_status.stop_token();
@@ -931,6 +1031,7 @@ async fn run_dependent_section(
         let cfg = cfg_rx.borrow_and_update().clone();
         if !enabled(&cfg) {
             board.set_section(kind, ServiceStatus::Stop).await;
+            set_section_runtime_status(&runtime_status, ServiceStatus::Stop);
             let mut stop_now = false;
             tokio::select! {
                 _ = stop.cancelled() => stop_now = true,
@@ -948,6 +1049,7 @@ async fn run_dependent_section(
 
         if !wait_session_ready(&mut state_rx, &stop, ready).await {
             board.set_section(kind, ServiceStatus::Stop).await;
+            set_section_runtime_status(&runtime_status, ServiceStatus::Stop);
             return;
         }
         let (iface, anchor) = {
@@ -970,6 +1072,7 @@ async fn run_dependent_section(
         let run = ServiceHandle::new();
         run.just_change_status(ServiceStatus::Staring);
         board.set_section(kind, run.current()).await;
+        set_section_runtime_status(&runtime_status, ServiceStatus::Staring);
         let run_child = run.clone();
         let runner = runner.clone();
         let iface_child = iface.clone();
@@ -983,6 +1086,7 @@ async fn run_dependent_section(
 
         let mut status_ticker = tokio::time::interval(STATUS_POLL_INTERVAL);
         let mut retry = false;
+        let mut give_up = false;
 
         loop {
             let mut step: Option<Step> = None;
@@ -1007,23 +1111,51 @@ async fn run_dependent_section(
                 None => continue,
                 Some(Step::Stop) => {
                     run.wait_stop().await;
-                    board.set_section(kind, run.current()).await;
+                    let current = run.current();
+                    board.set_section(kind, current.clone()).await;
+                    set_section_runtime_status(&runtime_status, current);
                     return;
                 }
                 Some(Step::Restart) => {
                     consecutive_failures = 0;
                     run.wait_stop().await;
                     board.set_section(kind, ServiceStatus::Stop).await;
+                    set_section_runtime_status(&runtime_status, ServiceStatus::Stop);
                     break;
                 }
                 Some(Step::Ended) => {
                     consecutive_failures =
                         next_failure_streak(consecutive_failures, run_started.elapsed());
-                    board.set_section(kind, run.current()).await;
-                    retry = true;
+                    let status = retry_status(consecutive_failures);
+                    board.set_section(kind, status.clone()).await;
+                    set_section_runtime_status(&runtime_status, status);
+                    if is_terminal_failure(consecutive_failures) {
+                        give_up = true;
+                    } else {
+                        retry = true;
+                    }
                     break;
                 }
             }
+        }
+
+        if give_up {
+            if !wait_section_rearm(
+                &stop,
+                &mut state_rx,
+                scope,
+                &anchor,
+                &mut cfg_rx,
+                &mut reconfig_rx,
+            )
+            .await
+            {
+                board.set_section(kind, ServiceStatus::Stop).await;
+                set_section_runtime_status(&runtime_status, ServiceStatus::Stop);
+                return;
+            }
+            consecutive_failures = 0;
+            continue;
         }
 
         if retry {

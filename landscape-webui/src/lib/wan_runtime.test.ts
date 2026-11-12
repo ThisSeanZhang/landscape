@@ -214,6 +214,7 @@ describe("formatServiceStatus", () => {
     [{ t: "stop" }, "runtime_svc_stop", "default"],
     [{ t: "disabled" }, "runtime_svc_disabled", "default"],
     [{ t: "failed" }, "runtime_svc_failed", "error"],
+    [{ t: "retrying" }, "runtime_svc_retrying", "warning"],
   ])("maps %j", (status, text, tone) => {
     expect(formatServiceStatus(status as ServiceStatus, t)).toEqual({
       text,

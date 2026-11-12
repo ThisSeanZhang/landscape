@@ -13,6 +13,7 @@ export default {
   stopped: "Stopped",
   disabled: "Disabled",
   failed: "Failed",
+  retrying: "Retrying",
   confirm_stop: "Confirm stop?",
   created_at: "Created At",
   create_bridge_device: "Create Bridge Device",

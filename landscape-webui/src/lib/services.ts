@@ -7,7 +7,8 @@ export type ServiceStatus =
   | { t: "stopping" }
   | { t: "stop" }
   | { t: "disabled" }
-  | { t: "failed" };
+  | { t: "failed" }
+  | { t: "retrying" };
 
 export enum ServiceStatusType {
   Staring = "staring",
@@ -16,6 +17,7 @@ export enum ServiceStatusType {
   Stop = "stop",
   Disabled = "disabled",
   Failed = "failed",
+  Retrying = "retrying",
 }
 
 export function get_service_status_color(
@@ -29,6 +31,7 @@ export function get_service_status_color(
       return themeVars.successColor;
     case ServiceStatusType.Staring:
     case ServiceStatusType.Stopping:
+    case ServiceStatusType.Retrying:
       return themeVars.warningColor;
     case ServiceStatusType.Failed:
       return themeVars.errorColor;
@@ -54,6 +57,8 @@ export function get_service_status_label(
       return t("common.running");
     case ServiceStatusType.Stopping:
       return t("common.stopping");
+    case ServiceStatusType.Retrying:
+      return t("common.retrying");
     case ServiceStatusType.Failed:
       return t("common.failed");
     case ServiceStatusType.Disabled:
@@ -74,6 +79,7 @@ export function get_service_status_tag_type(status: ServiceStatus | undefined) {
       return "success";
     case ServiceStatusType.Staring:
     case ServiceStatusType.Stopping:
+    case ServiceStatusType.Retrying:
       return "warning";
     case ServiceStatusType.Failed:
       return "error";

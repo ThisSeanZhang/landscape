@@ -9,12 +9,13 @@ use arc_swap::ArcSwap;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{
     HealthCheckRuntime, LinkStateHandle, SectionKind, SessionIface, WanLinkConfig,
-    WanLinkStatusHandle, WanV4Lease,
+    WanLinkStatusHandle, WanLinkStatusStore, WanV4Lease,
 };
 
 use super::{
-    SectionRunner, SectionScope, SectionTag, config_change_tags, next_failure_streak,
-    next_restart_delay, run_dependent_section,
+    MAX_RAPID_RETRIES, SectionRunner, SectionScope, SectionTag, config_change_tags,
+    is_terminal_failure, next_failure_streak, next_restart_delay, retry_status,
+    run_dependent_section,
 };
 
 fn link_config(nat_enable: bool) -> WanLinkConfig {
@@ -222,6 +223,7 @@ async fn session_scope_reattaches_on_reanchor_not_lease_change() {
         |state| state.is_up(),
         SectionScope::Session,
         counting_runner(starts.clone()),
+        None,
         Duration::from_millis(10),
     ));
 
@@ -276,6 +278,7 @@ async fn nat_requires_a_v4_lease() {
         |state| state.has_v4_lease(),
         SectionScope::SessionAndLease,
         counting_runner(starts.clone()),
+        None,
         Duration::from_millis(10),
     ));
 
@@ -322,6 +325,7 @@ async fn nat6_requires_a_v6_prefix() {
         |state| state.has_v6_prefix(),
         SectionScope::Session,
         counting_runner(starts.clone()),
+        None,
         Duration::from_millis(10),
     ));
 
@@ -369,6 +373,7 @@ async fn dead_section_run_is_retried_after_backoff() {
         |state| state.is_up(),
         SectionScope::Session,
         failing_runner(attempts.clone()),
+        None,
         Duration::from_millis(10),
     ));
 
@@ -410,6 +415,148 @@ fn a_long_lived_run_restarts_the_failure_streak() {
     assert_eq!(next_failure_streak(3, Duration::from_secs(1)), 4);
     // Staying up as long as the cap is not a rapid repeat.
     assert_eq!(next_failure_streak(7, Duration::from_secs(90)), 1);
+}
+
+#[test]
+fn retry_budget_turns_into_a_terminal_failure() {
+    assert!(!is_terminal_failure(1));
+    assert!(!is_terminal_failure(MAX_RAPID_RETRIES));
+    assert!(is_terminal_failure(MAX_RAPID_RETRIES + 1));
+    assert_eq!(retry_status(1), ServiceStatus::Retrying);
+    assert_eq!(retry_status(MAX_RAPID_RETRIES), ServiceStatus::Retrying);
+    assert_eq!(retry_status(MAX_RAPID_RETRIES + 1), ServiceStatus::Failed);
+}
+
+#[tokio::test]
+async fn repeated_dead_section_is_retried_then_parks_in_failed() {
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+
+    let (link_state, state_rx) = LinkStateHandle::new(None);
+    let (_cfg_tx, cfg_rx) = watch::channel(link_config(true));
+    let (reconfig_tx, reconfig_rx) = broadcast::channel(8);
+
+    let id = Uuid::new_v4();
+    let store: WanLinkStatusStore = Arc::default();
+    let board = WanLinkStatusHandle::new(id, store.clone(), true);
+    let runtime = Arc::new(ArcSwap::from_pointee(ServiceStatus::Stop));
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let handle = tokio::spawn(run_dependent_section(
+        link_status.clone(),
+        board,
+        state_rx,
+        cfg_rx,
+        reconfig_rx,
+        SectionTag::Nat4,
+        SectionKind::Nat4,
+        "wan.link.test.nat",
+        |cfg| cfg.nat.enable,
+        |state| state.is_up(),
+        SectionScope::Session,
+        failing_runner(attempts.clone()),
+        Some(runtime.clone()),
+        Duration::from_millis(50),
+    ));
+
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    // The first dead run is reported as Retrying while the backoff runs.
+    wait_until(|| attempts.load(Ordering::SeqCst) >= 1).await;
+    wait_for_section_status(&store, id, ServiceStatus::Retrying).await;
+    wait_for_runtime_status(&runtime, ServiceStatus::Retrying).await;
+
+    // Initial attempt + MAX_RAPID_RETRIES retries, then Failed and no respawn.
+    wait_until(|| attempts.load(Ordering::SeqCst) > MAX_RAPID_RETRIES as usize).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(attempts.load(Ordering::SeqCst), MAX_RAPID_RETRIES as usize + 1);
+    assert_eq!(
+        store.read().await.get(&id).map(|status| status.nat4.clone()),
+        Some(ServiceStatus::Failed)
+    );
+    assert_eq!(**runtime.load(), ServiceStatus::Failed);
+
+    // A config/section event gives the parked section a fresh reason to retry.
+    reconfig_tx.send(SectionTag::Nat4).unwrap();
+    wait_until(|| attempts.load(Ordering::SeqCst) > MAX_RAPID_RETRIES as usize + 1).await;
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("supervisor did not stop")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn stopping_while_parked_clears_section_status() {
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+
+    let (link_state, state_rx) = LinkStateHandle::new(None);
+    let (_cfg_tx, cfg_rx) = watch::channel(link_config(true));
+    let (_reconfig_tx, reconfig_rx) = broadcast::channel(8);
+
+    let id = Uuid::new_v4();
+    let store: WanLinkStatusStore = Arc::default();
+    let board = WanLinkStatusHandle::new(id, store.clone(), true);
+    let runtime = Arc::new(ArcSwap::from_pointee(ServiceStatus::Stop));
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let handle = tokio::spawn(run_dependent_section(
+        link_status.clone(),
+        board,
+        state_rx,
+        cfg_rx,
+        reconfig_rx,
+        SectionTag::Nat4,
+        SectionKind::Nat4,
+        "wan.link.test.nat",
+        |cfg| cfg.nat.enable,
+        |state| state.is_up(),
+        SectionScope::Session,
+        failing_runner(attempts.clone()),
+        Some(runtime.clone()),
+        Duration::from_millis(10),
+    ));
+
+    link_state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+
+    // Park the section in Failed, then stop the whole link.
+    wait_until(|| attempts.load(Ordering::SeqCst) > MAX_RAPID_RETRIES as usize).await;
+    wait_for_section_status(&store, id, ServiceStatus::Failed).await;
+    wait_for_runtime_status(&runtime, ServiceStatus::Failed).await;
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("supervisor did not stop")
+        .unwrap();
+
+    assert_eq!(
+        store.read().await.get(&id).map(|status| status.nat4.clone()),
+        Some(ServiceStatus::Stop)
+    );
+    assert_eq!(**runtime.load(), ServiceStatus::Stop);
+}
+
+async fn wait_for_section_status(store: &WanLinkStatusStore, id: Uuid, want: ServiceStatus) {
+    for _ in 0..500 {
+        if store.read().await.get(&id).map(|status| status.nat4.clone()) == Some(want.clone()) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    panic!("section status did not reach {want:?} in time");
+}
+
+async fn wait_for_runtime_status(runtime: &Arc<ArcSwap<ServiceStatus>>, want: ServiceStatus) {
+    for _ in 0..500 {
+        if **runtime.load() == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    panic!("section runtime status did not reach {want:?} in time");
 }
 
 #[tokio::test]

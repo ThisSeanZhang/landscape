@@ -62,11 +62,12 @@ impl WanLinkStatus {
         let sections = [pd, nat4, nat6, firewall, mss];
         let any_section_active =
             sections.iter().any(|s| matches!(s, ServiceStatus::Staring | ServiceStatus::Running));
-        let any_section_failed = sections.iter().any(|s| matches!(s, ServiceStatus::Failed));
+        let any_section_degraded =
+            sections.iter().any(|s| matches!(s, ServiceStatus::Failed | ServiceStatus::Retrying));
 
         match session {
             Some(ServiceStatus::Failed) => WanLinkState::Failed,
-            Some(ServiceStatus::Staring) => WanLinkState::Starting,
+            Some(ServiceStatus::Staring | ServiceStatus::Retrying) => WanLinkState::Starting,
             Some(ServiceStatus::Stopping | ServiceStatus::Stop | ServiceStatus::Disabled) => {
                 if any_section_active {
                     WanLinkState::Degraded
@@ -75,7 +76,7 @@ impl WanLinkStatus {
                 }
             }
             Some(ServiceStatus::Running) | None => {
-                if any_section_failed {
+                if any_section_degraded {
                     WanLinkState::Degraded
                 } else if sections.iter().any(|s| matches!(s, ServiceStatus::Staring)) {
                     WanLinkState::Starting
@@ -179,6 +180,10 @@ mod tests {
         ServiceStatus::Failed
     }
 
+    fn retrying() -> ServiceStatus {
+        ServiceStatus::Retrying
+    }
+
     #[test]
     fn inactive_link_is_idle_no_matter_what() {
         assert_eq!(
@@ -208,6 +213,22 @@ mod tests {
         assert_eq!(
             WanLinkStatus::compute_state(true, Some(ok()), ok(), ok(), failed(), dead(), failed()),
             WanLinkState::Degraded
+        );
+    }
+
+    #[test]
+    fn retrying_section_degrades_a_running_link() {
+        assert_eq!(
+            WanLinkStatus::compute_state(true, Some(ok()), ok(), ok(), retrying(), dead(), dead()),
+            WanLinkState::Degraded
+        );
+    }
+
+    #[test]
+    fn retrying_session_keeps_the_link_starting() {
+        assert_eq!(
+            WanLinkStatus::compute_state(true, Some(retrying()), ok(), ok(), ok(), ok(), ok()),
+            WanLinkState::Starting
         );
     }
 

@@ -33,6 +33,8 @@ pub enum ServiceStatus {
     Disabled,
     // 异常停止
     Failed,
+    // 异常后会自动重试(非终态,不取消停止信号)
+    Retrying,
 }
 
 impl ServiceStatus {
@@ -47,12 +49,19 @@ impl ServiceStatus {
                 | (ServiceStatus::Staring, ServiceStatus::Stopping)
                 | (ServiceStatus::Staring, ServiceStatus::Stop)
                 | (ServiceStatus::Staring, ServiceStatus::Failed)
+                | (ServiceStatus::Staring, ServiceStatus::Retrying)
                 | (ServiceStatus::Running, ServiceStatus::Stopping)
                 | (ServiceStatus::Running, ServiceStatus::Stop)
                 | (ServiceStatus::Running, ServiceStatus::Failed)
+                | (ServiceStatus::Running, ServiceStatus::Retrying)
                 | (ServiceStatus::Stopping, ServiceStatus::Stop)
                 | (ServiceStatus::Stopping, ServiceStatus::Failed)
                 | (ServiceStatus::Failed, ServiceStatus::Stop)
+                | (ServiceStatus::Retrying, ServiceStatus::Staring)
+                | (ServiceStatus::Retrying, ServiceStatus::Running)
+                | (ServiceStatus::Retrying, ServiceStatus::Stopping)
+                | (ServiceStatus::Retrying, ServiceStatus::Stop)
+                | (ServiceStatus::Retrying, ServiceStatus::Failed)
         );
         if !can {
             tracing::warn!("invalid status transition: {self:?} -> {target:?}");
@@ -118,7 +127,10 @@ impl ServiceStatusCell {
     }
 
     fn is_active(&self) -> bool {
-        matches!(*self.read(), ServiceStatus::Staring | ServiceStatus::Running)
+        matches!(
+            *self.read(),
+            ServiceStatus::Staring | ServiceStatus::Running | ServiceStatus::Retrying
+        )
     }
 
     fn is_exit(&self) -> bool {
@@ -152,14 +164,22 @@ impl ServiceStatusCell {
         }
     }
 
-    /// 停止请求(宽松幂等):active → Staring/Running 置 Stopping;已在退出态则不动。
+    /// 停止请求(宽松幂等):active → Staring/Running 置 Stopping;Retrying 没有
+    /// 存活任务,直接置 Stop;已在退出态则不动。
     /// 对应 systemd 的 job(转换请求)语义,与 [`ServiceStatusCell::just_change_status`]
     /// 的 state(观测状态)语义相对。
     fn request_stop(&self) {
         let mut guard = self.write();
-        if matches!(*guard, ServiceStatus::Staring | ServiceStatus::Running) {
-            tracing::debug!("current status: {guard:?}, requesting stop");
-            *guard = ServiceStatus::Stopping;
+        match *guard {
+            ServiceStatus::Staring | ServiceStatus::Running => {
+                tracing::debug!("current status: {guard:?}, requesting stop");
+                *guard = ServiceStatus::Stopping;
+            }
+            ServiceStatus::Retrying => {
+                tracing::debug!("current status: {guard:?}, requesting stop");
+                *guard = ServiceStatus::Stop;
+            }
+            _ => {}
         }
         drop(guard);
         // 幂等:无论是否发生写入都确保取消信号与状态一致
@@ -301,7 +321,10 @@ impl ServiceHandle {
             async move {
                 handle.inner.tracker.wait().await;
                 let status = handle.current();
-                if matches!(status, ServiceStatus::Staring | ServiceStatus::Running) {
+                if matches!(
+                    status,
+                    ServiceStatus::Staring | ServiceStatus::Running | ServiceStatus::Retrying
+                ) {
                     tracing::warn!(
                         status = ?status,
                         "service tasks all exited without a terminal status; marking as failed"
@@ -420,6 +443,41 @@ mod tests {
     }
 
     #[test]
+    fn retrying_is_non_terminal() {
+        assert!(ServiceStatus::Staring.can_transition_to(&ServiceStatus::Retrying));
+        assert!(ServiceStatus::Running.can_transition_to(&ServiceStatus::Retrying));
+        assert!(ServiceStatus::Retrying.can_transition_to(&ServiceStatus::Staring));
+        assert!(ServiceStatus::Retrying.can_transition_to(&ServiceStatus::Failed));
+        assert!(!ServiceStatus::Retrying.is_exit_state());
+        assert!(!ServiceStatus::Retrying.can_transition_to(&ServiceStatus::Disabled));
+    }
+
+    #[tokio::test]
+    async fn retrying_keeps_token_alive() {
+        let handle = ServiceHandle::new();
+        handle.just_change_status(ServiceStatus::Staring);
+        handle.just_change_status(ServiceStatus::Retrying);
+        assert_eq!(handle.current(), ServiceStatus::Retrying);
+        assert!(!handle.stop_token().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn stopping_a_retrying_handle_reaches_stop() {
+        let handle = handle_at(ServiceStatus::Retrying);
+        handle.inner.cell.request_stop();
+        assert_eq!(handle.current(), ServiceStatus::Stop);
+        assert!(handle.stop_token().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn wait_stop_from_retrying_reaches_stop() {
+        let handle = handle_at(ServiceStatus::Retrying);
+        handle.wait_stop().await;
+        assert_eq!(handle.current(), ServiceStatus::Stop);
+        assert!(handle.stop_token().is_cancelled());
+    }
+
+    #[test]
     fn illegal_transition_rejected_and_keeps_status() {
         let handle = handle_at(ServiceStatus::Running);
         // Stop -> Running 非法:状态保持 Running,token 不受影响
@@ -528,6 +586,7 @@ mod tests {
             ServiceStatus::Stopping,
             ServiceStatus::Stop,
             ServiceStatus::Failed,
+            ServiceStatus::Retrying,
         ] {
             let handle = handle_at(status.clone());
             assert_eq!(
@@ -538,6 +597,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(handle_at(ServiceStatus::Running)).unwrap(),
             json!({"t":"running"})
+        );
+        assert_eq!(
+            serde_json::to_value(handle_at(ServiceStatus::Retrying)).unwrap(),
+            json!({"t":"retrying"})
         );
     }
 }

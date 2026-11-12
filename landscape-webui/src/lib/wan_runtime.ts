@@ -223,6 +223,7 @@ const SERVICE_STATUS_TABLE: Record<
   stop: { key: "runtime_svc_stop", tone: "default" },
   disabled: { key: "runtime_svc_disabled", tone: "default" },
   failed: { key: "runtime_svc_failed", tone: "error" },
+  retrying: { key: "runtime_svc_retrying", tone: "warning" },
 };
 
 export function formatServiceStatus(

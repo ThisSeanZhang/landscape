@@ -75,6 +75,7 @@ export default {
     runtime_svc_stop: "Stopped",
     runtime_svc_disabled: "Disabled",
     runtime_svc_failed: "Failed",
+    runtime_svc_retrying: "Retrying",
     runtime_health_healthy: "Healthy",
     runtime_health_unhealthy: "Unhealthy",
     runtime_health_unknown: "Unknown",

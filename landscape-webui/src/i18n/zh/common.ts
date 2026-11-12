@@ -13,6 +13,7 @@ export default {
   stopped: "停止",
   disabled: "已停用",
   failed: "异常停止",
+  retrying: "重试中",
   confirm_stop: "确定停止吗",
   created_at: "创建时间",
   create_bridge_device: "创建桥接设备",
