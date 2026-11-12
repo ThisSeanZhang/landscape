@@ -7,6 +7,8 @@ use landscape_common::config_service::geo::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+mod child;
+pub mod cli;
 pub mod download;
 pub mod ip_service;
 mod ip_snapshot;

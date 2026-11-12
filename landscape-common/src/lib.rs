@@ -18,6 +18,7 @@ pub mod ebpf;
 pub mod error;
 pub mod event;
 pub mod flow;
+pub mod geo_cli;
 
 pub mod memtrack;
 pub mod metric;

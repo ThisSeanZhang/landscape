@@ -272,29 +272,21 @@ async fn del_geo_ip(
     tag = "Geo IPs",
     params(("id" = Uuid, Path, description = "Geo IP rule ID")),
     responses(
-        (status = 200, description = "Raw dat file bytes", content_type = "application/octet-stream"),
-        (status = 404, description = "Dat not found; background download started"),
-        (status = 409, description = "Download task already running")
+        (status = 200, description = "Raw source file bytes (fetch stage output)", content_type = "application/octet-stream"),
+        (status = 404, description = "Raw source file not found; refresh the source first")
     )
 )]
 async fn download_geo_ip_dat(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> Result<Response, LandscapeApiError> {
-    match state.geo_ip_service.get_raw_dat_or_start_download(id).await? {
-        RawDatState::Ready(bytes) => {
-            let mut headers = HeaderMap::new();
-            headers
-                .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-            let disposition =
-                HeaderValue::from_str(&format!("attachment; filename=\"ip-{id}.raw\""))
-                    .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
-            headers.insert(header::CONTENT_DISPOSITION, disposition);
-            Ok((headers, bytes).into_response())
-        }
-        RawDatState::Started => Err(GeoError::RawDatNotReady)?,
-        RawDatState::Running => Err(GeoError::RawDatDownloadRunning)?,
-    }
+    let bytes = state.geo_ip_service.get_raw_dat(id).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"ip-{id}.raw\""))
+        .map_err(|e| GeoError::RawDatReadFailed(e.to_string()))?;
+    headers.insert(header::CONTENT_DISPOSITION, disposition);
+    Ok((headers, bytes).into_response())
 }
 
 #[utoipa::path(

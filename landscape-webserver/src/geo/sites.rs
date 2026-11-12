@@ -257,15 +257,15 @@ async fn del_geo_site(
     tag = "Geo Sites",
     params(("id" = Uuid, Path, description = "Geo site rule ID")),
     responses(
-        (status = 200, description = "Legacy raw dat file bytes", content_type = "application/octet-stream"),
-        (status = 404, description = "Legacy raw dat file not found; use the snapshot endpoint")
+        (status = 200, description = "Raw source file bytes (fetch stage output)", content_type = "application/octet-stream"),
+        (status = 404, description = "Raw source file not found; refresh the source first")
     )
 )]
 async fn download_geo_site_dat(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> Result<Response, LandscapeApiError> {
-    let bytes = state.geo_site_service.get_legacy_raw_dat(id).await?;
+    let bytes = state.geo_site_service.get_raw_dat(id).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.raw\""))

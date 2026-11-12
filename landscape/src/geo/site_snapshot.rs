@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Cursor, Read},
+    io::{BufReader, Read},
     path::Path,
 };
 
@@ -68,15 +68,6 @@ pub fn build_dat_snapshot_reader<R: Read>(
     Ok(SiteSnapshotBuildSummary { entries })
 }
 
-pub fn build_dat_snapshot_bytes(
-    bytes: &[u8],
-    final_path: &Path,
-    source_id: Uuid,
-    cancel: &CancellationToken,
-) -> Result<SiteSnapshotBuildSummary, GeoError> {
-    build_dat_snapshot_reader(Cursor::new(bytes), final_path, source_id, cancel)
-}
-
 pub fn build_adguard_snapshot_file(
     source_path: &Path,
     final_path: &Path,
@@ -131,7 +122,7 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
-    use super::{build_adguard_snapshot_file, build_dat_snapshot_bytes};
+    use super::{build_adguard_snapshot_file, build_dat_snapshot_reader};
 
     fn push_varint(output: &mut Vec<u8>, mut value: u64) {
         loop {
@@ -201,9 +192,10 @@ mod tests {
     }
 
     #[test]
-    fn dat_bytes_become_a_site_snapshot() {
+    fn dat_file_becomes_a_site_snapshot() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("site.snap");
+        let dat_path = dir.path().join("site.dat");
         let source_id = Uuid::new_v4();
         let mut dat = Vec::new();
         let entry = encode_geosite(
@@ -215,8 +207,11 @@ mod tests {
         );
         push_len_field(&mut dat, 1, &entry);
 
+        fs::write(&dat_path, &dat).unwrap();
+        let file = fs::File::open(&dat_path).unwrap();
+
         let cancel = tokio_util::sync::CancellationToken::new();
-        let summary = build_dat_snapshot_bytes(&dat, &path, source_id, &cancel).unwrap();
+        let summary = build_dat_snapshot_reader(file, &path, source_id, &cancel).unwrap();
         assert_eq!(summary.entries, 1);
 
         let reader = SiteSnapshotReader::open(&path).unwrap();
@@ -268,34 +263,5 @@ mod tests {
             values[0].1.iter().map(|rule| rule.value.as_str()).collect::<Vec<_>>(),
             vec!["ads.example.com", "safe.example"]
         );
-    }
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn async_stream_bridge_feeds_the_streaming_dat_parser() {
-        use bytes::Bytes;
-        use futures::stream;
-        use tokio_util::io::{StreamReader, SyncIoBridge};
-
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("bridged.snap");
-        let mut dat = Vec::new();
-        push_len_field(
-            &mut dat,
-            1,
-            &encode_geosite("CN", &[(DomainMatchType::Domain, "example.com", &[])]),
-        );
-        let chunks: Vec<Result<Bytes, std::io::Error>> =
-            dat.chunks(3).map(|chunk| Ok(Bytes::copy_from_slice(chunk))).collect();
-        let async_reader = StreamReader::new(stream::iter(chunks));
-        let bridge = SyncIoBridge::new(async_reader);
-        let snapshot_path = path.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let summary = tokio::task::spawn_blocking(move || {
-            super::build_dat_snapshot_reader(bridge, &snapshot_path, Uuid::new_v4(), &cancel)
-        })
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(summary.entries, 1);
-        assert_eq!(read_all(&path)[0].1[0].value, "example.com");
     }
 }

@@ -217,35 +217,18 @@ impl GeoIpService {
         }
     }
 
-    async fn has_cached_name(&self, name: &str) -> bool {
-        self.cache.has_name(name).await.unwrap_or_else(|e| {
-            tracing::error!("query geo ip cache name '{name}' failed: {e}");
-            false
-        })
-    }
-
-    pub async fn get_raw_dat_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
+    /// Raw source bytes: the output of the `fetch` stage, kept for offline
+    /// rebuilds and for exporting the original file.
+    pub async fn get_raw_dat(&self, id: Uuid) -> Result<Vec<u8>, GeoError> {
         let dat_path = raw_dat_path("ip", id);
         if dat_path.exists() {
-            let bytes = fs::read(&dat_path)
-                .map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")))?;
-            return Ok(RawDatState::Ready(bytes));
+            return fs::read(&dat_path)
+                .map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")));
         }
-
-        let Some(config) = self.find_by_id(id).await? else {
+        if self.find_by_id(id).await?.is_none() {
             return Err(GeoError::IpNotFound(id));
-        };
-        if !matches!(config.source, GeoIpSource::Url { .. }) {
-            return Err(GeoError::RawDatNotReady);
         }
-
-        match self.tasks.insert(id, GeoSourceKind::Ip, GeoTaskPhase::Downloading) {
-            Ok(cancel) => {
-                self.spawn_geo_task(config, GeoTaskMode::Download, cancel);
-                Ok(RawDatState::Started)
-            }
-            Err(()) => Ok(RawDatState::Running),
-        }
+        Err(GeoError::RawDatMissing)
     }
 
     pub async fn get_snapshot_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
@@ -260,7 +243,7 @@ impl GeoIpService {
             return Err(GeoError::IpNotFound(id));
         };
         if !matches!(config.source, GeoIpSource::Url { .. }) {
-            return Err(GeoError::RawDatNotReady);
+            return Err(GeoError::RawDatMissing);
         }
 
         match self.tasks.insert(id, GeoSourceKind::Ip, GeoTaskPhase::Downloading) {
@@ -285,19 +268,20 @@ impl GeoIpService {
 
             match &config.source {
                 GeoIpSource::Url { next_update_at, .. } => {
-                    let due = force || *next_update_at < now;
-                    if !due {
-                        let snapshot_exists = geo_snapshot_path("ip", config.id).exists();
-                        let legacy_raw_exists = raw_dat_path("ip", config.id).exists();
-                        if snapshot_exists
-                            || legacy_raw_exists
-                            || !self.has_cached_name(&config.name).await
-                        {
-                            self.spawn_restore_task(&config);
+                    // No snapshot and no raw means nothing to rebuild from:
+                    // fetch immediately instead of waiting for the schedule.
+                    let have_source = geo_snapshot_path("ip", config.id).exists()
+                        || raw_dat_path("ip", config.id).exists();
+                    let due = force || *next_update_at < now || !have_source;
+                    if due {
+                        if !self.try_spawn_download_task(config.clone()) {
+                            tracing::debug!(
+                                "geo ip source {} refresh already running",
+                                config.name
+                            );
                         }
-                    }
-                    if due && !self.try_spawn_download_task(config.clone()) {
-                        tracing::debug!("geo ip source {} refresh already running", config.name);
+                    } else {
+                        self.spawn_restore_task(&config);
                     }
                 }
                 GeoIpSource::Direct { data } => {

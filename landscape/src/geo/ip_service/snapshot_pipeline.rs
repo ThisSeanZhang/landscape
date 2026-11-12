@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, path::Path, time::Instant};
+use std::{collections::HashMap, path::Path, time::Instant};
 
 use landscape_common::config_service::geo::{
     GeoError, GeoFileCacheKey, GeoIpSource, GeoIpSourceConfig, GeoTaskPhase,
@@ -9,8 +9,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::GeoIpService;
+use crate::geo::child::{self, BuildKind, BuildRequest};
 use crate::geo::download::{GeoDownloadError, download_to_sealed};
-use crate::geo::ip_snapshot::build_ip_snapshot_reader;
 use crate::geo::raw_file::raw_dat_path;
 use crate::geo::storage::{geo_snapshot_path, write_bytes_to_sealed};
 use crate::geo::{GeoCacheApplyResult, GeoTaskMode};
@@ -27,9 +27,10 @@ impl GeoIpService {
     ) {
         let source_id = config.id;
         let snapshot_path = geo_snapshot_path("ip", source_id);
+        let raw_path = raw_dat_path("ip", source_id);
 
         if matches!(mode, GeoTaskMode::RestoreOnly) {
-            match self.ensure_snapshot_from_legacy_raw(&config, &snapshot_path, cancel).await {
+            match self.ensure_snapshot(&config, &raw_path, &snapshot_path, cancel).await {
                 Ok(false) => return,
                 Err(GeoError::TaskCancelled) => return,
                 Err(error) => {
@@ -72,9 +73,11 @@ impl GeoIpService {
             GeoIpSource::Url { format, txt_key, .. } => (format.clone(), txt_key.clone()),
             GeoIpSource::Direct { .. } => return,
         };
-        let dat_path = raw_dat_path("ip", source_id);
 
-        let sealed = match mode {
+        // Stage 1 - fetch. The raw file is this stage's output, so it is
+        // committed as soon as the bytes are on disk: a failed conversion must
+        // not force another download.
+        match mode {
             GeoTaskMode::Download => {
                 let url = match &config.source {
                     GeoIpSource::Url { url, .. } => url.clone(),
@@ -82,14 +85,21 @@ impl GeoIpService {
                 };
                 tracing::debug!("download file: {}", url);
                 let started = Instant::now();
-                match download_to_sealed(source_id, &url, &dat_path, &self.tasks, cancel).await {
+                match download_to_sealed(source_id, &url, &raw_path, &self.tasks, cancel).await {
                     Ok(sealed) => {
                         tracing::debug!(
                             "download file done: {}, time: {}s",
                             url,
                             started.elapsed().as_secs()
                         );
-                        sealed
+                        if let Err(error) = sealed.commit() {
+                            tracing::error!(
+                                "persist raw geo ip file {:?} failed: {}",
+                                raw_path,
+                                error
+                            );
+                            return;
+                        }
                     }
                     Err(GeoDownloadError::Cancelled) => {
                         tracing::info!("refresh geo ip source {} cancelled", config.name);
@@ -103,77 +113,61 @@ impl GeoIpService {
                 }
             }
             GeoTaskMode::Upload(file_bytes) => {
-                match write_bytes_to_sealed(&dat_path, &file_bytes) {
+                let sealed = match write_bytes_to_sealed(&raw_path, &file_bytes) {
                     Ok(sealed) => sealed,
                     Err(error) => {
-                        tracing::error!("persist raw geo ip file {:?} failed: {}", dat_path, error);
+                        tracing::error!(
+                            "persist uploaded geo ip file {:?} failed: {}",
+                            raw_path,
+                            error
+                        );
                         return;
                     }
+                };
+                if let Err(error) = sealed.commit() {
+                    tracing::error!("persist raw geo ip file {:?} failed: {}", raw_path, error);
+                    return;
                 }
             }
             GeoTaskMode::RestoreOnly => unreachable!(),
-        };
+        }
 
         if cancel.is_cancelled() {
-            sealed.abort();
             return;
         }
 
+        // Stage 2 - build. Runs in a child process: the decode allocates
+        // millions of short-lived strings and its heap must not become part of
+        // the daemon's.
         self.tasks.advance(source_id, GeoTaskPhase::Verifying);
         self.tasks.advance(source_id, GeoTaskPhase::Parsing);
-        let sealed_path = sealed.path().to_path_buf();
-        let build_path = snapshot_path.clone();
-        let cancel_in_worker = cancel.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let file = File::open(&sealed_path).map_err(|error| {
-                GeoError::RawDatReadFailed(format!("open downloaded geo ip file: {error}"))
-            })?;
-            build_ip_snapshot_reader(
-                file,
-                &build_path,
+        let summary = match child::build_snapshot(
+            BuildRequest {
+                input: &raw_path,
+                output: &snapshot_path,
                 source_id,
-                &format,
-                txt_key.as_deref(),
-                &cancel_in_worker,
-            )
-        })
-        .await;
-        let result = match result {
-            Ok(result) => result,
+                kind: BuildKind::Ip { format, txt_key },
+            },
+            cancel,
+        )
+        .await
+        {
+            Ok(summary) => summary,
+            Err(GeoError::TaskCancelled) => {
+                tracing::info!("refresh geo ip source {} cancelled", config.name);
+                return;
+            }
             Err(error) => {
-                sealed.abort();
-                tracing::error!(
-                    "refresh geo ip source {} snapshot worker failed: {}",
-                    config.name,
-                    error
-                );
+                tracing::error!("build geo ip snapshot '{}' failed: {}", config.name, error);
                 return;
             }
         };
 
-        let summary = match result {
-            Ok(summary) => summary,
-            Err(GeoError::TaskCancelled) => {
-                sealed.abort();
-                return;
-            }
-            Err(error) => {
-                sealed.abort();
-                tracing::error!("refresh geo ip source {} error: {}", config.name, error);
-                return;
-            }
-        };
         if cancel.is_cancelled() {
-            sealed.abort();
             return;
         }
 
-        // Snapshot is the runtime authority, but keep the raw file for now as a
-        // rollback/legacy fallback.
-        if let Err(error) = sealed.commit() {
-            tracing::warn!("persist raw geo ip file {:?} failed: {}", dat_path, error);
-        }
-
+        // Stage 3 - apply. The snapshot stays on disk as the rebuild source.
         self.tasks.advance(source_id, GeoTaskPhase::Applying);
         let apply_result =
             match self.apply_snapshot(&config.name, &snapshot_path, false, cancel).await {
@@ -216,16 +210,18 @@ impl GeoIpService {
         self.notify_dst_ip_updated(apply_result.changed_keys);
     }
 
-    async fn ensure_snapshot_from_legacy_raw(
+    /// Build the snapshot from the raw file when it is missing. Used by the
+    /// restore path, which must not touch the network.
+    async fn ensure_snapshot(
         &self,
         config: &GeoIpSourceConfig,
+        raw_path: &Path,
         snapshot_path: &Path,
         cancel: &CancellationToken,
     ) -> Result<bool, GeoError> {
         if snapshot_path.exists() {
             return Ok(true);
         }
-        let raw_path = raw_dat_path("ip", config.id);
         if !raw_path.exists() {
             return Ok(false);
         }
@@ -236,50 +232,22 @@ impl GeoIpService {
 
         self.tasks.advance(config.id, GeoTaskPhase::Verifying);
         self.tasks.advance(config.id, GeoTaskPhase::Parsing);
-        let snapshot_path = snapshot_path.to_path_buf();
-        let source_id = config.id;
-        let cancel_in_worker = cancel.clone();
-        let raw_path_in_worker = raw_path.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let file = File::open(&raw_path_in_worker).map_err(|error| {
-                GeoError::RawDatReadFailed(format!(
-                    "open legacy raw file {raw_path_in_worker:?}: {error}"
-                ))
-            })?;
-            build_ip_snapshot_reader(
-                file,
-                &snapshot_path,
-                source_id,
-                &format,
-                txt_key.as_deref(),
-                &cancel_in_worker,
-            )
-        })
-        .await
-        .map_err(|error| {
-            GeoError::RawDatReadFailed(format!("snapshot worker join failed: {error}"))
-        })?;
-
-        match result {
-            Ok(summary) => {
-                tracing::info!(
-                    "migrated legacy geo ip source '{}' to snapshot ({} entries)",
-                    config.name,
-                    summary.entries
-                );
-                Ok(true)
-            }
-            Err(GeoError::TaskCancelled) => Err(GeoError::TaskCancelled),
-            Err(error) => {
-                tracing::warn!(
-                    "migrate legacy geo ip source '{}' from {:?} failed: {}",
-                    config.name,
-                    raw_path,
-                    error
-                );
-                Err(error)
-            }
-        }
+        let summary = child::build_snapshot(
+            BuildRequest {
+                input: raw_path,
+                output: snapshot_path,
+                source_id: config.id,
+                kind: BuildKind::Ip { format, txt_key },
+            },
+            cancel,
+        )
+        .await?;
+        tracing::info!(
+            "built geo ip snapshot for '{}' from raw ({} entries)",
+            config.name,
+            summary.entries
+        );
+        Ok(true)
     }
 
     async fn apply_snapshot(

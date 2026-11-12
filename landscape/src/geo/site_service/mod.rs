@@ -262,23 +262,18 @@ impl GeoSiteService {
         apply_result.changed_keys
     }
 
-    async fn has_cached_name(&self, name: &str) -> bool {
-        self.cache.has_name(name).await.unwrap_or_else(|e| {
-            tracing::error!("query geo site cache name '{name}' failed: {e}");
-            false
-        })
-    }
-
-    /// Legacy endpoint compatibility: only serve an existing raw file. New
-    /// downloads produce snapshots and are exposed through the snapshot API.
-    pub async fn get_legacy_raw_dat(&self, id: Uuid) -> Result<Vec<u8>, GeoError> {
+    /// Raw source bytes: the output of the `fetch` stage, kept for offline
+    /// rebuilds and for exporting the original file.
+    pub async fn get_raw_dat(&self, id: Uuid) -> Result<Vec<u8>, GeoError> {
         let dat_path = raw_dat_path("site", id);
         if dat_path.exists() {
             return fs::read(&dat_path)
                 .map_err(|e| GeoError::RawDatReadFailed(format!("{dat_path:?}: {e}")));
         }
-        let _ = self.find_by_id(id).await?;
-        Err(GeoError::RawDatNotReady)
+        if self.find_by_id(id).await?.is_none() {
+            return Err(GeoError::SiteNotFound(id));
+        }
+        Err(GeoError::RawDatMissing)
     }
 
     pub async fn get_snapshot_or_start_download(&self, id: Uuid) -> Result<RawDatState, GeoError> {
@@ -293,7 +288,7 @@ impl GeoSiteService {
             return Err(GeoError::SiteNotFound(id));
         };
         if !matches!(config.source, GeoSiteSource::Url { .. } | GeoSiteSource::AdguardHome { .. }) {
-            return Err(GeoError::RawDatNotReady);
+            return Err(GeoError::RawDatMissing);
         }
 
         match self.tasks.insert(id, GeoSourceKind::Site, GeoTaskPhase::Downloading) {
@@ -319,19 +314,20 @@ impl GeoSiteService {
             match &config.source {
                 GeoSiteSource::Url { next_update_at, .. }
                 | GeoSiteSource::AdguardHome { next_update_at, .. } => {
-                    let due = force || *next_update_at < now;
-                    if !due {
-                        let snapshot_exists = geo_snapshot_path("site", config.id).exists();
-                        let legacy_raw_exists = raw_dat_path("site", config.id).exists();
-                        if snapshot_exists
-                            || legacy_raw_exists
-                            || !self.has_cached_name(&config.name).await
-                        {
-                            self.spawn_restore_task(&config);
+                    // No snapshot and no raw means nothing to rebuild from:
+                    // fetch immediately instead of waiting for the schedule.
+                    let have_source = geo_snapshot_path("site", config.id).exists()
+                        || raw_dat_path("site", config.id).exists();
+                    let due = force || *next_update_at < now || !have_source;
+                    if due {
+                        if !self.try_spawn_download_task(config.clone()) {
+                            tracing::debug!(
+                                "geo site source {} refresh already running",
+                                config.name
+                            );
                         }
-                    }
-                    if due && !self.try_spawn_download_task(config.clone()) {
-                        tracing::debug!("geo site source {} refresh already running", config.name);
+                    } else {
+                        self.spawn_restore_task(&config);
                     }
                 }
                 GeoSiteSource::Direct { .. } => {

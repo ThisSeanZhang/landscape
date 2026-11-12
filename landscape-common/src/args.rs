@@ -152,6 +152,9 @@ pub enum LandscapeAction {
 
     /// Generate a landscape_init.toml from high-level deployment options
     Config(Box<crate::config::cli::ConfigCliArgs>),
+
+    /// Geo source pipeline: fetch raw sources, build snapshots, inspect them
+    Geo(crate::geo_cli::GeoArgs),
 }
 
 #[derive(Subcommand, Debug, Clone)]

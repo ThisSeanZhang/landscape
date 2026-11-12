@@ -723,6 +723,19 @@ async fn async_main() -> Result<(), StartupError> {
         return Ok(());
     }
 
+    // Geo pipeline commands are pure file-to-file stages: they must not touch
+    // the database, eBPF, logging or time sync. `geo build` also runs inside a
+    // child process, so this branch is what that child executes.
+    if let Some(LandscapeAction::Geo(geo)) = &args.action {
+        return match landscape::geo::cli::run(&geo.action).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(error.exit_code().into());
+            }
+        };
+    }
+
     let init_config_to_import = if args.action.is_none() { boot_check(&home_path)? } else { None };
     let config = RuntimeConfig::new_with_file_config(
         args.clone(),
@@ -792,7 +805,7 @@ async fn async_main() -> Result<(), StartupError> {
                 }
             },
             // Handled (and returned early) before this point.
-            LandscapeAction::Config(_) => Ok(()),
+            LandscapeAction::Config(_) | LandscapeAction::Geo(_) => Ok(()),
         }
     } else {
         let db_store_provider =
