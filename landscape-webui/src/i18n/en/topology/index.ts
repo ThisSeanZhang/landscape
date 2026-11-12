@@ -82,6 +82,8 @@ export default {
     runtime_health_stopped: "Stopped",
     runtime_health_timeout: "timeout",
     runtime_health_avg: "avg {ms}ms",
+    runtime_health_independent: "Independent probes",
+    runtime_health_follow: "Follows {family} health",
     parent: "Parent Controller",
     no_parent: "Not attached",
     children: "Child Interfaces",

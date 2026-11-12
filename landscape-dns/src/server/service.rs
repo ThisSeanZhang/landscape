@@ -403,14 +403,23 @@ impl LandscapeDnsServer {
         });
         if let Some(handler) = handler {
             let Ok(domain) = req.get_domain() else {
-                return CheckChainDnsResult::default();
+                return CheckChainDnsResult {
+                    error: Some(landscape_common::dns::check::DnsCheckError::InvalidDomain),
+                    ..Default::default()
+                };
             };
             let Ok(pd) = ParsedDomain::new(&domain) else {
-                return CheckChainDnsResult::default();
+                return CheckChainDnsResult {
+                    error: Some(landscape_common::dns::check::DnsCheckError::InvalidDomain),
+                    ..Default::default()
+                };
             };
             handler.check_domain(&pd, convert_record_type(req.record_type), req.apply_filter).await
         } else {
-            CheckChainDnsResult::default()
+            CheckChainDnsResult {
+                error: Some(landscape_common::dns::check::DnsCheckError::FlowUnavailable),
+                ..Default::default()
+            }
         }
     }
 
@@ -606,6 +615,34 @@ mod tests {
                 FlowRuntimeRefreshKind::Full,
             )
             .await;
+    }
+
+    #[test]
+    fn check_domain_reports_missing_flow_invalid_domain_and_missing_rule() {
+        use landscape_common::dns::{check::DnsCheckError, rule::LandscapeDnsRecordType};
+        run_async_test(async {
+            let server = test_dns_server();
+            let request = |domain: &str| CheckDnsReq {
+                flow_id: 7,
+                domain: domain.into(),
+                record_type: LandscapeDnsRecordType::A,
+                apply_filter: false,
+            };
+            assert_eq!(
+                server.check_domain(request("example.com")).await.error,
+                Some(DnsCheckError::FlowUnavailable)
+            );
+            refresh_full(&server, 7).await;
+            assert_eq!(
+                server.check_domain(request("..")).await.error,
+                Some(DnsCheckError::InvalidDomain)
+            );
+            assert_eq!(
+                server.check_domain(request("example.com")).await.error,
+                Some(DnsCheckError::NoMatchingRule)
+            );
+            server.stop_service().await;
+        });
     }
 
     #[test]

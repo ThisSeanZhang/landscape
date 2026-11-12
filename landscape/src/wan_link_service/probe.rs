@@ -12,6 +12,8 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 /// A timed-out or unanswered probe is `Ok(None)`, never an error.
 #[derive(Debug, thiserror::Error)]
 pub enum ProbeError {
+    #[error("probe configuration: {0}")]
+    Config(String),
     #[error("icmp socket: {0}")]
     Socket(#[from] std::io::Error),
     #[error("probe task failed: {0}")]
@@ -22,6 +24,38 @@ pub enum ProbeError {
 /// tests can drive it with a fake.
 #[async_trait::async_trait]
 pub trait WanHealthProbe: Send + Sync {
+    /// Shared injection point for grouped IPv4/IPv6 and application probes.
+    /// Production retains the same WAN-bound sockets as individual probes.
+    async fn probe_target(
+        &self,
+        dev: &str,
+        src: IpAddr,
+        target: &landscape_common::wan_link::WanProbeTarget,
+        timeout: Duration,
+        mark: u32,
+    ) -> Result<Option<Duration>, ProbeError> {
+        if let (
+            landscape_common::wan_link::WanProbeTarget::Icmp { address: IpAddr::V4(ip) },
+            IpAddr::V4(src),
+        ) = (target, src)
+        {
+            self.ping_v4_marked(dev, src, *ip, timeout, mark).await
+        } else {
+            super::application_probe::probe_target(dev, src, target, timeout, mark).await
+        }
+    }
+
+    async fn ping_v4_marked(
+        &self,
+        dev: &str,
+        src: Ipv4Addr,
+        target: Ipv4Addr,
+        timeout: Duration,
+        _mark: u32,
+    ) -> Result<Option<Duration>, ProbeError> {
+        self.ping_v4(dev, src, target, timeout).await
+    }
+
     async fn ping_v4(
         &self,
         dev: &str,
@@ -34,8 +68,98 @@ pub trait WanHealthProbe: Send + Sync {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IcmpV4Probe;
 
+pub(super) async fn ping_ip(
+    dev: &str,
+    src: IpAddr,
+    target: IpAddr,
+    timeout: Duration,
+    mark: u32,
+) -> Result<Option<Duration>, ProbeError> {
+    match (src, target) {
+        (IpAddr::V4(src), IpAddr::V4(target)) => {
+            IcmpV4Probe.ping_v4_marked(dev, src, target, timeout, mark).await
+        }
+        (IpAddr::V6(src), IpAddr::V6(target)) => {
+            let dev = dev.to_owned();
+            tokio::task::spawn_blocking(move || {
+                let socket = Socket::new(Domain::IPV6, Type::RAW, Some(Protocol::ICMPV6))?;
+                socket.bind_device(Some(dev.as_bytes()))?;
+                if mark != 0 {
+                    socket.set_mark(mark)?;
+                }
+                socket.bind(&SockAddr::from(SocketAddr::from((src, 0))))?;
+                let id: u16 = rand::random();
+                let seq: u16 = rand::random();
+                let request =
+                    [128, 0, 0, 0, (id >> 8) as u8, id as u8, (seq >> 8) as u8, seq as u8];
+                // Linux computes the ICMPv6 checksum, including its IPv6 pseudo-header.
+                let start = Instant::now();
+                let scope_id = if target.is_unicast_link_local() {
+                    let name = std::ffi::CString::new(dev.as_bytes())
+                        .map_err(|e| ProbeError::Config(e.to_string()))?;
+                    // SAFETY: name is a valid NUL-terminated interface name.
+                    let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+                    if index == 0 {
+                        return Err(ProbeError::Socket(std::io::Error::last_os_error()));
+                    }
+                    index
+                } else {
+                    0
+                };
+                let peer = std::net::SocketAddrV6::new(target, 0, 0, scope_id);
+                if socket.send_to(&request, &SockAddr::from(peer)).is_err() {
+                    return Ok(None);
+                }
+                let mut buf = [std::mem::MaybeUninit::<u8>::new(0); 1500];
+                loop {
+                    let remaining = timeout.saturating_sub(start.elapsed());
+                    if remaining.is_zero() {
+                        return Ok(None);
+                    }
+                    socket.set_read_timeout(Some(remaining))?;
+                    let (len, peer) = match socket.recv_from(&mut buf) {
+                        Ok(reply) => reply,
+                        Err(e)
+                            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                        {
+                            return Ok(None);
+                        }
+                        Err(e) => return Err(ProbeError::Socket(e)),
+                    };
+                    if len < 8 || peer.as_socket().is_none_or(|p| p.ip() != IpAddr::V6(target)) {
+                        continue;
+                    }
+                    // SAFETY: recv_from initialized the first len bytes.
+                    let reply =
+                        unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
+                    if reply[0] == 129 && reply[1] == 0 && reply[4..8] == request[4..8] {
+                        return Ok(Some(start.elapsed()));
+                    }
+                }
+            })
+            .await
+            .map_err(ProbeError::Task)?
+        }
+        _ => Err(ProbeError::Config("probe source and target address families differ".into())),
+    }
+}
+
 #[async_trait::async_trait]
 impl WanHealthProbe for IcmpV4Probe {
+    async fn ping_v4_marked(
+        &self,
+        dev: &str,
+        src: Ipv4Addr,
+        target: Ipv4Addr,
+        timeout: Duration,
+        mark: u32,
+    ) -> Result<Option<Duration>, ProbeError> {
+        let dev = dev.to_owned();
+        tokio::task::spawn_blocking(move || icmp_ping_blocking(&dev, src, target, timeout, mark))
+            .await
+            .map_err(ProbeError::Task)?
+    }
+
     async fn ping_v4(
         &self,
         dev: &str,
@@ -44,7 +168,7 @@ impl WanHealthProbe for IcmpV4Probe {
         timeout: Duration,
     ) -> Result<Option<Duration>, ProbeError> {
         let dev = dev.to_string();
-        tokio::task::spawn_blocking(move || icmp_ping_blocking(&dev, src, target, timeout))
+        tokio::task::spawn_blocking(move || icmp_ping_blocking(&dev, src, target, timeout, 0))
             .await
             .map_err(ProbeError::Task)?
     }
@@ -55,9 +179,13 @@ fn icmp_ping_blocking(
     src: Ipv4Addr,
     target: Ipv4Addr,
     timeout: Duration,
+    mark: u32,
 ) -> Result<Option<Duration>, ProbeError> {
     let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
     socket.bind_device(Some(dev.as_bytes()))?;
+    if mark != 0 {
+        socket.set_mark(mark)?;
+    }
     socket.bind(&SockAddr::from(SocketAddr::from((src, 0))))?;
 
     let ident: u16 = rand::random();
@@ -66,7 +194,15 @@ fn icmp_ping_blocking(
 
     let start = Instant::now();
     let dest = SockAddr::from(SocketAddr::from((target, 0)));
-    socket.send_to(&request, &dest)?;
+    if let Err(error) = socket.send_to(&request, &dest) {
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENETUNREACH | libc::EHOSTUNREACH | libc::ENETDOWN)
+        ) {
+            return Ok(None);
+        }
+        return Err(error.into());
+    }
 
     let mut buf = [std::mem::MaybeUninit::<u8>::new(0); 1500];
     loop {

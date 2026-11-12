@@ -197,7 +197,8 @@ impl SnapshotStore {
         resolves: &ResolveEngine,
         ttl_cap: Option<u32>,
     ) {
-        let current_cache = &self.runtime.load().cache;
+        let current = self.runtime.load_full();
+        let current_cache = &current.cache;
 
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
@@ -210,6 +211,12 @@ impl SnapshotStore {
                 continue;
             }
             if let Some(resolver) = Self::find_cache_rule(resolves, &pd, &cache_item) {
+                if let Some(previous) =
+                    Self::find_cache_rule(&current.resolve_engine, &pd, &cache_item)
+                    && !resolver.can_reuse_answers_from(previous)
+                {
+                    continue;
+                }
                 let new_mark = resolver.mark().clone();
 
                 let new_item = CacheDNSItem {

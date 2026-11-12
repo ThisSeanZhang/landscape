@@ -1,6 +1,7 @@
 import type {
   FlowMark,
   DNSRuleConfig,
+  DnsWanUpstream,
   FilterResult,
   RuleSource,
 } from "@landscape-router/types/api/schemas";
@@ -65,6 +66,7 @@ export class DnsRule implements DNSRuleConfig {
   filter: FilterResult;
   update_at?: number;
   upstream_id: string;
+  wan_upstreams: DnsWanUpstream[];
 
   constructor(obj?: Partial<DNSRuleConfig>) {
     this.id = obj?.id;
@@ -77,6 +79,7 @@ export class DnsRule implements DNSRuleConfig {
     this.filter = obj?.filter ?? "unfilter";
     this.update_at = obj?.update_at;
     this.upstream_id = obj?.upstream_id ?? "";
+    this.wan_upstreams = obj?.wan_upstreams ?? [];
   }
 }
 

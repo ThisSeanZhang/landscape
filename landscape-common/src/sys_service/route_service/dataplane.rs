@@ -23,6 +23,10 @@ pub trait RouteTableDataplane: Send + Sync {
     /// Replace the IPv6 WAN target slots of `flow_id`.
     fn replace_wan_slots_v6(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]);
 
+    /// Configure per-connection exit retention. Changing the generation clears
+    /// this flow/family's existing affinities; None disables connection retention.
+    fn set_connection_generation(&self, _flow_id: FlowId, _ipv6: bool, _generation: Option<u64>) {}
+
     /// Drop all IPv4 WAN target slots of `flow_id`.
     fn del_wan_slots_v4(&self, flow_id: FlowId);
 
@@ -34,6 +38,19 @@ pub trait RouteTableDataplane: Send + Sync {
     /// default route untouched (landscape never deletes a route it may not
     /// own). Returns `false` when the sync failed and should be retried.
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool;
+
+    /// Give explicitly interface-bound host sockets a gateway on every WAN.
+    async fn sync_bound_wan_routes(&self, _targets: &[WanRouteTarget]) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Own only dedicated, tagged rules/table for unmarked host traffic.
+    async fn sync_router_wan_policy(
+        &self,
+        _policy: Option<&super::RouterWanPolicy>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Recreate the LAN verdict-cache inner maps (invalidate all cached
     /// verdicts).

@@ -563,6 +563,7 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     // content is re-synced from user space anyway).
     route::init_rt4_lan_map(&paths.rt4_lan_map).expect("init rt4_lan_map failed");
     route::init_rt6_lan_map(&paths.rt6_lan_map).expect("init rt6_lan_map failed");
+    route::init_connection_maps(paths).expect("init connection maps failed");
     route::init_rt4_slot_map(&paths.rt4_slot_map).expect("init rt4_slot_map failed");
     route::init_rt6_slot_map(&paths.rt6_slot_map).expect("init rt6_slot_map failed");
 

@@ -16,6 +16,7 @@ pub struct DbDnsConfigSource {
     rules: DNSRuleService,
     redirects: DNSRedirectService,
     upstreams: DnsUpstreamService,
+    routes: crate::sys_service::route::IpRouteService,
 }
 
 impl DbDnsConfigSource {
@@ -23,8 +24,9 @@ impl DbDnsConfigSource {
         rules: DNSRuleService,
         redirects: DNSRedirectService,
         upstreams: DnsUpstreamService,
+        routes: crate::sys_service::route::IpRouteService,
     ) -> Self {
-        Self { rules, redirects, upstreams }
+        Self { rules, redirects, upstreams, routes }
     }
 }
 
@@ -51,14 +53,33 @@ impl DnsConfigSource for DbDnsConfigSource {
     async fn flow_bundle(
         &self,
         flow_id: u32,
-        rules: Vec<DNSRuleConfig>,
+        mut rules: Vec<DNSRuleConfig>,
     ) -> Result<FlowConfigBundle, DnsConfigError> {
-        let upstream_ids = rules.iter().map(|rule| rule.upstream_id).collect();
-        let upstreams = self
+        let upstream_ids = rules
+            .iter()
+            .flat_map(|rule| {
+                std::iter::once(rule.upstream_id)
+                    .chain(rule.wan_upstreams.iter().map(|mapping| mapping.upstream_id))
+            })
+            .collect();
+        if rules.iter().any(|rule| !rule.wan_upstreams.is_empty()) {
+            let binding = self.routes.dns_wan_binding(flow_id).await;
+            for rule in &mut rules {
+                if !rule.wan_upstreams.is_empty() {
+                    rule.resolved_wan = Some(binding.clone());
+                }
+            }
+        }
+        let mut upstreams = self
             .upstreams
             .find_ids(upstream_ids)
             .await
             .map_err(|error| config_error("failed to load DNS upstreams", error))?;
+        for upstream in &mut upstreams {
+            if let Some(flow) = upstream.bind_config.follow_flow {
+                upstream.bind_config.resolved_wan = Some(self.routes.dns_wan_binding(flow).await);
+            }
+        }
         let redirects = self
             .redirects
             .list_flow_configs(flow_id)

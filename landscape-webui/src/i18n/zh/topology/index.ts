@@ -82,6 +82,8 @@ export default {
     runtime_health_stopped: "已停止",
     runtime_health_timeout: "超时",
     runtime_health_avg: "平均 {ms}ms",
+    runtime_health_independent: "独立探测",
+    runtime_health_follow: "跟随 {family} 检测结果",
     parent: "上级控制设备",
     no_parent: "未挂载",
     children: "下级接口",

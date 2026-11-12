@@ -133,12 +133,25 @@ pub enum PdRuntime {
 #[serde(rename_all = "snake_case")]
 pub struct HealthProbeStatus {
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
-    pub target: Ipv4Addr,
+    pub target: std::net::IpAddr,
     #[cfg_attr(
         feature = "openapi",
         schema(required = true, nullable = true, value_type = Option<u64>)
     )]
     pub rtt_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct HealthFamilyRuntime {
+    pub state: WanLinkHealthState,
+    /// False means the health verdict is inherited from the other family.
+    pub probe_enabled: bool,
+    #[cfg_attr(
+        feature = "openapi",
+        schema(required = true, nullable = true, value_type = Option<f64>)
+    )]
+    pub rtt_ewma_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -155,8 +168,34 @@ pub enum HealthCheckRuntime {
         )]
         rtt_ewma_ms: Option<f64>,
         probes: Vec<HealthProbeStatus>,
+        /// Absent for an unconfigured address family or an older server response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ipv4: Option<HealthFamilyRuntime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ipv6: Option<HealthFamilyRuntime>,
     },
     Stopped,
+}
+
+impl HealthCheckRuntime {
+    pub fn running(
+        ipv4: Option<HealthFamilyRuntime>,
+        ipv6: Option<HealthFamilyRuntime>,
+        probes: Vec<HealthProbeStatus>,
+    ) -> Self {
+        let families: Vec<_> = ipv4.iter().chain(ipv6.iter()).collect();
+        let state = if families.iter().any(|f| f.state == WanLinkHealthState::Unhealthy) {
+            WanLinkHealthState::Unhealthy
+        } else if families.is_empty()
+            || families.iter().any(|f| f.state == WanLinkHealthState::Unknown)
+        {
+            WanLinkHealthState::Unknown
+        } else {
+            WanLinkHealthState::Healthy
+        };
+        let rtt_ewma_ms = families.iter().filter_map(|f| f.rtt_ewma_ms).reduce(f64::max);
+        Self::Running { state, rtt_ewma_ms, probes, ipv4, ipv6 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -338,6 +377,52 @@ impl WanLinkRuntimeStatusStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dual_stack_health_never_hides_an_unhealthy_family() {
+        let healthy = HealthFamilyRuntime {
+            state: WanLinkHealthState::Healthy,
+            probe_enabled: true,
+            rtt_ewma_ms: Some(10.0),
+        };
+        let mut other = healthy.clone();
+        other.state = WanLinkHealthState::Unhealthy;
+        for (v4, v6) in [(healthy.clone(), other.clone()), (other, healthy.clone())] {
+            let status = HealthCheckRuntime::running(Some(v4), Some(v6), vec![]);
+            assert!(matches!(
+                status,
+                HealthCheckRuntime::Running {
+                    state: WanLinkHealthState::Unhealthy,
+                    ipv4: Some(_),
+                    ipv6: Some(_),
+                    ..
+                }
+            ));
+        }
+        // A WAN with no IPv6 configuration must not become Unknown because
+        // the IPv6 probe switch defaults to enabled.
+        assert!(matches!(
+            HealthCheckRuntime::running(Some(healthy), None, vec![]),
+            HealthCheckRuntime::Running { state: WanLinkHealthState::Healthy, ipv6: None, .. }
+        ));
+    }
+
+    #[test]
+    fn legacy_health_runtime_deserializes_without_family_details() {
+        let status: HealthCheckRuntime = serde_json::from_value(serde_json::json!({
+            "running": { "state": "healthy", "rtt_ewma_ms": 1.5, "probes": [] }
+        }))
+        .unwrap();
+        assert!(matches!(
+            status,
+            HealthCheckRuntime::Running {
+                state: WanLinkHealthState::Healthy,
+                ipv4: None,
+                ipv6: None,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn swap_if_changed_keeps_arc_on_equal_value() {

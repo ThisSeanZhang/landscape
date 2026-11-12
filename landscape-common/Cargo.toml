@@ -36,6 +36,7 @@ uuid = { workspace = true }
 
 libc = { workspace = true }
 idna = { workspace = true }
+url = { workspace = true }
 
 deku = { workspace = true }
 

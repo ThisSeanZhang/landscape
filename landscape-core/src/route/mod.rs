@@ -43,12 +43,21 @@ pub(crate) type Ipv4LanRoutesByOwner = HashMap<String, Vec<LanRouteInfo>>;
 pub(crate) type Ipv6LanRoutesByKey = HashMap<LanIPv6RouteKey, LanRouteInfo>;
 
 #[derive(Clone)]
+pub(crate) struct RouterPolicyApplyState {
+    policy: Option<landscape_common::sys_service::route_service::RouterWanPolicy>,
+    error: Option<String>,
+    checked_at_ms: u64,
+}
+
+#[derive(Clone)]
 pub struct IpRouteService {
+    failover_selections: Arc<tokio::sync::Mutex<flow_target::FailoverSelections>>,
     pub(crate) dataplane: Arc<dyn RouteTableDataplane>,
     pub(crate) ipv4_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     pub(crate) ipv6_wan_ifaces: ShareRwLock<WanRoutesByOwner>,
     pub(crate) wan_route_events: broadcast::Sender<WanRouteEvent>,
     pub(crate) link_healths: ShareRwLock<health::LinkHealths>,
+    pub(crate) link_healths_v6: ShareRwLock<health::LinkHealths>,
     pub(crate) health_events: broadcast::Sender<health::WanLinkHealthEvent>,
 
     pub(crate) ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,
@@ -61,6 +70,9 @@ pub struct IpRouteService {
     // route change; `notify_one`'s single stored permit coalesces bursts
     // and survives across select iterations.
     pub(crate) kernel_default_notify: Arc<Notify>,
+    pub(crate) router_wan_policy:
+        ShareRwLock<Option<landscape_common::sys_service::route_service::RouterWanPolicy>>,
+    pub(crate) router_policy_applied: ShareRwLock<Option<RouterPolicyApplyState>>,
     pub(crate) reachable_local_ipv4_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
     pub(crate) reachable_local_ipv4_addrs_by_ifindex: Arc<ArcSwap<LocalAddrsByIfindex>>,
     pub(crate) reachable_local_ipv6_addrs: Arc<ArcSwap<Vec<IpAddr>>>,
@@ -75,15 +87,19 @@ impl IpRouteService {
     pub fn new(dataplane: Arc<dyn RouteTableDataplane>) -> Self {
         IpRouteService {
             dataplane,
+            failover_selections: Default::default(),
             ipv4_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_wan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             wan_route_events: broadcast::channel(64).0,
             link_healths: Arc::new(RwLock::new(HashMap::new())),
+            link_healths_v6: Arc::new(RwLock::new(HashMap::new())),
             health_events: broadcast::channel(64).0,
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             kernel_default_ipv4_cache: Arc::new(RwLock::new(None)),
             kernel_default_notify: Arc::new(Notify::new()),
+            router_wan_policy: Default::default(),
+            router_policy_applied: Default::default(),
             reachable_local_ipv4_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),
             reachable_local_ipv4_addrs_by_ifindex: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             reachable_local_ipv6_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),

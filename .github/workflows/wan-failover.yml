@@ -1,0 +1,115 @@
+name: WAN failover tests
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/multi-wan-failover', 'codex/multi-wan-failover-history-20261103']
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'landscape-ebpf/**'
+      - 'landscape-dns/**'
+      - 'landscape-database/**'
+      - 'landscape-common/src/dns/**'
+      - 'landscape-common/src/sys_service/route_service/**'
+      - 'landscape-webserver/src/services/routing.rs'
+      - 'landscape/src/dns/**'
+      - 'landscape/src/sys_service/**'
+      - 'landscape-webui/**'
+      - 'landscape-types/**'
+      - 'scripts/package_lkit.py'
+      - 'landscape-common/src/flow/**'
+      - 'landscape-common/src/wan_link/**'
+      - 'landscape-common/src/service/**'
+      - 'landscape-core/src/route/**'
+      - 'landscape/src/flow/**'
+      - 'landscape/src/wan_link_service/**'
+      - 'landscape/src/wan_service/**'
+      - 'landscape-webserver/src/services/wan_link.rs'
+      - 'landscape-webserver/src/system/config.rs'
+      - 'landscape-webui/src/components/flow/**'
+      - 'landscape-webui/src/components/health_check/**'
+      - '.github/workflows/wan-failover.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    env:
+      RUST_LOG: warn
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./scripts/setup_ubuntu_build.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: State, configuration and migration tests
+        run: |
+          cargo test --locked -p landscape-common -p landscape-core -p landscape-database -p migration --lib > "$RUNNER_TEMP/wan-state.log" 2>&1 || { tail -100 "$RUNNER_TEMP/wan-state.log"; exit 1; }
+          grep 'test result:' "$RUNNER_TEMP/wan-state.log"
+      - run: |
+          cargo test --locked -p landscape --lib wan_link_service::
+          cargo test --locked -p landscape --lib wan_service::
+          cargo test --locked -p landscape --lib flow::rule_service::tests::
+      - name: Compile privileged health and DNS socket tests
+        run: cargo test --locked -p landscape -p landscape-dns --lib --no-run --message-format=json > "$RUNNER_TEMP/wan-service-build.json"
+      - name: Probe confinement and DNS socket bindings
+        run: |
+          service_test_bin=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "landscape" and .profile.test == true) | .executable // empty' "$RUNNER_TEMP/wan-service-build.json" | tail -1)
+          dns_test_bin=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "landscape_dns" and .profile.test == true) | .executable // empty' "$RUNNER_TEMP/wan-service-build.json" | tail -1)
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$service_test_bin" wan_link_service::probe_netns_tests:: --ignored --test-threads=1 --nocapture
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 timeout 300 "$dns_test_bin" --test-threads=2
+      - run: cargo test --locked -p landscape-webserver export_openapi_json
+      - name: Compile isolated network tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked -p landscape-ebpf --features test-route,test-chain,test-nat --lib --no-run --message-format=json > "$RUNNER_TEMP/wan-ebpf-build.json"
+      - name: Real WAN failover packets in netns/veth
+        if: ${{ !cancelled() }}
+        run: |
+          wan_test_bin=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "landscape_ebpf" and .profile.test == true) | .executable // empty' "$RUNNER_TEMP/wan-ebpf-build.json" | tail -1)
+          test -n "$wan_test_bin"
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$wan_test_bin" tests::chain::wan_failover:: --ignored --test-threads=1 --nocapture
+      - name: Existing routing regression tests
+        if: ${{ !cancelled() }}
+        run: |
+          wan_test_bin=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "landscape_ebpf" and .profile.test == true) | .executable // empty' "$RUNNER_TEMP/wan-ebpf-build.json" | tail -1)
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$wan_test_bin" tests::route:: --test-threads=1
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$wan_test_bin" tests::helper::wire:: --test-threads=1
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$wan_test_bin" maps::route:: --test-threads=1
+          sudo env LANDSCAPE_PRIVILEGED_CI=1 "$wan_test_bin" tests::nat::v4::host_probe:: --test-threads=1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack pnpm install --frozen-lockfile --ignore-scripts
+      - run: corepack pnpm --filter @landscape-router/types generate
+      - run: corepack pnpm --filter landscape-webui test && corepack pnpm --filter landscape-webui build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wan-failover-validation
+          path: |
+            landscape-types/openapi.json
+            landscape-webui/dist
+      - name: Check release code before packaging
+        if: github.event_name == 'push'
+        run: |
+          cargo fmt -- --check
+          cargo clippy --locked --workspace --features metric-persistent -- -D warnings
+      - name: Build reviewed x86_64 release
+        if: github.event_name == 'push'
+        run: cargo build --locked --release -p landscape-webserver --features metric-persistent
+      - name: Package private Landscape Kit repository
+        if: github.event_name == 'push'
+        run: |
+          sudo apt-get install -y --no-install-recommends zstd
+          python3 scripts/package_lkit.py
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'push'
+        with:
+          name: landscape-kit-x86_64-${{ github.sha }}
+          path: lkit-repository
+          retention-days: 14

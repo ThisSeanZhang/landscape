@@ -14,9 +14,11 @@ struct route4_context {
     u8 l4_protocol;
     // tos value
     u8 tos;
-    // TODO
-    // u16 dst_port;
+    __be16 src_port;
+    __be16 dst_port;
     u8 smac[6];
+    u8 tcp_syn;
+    __be32 tcp_syn_seq;
 };
 
 static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,
@@ -41,8 +43,26 @@ static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,
 
     context->saddr = iph->saddr;
     context->daddr = iph->daddr;
-    context->l4_protocol = 0;
     context->tos = iph->tos;
+    u32 l4_offset = l3_offset + (u32)iph->ihl * 4;
+    if ((iph->frag_off & bpf_htons(0x3fff)) == 0 && iph->ihl >= 5 &&
+        (iph->protocol == 6 || iph->protocol == 17)) {
+        __be16 ports[2];
+        u8 protocol = iph->protocol;
+        if (bpf_skb_load_bytes(skb, l4_offset, ports, sizeof(ports)) == 0) {
+            context->src_port = ports[0];
+            context->dst_port = ports[1];
+            context->l4_protocol = protocol;
+            if (context->l4_protocol == 6) {
+                struct tcphdr tcp;
+                if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) == 0 && tcp.syn &&
+                    !tcp.ack) {
+                    context->tcp_syn = 1;
+                    context->tcp_syn_seq = tcp.seq;
+                }
+            }
+        }
+    }
     return TC_ACT_OK;
 }
 

@@ -49,7 +49,12 @@ const title_name = computed(() =>
           <!-- {{ rule.mark }} -->
         </n-descriptions-item>
         <n-descriptions-item :label="t('dns.rule_card.upstream_config')">
-          <UpstreamExhibit :rule_id="rule.upstream_id"></UpstreamExhibit>
+          <WanUpstreamMapping
+            v-if="rule.wan_upstreams?.length"
+            v-model="rule.wan_upstreams"
+            readonly
+          />
+          <UpstreamExhibit v-else :rule_id="rule.upstream_id"></UpstreamExhibit>
           <!-- {{ rule.resolve_mode }} -->
         </n-descriptions-item>
         <n-descriptions-item :label="t('dns.rule_card.match_rules')" span="2">

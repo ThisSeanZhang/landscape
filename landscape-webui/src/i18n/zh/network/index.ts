@@ -44,6 +44,27 @@ export default {
     clamp_value: "钳制值",
   },
   health_check: {
+    ipv4_probe: "启用 IPv4 探测",
+    ipv6_probe: "启用 IPv6 探测",
+    family_hint:
+      "两项都开启时独立判断；关闭一项后沿用另一项的健康结果，但仍检查本地址族路由。至少保留一项有效探测。普通 Ping / DNS / HTTP 仅支持 IPv4，IPv6 目标请使用“多目标分组”。",
+    follow_family:
+      "{follower} 不发送探测，沿用 {source} 的健康结果。无法发现仅影响 {follower} 的外网故障。",
+
+    dns_ip: "上游 DNS IPv4 / IPv6 地址",
+    multi: "多目标 / IPv4 + IPv6",
+    multi_hint:
+      "组内达到成功数量门槛才通过；同一地址族的所有组都必须通过。每组目标使用同一地址族。两项探测都开启时独立切换；关闭一项后保留其目标配置但不发送探测，改为沿用另一项的结果。",
+    group_name: "分组名称",
+    quorum: "至少成功的目标数",
+
+    method: "探测方式",
+    application_hint:
+      "探测固定使用当前 WAN。HTTP 成功或跳转响应视为正常；DNS 需返回与探测地址族一致的 A / AAAA 记录。HTTP 的 DNS 解析也使用下方指定的上游。",
+    http_url: "探测网址",
+    dns_server: "上游 DNS IPv4 地址",
+    dns_domain: "查询域名",
+
     title: "WAN 链路健康检查",
     targets: "探测目标 (IPv4)",
     targets_tooltip:

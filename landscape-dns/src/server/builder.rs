@@ -93,7 +93,8 @@ impl EngineBuilder {
                 continue;
             }
             dependencies.upstream_ids.insert(rule.upstream_id);
-            let Some(upstream) = upstreams.get(&rule.upstream_id) else {
+            dependencies.upstream_ids.extend(rule.wan_upstreams.iter().map(|m| m.upstream_id));
+            let Some(upstream) = super::wan_upstream::select(&rule, &upstreams) else {
                 tracing::warn!(rule_id = %rule.id, upstream_id = %rule.upstream_id, "skip DNS rule with missing upstream");
                 continue;
             };
@@ -106,7 +107,7 @@ impl EngineBuilder {
                 order: rule.index,
                 filter: rule.filter,
                 mark: rule.mark,
-                upstream: upstream.clone(),
+                upstream,
                 matcher,
                 flow_id,
                 pool: self.resolvers.clone(),
@@ -278,6 +279,8 @@ mod tests {
             enable: true,
             filter: Default::default(),
             upstream_id,
+            wan_upstreams: vec![],
+            resolved_wan: None,
             mark: Default::default(),
             source,
             flow_id: 7,
@@ -313,6 +316,8 @@ mod tests {
             enable: true,
             filter: Default::default(),
             upstream_id: upstream.id,
+            wan_upstreams: vec![],
+            resolved_wan: None,
             mark: Default::default(),
             source: vec![
                 RuleSource::GeoKey(missing_a.clone()),
@@ -418,6 +423,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_wan_group_remains_matched_and_tracks_all_upstreams() {
+        use landscape_common::dns::rule::DnsWanUpstream;
+        let builder = empty_builder().await;
+        let upstream = DnsUpstreamConfig::default();
+        let missing_id = uuid::Uuid::new_v4();
+        let mut rule = dns_rule(10, vec![], upstream.id);
+        rule.wan_upstreams = vec![DnsWanUpstream {
+            link_id: uuid::Uuid::new_v4(),
+            upstream_id: missing_id,
+        }];
+        let fallback = dns_rule(20, vec![], upstream.id);
+        let (_, engine, dependencies) = builder
+            .build_flow(7, vec![rule, fallback], vec![], vec![], vec![upstream.clone()])
+            .await;
+        let matched = engine.find_match(&pd("anything.example")).unwrap();
+        assert_eq!(matched.order(), 10);
+        assert!(matches!(
+            **matched.shared_resolver(),
+            crate::upstream::LandscapeResolver::Unavailable
+        ));
+        assert!(dependencies.upstream_ids.contains(&upstream.id));
+        assert!(dependencies.upstream_ids.contains(&missing_id));
+    }
+
+    #[tokio::test]
     async fn rule_with_empty_source_stays_match_all() {
         let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
@@ -503,6 +533,8 @@ mod tests {
             enable: true,
             filter: Default::default(),
             upstream_id,
+            wan_upstreams: vec![],
+            resolved_wan: None,
             // Direct action: SO_MARK stays 0x8000 regardless of the flow.
             mark: FlowMark::from(0x0100),
             source,

@@ -23,6 +23,7 @@ pub fn get_route_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(trace_flow_match))
         .routes(routes!(trace_verdict))
         .routes(routes!(get_routing_status))
+        .routes(routes!(get_flow_wan_status))
 }
 
 fn link_health(
@@ -91,6 +92,7 @@ async fn get_routing_status(
     let ipv4_lan = state.route_service.get_all_ipv4_lan_routes().await;
     let ipv6_lan = state.route_service.get_all_ipv6_lan_routes().await;
     let link_healths = state.route_service.get_link_healths().await;
+    let healths_v6 = state.route_service.get_link_healths_for_family(true).await;
 
     let mut ipv4_wan: Vec<WanRouteEntry> = ipv4_wan
         .into_iter()
@@ -102,7 +104,7 @@ async fn get_routing_status(
     let mut ipv6_wan: Vec<WanRouteEntry> = ipv6_wan
         .into_iter()
         .map(|(owner, target)| {
-            let health = link_health(&link_healths, &owner);
+            let health = link_health(&healths_v6, &owner);
             WanRouteEntry { owner, info: target.info, health }
         })
         .collect();
@@ -128,4 +130,12 @@ async fn get_routing_status(
     });
 
     LandscapeApiResp::success(RouteStatusView { ipv4_wan, ipv6_wan, ipv4_lan, ipv6_lan })
+}
+
+#[utoipa::path(get, path = "/routing/failover/status", tag = "Route",
+    responses((status = 200, description = "Active WAN, candidates and recent switches per flow/address family", body = CommonApiResp<Vec<landscape_common::flow::failover::FlowWanStatus>>)))]
+async fn get_flow_wan_status(
+    State(state): State<LandscapeApp>,
+) -> LandscapeApiResult<Vec<landscape_common::flow::failover::FlowWanStatus>> {
+    LandscapeApiResp::success(state.route_service.get_flow_wan_statuses().await)
 }

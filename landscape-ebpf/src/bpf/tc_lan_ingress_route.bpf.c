@@ -6,6 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "route/connection.h"
 #include "route/route4_path.h"
 #include "route/route6_path.h"
 #include "route/route4_context.h"
@@ -31,7 +32,7 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
         .flow_id = resolved_flow_id,
         .slot = route4_target_slot(context->daddr),
     };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+    struct route4_target_info *target_info = route4_select_connection(context, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
@@ -102,7 +103,7 @@ static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 
         .flow_id = resolved_flow_id,
         .slot = route6_target_slot(&context->daddr),
     };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    struct route6_target_info *target_info = route6_select_connection(context, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {

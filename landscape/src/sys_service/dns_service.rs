@@ -129,6 +129,7 @@ impl LandscapeDnsService {
             dns_rule_service,
             dns_redirect_rule_service,
             dns_upstream_service,
+            route_service.clone(),
         ));
         let coordinator =
             Arc::new(DnsCoordinator::new(server, geo_site_service.matcher_registry(), source));

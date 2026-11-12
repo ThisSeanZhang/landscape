@@ -1,6 +1,7 @@
 import { get_all_wan_links, get_wan_link_status } from "@/api/service_wan_link";
 import { get_route_status } from "@/api/route/status";
 import { WanLink } from "@/lib/wan_link";
+import { mergeHealthStates } from "@/lib/wan_runtime";
 import type {
   WanLinkHealthState,
   WanLinkStatus,
@@ -42,7 +43,13 @@ export const useWanLinkStore = defineStore("wan_link", () => {
         ...(route_result.ipv6_wan ?? []),
       ]) {
         if ("Link" in entry.owner) {
-          health_map.set(entry.owner.Link, entry.health ?? "unknown");
+          health_map.set(
+            entry.owner.Link,
+            mergeHealthStates(
+              health_map.get(entry.owner.Link),
+              entry.health ?? "unknown",
+            ),
+          );
         }
       }
       health.value = health_map;

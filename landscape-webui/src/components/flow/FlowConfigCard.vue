@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ApiFlowConfig as FlowConfig } from "@landscape-router/types/api/schemas";
+import FlowWanStatus from "./FlowWanStatus.vue";
 import FlowEditModal from "@/components/flow/FlowEditModal.vue";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
@@ -111,6 +112,14 @@ const show_remark = computed(
     </template>
 
     <template #footer>
+      <FlowWanStatus
+        v-if="
+          config.enable &&
+          (config.failover?.enable ||
+            config.failover?.mode === 'primary_backup')
+        "
+        :flow-id="config.flow_id"
+      />
       <!-- <n-flex>
         <n-tag :bordered="false" v-for="rule in config.flow_match_rules">
           {{ `${rule.ip} - ${rule.qos ?? "N/A"} - ${rule.vlan_id ?? "N/A"}` }}
@@ -149,7 +158,7 @@ const show_remark = computed(
       </n-descriptions-item>
       <n-descriptions-item label="分流出口">
 
-        <n-tag v-for="each in config.flow_targets" :bordered="false">
+        <n-tag v-for="(each, index) in config.flow_targets" :bordered="false">
           {{ each.t === "netns" ? each.container_name : each.name }}
           <template #icon>
             <n-icon :component="each.t === 'netns' ? Docker : NetworkWired" />
@@ -182,9 +191,28 @@ const show_remark = computed(
       </n-flex>
     </n-flex>
     <template #action>
-      <n-tag v-for="each in config.flow_targets" :bordered="false">
+      <n-tag v-for="(each, index) in config.flow_targets" :bordered="false">
+        <span
+          v-if="
+            config.failover?.enable ||
+            config.failover?.mode === 'primary_backup'
+          "
+          >{{
+            index === 0
+              ? t("flow.failover.primary")
+              : t("flow.failover.backup", { index })
+          }}:
+        </span>
         {{ frontEndStore.MASK_INFO(target_label(each.target)) }}
-        <span v-if="(each.weight ?? 1) !== 1"> ×{{ each.weight ?? 1 }}</span>
+        <span
+          v-if="
+            !config.failover?.enable &&
+            config.failover?.mode !== 'primary_backup' &&
+            (each.weight ?? 1) !== 1
+          "
+        >
+          ×{{ each.weight ?? 1 }}</span
+        >
         <template #icon>
           <n-icon
             :component="each.target.t === 'netns' ? Docker : NetworkWired"

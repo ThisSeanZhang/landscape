@@ -1,5 +1,12 @@
 export default {
   rule_edit: {
+    wan_groups: "按出口选择独立 DNS 组",
+    wan_groups_hint:
+      "每条 WAN 选择一个独立上游。跟随本分流的出口自动切换；各组只填写自己的 DNS 地址，无需再绑定分流或源地址。未配置对应组时解析失败，不会混用其他组。",
+    wan_group_select: "选择独立 DNS 上游",
+    wan_group_add: "添加 WAN 对应组",
+    wan_groups_invalid: "请为每条 WAN 选择上游，并去除重复的 WAN。",
+
     title: "规则编辑",
     priority: "优先级",
     remark: "备注",
@@ -62,6 +69,18 @@ export default {
     err_match_rules_required: "至少需要添加一条匹配域名规则",
   },
   upstream_edit: {
+    wan_servers: "按 WAN 使用独立 DNS",
+    wan_select: "选择 WAN",
+    wan_servers_hint:
+      "为每条 WAN 填写对应运营商的 DNS。切换出口时同时切换 DNS 地址和连接；当前 WAN 未配置时解析失败，不会使用其他运营商或公共 DNS。IPv4 DNS 也可以解析 IPv6 记录。所有组使用下方相同的协议和端口。",
+    wan_servers_invalid: "每条 WAN 只能配置一次，且至少填写一个有效 DNS 地址。",
+
+    follow_flow: "DNS 上游固定跟随指定分流",
+    follow_flow_off: "保持原有路由 / 固定源地址",
+    default_flow: "默认分流（0）",
+    follow_flow_hint:
+      "所有引用此上游的规则，都固定跟随这里指定的分流，使用其当前 WAN 的源地址和网卡，切换时重建连接；不会自动跟随每条规则所属的分流。若多个分流需要各自切换运营商 DNS，请在各自 DNS 规则中启用“按出口选择独立 DNS 组”。无可用 WAN 的地址族不会改走其他出口。",
+
     title: "DNS 上游配置",
     copy: "复制",
     paste: "粘贴",
@@ -127,6 +146,20 @@ export default {
     confirm_import: "确定从剪贴板导入吗?",
   },
   check_domain: {
+    error_upstream_timeout:
+      "上游 DNS 查询超时。请检查该 Flow 出口到上游的连通性，或添加该线路可访问的备用 DNS。缓存结果不代表本次查询成功。",
+    error_upstream_network:
+      "上游 DNS 网络连接失败，请检查出口、绑定地址及路由。",
+    error_upstream_failure: "上游 DNS 查询失败，详细传输错误请查看服务日志。",
+    error_upstream_response: "上游 DNS 返回错误响应。",
+    error_no_matching_rule:
+      "没有匹配的 DNS 上游规则；下方已有缓存不代表上游查询成功。",
+    error_flow_unavailable: "该 Flow 的 DNS 服务未运行或不存在。",
+    error_invalid_domain: "域名格式无效。",
+    nxdomain: "上游确认该域名不存在（NXDOMAIN）。",
+    no_data: "上游查询成功，但没有返回该类型的记录（NODATA）。",
+    response_code: "DNS 响应码：{code}",
+
     enter_domain: "请输入待查询域名",
     test_flow_query: "测试 flow: {flow_id} 域名查询 (结果不缓存)",
     query_instruction: "输入域名后, 点击右侧按钮或使用回车",

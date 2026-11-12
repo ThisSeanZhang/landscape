@@ -6,7 +6,7 @@
 //! views). This module is deliberately IO-free: the evaluator only sees
 //! per-round probe results.
 
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ pub enum WanLinkHealthState {
 /// One probe target's result, fed into [`HealthEvaluator::apply_round`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetProbe {
-    pub target: Ipv4Addr,
+    pub target: IpAddr,
     /// Round-trip time; `None` when the probe failed or timed out.
     pub rtt: Option<Duration>,
 }
@@ -37,7 +37,7 @@ pub struct TargetProbe {
 /// Per-target detail of the most recent probe round.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TargetHealthStat {
-    pub target: Ipv4Addr,
+    pub target: IpAddr,
     /// RTT of the latest probe; `None` when it failed.
     pub last_rtt_ms: Option<u64>,
     /// Smoothed RTT trend; `None` until the first successful probe. A
@@ -225,6 +225,7 @@ impl HealthEvaluator {
 mod tests {
     use super::*;
     use WanLinkHealthState::{Healthy, Unhealthy, Unknown};
+    use std::net::Ipv4Addr;
 
     const T1: Ipv4Addr = Ipv4Addr::new(223, 5, 5, 5);
     const T2: Ipv4Addr = Ipv4Addr::new(119, 29, 29, 29);
@@ -238,11 +239,14 @@ mod tests {
     }
 
     fn ok(target: Ipv4Addr, ms: u64) -> TargetProbe {
-        TargetProbe { target, rtt: Some(Duration::from_millis(ms)) }
+        TargetProbe {
+            target: target.into(),
+            rtt: Some(Duration::from_millis(ms)),
+        }
     }
 
     fn fail(target: Ipv4Addr) -> TargetProbe {
-        TargetProbe { target, rtt: None }
+        TargetProbe { target: target.into(), rtt: None }
     }
 
     #[test]
