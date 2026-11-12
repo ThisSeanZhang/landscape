@@ -26,7 +26,7 @@ mod integration_tests;
 pub(crate) mod test_util;
 
 #[cfg(feature = "pool-native")]
-use hickory_proto::{op::Query, rr::Name};
+use hickory_proto::op::Query;
 #[cfg(feature = "pool-native")]
 use hickory_resolver::net::{DnsError, NoRecords};
 #[cfg(feature = "pool-native")]
@@ -58,12 +58,15 @@ impl LandscapeResolver {
         query_type: RecordType,
     ) -> Result<Lookup, NetError> {
         match self {
-            Self::Legacy(resolver) => resolver.lookup(domain, query_type).await,
+            Self::Legacy(resolver) => {
+                let name = crate::domain::name_from_domain_text(domain)?;
+                resolver.lookup(name, query_type).await
+            }
             #[cfg(feature = "pool-exp")]
             Self::Pooled(resolver) => resolver.lookup(domain, query_type).await,
             #[cfg(feature = "pool-native")]
             Self::Native(pool) => {
-                let name = Name::parse(domain, None).map_err(NetError::from)?;
+                let name = crate::domain::name_from_domain_text(domain).map_err(NetError::from)?;
                 let query = Query::query(name, query_type);
                 match pool.lookup(domain, query_type).await {
                     Ok(answer) => {

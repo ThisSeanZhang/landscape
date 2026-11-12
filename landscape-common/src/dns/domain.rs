@@ -7,9 +7,21 @@ pub fn normalize_domain_name(domain: &str) -> Result<String, DnsServiceError> {
     if no_dot.is_empty() {
         return Err(DnsServiceError::Invalid { domain: domain.to_string() });
     }
-    let ascii = idna::domain_to_ascii(no_dot)
-        .map_err(|_| DnsServiceError::Invalid { domain: domain.to_string() })?;
-    Ok(ascii.to_ascii_lowercase())
+    if let Ok(ascii) = idna::domain_to_ascii(no_dot) {
+        return Ok(ascii.to_ascii_lowercase());
+    }
+    // hickory/IDNA rejects hostname-invalid labels such as `space_station`,
+    // although they are valid DNS labels. Keep ASCII DNS labels usable.
+    if no_dot.is_ascii()
+        && no_dot.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+    {
+        return Ok(no_dot.to_ascii_lowercase());
+    }
+    Err(DnsServiceError::Invalid { domain: domain.to_string() })
 }
 
 /// Trims trailing dots and lowercases ASCII uppercase bytes; `Cow` borrows
@@ -61,5 +73,18 @@ mod tests {
         assert_eq!(normalize_domain_string("FOO..".to_string()), "foo");
         assert_eq!(normalize_domain_string("Foo..".to_string()), "foo");
         assert_eq!(normalize_domain_string("EXAMPLE.com".to_string()), "example.com");
+    }
+}
+
+#[cfg(test)]
+mod underscore_label_tests {
+    use super::*;
+
+    #[test]
+    fn underscore_label_is_valid_for_dns() {
+        assert_eq!(
+            normalize_domain_name("space_station.flydigi.com").unwrap(),
+            "space_station.flydigi.com"
+        );
     }
 }
