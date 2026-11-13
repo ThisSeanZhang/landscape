@@ -5,6 +5,9 @@ pub use landscape_common::dns::check::{
 pub mod coordinator;
 pub(crate) mod domain;
 
+#[cfg(feature = "bench")]
+pub mod benchmark;
+
 pub mod listener;
 pub mod mdns;
 pub mod resolve;
