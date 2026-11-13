@@ -110,7 +110,12 @@ const FANOUT_LOWER: u8 = 1;
 const FANOUT_UPPER: u8 = 8;
 
 /// Default number of endpoints queried concurrently per attempt.
-pub(crate) const DEFAULT_FANOUT: usize = 4;
+///
+/// Two keeps a second endpoint in flight for tail-latency recovery without
+/// multiplying every lookup across four upstreams. The bench target shows
+/// fan-out 4 roughly halving throughput versus fan-out 2 on the same
+/// topology; callers that need more resilience can raise it explicitly.
+pub(crate) const DEFAULT_FANOUT: usize = 2;
 
 /// An explicit negative answer (NXDomain/NoData) waits this long for a
 /// positive answer from another concurrently queried endpoint before being

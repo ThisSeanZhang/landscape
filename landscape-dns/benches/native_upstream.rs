@@ -8,6 +8,8 @@
 //! - `LANDSCAPE_BENCH_SEQ_SECS`
 //! - `LANDSCAPE_BENCH_CONCURRENCY`
 //! - `LANDSCAPE_BENCH_CONC_SECS`
+//! - `LANDSCAPE_BENCH_ENDPOINTS`
+//! - `LANDSCAPE_BENCH_FANOUT`
 //! - `LANDSCAPE_BENCH_MARK`
 //! - `LANDSCAPE_BENCH_NAME`
 
@@ -31,6 +33,12 @@ fn main() {
     if let Ok(value) = env::var("LANDSCAPE_BENCH_CONC_SECS") {
         options.concurrent_duration =
             Duration::from_secs_f64(value.parse().expect("LANDSCAPE_BENCH_CONC_SECS must be f64"));
+    }
+    if let Ok(value) = env::var("LANDSCAPE_BENCH_ENDPOINTS") {
+        options.endpoint_count = value.parse().expect("LANDSCAPE_BENCH_ENDPOINTS must be a usize");
+    }
+    if let Ok(value) = env::var("LANDSCAPE_BENCH_FANOUT") {
+        options.max_fanout = value.parse().expect("LANDSCAPE_BENCH_FANOUT must be a usize");
     }
     if let Ok(value) = env::var("LANDSCAPE_BENCH_MARK") {
         options.mark = value.parse().expect("LANDSCAPE_BENCH_MARK must be u32");

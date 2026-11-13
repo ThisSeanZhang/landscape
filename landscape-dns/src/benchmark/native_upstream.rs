@@ -18,12 +18,23 @@
 //!   cargo bench -p landscape-dns --features bench --bench native_upstream
 //! ```
 //!
+//! Multi-endpoint/fan-out runs use the endpoint and fan-out overrides:
+//!
+//! ```text
+//! LANDSCAPE_BENCH_ENDPOINTS=2 LANDSCAPE_BENCH_FANOUT=2 \
+//!   CARGO_PROFILE_BENCH_LTO=off CARGO_PROFILE_BENCH_CODEGEN_UNITS=16 \
+//!   cargo bench -p landscape-dns --features bench --bench native_upstream
+//! ```
+//!
 //! Benchmark record (AMD EPYC 7302 16 vCPU, Linux 6.12.111 x86_64, median
 //! of 3 runs with the command above; zero errors in both phases):
 //! - before single-leg/UDP-socket reuse: sequential 6999 qps, p50 134 us;
 //!   concurrent 32 workers 73694 qps, p50 415 us, p99 873 us;
 //! - after (16-idle UDP socket cap): sequential 19674 qps, p50 46 us,
 //!   p99 100 us; concurrent 32 workers 93110 qps, p50 329 us, p99 656 us.
+//! - multi-endpoint (32 workers, 2 runs): 2 endpoints/fanout 1: 114-125k
+//!   qps; 2/fanout 2: 75k; 4/fanout 2: 86k; 4/fanout 4: 48k. This is why
+//!   the production default fan-out is 2.
 
 use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr};
@@ -57,6 +68,10 @@ pub struct BenchOptions {
     pub concurrent_duration: Duration,
     /// Fully-qualified name queried in every lookup.
     pub query_name: String,
+    /// Number of loopback upstream endpoints in the benchmark topology.
+    pub endpoint_count: usize,
+    /// Maximum number of endpoints queried concurrently per attempt.
+    pub max_fanout: usize,
     /// SO_MARK applied to upstream sockets. Zero avoids CAP_NET_ADMIN in
     /// environments where SO_MARK is privileged.
     pub mark: u32,
@@ -70,6 +85,8 @@ impl Default for BenchOptions {
             concurrency: 32,
             concurrent_duration: Duration::from_secs(5),
             query_name: "www.example.com.".to_string(),
+            endpoint_count: 1,
+            max_fanout: 2,
             mark: 0,
         }
     }
@@ -93,6 +110,8 @@ pub struct PhaseStats {
 #[derive(Debug, Clone)]
 pub struct BenchReport {
     pub query_name: String,
+    pub endpoint_count: usize,
+    pub max_fanout: usize,
     pub warmup_queries: usize,
     pub sequential: PhaseStats,
     pub concurrent: PhaseStats,
@@ -104,10 +123,12 @@ impl BenchReport {
         let _ = write!(
             out,
             concat!(
-                "{{\"query_name\":\"{}\",\"warmup_queries\":{},",
-                "\"sequential\":{},\"concurrent\":{}}}"
+                "{{\"query_name\":\"{}\",\"endpoint_count\":{},\"max_fanout\":{},",
+                "\"warmup_queries\":{},\"sequential\":{},\"concurrent\":{}}}"
             ),
             json_escape(&self.query_name),
+            self.endpoint_count,
+            self.max_fanout,
             self.warmup_queries,
             phase_json(&self.sequential),
             phase_json(&self.concurrent),
@@ -139,12 +160,23 @@ fn json_escape(input: &str) -> String {
 
 /// Runs the complete benchmark against an in-process local DNS server.
 pub async fn run(options: BenchOptions) -> Result<BenchReport, String> {
-    let server = LocalDnsServer::spawn().await?;
+    if !(1..=254).contains(&options.endpoint_count) {
+        return Err("endpoint_count must be between 1 and 254".to_string());
+    }
+    if !(1..=8).contains(&options.max_fanout) {
+        return Err("max_fanout must be between 1 and 8".to_string());
+    }
+
+    let server = LocalDnsServer::spawn(options.endpoint_count).await?;
     let upstream = DnsUpstreamConfig {
         remark: "native upstream benchmark".to_string(),
         mode: DnsUpstreamMode::Plaintext,
-        ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+        ips: endpoint_ips(options.endpoint_count),
         port: Some(server.port),
+        ..Default::default()
+    };
+    let settings = PoolSettings {
+        max_fanout: Some(options.max_fanout as u8),
         ..Default::default()
     };
     let pool = UpstreamPool::new(
@@ -152,7 +184,7 @@ pub async fn run(options: BenchOptions) -> Result<BenchReport, String> {
         options.mark,
         &upstream,
         MarkRuntimeProvider::new(options.mark, upstream.bind_config.clone()),
-        &PoolSettings::default(),
+        &settings,
         None,
     )
     .ok_or_else(|| "failed to build native upstream pool".to_string())?;
@@ -172,6 +204,8 @@ pub async fn run(options: BenchOptions) -> Result<BenchReport, String> {
     drop(server);
     Ok(BenchReport {
         query_name: options.query_name,
+        endpoint_count: options.endpoint_count,
+        max_fanout: options.max_fanout,
         warmup_queries: options.warmup_queries,
         sequential,
         concurrent,
@@ -310,26 +344,68 @@ impl Drop for LocalDnsServer {
 }
 
 impl LocalDnsServer {
-    async fn spawn() -> Result<Self, String> {
-        // Binding UDP first gives us a free port; binding TCP to the same
-        // port mirrors the native plaintext topology (one endpoint exposing
-        // both transports).
+    async fn spawn(endpoint_count: usize) -> Result<Self, String> {
+        let bind_ips: Vec<Ipv4Addr> = endpoint_ips(endpoint_count)
+            .into_iter()
+            .map(|ip| match ip {
+                IpAddr::V4(ip) => ip,
+                IpAddr::V6(_) => unreachable!("benchmark endpoints are IPv4 loopback"),
+            })
+            .collect();
+
+        // Bind every endpoint to the same port so one upstream config can
+        // cover the whole fan-out topology.
         for _ in 0..8 {
-            let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            let first = UdpSocket::bind((bind_ips[0], 0))
                 .await
                 .map_err(|e| format!("bind benchmark UDP socket: {e}"))?;
-            let port = udp.local_addr().map_err(|e| format!("read UDP local addr: {e}"))?.port();
-            let tcp = match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
-                Ok(tcp) => tcp,
-                Err(_) => continue,
-            };
+            let port = first.local_addr().map_err(|e| format!("read UDP local addr: {e}"))?.port();
 
-            let udp_task = tokio::spawn(run_udp_server(udp));
-            let tcp_task = tokio::spawn(run_tcp_server(tcp));
-            return Ok(Self { port, tasks: vec![udp_task, tcp_task] });
+            let mut udp_sockets = Vec::with_capacity(bind_ips.len());
+            udp_sockets.push(first);
+            let mut failed = false;
+            for ip in &bind_ips[1..] {
+                match UdpSocket::bind((*ip, port)).await {
+                    Ok(socket) => udp_sockets.push(socket),
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            if failed {
+                continue;
+            }
+
+            let mut tcp_listeners = Vec::with_capacity(bind_ips.len());
+            for ip in &bind_ips {
+                match TcpListener::bind((*ip, port)).await {
+                    Ok(listener) => tcp_listeners.push(listener),
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            if failed {
+                continue;
+            }
+
+            let mut tasks = Vec::with_capacity(udp_sockets.len() + tcp_listeners.len());
+            for socket in udp_sockets {
+                tasks.push(tokio::spawn(run_udp_server(socket)));
+            }
+            for listener in tcp_listeners {
+                tasks.push(tokio::spawn(run_tcp_server(listener)));
+            }
+            return Ok(Self { port, tasks });
         }
-        Err("could not bind UDP and TCP benchmark server on the same port".to_string())
+        Err("could not bind UDP and TCP benchmark servers on the same port".to_string())
     }
+}
+
+fn endpoint_ips(count: usize) -> Vec<IpAddr> {
+    (0..count).map(|index| IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1 + index as u8))).collect()
 }
 
 async fn run_udp_server(socket: UdpSocket) {
@@ -412,29 +488,46 @@ mod tests {
         };
         let report = BenchReport {
             query_name: "www.example.com.".to_string(),
+            endpoint_count: 2,
+            max_fanout: 2,
             warmup_queries: 100,
             sequential: stats.clone(),
             concurrent: stats,
         };
         let value: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+        assert_eq!(value["endpoint_count"], 2);
+        assert_eq!(value["max_fanout"], 2);
         assert_eq!(value["sequential"]["queries"], 10);
         assert_eq!(value["concurrent"]["errors"], 1);
     }
 
+    #[test]
+    fn endpoint_ips_are_distinct_loopback_addresses() {
+        assert_eq!(
+            endpoint_ips(3),
+            vec![
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+            ]
+        );
+    }
+
     #[tokio::test]
-    async fn udp_and_tcp_benchmark_server_answers() {
-        let server = LocalDnsServer::spawn().await.unwrap();
+    async fn multi_endpoint_benchmark_server_answers() {
+        let server = LocalDnsServer::spawn(2).await.unwrap();
+        let settings = PoolSettings { max_fanout: Some(2), ..Default::default() };
         let pool = UpstreamPool::new(
             1,
             0,
             &DnsUpstreamConfig {
                 mode: DnsUpstreamMode::Plaintext,
-                ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+                ips: endpoint_ips(2),
                 port: Some(server.port),
                 ..Default::default()
             },
             MarkRuntimeProvider::new(0, Default::default()),
-            &PoolSettings::default(),
+            &settings,
             None,
         )
         .unwrap();
