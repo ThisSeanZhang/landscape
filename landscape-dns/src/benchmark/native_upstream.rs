@@ -18,11 +18,12 @@
 //!   cargo bench -p landscape-dns --features bench --bench native_upstream
 //! ```
 //!
-//! Baseline (2026-11-12, commit 4877386b, AMD EPYC 7302 16 vCPU, Linux
-//! 6.12.111 x86_64, median of 3 runs; use the same command for comparisons):
-//! sequential 1 in-flight: 6999 qps, p50 134 us, p95 214 us, p99 276 us;
-//! concurrent 32 workers: 73694 qps, p50 415 us, p95 666 us, p99 873 us;
-//! zero errors in both phases.
+//! Benchmark record (AMD EPYC 7302 16 vCPU, Linux 6.12.111 x86_64, median
+//! of 3 runs with the command above; zero errors in both phases):
+//! - before single-leg/UDP-socket reuse: sequential 6999 qps, p50 134 us;
+//!   concurrent 32 workers 73694 qps, p50 415 us, p99 873 us;
+//! - after (16-idle UDP socket cap): sequential 19674 qps, p50 46 us,
+//!   p99 100 us; concurrent 32 workers 93110 qps, p50 329 us, p99 656 us.
 
 use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr};

@@ -989,6 +989,14 @@ impl UpstreamPool {
         options: &DnsRequestOptions,
         legs: &[usize],
     ) -> FanOutVerdict {
+        // A single leg is the common router topology (one upstream IP).
+        // Avoid JoinSet spawn, query clone, abort bookkeeping and the
+        // negative-grace timer when there is nothing to race.
+        if let [index] = legs {
+            let result = self.leg_query(self.connectors[*index].clone(), query, options).await;
+            return Self::single_leg_verdict(result);
+        }
+
         let mut join_set = JoinSet::new();
         for &idx in legs {
             let pool = self.clone();
@@ -1097,6 +1105,24 @@ impl UpstreamPool {
         soa
     }
 
+    /// Maps the sole leg's result to the same verdict shape used by the
+    /// concurrent selection path. There is no competing endpoint to grace or
+    /// abort, so a negative keeps its original SOA TTL unchanged.
+    fn single_leg_verdict(result: Result<Message, UpstreamError>) -> FanOutVerdict {
+        match result {
+            Ok(message) if message.metadata.truncation => FanOutVerdict::Truncated(message),
+            Ok(message) if is_negative_response(&message) => {
+                FanOutVerdict::Negative(message.metadata.response_code, soa_of_message(&message))
+            }
+            Ok(message) => FanOutVerdict::Answer(message),
+            Err(UpstreamError::Protocol(
+                code @ (ResponseCode::NXDomain | ResponseCode::NoError),
+                soa,
+            )) => FanOutVerdict::Negative(code, soa),
+            Err(e) => FanOutVerdict::Failed(e),
+        }
+    }
+
     /// Folds one leg's outcome into the fan-out selection state; returns a
     /// verdict when the leg's answer wins outright (a positive answer).
     fn fold_leg_outcome(
@@ -1197,6 +1223,11 @@ impl UpstreamPool {
                 {
                     winner.last_used_ms.store(self.clock.now_ms(), Ordering::Relaxed);
                     self.scale_up(connector);
+                    // Let the freshly spawned scale-up dial get its first poll.
+                    // Besides preserving the old fan-out scheduling behavior,
+                    // this avoids a capacity burst repeatedly observing the
+                    // pre-dial slot state before the background task runs.
+                    tokio::task::yield_now().await;
                 }
             }
         }

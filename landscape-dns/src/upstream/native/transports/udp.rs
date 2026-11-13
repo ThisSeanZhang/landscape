@@ -1,25 +1,42 @@
 //! Native plaintext-UDP transport.
 //!
-//! Mirrors the old hickory-net UDP path: a fresh connected socket (random
-//! source port, SO_MARK applied) per query attempt, one datagram per attempt
-//! — the pool retries at the attempt level, so a blackholed upstream is not
-//! hammered — and up to three receive attempts validating id + question echo
-//! before giving up.
+//! A small per-endpoint pool reuses connected UDP sockets across sequential
+//! queries. Each socket is checked out by one query at a time, carries a
+//! random DNS id per query, is connected (so the kernel filters foreign
+//! sources), and validates the id + question echo before accepting a
+//! response. Sockets rotate after a bounded number of uses / lifetime so the
+//! source-port exposure stays bounded. The pool retries at the attempt level,
+//! so a blackholed upstream is not hammered with datagrams.
 
+use std::collections::VecDeque;
 use std::fmt::Debug;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use hickory_proto::op::{DnsRequestOptions, Message, MessageType, Query};
+use tokio::net::UdpSocket;
 
 use crate::upstream::native::mark::MarkRuntimeProvider;
 use crate::upstream::native::traits::{DnsConn, DnsConnError, DnsConnector, DnsTransport};
 
 use super::{build_message, classify_message};
 
-/// Builds (stateless) UDP connections to one endpoint.
+/// Maximum number of idle sockets kept per endpoint. A home/soft-router
+/// workload rarely needs more than this in flight; checked-out sockets are
+/// limited by concurrent queries and extras are closed on return instead of
+/// growing the cache without bound.
+const UDP_SOCKET_POOL_SIZE: usize = 16;
+/// Rotate a socket after this many completed exchanges.
+const UDP_SOCKET_MAX_REUSES: u32 = 64;
+/// Rotate a socket after this age even when it is still under the use cap.
+const UDP_SOCKET_MAX_AGE: Duration = Duration::from_secs(30);
+/// Scratch buffer used to drain late datagrams before reusing a socket.
+const UDP_DRAIN_BUF_SIZE: usize = 4096;
+
+/// Builds UDP connections to one endpoint.
 pub(crate) struct UdpConnector {
     pub(super) addr: SocketAddr,
     pub(super) provider: MarkRuntimeProvider,
@@ -36,8 +53,11 @@ impl Debug for UdpConnector {
 impl DnsConnector for UdpConnector {
     async fn connect(&self) -> Result<Arc<dyn DnsConn>, DnsConnError> {
         Ok(Arc::new(UdpConn {
-            addr: self.addr,
-            provider: self.provider.clone(),
+            pool: Arc::new(UdpSocketPool {
+                addr: self.addr,
+                provider: self.provider.clone(),
+                idle: Mutex::new(VecDeque::new()),
+            }),
             query_timeout: self.query_timeout,
         }))
     }
@@ -57,17 +77,88 @@ impl DnsConnector for UdpConnector {
     }
 }
 
-/// A UDP "connection": stateless, one socket per query attempt. The pool's
-/// connection accounting (reuse, retirement) is bookkeeping over it.
+/// A pooled UDP endpoint. The outer pool treats this object as one logical
+/// connection; this inner pool owns the reusable stateless sockets.
 struct UdpConn {
-    addr: SocketAddr,
-    provider: MarkRuntimeProvider,
+    pool: Arc<UdpSocketPool>,
     query_timeout: Duration,
 }
 
 impl Debug for UdpConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UdpConn").field("addr", &self.addr).finish()
+        f.debug_struct("UdpConn").field("addr", &self.pool.addr).finish()
+    }
+}
+
+struct UdpSocketPool {
+    addr: SocketAddr,
+    provider: MarkRuntimeProvider,
+    idle: Mutex<VecDeque<PooledUdpSocket>>,
+}
+
+struct PooledUdpSocket {
+    socket: UdpSocket,
+    uses: u32,
+    created: Instant,
+}
+
+impl PooledUdpSocket {
+    fn expired(&self) -> bool {
+        self.uses >= UDP_SOCKET_MAX_REUSES || self.created.elapsed() >= UDP_SOCKET_MAX_AGE
+    }
+}
+
+struct UdpLease {
+    pool: Arc<UdpSocketPool>,
+    entry: Option<PooledUdpSocket>,
+}
+
+impl UdpLease {
+    fn socket(&self) -> &UdpSocket {
+        &self.entry.as_ref().expect("checked-out UDP socket is present until drop").socket
+    }
+}
+
+impl Drop for UdpLease {
+    fn drop(&mut self) {
+        let Some(mut entry) = self.entry.take() else { return };
+        // A late response from the previous query must never be delivered to
+        // the next borrower.
+        let mut scratch = [0u8; UDP_DRAIN_BUF_SIZE];
+        while entry.socket.try_recv(&mut scratch).is_ok() {}
+
+        entry.uses = entry.uses.saturating_add(1);
+        if entry.expired() {
+            return;
+        }
+        let mut idle = self.pool.idle.lock().unwrap_or_else(|e| e.into_inner());
+        if idle.len() < UDP_SOCKET_POOL_SIZE {
+            idle.push_back(entry);
+        }
+    }
+}
+
+impl UdpSocketPool {
+    async fn checkout(self: &Arc<Self>) -> io::Result<UdpLease> {
+        let reused = {
+            let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+            loop {
+                match idle.pop_front() {
+                    Some(entry) if !entry.expired() => break Some(entry),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            }
+        };
+        let entry = match reused {
+            Some(entry) => entry,
+            None => PooledUdpSocket {
+                socket: self.provider.bind_udp(self.addr).await?,
+                uses: 0,
+                created: Instant::now(),
+            },
+        };
+        Ok(UdpLease { pool: Arc::clone(self), entry: Some(entry) })
     }
 }
 
@@ -84,8 +175,8 @@ impl DnsConn for UdpConn {
         message.metadata.id = rand::random();
         let bytes = message.to_vec().map_err(|e| DnsConnError::Internal(e.to_string()))?;
 
-        let socket =
-            self.provider.bind_udp(self.addr).await.map_err(|e| DnsConnError::Io(e.to_string()))?;
+        let lease = self.pool.checkout().await.map_err(|e| DnsConnError::Io(e.to_string()))?;
+        let socket = lease.socket();
         socket.send(&bytes).await.map_err(|e| DnsConnError::Io(e.to_string()))?;
 
         // The receive buffer is the advertised EDNS payload (mirrors hickory:
@@ -132,7 +223,7 @@ impl DnsConn for UdpConn {
     }
 
     fn ip(&self) -> IpAddr {
-        self.addr.ip()
+        self.pool.addr.ip()
     }
 
     fn shutdown(&self) {}
@@ -200,6 +291,20 @@ mod tests {
         let mut response = Message::response(0x1234, OpCode::Query);
         response.metadata.response_code = code;
         response
+    }
+
+    #[tokio::test]
+    async fn reuses_idle_udp_socket() {
+        let pool = Arc::new(UdpSocketPool {
+            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+            provider: MarkRuntimeProvider::new(0, Default::default()),
+            idle: Mutex::new(VecDeque::new()),
+        });
+        let first = pool.checkout().await.unwrap();
+        let first_addr = first.socket().local_addr().unwrap();
+        drop(first);
+        let second = pool.checkout().await.unwrap();
+        assert_eq!(second.socket().local_addr().unwrap(), first_addr);
     }
 
     #[test]
