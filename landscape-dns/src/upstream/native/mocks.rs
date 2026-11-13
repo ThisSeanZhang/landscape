@@ -32,6 +32,7 @@ pub(crate) struct MockConn {
     transport: DnsTransport,
     outcomes: Arc<Mutex<VecDeque<MockOutcome>>>,
     query_count: Arc<AtomicU32>,
+    last_query: Arc<Mutex<Option<Name>>>,
     shutdown_count: Arc<AtomicU32>,
 }
 
@@ -39,10 +40,11 @@ pub(crate) struct MockConn {
 impl DnsConn for MockConn {
     async fn query(
         &self,
-        _query: &Query,
+        query: &Query,
         _options: &DnsRequestOptions,
     ) -> Result<Message, DnsConnError> {
         self.query_count.fetch_add(1, Ordering::Relaxed);
+        *self.last_query.lock().unwrap_or_else(|e| e.into_inner()) = Some(query.name().clone());
         let outcome = {
             let mut outcomes = self.outcomes.lock().unwrap_or_else(|e| e.into_inner());
             outcomes.pop_front()
@@ -82,6 +84,7 @@ pub(crate) struct MockConnector {
     /// Dial ordinal (1-based) above which `connect` panics; u32::MAX never.
     panic_dials_over: Arc<AtomicU32>,
     conns: Arc<Mutex<Vec<Arc<MockConn>>>>,
+    last_query: Arc<Mutex<Option<Name>>>,
 }
 
 impl MockConnector {
@@ -95,6 +98,7 @@ impl MockConnector {
             dial_delay_ms: Arc::new(AtomicU64::new(0)),
             panic_dials_over: Arc::new(AtomicU32::new(u32::MAX)),
             conns: Arc::new(Mutex::new(vec![])),
+            last_query: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -142,6 +146,11 @@ impl MockConnector {
             .sum()
     }
 
+    /// Name of the most recent query received across all connections.
+    pub(crate) fn last_query_name(&self) -> Option<Name> {
+        self.last_query.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     pub(crate) fn shutdowns(&self) -> u32 {
         self.conns
             .lock()
@@ -177,6 +186,7 @@ impl DnsConnector for MockConnector {
             transport: self.transport,
             outcomes: self.outcomes.clone(),
             query_count: Arc::new(AtomicU32::new(0)),
+            last_query: self.last_query.clone(),
             shutdown_count: Arc::new(AtomicU32::new(0)),
         });
         self.conns.lock().unwrap_or_else(|e| e.into_inner()).push(conn.clone());

@@ -199,7 +199,11 @@ impl DNSResolveRuntime {
         self.matcher.is_match(domain)
     }
 
-    pub async fn lookup(&self, domain: &str, query_type: RecordType) -> DnsResult<Vec<Record>> {
+    pub async fn lookup(
+        &self,
+        domain: &ParsedDomain,
+        query_type: RecordType,
+    ) -> DnsResult<Vec<Record>> {
         match self.resolver.lookup(domain, query_type).await {
             Ok(lookup) => {
                 let result = if self.enable_ip_validation {
@@ -227,7 +231,7 @@ impl DNSResolveRuntime {
                         tracing::warn!(
                             flow_id = self.flow_id,
                             rule_id = %self.rule_id,
-                            domain = %domain,
+                            domain = %domain.raw(),
                             response_code = ?no_records.response_code,
                             "upstream answered an error code"
                         );
@@ -242,7 +246,7 @@ impl DNSResolveRuntime {
                     "[flow_id: {}, rule: {}] DNS resolution failed for {}: {}",
                     self.flow_id,
                     self.rule_id,
-                    domain,
+                    domain.raw(),
                     e
                 );
                 Err(DnsServiceError::Internal(e.to_string()))

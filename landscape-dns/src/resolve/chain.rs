@@ -132,9 +132,7 @@ impl<'a> ResolveChain<'a> {
         policy: CacheWritePolicy,
     ) -> RuleLookupOutcome {
         let outcome =
-            match with_lookup_timeout(resolver.lookup(domain.raw(), query_type), LOOKUP_TIMEOUT)
-                .await
-            {
+            match with_lookup_timeout(resolver.lookup(domain, query_type), LOOKUP_TIMEOUT).await {
                 Ok(rdata_vec) => RuleLookupOutcome::NoError { records: rdata_vec },
                 Err(err) => rule_lookup_outcome_from_error(&err),
             };

@@ -237,6 +237,23 @@ mod tests {
     }
 
     #[test]
+    fn decodes_underscore_name_into_request() {
+        let mut message = Message::new(0x1234, MessageType::Query, OpCode::Query);
+        message.add_query(Query::query(
+            Name::from_ascii("xxx_xxx.example.com.").unwrap(),
+            RecordType::A,
+        ));
+        let buffer = encoded(&message);
+
+        let DecodeOutcome::Request(req) = decode(&buffer, test_src(), Protocol::Udp) else {
+            panic!("expected request");
+        };
+
+        assert_eq!(req.domain.raw(), "xxx_xxx.example.com.");
+        assert_eq!(req.domain.as_dns_name().to_ascii(), "xxx_xxx.example.com.");
+    }
+
+    #[test]
     fn decodes_edns_max_size() {
         let mut message = query_message();
         let mut edns = Edns::new();

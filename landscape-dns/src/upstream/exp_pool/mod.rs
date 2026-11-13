@@ -186,16 +186,23 @@ impl PooledDnsResolver {
         Ok(Self { flow_id, scheduler, config: pool_config })
     }
 
+    /// String convenience entry point for tests; production passes the
+    /// wire-parsed [`Name`] to [`Self::lookup_name`].
+    #[cfg(test)]
     pub(crate) async fn lookup(
         &self,
         domain: &str,
         query_type: RecordType,
     ) -> Result<Lookup, NetError> {
-        let name = Name::parse(domain, None).map_err(NetError::from)?;
+        let name = Name::from_str_relaxed(domain).map_err(NetError::from)?;
         self.lookup_name(name, query_type).await
     }
 
-    async fn lookup_name(&self, name: Name, query_type: RecordType) -> Result<Lookup, NetError> {
+    pub(crate) async fn lookup_name(
+        &self,
+        name: Name,
+        query_type: RecordType,
+    ) -> Result<Lookup, NetError> {
         let original = Query::query(name.clone(), query_type);
         let mut query = original.clone();
         let mut records: Vec<Record> = Vec::new();

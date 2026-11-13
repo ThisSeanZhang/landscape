@@ -559,11 +559,10 @@ impl UpstreamPool {
         }
     }
 
-    /// Resolves `domain` for `query_type`, mirroring the old resolver
-    /// semantics: `attempts` tries, each bounded by `query_timeout`, with
-    /// UDP→stream fallback on truncation, a lookup-level deadline
-    /// (`attempts × query_timeout + connect_timeout`), and fast-fail while
-    /// offline.
+    /// String convenience entry point for tests. Production resolves through
+    /// [`Self::lookup_name`] with the wire-parsed [`Name`] so labels that
+    /// legitimately contain underscores are not re-validated by IDNA.
+    #[cfg(test)]
     pub(crate) async fn lookup(
         self: &Arc<Self>,
         domain: &str,
@@ -573,6 +572,19 @@ impl UpstreamPool {
             Ok(name) => name,
             Err(e) => return Err(UpstreamError::Internal(format!("invalid domain: {e}"))),
         };
+        self.lookup_name(name, query_type).await
+    }
+
+    /// Resolves an already-parsed `name` for `query_type`, mirroring the old
+    /// resolver semantics: `attempts` tries, each bounded by `query_timeout`,
+    /// with UDP→stream fallback on truncation, a lookup-level deadline
+    /// (`attempts × query_timeout + connect_timeout`), and fast-fail while
+    /// offline.
+    pub(crate) async fn lookup_name(
+        self: &Arc<Self>,
+        name: Name,
+        query_type: RecordType,
+    ) -> Result<LookupAnswer, UpstreamError> {
         let query = Query::query(name, query_type);
         let options = request_options();
 

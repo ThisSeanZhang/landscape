@@ -21,8 +21,7 @@ pub struct ParsedDomain {
 impl ParsedDomain {
     pub fn new(fqdn: &str) -> Result<Self, DnsServiceError> {
         let normalized = normalize_domain_text(fqdn);
-        let dns_name = Name::from_utf8(normalized.as_ref())
-            .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
+        let dns_name = parse_dns_name(normalized.as_ref(), fqdn)?;
         Ok(Self::canonicalize(dns_name))
     }
 
@@ -80,6 +79,23 @@ impl ParsedDomain {
     }
 }
 
+/// Parse domain text into a DNS name, keeping IDNA for Unicode labels while
+/// also accepting DNS-only labels such as `xxx_xxx`.
+///
+/// `Name::from_str_relaxed` is whole-name: it falls back from IDNA to the
+/// ASCII parser only when the entire name fails IDNA, so a mix of IDNA and
+/// underscore labels fails both passes. Normalize that mixed case to ASCII
+/// with the (non-strict) `idna` crate and parse the result as plain labels.
+fn parse_dns_name(normalized: &str, original: &str) -> Result<Name, DnsServiceError> {
+    if let Ok(name) = Name::from_str_relaxed(normalized) {
+        return Ok(name);
+    }
+
+    let ascii = idna::domain_to_ascii(normalized)
+        .map_err(|_| DnsServiceError::Invalid { domain: original.to_string() })?;
+    Name::from_ascii(ascii).map_err(|_| DnsServiceError::Invalid { domain: original.to_string() })
+}
+
 #[cfg(test)]
 mod tests {
     use hickory_proto::rr::Name;
@@ -101,6 +117,34 @@ mod tests {
 
         assert_eq!(domain.name(), "www.example.com");
         assert_eq!(domain.raw(), "www.example.com.");
+    }
+
+    #[test]
+    fn accepts_underscore_labels_after_the_first_character() {
+        let domain = ParsedDomain::new("xxx_xxx.example.com.").unwrap();
+
+        assert_eq!(domain.name(), "xxx_xxx.example.com");
+        assert_eq!(domain.raw(), "xxx_xxx.example.com.");
+        assert_eq!(domain.as_dns_name().to_ascii().trim_end_matches('.'), "xxx_xxx.example.com");
+    }
+
+    #[test]
+    fn accepts_mixed_idna_and_underscore_labels() {
+        let domain = ParsedDomain::new("xxx_xxx.测试.com.").unwrap();
+
+        assert!(domain.name().is_ascii());
+        assert!(domain.name().starts_with("xxx_xxx.xn--"));
+        assert!(domain.name().ends_with(".com"));
+        assert_eq!(domain.raw(), format!("{}.", domain.name()));
+    }
+
+    #[test]
+    fn accepts_underscore_inside_unicode_labels() {
+        let domain = ParsedDomain::new("测试_foo.com.").unwrap();
+
+        assert!(domain.name().is_ascii());
+        assert!(domain.name().starts_with("xn--"));
+        assert!(domain.name().ends_with(".com"));
     }
 
     #[test]

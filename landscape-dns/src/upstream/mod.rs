@@ -8,6 +8,7 @@ use hickory_resolver::{Resolver, lookup::Lookup, net::NetError};
 
 use landscape_common::dns::config::DnsUpstreamConfig;
 
+use crate::domain::ParsedDomain;
 use legacy::provider::MarkConnectionProvider;
 
 pub(crate) mod legacy;
@@ -26,7 +27,7 @@ mod integration_tests;
 pub(crate) mod test_util;
 
 #[cfg(feature = "pool-native")]
-use hickory_proto::{op::Query, rr::Name};
+use hickory_proto::op::Query;
 #[cfg(feature = "pool-native")]
 use hickory_resolver::net::{DnsError, NoRecords};
 #[cfg(feature = "pool-native")]
@@ -54,26 +55,31 @@ pub(crate) enum LandscapeResolver {
 impl LandscapeResolver {
     pub(crate) async fn lookup(
         &self,
-        domain: &str,
+        domain: &ParsedDomain,
         query_type: RecordType,
     ) -> Result<Lookup, NetError> {
+        // Use the wire-parsed name directly: re-parsing the canonical string
+        // through `Name::from_utf8`/`Name::parse` would reject labels that
+        // contain an underscore after the first character (IDNA STD3), even
+        // though the wire name is valid.
+        let name = domain.as_dns_name();
         match self {
-            Self::Legacy(resolver) => resolver.lookup(domain, query_type).await,
+            Self::Legacy(resolver) => resolver.lookup(name.clone(), query_type).await,
             #[cfg(feature = "pool-exp")]
-            Self::Pooled(resolver) => resolver.lookup(domain, query_type).await,
+            Self::Pooled(resolver) => resolver.lookup_name(name.clone(), query_type).await,
             #[cfg(feature = "pool-native")]
             Self::Native(pool) => {
-                let name = Name::parse(domain, None).map_err(NetError::from)?;
-                let query = Query::query(name, query_type);
-                match pool.lookup(domain, query_type).await {
+                let query = Query::query(name.clone(), query_type);
+                match pool.lookup_name(name.clone(), query_type).await {
                     Ok(answer) => {
                         // A truncated answer is served as-is (matching the
                         // legacy/exp behaviour); the TC-bit passthrough to
                         // the client rides on the RFC 2308 semantics port.
                         if answer.truncated {
                             tracing::debug!(
-                                "upstream answer for {domain} was truncated; serving \
-                                 partial records"
+                                "upstream answer for {} was truncated; serving \
+                                 partial records",
+                                domain.raw()
                             );
                         }
                         let min_ttl =

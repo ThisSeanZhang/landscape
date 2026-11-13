@@ -470,6 +470,45 @@ async fn invalid_domain_returns_internal_error() {
     assert_eq!(connector.dials(), 0);
 }
 
+#[tokio::test]
+async fn lookup_name_accepts_middle_underscore_labels() {
+    // The wire name is valid DNS even though IDNA would reject the label:
+    // the pool must accept the already-parsed Name without re-validating it.
+    let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    connector.push(Ok(answer_with(vec![a_record_named("xxx_xxx.example.com.", [1, 2, 3, 4])])));
+    let pool = stream_pool(connector.clone(), 3);
+
+    let records = pool
+        .lookup_name(Name::from_ascii("xxx_xxx.example.com.").unwrap(), RecordType::A)
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(matches!(&records[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::new(1, 2, 3, 4)));
+}
+
+#[tokio::test]
+async fn facade_lookup_accepts_middle_underscore_labels() {
+    // Regression: the facade used to re-parse the canonical string through
+    // `Name::parse`, which rejects underscores anywhere but the label start.
+    use crate::domain::ParsedDomain;
+    use crate::upstream::LandscapeResolver;
+
+    let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    connector.push(Ok(answer_with(vec![a_record_named("xxx_xxx.example.com.", [1, 2, 3, 4])])));
+    let resolver = LandscapeResolver::Native(stream_pool(connector.clone(), 3));
+
+    let domain = ParsedDomain::from_wire_name(Name::from_ascii("xxx_xxx.example.com.").unwrap());
+    let lookup = resolver.lookup(&domain, RecordType::A).await.unwrap();
+    assert_eq!(lookup.answers().len(), 1);
+    assert!(
+        matches!(&lookup.answers()[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::new(1, 2, 3, 4))
+    );
+    assert_eq!(
+        connector.last_query_name(),
+        Some(Name::from_ascii("xxx_xxx.example.com.").unwrap())
+    );
+}
+
 #[test]
 fn request_options_sets_recursion_edns_and_payload() {
     let options = request_options();
