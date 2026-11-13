@@ -191,7 +191,7 @@ impl PooledDnsResolver {
         domain: &str,
         query_type: RecordType,
     ) -> Result<Lookup, NetError> {
-        let name = Name::parse(domain, None).map_err(NetError::from)?;
+        let name = crate::domain::name_from_domain_text(domain).map_err(NetError::from)?;
         self.lookup_name(name, query_type).await
     }
 

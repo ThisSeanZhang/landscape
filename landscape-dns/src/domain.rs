@@ -1,9 +1,28 @@
 use std::sync::Arc;
 
-use hickory_proto::rr::Name;
+use hickory_proto::{ProtoError, rr::Name};
 use landscape_common::dns::error::DnsServiceError;
 
 pub(crate) use landscape_common::dns::domain::normalize_domain_text;
+
+/// Parse a DNS name without applying hostname/IDNA label restrictions.
+///
+/// DNS labels may legally contain characters such as `_` (for example
+/// `space_station.example.com`), while hickory's strict `Name::from_utf8`
+/// path treats them as invalid hostnames. For ASCII wire/domain text we build
+/// the labels from raw bytes; non-ASCII input still uses the IDNA path.
+pub(crate) fn name_from_domain_text(domain: &str) -> Result<Name, ProtoError> {
+    let trimmed = domain.trim_end_matches('.');
+    if trimmed.is_empty() {
+        return Name::from_labels(Vec::<&[u8]>::new());
+    }
+    if trimmed.is_ascii() {
+        let labels: Vec<&[u8]> = trimmed.split('.').map(str::as_bytes).collect();
+        Name::from_labels(labels)
+    } else {
+        Name::from_utf8(trimmed)
+    }
+}
 
 /// Canonical per-request representation of a DNS name. Parsed once per query
 /// and shared unchanged across the whole resolution chain (local resolver,
@@ -21,8 +40,12 @@ pub struct ParsedDomain {
 impl ParsedDomain {
     pub fn new(fqdn: &str) -> Result<Self, DnsServiceError> {
         let normalized = normalize_domain_text(fqdn);
-        let dns_name = Name::from_utf8(normalized.as_ref())
-            .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
+        let dns_name = if normalized.is_ascii() {
+            name_from_domain_text(normalized.as_ref())
+        } else {
+            Name::from_utf8(normalized.as_ref())
+        }
+        .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
         Ok(Self::canonicalize(dns_name))
     }
 
@@ -114,5 +137,17 @@ mod tests {
             wire.as_dns_name().to_ascii().trim_end_matches('.'),
             text.as_dns_name().to_ascii().trim_end_matches('.')
         );
+    }
+}
+
+#[cfg(test)]
+mod dns_label_tests {
+    use super::*;
+
+    #[test]
+    fn underscore_label_is_parsed_as_dns_name() {
+        let domain = ParsedDomain::new("space_station.flydigi.com").unwrap();
+        assert_eq!(domain.name(), "space_station.flydigi.com");
+        assert_eq!(domain.as_dns_name().to_ascii(), "space_station.flydigi.com.");
     }
 }
