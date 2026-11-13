@@ -1,21 +1,36 @@
 use std::{io::Read, path::PathBuf};
 
-use landscape_common::dns::{domain::normalize_domain_string_in_place, rule::DomainMatchType};
+use landscape_common::{
+    config_service::geo::{site_attributes_to_json, site_pattern_is_valid},
+    dns::{domain::normalize_domain_string_in_place, rule::DomainMatchType},
+};
 
 use super::{
     GeoSnapshotError, GeoSnapshotIndex, GeoSnapshotMetadata, GeoSnapshotPayloadReader,
-    GeoSnapshotReader, GeoSnapshotSourceKind, GeoSnapshotWriter,
+    GeoSnapshotReader, GeoSnapshotSourceKind, GeoSnapshotWriter, SnapshotLayout,
 };
 
 const MAX_RULE_VALUE_BYTES: u32 = 1024 * 1024;
 const MAX_ATTRIBUTES: u32 = 4096;
 const MAX_ATTRIBUTE_BYTES: u32 = 4096;
+const MAX_ATTRIBUTES_JSON_BYTES: u32 = 4 * 1024 * 1024;
+const FLAG_PATTERN_VALID: u8 = 0x01;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeoSnapshotRule {
     pub match_type: DomainMatchType,
     pub value: String,
     pub attributes: Vec<String>,
+}
+
+/// A rule already shaped like a cache row: the build stage normalized the
+/// value, validated the Regex and encoded the attributes as canonical JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeoSnapshotPreparedRule {
+    pub match_type: DomainMatchType,
+    pub pattern_valid: bool,
+    pub value: String,
+    pub attributes_json: Option<String>,
 }
 
 pub struct SiteSnapshotWriter {
@@ -81,15 +96,20 @@ impl SiteSnapshotWriter {
                 return Err(GeoSnapshotError::InvalidPayload("site attribute is too large"));
             }
         }
+        let attributes_json = encode_attributes_json(&self.attributes)?;
+        let pattern_valid = site_pattern_is_valid(&match_type, &self.value_buf);
 
         self.item_buf.clear();
+        self.item_buf.push(if pattern_valid { FLAG_PATTERN_VALID } else { 0 });
         self.item_buf.push(match_type_tag(match_type));
         push_u32(&mut self.item_buf, self.value_buf.len())?;
         self.item_buf.extend_from_slice(self.value_buf.as_bytes());
-        push_u32(&mut self.item_buf, self.attributes.len())?;
-        for attribute in &self.attributes {
-            push_u32(&mut self.item_buf, attribute.len())?;
-            self.item_buf.extend_from_slice(attribute.as_bytes());
+        match &attributes_json {
+            Some(json) => {
+                push_u32(&mut self.item_buf, json.len())?;
+                self.item_buf.extend_from_slice(json.as_bytes());
+            }
+            None => push_u32(&mut self.item_buf, 0)?,
         }
         self.inner.write_item(&self.item_buf)
     }
@@ -105,6 +125,7 @@ impl SiteSnapshotWriter {
 
 pub struct SiteSnapshotReader {
     inner: GeoSnapshotReader,
+    layout: SnapshotLayout,
 }
 
 impl SiteSnapshotReader {
@@ -115,7 +136,8 @@ impl SiteSnapshotReader {
                 inner.metadata().source_kind as u8,
             ));
         }
-        Ok(Self { inner })
+        let layout = SnapshotLayout::from_version(inner.metadata().format_version)?;
+        Ok(Self { inner, layout })
     }
 
     pub fn metadata(&self) -> &GeoSnapshotMetadata {
@@ -129,6 +151,7 @@ impl SiteSnapshotReader {
     pub fn open_key(&self, key: &str) -> Result<SiteSnapshotKeyReader, GeoSnapshotError> {
         Ok(SiteSnapshotKeyReader {
             payload: self.inner.open_key(key)?,
+            layout: self.layout,
             finished: false,
         })
     }
@@ -136,17 +159,78 @@ impl SiteSnapshotReader {
 
 pub struct SiteSnapshotKeyReader {
     payload: GeoSnapshotPayloadReader,
+    layout: SnapshotLayout,
     finished: bool,
 }
 
 impl SiteSnapshotKeyReader {
+    /// Cache-ready form: no Regex compile, sorting or JSON encoding on the
+    /// apply path. v1 files still take the legacy conversion once.
+    pub fn next_prepared(&mut self) -> Result<Option<GeoSnapshotPreparedRule>, GeoSnapshotError> {
+        match self.layout {
+            SnapshotLayout::V1 => match self.next_rule_v1()? {
+                Some(rule) => Ok(Some(prepared_from_legacy(rule)?)),
+                None => Ok(None),
+            },
+            SnapshotLayout::V2 => self.next_prepared_v2(),
+        }
+    }
+
     pub fn next_rule(&mut self) -> Result<Option<GeoSnapshotRule>, GeoSnapshotError> {
-        if self.finished {
+        match self.layout {
+            SnapshotLayout::V1 => self.next_rule_v1(),
+            SnapshotLayout::V2 => {
+                let Some(prepared) = self.next_prepared_v2()? else {
+                    return Ok(None);
+                };
+                let attributes = match prepared.attributes_json {
+                    Some(json) => serde_json::from_str::<Vec<String>>(&json)
+                        .map_err(|_| GeoSnapshotError::InvalidPayload("invalid site attributes"))?,
+                    None => Vec::new(),
+                };
+                Ok(Some(GeoSnapshotRule {
+                    match_type: prepared.match_type,
+                    value: prepared.value,
+                    attributes,
+                }))
+            }
+        }
+    }
+
+    fn next_prepared_v2(&mut self) -> Result<Option<GeoSnapshotPreparedRule>, GeoSnapshotError> {
+        if self.is_done()? {
             return Ok(None);
         }
-        if self.payload.remaining_len() == 0 {
-            self.payload.finish()?;
-            self.finished = true;
+
+        let flags = read_u8(&mut self.payload)?;
+        let match_type = read_match_type(&mut self.payload)?;
+        let value_len = read_u32(&mut self.payload)?;
+        if value_len > MAX_RULE_VALUE_BYTES {
+            return Err(GeoSnapshotError::InvalidPayload("site rule value is too large"));
+        }
+        let value = read_string(&mut self.payload, value_len as usize, "rule value")?;
+
+        let attributes_len = read_u32(&mut self.payload)?;
+        if attributes_len > MAX_ATTRIBUTES_JSON_BYTES {
+            return Err(GeoSnapshotError::InvalidPayload("site attributes are too large"));
+        }
+        let attributes_json = if attributes_len == 0 {
+            None
+        } else {
+            Some(read_string(&mut self.payload, attributes_len as usize, "attributes")?)
+        };
+
+        self.payload.record_item();
+        Ok(Some(GeoSnapshotPreparedRule {
+            match_type,
+            pattern_valid: flags & FLAG_PATTERN_VALID != 0,
+            value,
+            attributes_json,
+        }))
+    }
+
+    fn next_rule_v1(&mut self) -> Result<Option<GeoSnapshotRule>, GeoSnapshotError> {
+        if self.is_done()? {
             return Ok(None);
         }
 
@@ -173,6 +257,50 @@ impl SiteSnapshotKeyReader {
         self.payload.record_item();
         Ok(Some(GeoSnapshotRule { match_type, value, attributes }))
     }
+
+    fn is_done(&mut self) -> Result<bool, GeoSnapshotError> {
+        if self.finished {
+            return Ok(true);
+        }
+        if self.payload.remaining_len() == 0 {
+            self.payload.finish()?;
+            self.finished = true;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+fn prepared_from_legacy(
+    rule: GeoSnapshotRule,
+) -> Result<GeoSnapshotPreparedRule, GeoSnapshotError> {
+    let pattern_valid = site_pattern_is_valid(&rule.match_type, &rule.value);
+    // v1 files were accepted without this cap, so converting one must not
+    // reject attributes that were valid under the old format.
+    let attributes_json = encode_attributes_json_unbounded(&rule.attributes)?;
+    Ok(GeoSnapshotPreparedRule {
+        match_type: rule.match_type,
+        pattern_valid,
+        value: rule.value,
+        attributes_json,
+    })
+}
+
+fn encode_attributes_json(attributes: &[String]) -> Result<Option<String>, GeoSnapshotError> {
+    let json = encode_attributes_json_unbounded(attributes)?;
+    if let Some(json) = &json
+        && json.len() > MAX_ATTRIBUTES_JSON_BYTES as usize
+    {
+        return Err(GeoSnapshotError::InvalidPayload("site attributes are too large"));
+    }
+    Ok(json)
+}
+
+fn encode_attributes_json_unbounded(
+    attributes: &[String],
+) -> Result<Option<String>, GeoSnapshotError> {
+    site_attributes_to_json(attributes.iter().map(String::as_str))
+        .map_err(|_| GeoSnapshotError::InvalidPayload("failed to encode site attributes"))
 }
 
 fn push_u32(output: &mut Vec<u8>, value: usize) -> Result<(), GeoSnapshotError> {
@@ -181,10 +309,14 @@ fn push_u32(output: &mut Vec<u8>, value: usize) -> Result<(), GeoSnapshotError> 
     Ok(())
 }
 
+fn read_u8<R: Read>(reader: &mut R) -> Result<u8, GeoSnapshotError> {
+    let mut bytes = [0u8; 1];
+    map_payload_read(reader.read_exact(&mut bytes))?;
+    Ok(bytes[0])
+}
+
 fn read_match_type<R: Read>(reader: &mut R) -> Result<DomainMatchType, GeoSnapshotError> {
-    let mut tag = [0u8; 1];
-    map_payload_read(reader.read_exact(&mut tag))?;
-    match tag[0] {
+    match read_u8(reader)? {
         0 => Ok(DomainMatchType::Plain),
         1 => Ok(DomainMatchType::Regex),
         2 => Ok(DomainMatchType::Domain),

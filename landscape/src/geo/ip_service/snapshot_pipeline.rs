@@ -16,7 +16,7 @@ use crate::geo::storage::{geo_snapshot_path, write_bytes_to_sealed};
 use crate::geo::{GeoCacheApplyResult, GeoTaskMode};
 
 const SNAPSHOT_CACHE_BATCH: usize = 500;
-const SNAPSHOT_CACHE_CHANNEL_SIZE: usize = 8;
+const SNAPSHOT_CACHE_CHANNEL_SIZE: usize = 4;
 
 impl GeoIpService {
     pub(super) async fn run_geo_task(
@@ -343,13 +343,13 @@ pub(super) fn stream_snapshot_cache_events(
             if cancel.is_cancelled() {
                 return Err(GeoError::TaskCancelled);
             }
-            let Some(cidr) = key_reader.next_cidr().map_err(|error| {
+            let Some(cidr) = key_reader.next_prepared().map_err(|error| {
                 GeoError::RawDatReadFailed(format!("read snapshot key {key} failed: {error}"))
             })?
             else {
                 break;
             };
-            batch.push(IpCidrRow { network: cidr.ip, prefix_len: cidr.prefix as u8 });
+            batch.push(IpCidrRow::from_prepared(cidr.family, cidr.prefix_len, cidr.network));
             if batch.len() >= SNAPSHOT_CACHE_BATCH {
                 send_ip_cache_event(&tx, IpCacheStreamEvent::Cidrs(std::mem::take(&mut batch)))?;
                 batch = Vec::with_capacity(SNAPSHOT_CACHE_BATCH);

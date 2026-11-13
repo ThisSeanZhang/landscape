@@ -18,11 +18,47 @@ use super::{CacheWriteOutcome, db_err};
 /// 500 rows x 5 bound columns = 2500 parameters, below SQLite's 32766 limit.
 const INSERT_BATCH: usize = 500;
 
-/// Row of a full-content replace; host bits are masked on write.
-#[derive(Debug, Clone)]
+/// Row of a full-content replace; `network` holds already-masked bytes and
+/// `family` is the stored IP version (4 or 6).
+#[derive(Debug, Clone, Copy)]
 pub struct IpCidrRow {
-    pub network: IpAddr,
+    pub family: u8,
     pub prefix_len: u8,
+    pub network: [u8; 16],
+}
+
+impl IpCidrRow {
+    /// Direct/upload path: mask the host bits, pack the network bytes and clamp
+    /// the prefix to the family maximum so no row is stored unmatchable.
+    pub fn from_ip(network: IpAddr, prefix_len: u8) -> Self {
+        match network {
+            IpAddr::V4(addr) => {
+                let prefix_len = prefix_len.min(32);
+                let prefix = prefix_len as u32;
+                let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };
+                let mut bytes = [0u8; 16];
+                bytes[..4].copy_from_slice(&(u32::from(addr) & mask).to_be_bytes());
+                Self { family: 4, prefix_len, network: bytes }
+            }
+            IpAddr::V6(addr) => {
+                let prefix_len = prefix_len.min(128);
+                let prefix = prefix_len as u32;
+                let mask = if prefix == 0 { 0 } else { u128::MAX << (128 - prefix) };
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(&(u128::from(addr) & mask).to_be_bytes());
+                Self { family: 6, prefix_len, network: bytes }
+            }
+        }
+    }
+
+    /// Snapshot path: the build stage already masked and packed the row.
+    pub fn from_prepared(family: u8, prefix_len: u8, network: [u8; 16]) -> Self {
+        Self { family, prefix_len, network }
+    }
+
+    pub fn network_len(&self) -> usize {
+        if self.family == 4 { 4 } else { 16 }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -41,22 +77,6 @@ pub enum IpCacheStreamEvent {
     Begin { key: String, content_hash: String },
     Cidrs(Vec<IpCidrRow>),
     End,
-}
-
-/// Big-endian network bytes (4/16) with host bits masked to zero.
-pub fn masked_network_bytes(network: IpAddr, prefix_len: u8) -> Vec<u8> {
-    match network {
-        IpAddr::V4(addr) => {
-            let prefix_len = prefix_len.min(32) as u32;
-            let mask = if prefix_len == 0 { 0 } else { u32::MAX << (32 - prefix_len) };
-            (u32::from(addr) & mask).to_be_bytes().to_vec()
-        }
-        IpAddr::V6(addr) => {
-            let prefix_len = prefix_len.min(128) as u32;
-            let mask = if prefix_len == 0 { 0 } else { u128::MAX << (128 - prefix_len) };
-            (u128::from(addr) & mask).to_be_bytes().to_vec()
-        }
-    }
 }
 
 fn network_from_bytes(bytes: &[u8]) -> Option<IpAddr> {
@@ -89,13 +109,6 @@ fn prefix_probes(ip: IpAddr) -> Vec<(i32, i32, Vec<u8>)> {
                 })
                 .collect()
         }
-    }
-}
-
-fn family_of(ip: IpAddr) -> i32 {
-    match ip {
-        IpAddr::V4(_) => 4,
-        IpAddr::V6(_) => 6,
     }
 }
 
@@ -515,9 +528,9 @@ async fn insert_cidr_chunk(
         builder.push_values(chunk.iter().enumerate(), |mut row, (offset, cidr)| {
             row.push_bind(entry_id)
                 .push_bind(base + offset as i64)
-                .push_bind(family_of(cidr.network))
+                .push_bind(cidr.family as i32)
                 .push_bind(cidr.prefix_len as i32)
-                .push_bind(masked_network_bytes(cidr.network, cidr.prefix_len));
+                .push_bind(&cidr.network[..cidr.network_len()]);
         });
         builder.build().execute(&mut *tx).await.map_err(db_err)?;
     }
@@ -530,9 +543,7 @@ mod tests {
 
     use tokio::sync::mpsc;
 
-    use super::{
-        IpCacheRepository, IpCacheStreamEvent, IpCidrRow, masked_network_bytes, prefix_probes,
-    };
+    use super::{IpCacheRepository, IpCacheStreamEvent, IpCidrRow, prefix_probes};
     use crate::geo_cache::{CacheWriteOutcome, GeoCacheDatabase};
 
     fn ip(value: &str) -> IpAddr {
@@ -540,7 +551,7 @@ mod tests {
     }
 
     fn cidr(network: &str, prefix_len: u8) -> IpCidrRow {
-        IpCidrRow { network: ip(network), prefix_len }
+        IpCidrRow::from_ip(ip(network), prefix_len)
     }
 
     async fn repo() -> IpCacheRepository {
@@ -549,13 +560,31 @@ mod tests {
 
     #[test]
     fn masking_clears_host_bits() {
-        assert_eq!(masked_network_bytes(ip("10.1.2.3"), 8), vec![10, 0, 0, 0]);
-        assert_eq!(masked_network_bytes(ip("10.1.2.3"), 32), vec![10, 1, 2, 3]);
-        assert_eq!(masked_network_bytes(ip("10.1.2.3"), 0), vec![0, 0, 0, 0]);
-        assert_eq!(
-            masked_network_bytes(ip("2001:db8::1"), 32),
-            vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        );
+        let row = IpCidrRow::from_ip(ip("10.1.2.3"), 8);
+        assert_eq!(row.family, 4);
+        assert_eq!(&row.network[..4], &[10, 0, 0, 0]);
+
+        let row = IpCidrRow::from_ip(ip("10.1.2.3"), 32);
+        assert_eq!(&row.network[..4], &[10, 1, 2, 3]);
+
+        let row = IpCidrRow::from_ip(ip("10.1.2.3"), 0);
+        assert_eq!(&row.network[..4], &[0, 0, 0, 0]);
+
+        let row = IpCidrRow::from_ip(ip("2001:db8::1"), 32);
+        assert_eq!(row.family, 6);
+        assert_eq!(&row.network[..], &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn prefix_is_clamped_to_family_maximum() {
+        let row = IpCidrRow::from_ip(ip("10.1.2.3"), 40);
+        assert_eq!((row.family, row.prefix_len), (4, 32));
+        assert_eq!(&row.network[..4], &[10, 1, 2, 3]);
+
+        let row = IpCidrRow::from_ip(ip("2001:db8::1"), 200);
+        assert_eq!((row.family, row.prefix_len), (6, 128));
+        let IpAddr::V6(addr) = ip("2001:db8::1") else { unreachable!("expected an IPv6 address") };
+        assert_eq!(row.network, addr.octets());
     }
 
     #[test]
@@ -785,10 +814,7 @@ mod mem_probe {
             while index < total {
                 let end = (index + 500).min(total);
                 let batch = (index..end)
-                    .map(|value| IpCidrRow {
-                        network: IpAddr::V4(Ipv4Addr::from(value as u32)),
-                        prefix_len: 32,
-                    })
+                    .map(|value| IpCidrRow::from_ip(IpAddr::V4(Ipv4Addr::from(value as u32)), 32))
                     .collect::<Vec<_>>();
                 tx.send(IpCacheStreamEvent::Cidrs(batch)).await.unwrap();
                 index = end;

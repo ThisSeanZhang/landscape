@@ -16,7 +16,7 @@ use crate::geo::storage::{geo_snapshot_path, write_bytes_to_sealed};
 use crate::geo::{GeoCacheApplyResult, GeoTaskMode};
 
 const SNAPSHOT_CACHE_BATCH: usize = 500;
-const SNAPSHOT_CACHE_CHANNEL_SIZE: usize = 8;
+const SNAPSHOT_CACHE_CHANNEL_SIZE: usize = 4;
 
 impl GeoSiteService {
     pub(super) async fn run_geo_task(
@@ -334,16 +334,17 @@ pub(super) fn stream_snapshot_cache_events(
             if cancel.is_cancelled() {
                 return Err(GeoError::TaskCancelled);
             }
-            let Some(rule) = key_reader.next_rule().map_err(|e| {
+            let Some(rule) = key_reader.next_prepared().map_err(|e| {
                 GeoError::RawDatReadFailed(format!("read snapshot key {key} failed: {e}"))
             })?
             else {
                 break;
             };
-            batch.push(SiteRuleRow::new(
+            batch.push(SiteRuleRow::from_prepared(
                 rule.match_type,
                 rule.value,
-                rule.attributes.into_iter().collect(),
+                rule.attributes_json,
+                rule.pattern_valid,
             ));
             if batch.len() >= SNAPSHOT_CACHE_BATCH {
                 send_site_cache_event(

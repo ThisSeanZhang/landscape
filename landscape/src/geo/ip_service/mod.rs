@@ -374,9 +374,8 @@ impl GeoIpService {
             let content_hash = geo_ip_content_hash(&values);
             let cidrs: Vec<IpCidrRow> = values
                 .iter()
-                .map(|config| IpCidrRow {
-                    network: config.ip,
-                    prefix_len: config.prefix.min(u8::MAX as u32) as u8,
+                .map(|config| {
+                    IpCidrRow::from_ip(config.ip, config.prefix.min(u8::MAX as u32) as u8)
                 })
                 .collect();
 

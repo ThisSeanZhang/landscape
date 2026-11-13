@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use landscape_common::{
-    config_service::geo::{GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig},
+    config_service::geo::{
+        GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig, site_attributes_from_json,
+        site_attributes_to_json, site_pattern_is_valid,
+    },
     database::error::DbError,
     dns::rule::DomainMatchType,
     utils::time::get_f64_timestamp,
 };
-use regex::Regex;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use tokio::sync::mpsc;
 
@@ -21,18 +23,31 @@ const INSERT_BATCH: usize = 500;
 pub struct SiteRuleRow {
     pub match_type: DomainMatchType,
     pub domain: String,
-    pub attributes: HashSet<String>,
+    pub attributes_json: Option<String>,
     pub pattern_valid: bool,
 }
 
 impl SiteRuleRow {
+    /// Direct/upload path: derive the cache-ready fields from raw rule data.
+    ///
     /// `pattern_valid` guards the REGEXP arm of the lookup query, which
     /// errors the whole statement on an uncompilable pattern: invalid Regex
     /// rules must simply never match, not break lookups.
     pub fn new(match_type: DomainMatchType, domain: String, attributes: HashSet<String>) -> Self {
-        let pattern_valid =
-            !matches!(match_type, DomainMatchType::Regex) || Regex::new(&domain).is_ok();
-        Self { match_type, domain, attributes, pattern_valid }
+        let pattern_valid = site_pattern_is_valid(&match_type, &domain);
+        let attributes_json =
+            site_attributes_to_json(attributes.iter().map(String::as_str)).ok().flatten();
+        Self { match_type, domain, attributes_json, pattern_valid }
+    }
+
+    /// Snapshot path: the build stage already validated and encoded the row.
+    pub fn from_prepared(
+        match_type: DomainMatchType,
+        domain: String,
+        attributes_json: Option<String>,
+        pattern_valid: bool,
+    ) -> Self {
+        Self { match_type, domain, attributes_json, pattern_valid }
     }
 }
 
@@ -68,23 +83,6 @@ fn match_type_from_i32(value: i32) -> Option<DomainMatchType> {
         3 => Some(DomainMatchType::Full),
         _ => None,
     }
-}
-
-/// Empty sets are NULL, non-empty ones a sorted JSON array.
-fn attributes_to_json(attributes: &HashSet<String>) -> Option<String> {
-    if attributes.is_empty() {
-        return None;
-    }
-    let mut names: Vec<&str> = attributes.iter().map(String::as_str).collect();
-    names.sort_unstable();
-    serde_json::to_string(&names).ok()
-}
-
-fn attributes_from_json(raw: Option<String>) -> HashSet<String> {
-    raw.and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .collect()
 }
 
 /// `"www.a.b.c"` → `["www.a.b.c", "a.b.c", "b.c", "c"]`.
@@ -290,7 +288,7 @@ impl SiteCacheRepository {
                     key: GeoFileCacheKey { name, key },
                     match_type: match_type_from_i32(match_type)?,
                     domain,
-                    attributes: attributes_from_json(attributes),
+                    attributes: site_attributes_from_json(attributes.as_deref()),
                 })
             })
             .collect::<Option<Vec<_>>>()
@@ -348,7 +346,7 @@ impl SiteCacheRepository {
                 Some(GeoSiteFileConfig {
                     match_type: match_type_from_i32(match_type)?,
                     value,
-                    attributes: attributes_from_json(attributes),
+                    attributes: site_attributes_from_json(attributes.as_deref()),
                 })
             })
             .collect::<Option<Vec<_>>>()
@@ -545,7 +543,7 @@ async fn insert_rule_chunk(
                 .push_bind(base + offset as i64)
                 .push_bind(match_type_to_i32(rule.match_type.clone()))
                 .push_bind(rule.domain.as_str())
-                .push_bind(attributes_to_json(&rule.attributes))
+                .push_bind(rule.attributes_json.as_deref())
                 .push_bind(rule.pattern_valid);
         });
         builder.build().execute(&mut *tx).await.map_err(db_err)?;
