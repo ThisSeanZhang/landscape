@@ -170,6 +170,10 @@ function select_ip_model(value: WanIpMode) {
           style="flex: 1"
           v-else-if="iface_data.ip_model.t === WanIpMode.PPPoE"
         >
+          <n-alert type="warning">
+            {{ t("interface.pppoe_native_warn_1") }}<br />
+            {{ t("interface.pppoe_native_warn_2") }}
+          </n-alert>
           <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
             <n-grid :cols="5">
               <n-form-item-gi :label="t('interface.username')" :span="5">

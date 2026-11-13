@@ -4,6 +4,9 @@ export default {
   mode_static: "Static IP",
   mode_pppoe_native: "PPPoE (Native)",
   mode_dhcp_client: "DHCP Client",
+  pppoe_native_warn_1:
+    "Please confirm whether the current interface supports native XDP.",
+  pppoe_native_warn_2: "If not, use pppd mode for higher performance",
   static_ip: "Static IP",
   set_default_route: "Set default route",
   yes: "Yes",

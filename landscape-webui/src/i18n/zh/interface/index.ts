@@ -4,6 +4,8 @@ export default {
   mode_static: "静态IP",
   mode_pppoe_native: "PPPoE 原生拨号",
   mode_dhcp_client: "DHCP 客户端",
+  pppoe_native_warn_1: "请先确认当前网卡是否支持 native XDP,",
+  pppoe_native_warn_2: "如不支持请使用 pppd 模式, 以获得更高性能",
   static_ip: "静态 IP",
   set_default_route: "是否设置默认路由",
   yes: "是",
