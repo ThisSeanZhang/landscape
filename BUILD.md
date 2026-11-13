@@ -87,13 +87,17 @@ If the UI build fails with missing `@landscape-router/types/...` modules, regene
 
 ## Full build
 
-Use this when you want the same general flow as CI:
+Use this for local verification builds:
 
 ```bash
 bash ./build.sh -t x86_64
 ```
 
-`build.sh` installs frontend dependencies, regenerates API bindings only when the generated files or lock file are missing, builds the web UI, stages the Scalar static assets under `output/static`, and then builds the release backend binary.
+`build.sh` installs frontend dependencies, regenerates API bindings only when the generated files or lock file are missing, builds the web UI, stages the Scalar static assets under `output/static`, and then builds the backend binary. It uses the `fast` Cargo profile by default (no size optimizations, fastest compile). For release-style artifacts, use:
+
+```bash
+bash ./build.sh -t x86_64 --release
+```
 
 ## `sudo`
 

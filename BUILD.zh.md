@@ -93,7 +93,11 @@ pnpm --filter landscape-webui dev
 bash ./build.sh -t x86_64
 ```
 
-`build.sh` 会安装前端依赖，只在生成产物或 lock 文件缺失时重新生成 API 类型，构建 Web UI、把 Scalar 静态资源整理到 `output/static`，然后再构建 release 后端二进制。
+`build.sh` 会安装前端依赖，只在生成产物或 lock 文件缺失时重新生成 API 类型，构建 Web UI、把 Scalar 静态资源整理到 `output/static`，然后再构建后端二进制。默认使用 `fast` Cargo profile（关闭体积优化以换取最快编译速度）。需要正式 release 产物时使用：
+
+```bash
+bash ./build.sh -t x86_64 --release
+```
 
 ## `sudo`
 

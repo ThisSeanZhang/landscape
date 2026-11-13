@@ -231,3 +231,16 @@ strip = "symbols"
 debug = false
 incremental = false
 overflow-checks = false
+
+# Fast local validation profile: skip size optimizations to minimize compile time.
+[profile.fast]
+inherits = "release"
+opt-level = 0
+lto = false
+codegen-units = 256
+panic = "unwind"
+strip = false
+debug = false
+debug-assertions = false
+incremental = true
+overflow-checks = false
