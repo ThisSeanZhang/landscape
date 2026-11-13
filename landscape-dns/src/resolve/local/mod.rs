@@ -3,7 +3,8 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use hickory_proto::rr::{Record, RecordType};
 use landscape_common::{
-    dns::DohRuntimeConfig, metric::dns::DnsOutcome, sys_service::lan_hostname::LanHostnameConfig,
+    metric::dns::DnsOutcome,
+    sys_config::{DohRuntimeConfig, LanHostnameConfig},
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 

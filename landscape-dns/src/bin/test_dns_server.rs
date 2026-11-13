@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use landscape_common::dns::{CacheRuntimeConfig, gen_default_dns_rule_and_upstream};
+use landscape_common::dns::gen_default_dns_rule_and_upstream;
 use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::CacheRuntimeConfig;
+use landscape_common::sys_config::LanHostnameConfig;
 use landscape_core::geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry};
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::server::{DnsServiceDeps, EngineBuilder, LandscapeDnsServer};

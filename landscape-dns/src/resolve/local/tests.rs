@@ -5,7 +5,7 @@ use hickory_proto::serialize::binary::BinEncodable;
 use landscape_common::{
     event::hub::{IPv6AssignEvent, Ipv6AssignAddress},
     net::MacAddr,
-    sys_service::lan_hostname::LanHostnameConfig,
+    sys_config::LanHostnameConfig,
 };
 use landscape_core::lan_device::DirectorySeedDevice;
 

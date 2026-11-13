@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
 };
 
-use landscape_common::{VERSION, config::StoreRuntimeConfig, database::error::DbError};
+use landscape_common::{VERSION, database::error::DbError, sys_config::StoreRuntimeConfig};
 use migration::{Migrator, MigratorTrait, sea_orm::ConnectOptions};
 use sea_orm::{Database, DatabaseConnection};
 

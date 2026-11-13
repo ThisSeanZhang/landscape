@@ -1,8 +1,8 @@
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::{
     ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectRealtimeStatus, ConnectStatusType,
     IfaceRealtimeStat, IpAggregatedStats, IpRealtimeStat,
 };
+use landscape_common::sys_config::MetricRuntimeConfig;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -791,7 +791,7 @@ mod tests {
 
     fn test_config(window_minutes: u64) -> MetricRuntimeConfig {
         MetricRuntimeConfig {
-            mode: landscape_common::config::MetricMode::Memory,
+            mode: landscape_common::sys_config::MetricMode::Memory,
             connect_second_window_minutes: window_minutes,
             connect_1m_retention_days: 1,
             connect_1h_retention_days: 7,

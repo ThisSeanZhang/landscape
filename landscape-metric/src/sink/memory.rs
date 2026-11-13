@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -15,6 +14,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_common::sys_config::MetricRuntimeConfig;
 
 use landscape_common::metric::connect::ConnectMetric;
 use landscape_common::metric::dns::DnsMetricEvent;
@@ -247,8 +247,8 @@ impl MemoryMetricStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use landscape_common::config::MetricMode;
     use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
+    use landscape_common::sys_config::MetricMode;
     use std::net::{IpAddr, Ipv4Addr};
 
     fn test_config() -> MetricRuntimeConfig {

@@ -13,8 +13,9 @@ use moka::future::Cache;
 use uuid::Uuid;
 
 use landscape_common::{
-    dns::{CacheRuntimeConfig, rule::FilterResult},
+    dns::rule::FilterResult,
     flow::{DnsResultSink, DnsRuntimeMarkInfo, FlowMarkInfo},
+    sys_config::CacheRuntimeConfig,
 };
 
 use crate::domain::ParsedDomain;

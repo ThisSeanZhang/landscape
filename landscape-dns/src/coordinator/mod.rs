@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use landscape_common::config::DnsRuntimeConfig;
+use landscape_common::sys_config::DnsRuntimeConfig;
 use landscape_core::geo_cache::SiteMatcherRegistry;
 
 use crate::server::{EngineBuilder, LandscapeDnsServer};

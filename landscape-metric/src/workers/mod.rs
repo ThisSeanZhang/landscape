@@ -4,8 +4,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::ConnectMetric;
+use landscape_common::sys_config::MetricRuntimeConfig;
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -252,7 +252,6 @@ pub(crate) mod testing {
 
     use hickory_proto::op::ResponseCode;
     use hickory_proto::rr::RecordType;
-    use landscape_common::config::{MetricMode, MetricRuntimeConfig};
     use landscape_common::database::error::DbError;
     use landscape_common::metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -263,6 +262,7 @@ pub(crate) mod testing {
         DnsSummaryQueryParams, DnsSummaryResponse,
     };
     use landscape_common::metric::dns::{DnsMetric, DnsMetricEvent, DnsOutcome};
+    use landscape_common::sys_config::{MetricMode, MetricRuntimeConfig};
 
     use crate::agg::dns_bucket::DnsBucketRow;
     use crate::agg::dns_bucket::DnsSummaryParts;

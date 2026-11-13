@@ -20,9 +20,8 @@ use crate::{
 };
 use landscape_common::utils::time::now_ms;
 use landscape_common::{
-    dns::{CacheRuntimeConfig, error::DnsServiceError},
-    flow::DnsResultSink,
-    metric::dns::DnsMetricEvent,
+    dns::error::DnsServiceError, flow::DnsResultSink, metric::dns::DnsMetricEvent,
+    sys_config::CacheRuntimeConfig,
 };
 
 #[derive(Clone)]

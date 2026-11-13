@@ -26,7 +26,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::{
 };
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameConfig;
 
 use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceHandle, ServiceStatus};

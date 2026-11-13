@@ -1,9 +1,7 @@
 use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::config::LandscapeLanHostnameConfig;
-use landscape_common::sys_service::lan_hostname::{
-    GetLanHostnameConfigResponse, UpdateLanHostnameConfigRequest,
-};
+use landscape_common::sys_config::LandscapeLanHostnameConfig;
+use landscape_common::sys_config::{GetLanHostnameConfigResponse, UpdateLanHostnameConfigRequest};
 
 use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};

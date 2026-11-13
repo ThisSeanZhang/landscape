@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub use super::runtime::GatewayRuntimeConfig;
-
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapeGatewayConfig {

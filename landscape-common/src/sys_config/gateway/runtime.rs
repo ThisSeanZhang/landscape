@@ -1,4 +1,4 @@
-use super::settings::LandscapeGatewayConfig;
+use super::config::LandscapeGatewayConfig;
 
 const DEFAULT_ENABLE: bool = false;
 const DEFAULT_HTTP_PORT: u16 = 80;

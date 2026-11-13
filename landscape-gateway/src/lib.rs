@@ -14,8 +14,8 @@ use std::os::windows::io::AsRawSocket;
 
 use arc_swap::ArcSwap;
 use landscape_common::concurrency::{runtime_thread_name_fn, spawn_named_thread, thread_name};
+use landscape_common::sys_config::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
-use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use pingora::apps::ServerApp;

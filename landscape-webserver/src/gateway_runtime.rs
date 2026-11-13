@@ -8,8 +8,8 @@ use landscape_common::config::ConfigId;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
+use landscape_common::sys_config::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
-use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
 #[cfg(feature = "gateway")]
 use landscape_database::repository::Repository;

@@ -164,23 +164,6 @@ pub enum DbAction {
     Rollback,
 }
 
-#[derive(Debug, Clone)]
-pub struct WebConfig {
-    pub web_root: PathBuf,
-
-    pub port: u16,
-
-    pub address: IpAddr,
-}
-
-#[derive(Debug, Clone)]
-pub struct LogConfig {
-    pub log_path: PathBuf,
-    pub debug: bool,
-    pub log_output_in_terminal: bool,
-    pub max_log_files: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

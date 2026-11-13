@@ -35,9 +35,9 @@ use landscape::{
 };
 
 use landscape_common::{
-    config::AuthRuntimeConfig,
     memtrack::MemoryHistory,
     service::controller::{ConfigStoreController, ConfigStoreServiceController},
+    sys_config::AuthRuntimeConfig,
     wan_link::{WanLinkKind, WanLinkV4Model},
 };
 use landscape_core::time::SyncTimeService;

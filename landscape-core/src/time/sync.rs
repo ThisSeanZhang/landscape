@@ -8,8 +8,8 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use landscape_common::{
     concurrency::thread_name,
-    config::TimeRuntimeConfig,
     memtrack::{TaggedFuture, subsystem_from_task_label},
+    sys_config::TimeRuntimeConfig,
     sys_service::time_sync::{
         TimeSyncAction, TimeSyncError, TimeSyncSource, TimeSyncStage, TimeSyncStatus,
     },

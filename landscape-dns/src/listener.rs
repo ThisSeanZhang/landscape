@@ -8,8 +8,8 @@ use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 
 use crate::server::handler::DnsRequestHandler;
-use landscape_common::dns::DohRuntimeConfig;
 use landscape_common::flow::{DnsListenerRole, DnsSocketRegisterError, FlowSocketRegistrar};
+use landscape_common::sys_config::DohRuntimeConfig;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;

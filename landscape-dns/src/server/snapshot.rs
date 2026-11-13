@@ -4,8 +4,8 @@ use arc_swap::ArcSwap;
 #[cfg(test)]
 use arc_swap::Guard;
 
-use landscape_common::dns::CacheRuntimeConfig;
 use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
+use landscape_common::sys_config::CacheRuntimeConfig;
 
 use crate::{
     domain::ParsedDomain,

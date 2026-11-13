@@ -1,14 +1,12 @@
 use arc_swap::ArcSwap;
-use landscape_common::config::{
-    InitConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeLanHostnameConfig,
-    LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUIConfig, RuntimeConfig,
-};
+use landscape_common::config::InitConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
-use landscape_common::sys_service::gateway::settings::{
-    GatewayRuntimeConfig, LandscapeGatewayConfig,
+use landscape_common::sys_config::{
+    GatewayRuntimeConfig, LanHostnameConfig, LandscapeConfig, LandscapeDnsConfig,
+    LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeTimeConfig,
+    LandscapeUIConfig, RuntimeConfig,
 };
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -185,7 +183,7 @@ impl LandscapeConfigService {
         self.config.load().ui.clone()
     }
 
-    pub fn get_auth_config(&self) -> landscape_common::config::AuthRuntimeConfig {
+    pub fn get_auth_config(&self) -> landscape_common::sys_config::AuthRuntimeConfig {
         self.config.load().auth.clone()
     }
 
@@ -193,7 +191,7 @@ impl LandscapeConfigService {
         self.config.load().file_config.metric.clone()
     }
 
-    pub fn get_metric_runtime_config(&self) -> landscape_common::config::MetricRuntimeConfig {
+    pub fn get_metric_runtime_config(&self) -> landscape_common::sys_config::MetricRuntimeConfig {
         self.config.load().metric.clone()
     }
 
@@ -204,7 +202,7 @@ impl LandscapeConfigService {
         (dns, hash)
     }
 
-    pub fn get_dns_runtime_config(&self) -> landscape_common::config::DnsRuntimeConfig {
+    pub fn get_dns_runtime_config(&self) -> landscape_common::sys_config::DnsRuntimeConfig {
         self.config.load().dns.clone()
     }
 
@@ -220,7 +218,7 @@ impl LandscapeConfigService {
         self.config.load().file_config.time.clone()
     }
 
-    pub fn get_time_runtime_config(&self) -> landscape_common::config::TimeRuntimeConfig {
+    pub fn get_time_runtime_config(&self) -> landscape_common::sys_config::TimeRuntimeConfig {
         self.config.load().time.clone()
     }
 

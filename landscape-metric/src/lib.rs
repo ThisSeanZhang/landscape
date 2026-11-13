@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::ConnectMetric;
 use landscape_common::metric::connect::{
@@ -16,6 +15,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_common::sys_config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;

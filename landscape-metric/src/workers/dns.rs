@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::dns::DnsMetric;
 use landscape_common::metric::dns::DnsMetricEvent;
+use landscape_common::sys_config::MetricRuntimeConfig;
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

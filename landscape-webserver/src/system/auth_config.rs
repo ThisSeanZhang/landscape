@@ -1,5 +1,5 @@
 use axum::extract::State;
-use landscape_common::auth::ChangePasswordRequest;
+use landscape_common::sys_config::ChangePasswordRequest;
 use subtle::ConstantTimeEq;
 
 use crate::LandscapeApp;

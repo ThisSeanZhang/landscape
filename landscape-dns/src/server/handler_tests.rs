@@ -7,7 +7,7 @@ use landscape_common::dns::redirect::{DNSRedirectRuntimeRule, DnsRedirectAnswerM
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType, FilterResult};
 use landscape_common::flow::{DnsRuntimeMarkInfo, NoopDnsResultSink};
 use landscape_common::metric::dns::DnsOutcome;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameConfig;
 use landscape_core::lan_device::LanDeviceDirectory;
 use std::net::IpAddr;
 use uuid::Uuid;

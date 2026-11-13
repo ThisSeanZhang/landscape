@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use landscape_common::{
     LANDSCAPE_METRIC_DIR_NAME,
-    config::{MetricMode, MetricRuntimeConfig},
     database::error::DbError,
     metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -20,6 +19,7 @@ use landscape_common::{
         DEFAULT_MEM_METRIC_RETENTION_DAYS, MemHistoryQueryParams, MemHistoryResponse,
     },
     service::ServiceStatus,
+    sys_config::{MetricMode, MetricRuntimeConfig},
 };
 use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
 use landscape_metric::MetricEngine;

@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use crate::config::MetricMode;
+use crate::sys_config::MetricMode;
 pub use landscape_macro::LdApiError;
 
 pub mod api_response;
@@ -19,6 +19,7 @@ pub mod error;
 pub mod event;
 pub mod flow;
 pub mod geo_cli;
+pub mod sys_config;
 
 pub mod memtrack;
 pub mod metric;

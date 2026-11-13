@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -15,6 +14,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_common::sys_config::MetricRuntimeConfig;
 use landscape_common::utils::time::now_ms;
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
@@ -56,7 +56,7 @@ impl PersistentMetricStore {
     #[cfg(test)]
     pub(crate) async fn new(base_path: PathBuf) -> Result<Self, String> {
         let config = MetricRuntimeConfig {
-            mode: landscape_common::config::MetricMode::Persistent,
+            mode: landscape_common::sys_config::MetricMode::Persistent,
             connect_second_window_minutes: 5,
             connect_1m_retention_days: 1,
             connect_1h_retention_days: 7,
@@ -716,7 +716,7 @@ mod tests {
 
     fn test_config() -> MetricRuntimeConfig {
         MetricRuntimeConfig {
-            mode: landscape_common::config::MetricMode::Persistent,
+            mode: landscape_common::sys_config::MetricMode::Persistent,
             connect_second_window_minutes: 5,
             connect_1m_retention_days: 1,
             connect_1h_retention_days: 7,

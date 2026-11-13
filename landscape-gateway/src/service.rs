@@ -1,7 +1,7 @@
 use crate::{GatewayManager, GatewayTlsConfig};
 use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
-use landscape_common::sys_service::gateway::settings::GatewayRuntimeConfig;
+use landscape_common::sys_config::GatewayRuntimeConfig;
 use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
 use std::sync::Arc;
 

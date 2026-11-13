@@ -4,10 +4,11 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use landscape_common::{
-    config::DnsRuntimeConfig,
-    dns::{CacheRuntimeConfig, rule::DNSRuleConfig},
+    dns::rule::DNSRuleConfig,
     flow::{NoopDnsResultSink, NoopFlowSocketRegistrar},
-    sys_service::lan_hostname::LanHostnameConfig,
+    sys_config::CacheRuntimeConfig,
+    sys_config::DnsRuntimeConfig,
+    sys_config::LanHostnameConfig,
 };
 use landscape_core::{
     geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry},

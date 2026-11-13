@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameConfig;
 use landscape_common::{
-    config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
     dns::{DnsServiceStatus, FlowDnsStatus},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
     metric::dns::DnsMetricEvent,
+    sys_config::DnsRuntimeConfig,
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{

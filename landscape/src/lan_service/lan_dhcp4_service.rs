@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use arc_swap::ArcSwap;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameConfig;
 
 use crate::LandscapeSingleIpInfo;
 use crate::get_iface_by_name;
@@ -77,7 +77,7 @@ pub struct DHCPv4ServerStarter {
     route_service: IpRouteService,
     db_provider: LandscapeDBServiceProvider,
     api_tls_resolver: SharedSniResolver,
-    dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+    dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
     /// Live LAN suffix, advertised as DHCP option 15/119.
     lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
@@ -92,7 +92,7 @@ impl DHCPv4ServerStarter {
         route_service: IpRouteService,
         db_provider: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
-        dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+        dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
         lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
         lan_discovery_sender: LanDiscoveryEventSender,
@@ -308,7 +308,7 @@ impl DHCPv4ServerManagerService {
         route_service: IpRouteService,
         store_service: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
-        dns_runtime_config: landscape_common::config::DnsRuntimeConfig,
+        dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
         lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,

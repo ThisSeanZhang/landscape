@@ -7,12 +7,12 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
 use landscape_common::dns::{
-    CacheRuntimeConfig, DnsServicePhase, DnsServiceStatus, DohRuntimeConfig, FlowDnsDependencies,
-    FlowDnsPhase, FlowDnsStatus,
+    DnsServicePhase, DnsServiceStatus, FlowDnsDependencies, FlowDnsPhase, FlowDnsStatus,
 };
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::metric::dns::DnsMetricEvent;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::{CacheRuntimeConfig, DohRuntimeConfig};
 use landscape_core::lan_device::LanDeviceDirectory;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -515,9 +515,9 @@ impl LandscapeDnsServer {
 mod tests {
     use super::*;
     use arc_swap::ArcSwap;
-    use landscape_common::dns::CacheRuntimeConfig;
     use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
-    use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+    use landscape_common::sys_config::CacheRuntimeConfig;
+    use landscape_common::sys_config::LanHostnameConfig;
     use landscape_core::lan_device::LanDeviceDirectory;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {

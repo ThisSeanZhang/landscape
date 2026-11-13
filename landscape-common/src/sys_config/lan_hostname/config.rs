@@ -76,11 +76,11 @@ fn is_same_or_subdomain(name: &str, zone: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::LandscapeConfig;
     use crate::error::LdApiErrorInfo;
+    use crate::sys_config::LandscapeConfig;
 
     use super::{LanHostnameError, LandscapeLanHostnameConfig, normalize_lan_suffix};
-    use crate::sys_service::lan_hostname::runtime::LanHostnameConfig;
+    use crate::sys_config::lan_hostname::runtime::LanHostnameConfig;
 
     #[test]
     fn legacy_hostname_registry_key_deserializes_as_lan_hostname() {

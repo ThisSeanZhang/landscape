@@ -1,4 +1,3 @@
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -8,6 +7,7 @@ use landscape_common::metric::dns::{
     DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use landscape_common::sys_config::MetricRuntimeConfig;
 
 use crate::agg::Batch;
 use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};

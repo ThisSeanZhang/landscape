@@ -53,10 +53,10 @@ use landscape_common::{
     VERSION,
     args::{DbAction, LAND_ARGS, LAND_HOME_PATH, LandscapeAction},
     concurrency::{runtime_thread_name_fn, spawn_task, task_label, thread_name},
-    config::RuntimeConfig,
     database::error::DbError,
     database::store::ConfigStore,
     event::hub::EventHub,
+    sys_config::RuntimeConfig,
 };
 use landscape_common::{config::InitConfig, lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig};
 use landscape_core::cert::build_tls_server_config_with_shared_resolver;

@@ -18,7 +18,7 @@ pub mod runtime;
 pub mod status;
 pub mod upstream;
 
-pub use runtime::{CacheRuntimeConfig, DohRuntimeConfig, FlowDnsDependencies};
+pub use runtime::FlowDnsDependencies;
 pub use status::{DnsServicePhase, DnsServiceStatus, FlowDnsPhase, FlowDnsStatus};
 
 pub fn gen_default_dns_rule_and_upstream() -> (DNSRuleConfig, DnsUpstreamConfig) {

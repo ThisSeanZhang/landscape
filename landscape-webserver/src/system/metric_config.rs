@@ -1,9 +1,9 @@
 use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::config::{
+use landscape_common::database::error::DbError;
+use landscape_common::sys_config::{
     GetMetricConfigResponse, LandscapeMetricConfig, UpdateMetricConfigRequest,
 };
-use landscape_common::database::error::DbError;
 
 use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};

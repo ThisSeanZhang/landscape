@@ -1,6 +1,6 @@
 use axum::extract::State;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::config::{
+use landscape_common::sys_config::{
     GetGatewayConfigResponse, LandscapeGatewayConfig, UpdateGatewayConfigRequest,
 };
 
