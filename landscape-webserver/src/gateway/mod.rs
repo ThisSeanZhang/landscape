@@ -53,7 +53,7 @@ async fn list_gateway_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<HttpUpstreamRuleConfig>> {
     ensure_gateway_supported(&state)?;
-    let result = state.gateway_service.list_rules().await.unwrap_or_default();
+    let result = state.managed.gateway_service.list_rules().await.unwrap_or_default();
     LandscapeApiResp::success(result)
 }
 
@@ -71,7 +71,7 @@ async fn create_gateway_rule(
     ensure_gateway_supported(&state)?;
     validate_gateway_rule(&state, &config).await?;
 
-    let saved = state.gateway_service.save_rule(config).await?;
+    let saved = state.managed.gateway_service.save_rule(config).await?;
 
     sync_gateway_dynamic_dns_redirects(&state).await;
     reload_gateway_rules(&state).await;
@@ -94,7 +94,7 @@ async fn get_gateway_rule(
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<HttpUpstreamRuleConfig> {
     ensure_gateway_supported(&state)?;
-    let result = state.gateway_service.find_rule(id).await?;
+    let result = state.managed.gateway_service.find_rule(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -117,7 +117,7 @@ async fn delete_gateway_rule(
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
     ensure_gateway_supported(&state)?;
-    state.gateway_service.delete_rule(id).await?;
+    state.managed.gateway_service.delete_rule(id).await?;
 
     sync_gateway_dynamic_dns_redirects(&state).await;
     reload_gateway_rules(&state).await;
@@ -145,42 +145,42 @@ async fn get_gateway_status(
 )]
 async fn restart_gateway(State(state): State<LandscapeApp>) -> LandscapeApiResult<GatewayStatus> {
     ensure_gateway_supported(&state)?;
-    let gateway_config = state.config_service.get_gateway_runtime_config();
-    state.gateway_service.restart(gateway_config, std::time::Duration::from_secs(10)).await;
+    let gateway_config = state.system.config_service.get_gateway_runtime_config();
+    state.managed.gateway_service.restart(gateway_config, std::time::Duration::from_secs(10)).await;
     LandscapeApiResp::success(build_gateway_status(&state).await)
 }
 
 async fn reload_gateway_rules(state: &LandscapeApp) {
-    state.gateway_service.reload_rules().await;
+    state.managed.gateway_service.reload_rules().await;
 }
 
 async fn build_gateway_status(state: &LandscapeApp) -> GatewayStatus {
-    let config = state.gateway_service.config();
+    let config = state.managed.gateway_service.config();
     GatewayStatus {
-        supported: state.gateway_service.is_supported(),
-        status: state.gateway_service.status(),
+        supported: state.managed.gateway_service.is_supported(),
+        status: state.managed.gateway_service.status(),
         http_port: config.http_port,
         https_port: config.https_port,
-        https_ready: state.gateway_service.has_https_listener(),
-        rule_count: state.gateway_service.stored_rule_count().await,
+        https_ready: state.managed.gateway_service.has_https_listener(),
+        rule_count: state.managed.gateway_service.stored_rule_count().await,
     }
 }
 
 pub(crate) async fn sync_gateway_dynamic_dns_redirects(state: &LandscapeApp) {
-    let rules = if state.gateway_service.is_supported() {
-        state.gateway_service.list_rules().await.unwrap_or_default()
+    let rules = if state.managed.gateway_service.is_supported() {
+        state.managed.gateway_service.list_rules().await.unwrap_or_default()
     } else {
         Vec::new()
     };
     let batch = build_gateway_dynamic_dns_redirect_batch(&rules);
-    let _ = state.dns_redirect_service.set_dynamic_batch(batch).await;
+    let _ = state.managed.dns_redirect_service.set_dynamic_batch(batch).await;
 }
 
 async fn validate_gateway_rule(
     state: &LandscapeApp,
     config: &HttpUpstreamRuleConfig,
 ) -> Result<(), GatewayError> {
-    let existing_rules = state.gateway_service.list_rules().await.unwrap_or_default();
+    let existing_rules = state.managed.gateway_service.list_rules().await.unwrap_or_default();
 
     validate_rule_shape(config)?;
 
@@ -197,7 +197,7 @@ async fn validate_gateway_rule(
 }
 
 fn ensure_gateway_supported(state: &LandscapeApp) -> Result<(), LandscapeApiError> {
-    if state.gateway_service.is_supported() {
+    if state.managed.gateway_service.is_supported() {
         Ok(())
     } else {
         Err(LandscapeApiError::GatewayUnsupportedTarget)

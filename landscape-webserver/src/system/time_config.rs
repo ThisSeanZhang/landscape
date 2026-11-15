@@ -19,7 +19,7 @@ use crate::error::LandscapeApiResult;
 pub async fn get_time_sync_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<TimeSyncStatus> {
-    LandscapeApiResp::success(state.time_service.status())
+    LandscapeApiResp::success(state.system.time_service.status())
 }
 
 #[utoipa::path(
@@ -30,7 +30,7 @@ pub async fn get_time_sync_status(
     responses((status = 200, description = "Success"))
 )]
 pub async fn sync_time_now(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.time_service.sync_now()?;
+    state.system.time_service.sync_now()?;
     LandscapeApiResp::success(())
 }
 
@@ -44,7 +44,7 @@ pub async fn sync_time_now(State(state): State<LandscapeApp>) -> LandscapeApiRes
 pub async fn get_time_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetTimeConfigResponse> {
-    let (time, hash) = state.config_service.get_time_config_from_file().await;
+    let (time, hash) = state.system.config_service.get_time_config_from_file().await;
     LandscapeApiResp::success(GetTimeConfigResponse { time, hash })
 }
 
@@ -58,7 +58,7 @@ pub async fn get_time_config(
 pub async fn get_time_config_fast(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<LandscapeTimeConfig> {
-    let time_config = state.config_service.get_time_config_from_memory();
+    let time_config = state.system.config_service.get_time_config_from_memory();
     LandscapeApiResp::success(time_config)
 }
 
@@ -74,10 +74,10 @@ pub async fn update_time_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateTimeConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.config_service.update_time_config(payload.new_time, payload.expected_hash).await?;
+    state.system.config_service.update_time_config(payload.new_time, payload.expected_hash).await?;
 
-    let time_runtime = state.config_service.get_time_runtime_config();
-    state.time_service.update_config(time_runtime);
+    let time_runtime = state.system.config_service.get_time_runtime_config();
+    state.system.time_service.update_config(time_runtime);
 
     LandscapeApiResp::success(())
 }

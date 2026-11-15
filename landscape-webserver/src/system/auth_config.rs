@@ -34,7 +34,7 @@ pub async fn update_auth_config(
     if req.current_password.is_empty() {
         return Err(AuthError::CurrentPasswordIncorrect.into());
     }
-    let current_auth = state.config_service.get_auth_config();
+    let current_auth = state.system.config_service.get_auth_config();
     let current_ok = req.current_password.as_bytes().ct_eq(current_auth.admin_pass.as_bytes());
     if !bool::from(current_ok) {
         return Err(AuthError::CurrentPasswordIncorrect.into());
@@ -56,10 +56,10 @@ pub async fn update_auth_config(
     }
 
     // 5. Persist
-    state.config_service.update_auth_password(req.new_password.clone()).await?;
+    state.system.config_service.update_auth_password(req.new_password.clone()).await?;
 
     // 6. Update the shared auth config so middleware/login see the new password immediately
-    state.auth.rcu(|old| {
+    state.system.auth.rcu(|old| {
         let mut new_auth = (**old).clone();
         new_auth.admin_pass = req.new_password.clone();
         new_auth

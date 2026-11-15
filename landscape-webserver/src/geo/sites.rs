@@ -47,7 +47,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_geo_site_tasks(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<GeoTaskProgress>> {
-    LandscapeApiResp::success(state.geo_site_service.task_progress_snapshot())
+    LandscapeApiResp::success(state.managed.geo_site_service.task_progress_snapshot())
 }
 
 #[utoipa::path(
@@ -63,7 +63,7 @@ async fn cancel_geo_site_task(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<bool> {
-    LandscapeApiResp::success(state.geo_site_service.cancel_geo_task(id))
+    LandscapeApiResp::success(state.managed.geo_site_service.cancel_geo_task(id))
 }
 
 #[utoipa::path(
@@ -80,7 +80,7 @@ async fn lookup_geo_site_domain(
     State(state): State<LandscapeApp>,
     Query(query): Query<QueryGeoSiteDomain>,
 ) -> LandscapeApiResult<Vec<GeoSiteLookupResult>> {
-    LandscapeApiResp::success(state.geo_site_service.lookup_domain(&query.domain).await?)
+    LandscapeApiResp::success(state.managed.geo_site_service.lookup_domain(&query.domain).await?)
 }
 
 #[utoipa::path(
@@ -100,7 +100,7 @@ async fn get_geo_site_cache_detail(
     State(state): State<LandscapeApp>,
     Query(key): Query<GeoFileCacheKey>,
 ) -> LandscapeApiResult<GeoDomainConfig> {
-    let result = state.geo_site_service.get_cache_value_by_key(&key).await;
+    let result = state.managed.geo_site_service.get_cache_value_by_key(&key).await;
     if let Some(result) = result {
         LandscapeApiResp::success(result)
     } else {
@@ -128,6 +128,7 @@ async fn search_geo_site_cache(
     tracing::debug!("name: {name:?}");
     tracing::debug!("key: {key:?}");
     let result: Vec<GeoFileCacheKey> = state
+        .managed
         .geo_site_service
         .list_all_keys()
         .await
@@ -149,7 +150,7 @@ async fn search_geo_site_cache(
 async fn get_geo_site_cache(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<GeoFileCacheKey>> {
-    let result = state.geo_site_service.list_all_keys().await;
+    let result = state.managed.geo_site_service.list_all_keys().await;
     LandscapeApiResp::success(result)
 }
 
@@ -160,7 +161,7 @@ async fn get_geo_site_cache(
     responses((status = 200, description = "Success"))
 )]
 async fn refresh_geo_site_cache(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.geo_site_service.refresh(true).await;
+    state.managed.geo_site_service.refresh(true).await;
     LandscapeApiResp::success(())
 }
 
@@ -177,7 +178,7 @@ async fn get_geo_sites(
     State(state): State<LandscapeApp>,
     Query(q): Query<QueryGeoDomainConfig>,
 ) -> LandscapeApiResult<Vec<GeoSiteSourceConfig>> {
-    let result = state.geo_site_service.query_geo_by_name(q.name).await;
+    let result = state.managed.geo_site_service.query_geo_by_name(q.name).await;
     LandscapeApiResp::success(result)
 }
 
@@ -195,7 +196,7 @@ async fn get_geo_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<GeoSiteSourceConfig> {
-    let result = state.geo_site_service.find_by_id(id).await?;
+    let result = state.managed.geo_site_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -214,7 +215,7 @@ async fn add_geo_site(
     State(state): State<LandscapeApp>,
     JsonBody(dns_rule): JsonBody<GeoSiteSourceConfig>,
 ) -> LandscapeApiResult<GeoSiteSourceConfig> {
-    let result = state.geo_site_service.checked_set(dns_rule).await?;
+    let result = state.managed.geo_site_service.checked_set(dns_rule).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -229,7 +230,7 @@ async fn add_many_geo_sites(
     State(state): State<LandscapeApp>,
     JsonBody(rules): JsonBody<Vec<GeoSiteSourceConfig>>,
 ) -> LandscapeApiResult<()> {
-    state.geo_site_service.checked_set_list(rules).await?;
+    state.managed.geo_site_service.checked_set_list(rules).await?;
     LandscapeApiResp::success(())
 }
 
@@ -247,7 +248,7 @@ async fn del_geo_site(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.geo_site_service.delete(id).await?;
+    state.managed.geo_site_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 
@@ -265,7 +266,7 @@ async fn download_geo_site_dat(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> Result<Response, LandscapeApiError> {
-    let bytes = state.geo_site_service.get_raw_dat(id).await?;
+    let bytes = state.managed.geo_site_service.get_raw_dat(id).await?;
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     let disposition = HeaderValue::from_str(&format!("attachment; filename=\"site-{id}.raw\""))
@@ -289,7 +290,7 @@ async fn download_geo_site_snapshot(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> Result<Response, LandscapeApiError> {
-    match state.geo_site_service.get_snapshot_or_start_download(id).await? {
+    match state.managed.geo_site_service.get_snapshot_or_start_download(id).await? {
         RawDatState::Ready(bytes) => {
             let mut headers = HeaderMap::new();
             headers
@@ -333,7 +334,7 @@ async fn update_by_upload(
         return Err(GeoError::SiteFileReadError)?;
     };
 
-    state.geo_site_service.update_geo_config_by_bytes(name, bytes).await?;
+    state.managed.geo_site_service.update_geo_config_by_bytes(name, bytes).await?;
 
     LandscapeApiResp::success(())
 }
@@ -352,6 +353,6 @@ async fn refresh_geo_site_config_by_name(
     State(state): State<LandscapeApp>,
     Path(name): Path<String>,
 ) -> LandscapeApiResult<()> {
-    state.geo_site_service.refresh_one(&name).await?;
+    state.managed.geo_site_service.refresh_one(&name).await?;
     LandscapeApiResp::success(())
 }

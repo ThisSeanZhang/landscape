@@ -28,7 +28,7 @@ pub fn get_dns_upstream_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_dns_upstreams(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DnsUpstreamConfig>> {
-    let result = state.dns_upstream_service.list().await?;
+    let result = state.managed.dns_upstream_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -46,7 +46,7 @@ async fn get_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DnsUpstreamConfig> {
-    let result = state.dns_upstream_service.find_by_id(id).await?;
+    let result = state.managed.dns_upstream_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -65,7 +65,7 @@ async fn add_many_dns_upstreams(
     State(state): State<LandscapeApp>,
     JsonBody(dns_upstreams): JsonBody<Vec<DnsUpstreamConfig>>,
 ) -> LandscapeApiResult<()> {
-    state.dns_upstream_service.checked_set_list(dns_upstreams).await?;
+    state.managed.dns_upstream_service.checked_set_list(dns_upstreams).await?;
     LandscapeApiResp::success(())
 }
 
@@ -80,7 +80,7 @@ async fn add_dns_upstream(
     State(state): State<LandscapeApp>,
     JsonBody(dns_upstream): JsonBody<DnsUpstreamConfig>,
 ) -> LandscapeApiResult<DnsUpstreamConfig> {
-    let result = state.dns_upstream_service.checked_set(dns_upstream).await?;
+    let result = state.managed.dns_upstream_service.checked_set(dns_upstream).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -98,6 +98,6 @@ async fn del_dns_upstream(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_upstream_service.delete(id).await?;
+    state.managed.dns_upstream_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

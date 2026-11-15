@@ -17,7 +17,8 @@ use crate::error::LandscapeApiResult;
 pub async fn get_lan_hostname_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetLanHostnameConfigResponse> {
-    let (lan_hostname, hash) = state.config_service.get_lan_hostname_config_from_file().await;
+    let (lan_hostname, hash) =
+        state.system.config_service.get_lan_hostname_config_from_file().await;
     LandscapeApiResp::success(GetLanHostnameConfigResponse { lan_hostname, hash })
 }
 
@@ -31,7 +32,7 @@ pub async fn get_lan_hostname_config(
 pub async fn get_lan_hostname_config_fast(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<LandscapeLanHostnameConfig> {
-    let config = state.config_service.get_lan_hostname_config_from_memory();
+    let config = state.system.config_service.get_lan_hostname_config_from_memory();
     LandscapeApiResp::success(config)
 }
 
@@ -49,10 +50,11 @@ pub async fn update_lan_hostname_config(
 ) -> LandscapeApiResult<()> {
     let new_lan_hostname = payload.new_lan_hostname.normalized()?;
     state
+        .system
         .config_service
         .update_lan_hostname_config(new_lan_hostname, payload.expected_hash)
         .await?;
-    let runtime = state.config_service.get_lan_hostname_runtime_config();
-    state.dns_service.update_lan_hostname_config(runtime);
+    let runtime = state.system.config_service.get_lan_hostname_runtime_config();
+    state.system.dns_service.update_lan_hostname_config(runtime);
     LandscapeApiResp::success(())
 }

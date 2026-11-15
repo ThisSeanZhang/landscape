@@ -27,7 +27,7 @@ pub fn get_dns_provider_profile_paths() -> OpenApiRouter<LandscapeApp> {
 async fn list_provider_profiles(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DnsProviderProfile>> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.list().await?)
+    LandscapeApiResp::success(app.managed.dns_provider_profile_service.list().await?)
 }
 
 #[utoipa::path(
@@ -41,7 +41,7 @@ async fn get_provider_profile(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<DnsProviderProfile>> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.find_by_id(id).await?)
+    LandscapeApiResp::success(app.managed.dns_provider_profile_service.find_by_id(id).await?)
 }
 
 #[utoipa::path(
@@ -55,7 +55,9 @@ async fn create_provider_profile(
     State(app): State<LandscapeApp>,
     JsonBody(payload): JsonBody<DnsProviderProfile>,
 ) -> LandscapeApiResult<DnsProviderProfile> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.checked_set_profile(payload).await?)
+    LandscapeApiResp::success(
+        app.managed.dns_provider_profile_service.checked_set_profile(payload).await?,
+    )
 }
 
 #[utoipa::path(
@@ -69,7 +71,9 @@ async fn validate_provider_profile(
     State(app): State<LandscapeApp>,
     JsonBody(payload): JsonBody<DnsProviderCredentialCheckRequest>,
 ) -> LandscapeApiResult<DnsProviderCredentialCheckResult> {
-    LandscapeApiResp::success(app.dns_provider_profile_service.validate_credentials(payload).await?)
+    LandscapeApiResp::success(
+        app.managed.dns_provider_profile_service.validate_credentials(payload).await?,
+    )
 }
 
 #[utoipa::path(
@@ -86,7 +90,9 @@ async fn update_provider_profile(
     JsonBody(mut payload): JsonBody<DnsProviderProfile>,
 ) -> LandscapeApiResult<DnsProviderProfile> {
     payload.id = id;
-    LandscapeApiResp::success(app.dns_provider_profile_service.checked_set_profile(payload).await?)
+    LandscapeApiResp::success(
+        app.managed.dns_provider_profile_service.checked_set_profile(payload).await?,
+    )
 }
 
 #[utoipa::path(
@@ -100,6 +106,6 @@ async fn delete_provider_profile(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.dns_provider_profile_service.delete_profile(id).await?;
+    app.managed.dns_provider_profile_service.delete_profile(id).await?;
     LandscapeApiResp::success(())
 }

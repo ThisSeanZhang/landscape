@@ -16,7 +16,7 @@ use crate::error::LandscapeApiResult;
 pub async fn get_dns_config_fast(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetDnsConfigResponse> {
-    let (dns, hash) = state.config_service.get_dns_config();
+    let (dns, hash) = state.system.config_service.get_dns_config();
     LandscapeApiResp::success(GetDnsConfigResponse { dns, hash })
 }
 
@@ -30,7 +30,7 @@ pub async fn get_dns_config_fast(
 pub async fn get_dns_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetDnsConfigResponse> {
-    let (dns, hash) = state.config_service.get_dns_config_from_file().await;
+    let (dns, hash) = state.system.config_service.get_dns_config_from_file().await;
     LandscapeApiResp::success(GetDnsConfigResponse { dns, hash })
 }
 
@@ -48,8 +48,8 @@ pub async fn update_dns_config(
 ) -> LandscapeApiResult<String> {
     let request: UpdateDnsConfigRequest = serde_json::from_value(payload)?;
     request.new_dns.validate()?;
-    state.config_service.update_dns_config(request.new_dns, request.expected_hash).await?;
-    let dns_runtime = state.config_service.get_dns_runtime_config();
-    state.dns_service.apply_runtime_config(dns_runtime).await;
+    state.system.config_service.update_dns_config(request.new_dns, request.expected_hash).await?;
+    let dns_runtime = state.system.config_service.get_dns_runtime_config();
+    state.system.dns_service.apply_runtime_config(dns_runtime).await;
     LandscapeApiResp::success("success".to_string())
 }

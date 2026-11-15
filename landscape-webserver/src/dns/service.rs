@@ -29,7 +29,7 @@ pub fn get_dns_service_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_dns_service_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<DnsServiceStatus> {
-    LandscapeApiResp::success(state.dns_service.get_status().await)
+    LandscapeApiResp::success(state.system.dns_service.get_status().await)
 }
 
 #[utoipa::path(
@@ -47,7 +47,7 @@ async fn get_dns_service_status(
 async fn get_dns_flow_statuses(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<FlowDnsStatus>> {
-    LandscapeApiResp::success(state.dns_service.flow_statuses().await)
+    LandscapeApiResp::success(state.system.dns_service.flow_statuses().await)
 }
 
 #[utoipa::path(
@@ -67,6 +67,7 @@ async fn get_dns_flow_status(
     Path(flow_id): Path<FlowId>,
 ) -> LandscapeApiResult<FlowDnsStatus> {
     let status = state
+        .system
         .dns_service
         .flow_status(flow_id)
         .await
@@ -82,7 +83,7 @@ async fn get_dns_flow_status(
     responses((status = 200, description = "Success"))
 )]
 async fn start_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.dns_service.start_dns_service().await;
+    state.system.dns_service.start_dns_service().await;
     LandscapeApiResp::success(())
 }
 
@@ -94,7 +95,7 @@ async fn start_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiRes
     responses((status = 200, description = "Success"))
 )]
 async fn stop_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.dns_service.stop().await;
+    state.system.dns_service.stop().await;
     LandscapeApiResp::success(())
 }
 
@@ -116,7 +117,7 @@ async fn check_domain(
     State(state): State<LandscapeApp>,
     Query(req): Query<CheckDnsReq>,
 ) -> LandscapeApiResult<CheckChainDnsResult> {
-    LandscapeApiResp::success(state.dns_service.check_domain(req).await)
+    LandscapeApiResp::success(state.system.dns_service.check_domain(req).await)
 }
 
 #[utoipa::path(
@@ -137,7 +138,7 @@ async fn invalidate_domain_cache(
     State(state): State<LandscapeApp>,
     Query(req): Query<CheckDnsReq>,
 ) -> LandscapeApiResult<CheckChainDnsResult> {
-    LandscapeApiResp::success(state.dns_service.invalidate_domain_cache(req).await?)
+    LandscapeApiResp::success(state.system.dns_service.invalidate_domain_cache(req).await?)
 }
 
 #[utoipa::path(
@@ -158,5 +159,5 @@ async fn refresh_domain_cache(
     State(state): State<LandscapeApp>,
     Query(req): Query<CheckDnsReq>,
 ) -> LandscapeApiResult<CheckChainDnsResult> {
-    LandscapeApiResp::success(state.dns_service.refresh_domain_cache(req).await?)
+    LandscapeApiResp::success(state.system.dns_service.refresh_domain_cache(req).await?)
 }

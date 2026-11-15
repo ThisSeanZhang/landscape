@@ -79,5 +79,5 @@ async fn get_memory_persisted_history(
     State(state): State<LandscapeApp>,
     Query(params): Query<MemHistoryQueryParams>,
 ) -> LandscapeApiResult<MemHistoryResponse> {
-    LandscapeApiResp::success(state.metric_service.query_memory_history(params).await)
+    LandscapeApiResp::success(state.system.metric_service.query_memory_history(params).await)
 }

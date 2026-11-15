@@ -31,7 +31,9 @@ pub fn get_ddns_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<ApiDdnsJob>>))
 )]
 async fn list_ddns_jobs(State(app): State<LandscapeApp>) -> LandscapeApiResult<Vec<ApiDdnsJob>> {
-    LandscapeApiResp::success(app.ddns_service.list().await?.into_iter().map(Into::into).collect())
+    LandscapeApiResp::success(
+        app.managed.ddns_service.list().await?.into_iter().map(Into::into).collect(),
+    )
 }
 
 #[utoipa::path(
@@ -43,7 +45,9 @@ async fn list_ddns_jobs(State(app): State<LandscapeApp>) -> LandscapeApiResult<V
 async fn list_ddns_job_status(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DdnsJobRuntime>> {
-    LandscapeApiResp::success(app.ddns_service.get_runtime_statuses().await.into_values().collect())
+    LandscapeApiResp::success(
+        app.managed.ddns_service.get_runtime_statuses().await.into_values().collect(),
+    )
 }
 
 #[utoipa::path(
@@ -57,7 +61,7 @@ async fn get_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<ApiDdnsJob>> {
-    LandscapeApiResp::success(app.ddns_service.find_by_id(id).await?.map(Into::into))
+    LandscapeApiResp::success(app.managed.ddns_service.find_by_id(id).await?.map(Into::into))
 }
 
 #[utoipa::path(
@@ -74,7 +78,9 @@ async fn create_ddns_job(
     State(app): State<LandscapeApp>,
     JsonBody(payload): JsonBody<ApiDdnsJob>,
 ) -> LandscapeApiResult<ApiDdnsJob> {
-    LandscapeApiResp::success(app.ddns_service.checked_set_job(payload.into()).await?.into())
+    LandscapeApiResp::success(
+        app.managed.ddns_service.checked_set_job(payload.into()).await?.into(),
+    )
 }
 
 #[utoipa::path(
@@ -86,7 +92,7 @@ async fn create_ddns_job(
 async fn list_ddns_tasks(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DdnsTaskProgress>> {
-    LandscapeApiResp::success(app.ddns_service.task_progress_snapshot())
+    LandscapeApiResp::success(app.managed.ddns_service.task_progress_snapshot())
 }
 
 #[utoipa::path(
@@ -104,7 +110,7 @@ async fn trigger_ddns_job_sync(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DdnsJobRuntime> {
-    LandscapeApiResp::success(app.ddns_service.sync_job_now(id).await?)
+    LandscapeApiResp::success(app.managed.ddns_service.sync_job_now(id).await?)
 }
 
 #[utoipa::path(
@@ -121,7 +127,7 @@ async fn cancel_ddns_job_sync(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DdnsJobRuntime> {
-    LandscapeApiResp::success(app.ddns_service.cancel_job_sync(id).await?)
+    LandscapeApiResp::success(app.managed.ddns_service.cancel_job_sync(id).await?)
 }
 
 #[utoipa::path(
@@ -141,7 +147,9 @@ async fn update_ddns_job(
     JsonBody(mut payload): JsonBody<ApiDdnsJob>,
 ) -> LandscapeApiResult<ApiDdnsJob> {
     payload.id = id;
-    LandscapeApiResp::success(app.ddns_service.checked_set_job(payload.into()).await?.into())
+    LandscapeApiResp::success(
+        app.managed.ddns_service.checked_set_job(payload.into()).await?.into(),
+    )
 }
 
 #[utoipa::path(
@@ -158,6 +166,6 @@ async fn delete_ddns_job(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.ddns_service.checked_delete(id).await?;
+    app.managed.ddns_service.checked_delete(id).await?;
     LandscapeApiResp::success(())
 }

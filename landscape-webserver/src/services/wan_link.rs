@@ -36,7 +36,7 @@ pub fn get_wan_link_paths() -> OpenApiRouter<LandscapeApp> {
 async fn list_wan_links(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<WanLinkConfig>> {
-    LandscapeApiResp::success(state.wan_link_service.list().await?)
+    LandscapeApiResp::success(state.managed.wan_link_service.list().await?)
 }
 
 #[utoipa::path(
@@ -49,7 +49,7 @@ async fn list_wan_links(
 async fn get_all_wan_link_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, WanLinkStatus>> {
-    LandscapeApiResp::success(state.wan_link_service.get_link_statuses().await)
+    LandscapeApiResp::success(state.managed.wan_link_service.get_link_statuses().await)
 }
 
 #[utoipa::path(
@@ -67,7 +67,7 @@ async fn get_wan_link_runtime_status(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<WanLinkSectionsSnapshot> {
-    if let Some(snapshot) = state.wan_link_service.get_section_runtime_status(id) {
+    if let Some(snapshot) = state.managed.wan_link_service.get_section_runtime_status(id) {
         LandscapeApiResp::success(snapshot)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "WAN Link runtime status" })?
@@ -89,7 +89,7 @@ async fn get_wan_link(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<WanLinkConfig> {
-    if let Some(link) = state.wan_link_service.find_by_id(id).await? {
+    if let Some(link) = state.managed.wan_link_service.find_by_id(id).await? {
         LandscapeApiResp::success(link)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "WAN Link" })?
@@ -111,7 +111,7 @@ async fn create_wan_link(
     // id/update_at are server-assigned by the DTO conversion.
     let payload: WanLinkConfig = payload.into();
     validate_wan_link(&payload, None).await?;
-    LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)
+    LandscapeApiResp::success(state.managed.wan_link_service.handle_service_config(payload).await?)
 }
 
 #[utoipa::path(
@@ -131,7 +131,7 @@ async fn update_wan_link(
     Path(id): Path<ConfigId>,
     JsonBody(body): JsonBody<UpdateWanLinkConfig>,
 ) -> LandscapeApiResult<WanLinkConfig> {
-    let old = state.wan_link_service.find_by_id(id).await?;
+    let old = state.managed.wan_link_service.find_by_id(id).await?;
     if old.is_none() {
         Err(ServiceConfigError::NotFound { service_name: "WAN Link" })?;
     }
@@ -139,7 +139,7 @@ async fn update_wan_link(
     let mut payload: WanLinkConfig = body.into();
     payload.id = id;
     validate_wan_link(&payload, old.as_ref()).await?;
-    LandscapeApiResp::success(state.wan_link_service.handle_service_config(payload).await?)
+    LandscapeApiResp::success(state.managed.wan_link_service.handle_service_config(payload).await?)
 }
 
 #[utoipa::path(
@@ -154,7 +154,7 @@ async fn delete_wan_link(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    if let Some(config) = state.wan_link_service.find_by_id(id).await?
+    if let Some(config) = state.managed.wan_link_service.find_by_id(id).await?
         && matches!(config.kind, WanLinkKind::Pppd { .. })
         && config.v4.enable
     {
@@ -163,7 +163,7 @@ async fn delete_wan_link(
             reason: "disable the PPPD link before deleting it".to_string(),
         })?;
     }
-    LandscapeApiResp::success(state.wan_link_service.delete_and_stop_service(id).await?)
+    LandscapeApiResp::success(state.managed.wan_link_service.delete_and_stop_service(id).await?)
 }
 
 /// Runtime-state (netlink) validation only. Cross-link rules and the WAN

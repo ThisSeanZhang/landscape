@@ -18,7 +18,7 @@ use crate::error::LandscapeApiResult;
 pub async fn get_gateway_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetGatewayConfigResponse> {
-    let (gateway, hash) = state.config_service.get_gateway_config_from_file().await;
+    let (gateway, hash) = state.system.config_service.get_gateway_config_from_file().await;
     LandscapeApiResp::success(GetGatewayConfigResponse { gateway, hash })
 }
 
@@ -32,7 +32,7 @@ pub async fn get_gateway_config(
 pub async fn get_gateway_config_fast(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<LandscapeGatewayConfig> {
-    let gateway_config = state.config_service.get_gateway_config_from_memory();
+    let gateway_config = state.system.config_service.get_gateway_config_from_memory();
     LandscapeApiResp::success(gateway_config)
 }
 
@@ -48,6 +48,10 @@ pub async fn update_gateway_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateGatewayConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.config_service.update_gateway_config(payload.new_gateway, payload.expected_hash).await?;
+    state
+        .system
+        .config_service
+        .update_gateway_config(payload.new_gateway, payload.expected_hash)
+        .await?;
     LandscapeApiResp::success(())
 }

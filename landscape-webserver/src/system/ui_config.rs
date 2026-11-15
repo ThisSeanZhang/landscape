@@ -16,7 +16,7 @@ use crate::error::LandscapeApiResult;
 pub async fn get_ui_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GetUIConfigResponse> {
-    let (ui, hash) = state.config_service.get_ui_config_from_file().await?;
+    let (ui, hash) = state.system.config_service.get_ui_config_from_file().await?;
     LandscapeApiResp::success(GetUIConfigResponse { ui, hash })
 }
 
@@ -30,7 +30,7 @@ pub async fn get_ui_config(
 pub async fn get_ui_config_fast(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<LandscapeUIConfig> {
-    let ui_config = state.config_service.get_ui_config_from_memory();
+    let ui_config = state.system.config_service.get_ui_config_from_memory();
     LandscapeApiResp::success(ui_config)
 }
 
@@ -46,6 +46,6 @@ pub async fn update_ui_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateUIConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.config_service.update_ui_config(payload.new_ui, payload.expected_hash).await?;
+    state.system.config_service.update_ui_config(payload.new_ui, payload.expected_hash).await?;
     LandscapeApiResp::success(())
 }

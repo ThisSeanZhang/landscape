@@ -38,7 +38,7 @@ pub fn get_lan_ipv6_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
-    LandscapeApiResp::success(state.lan_ipv6_service.get_all_status().await)
+    LandscapeApiResp::success(state.managed.lan_ipv6_service.get_all_status().await)
 }
 
 #[utoipa::path(
@@ -53,6 +53,7 @@ async fn get_all_lan_ipv6_configs(
 ) -> LandscapeApiResult<Vec<ApiLanIPv6ServiceConfigV2>> {
     LandscapeApiResp::success(
         state
+            .managed
             .lan_ipv6_service
             .list()
             .await
@@ -77,7 +78,8 @@ async fn get_lan_ipv6_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<ApiLanIPv6ServiceConfigV2> {
-    if let Some(iface_config) = state.lan_ipv6_service.get_config_by_name(iface_name).await {
+    if let Some(iface_config) = state.managed.lan_ipv6_service.get_config_by_name(iface_name).await
+    {
         LandscapeApiResp::success(iface_config.into())
     } else {
         Err(ServiceConfigError::NotFound { service_name: "LAN IPv6" })?
@@ -96,16 +98,16 @@ async fn handle_lan_ipv6(
     JsonBody(payload): JsonBody<ApiLanIPv6ServiceConfigV2>,
 ) -> LandscapeApiResult<()> {
     let mut config: LanIPv6ServiceConfigV2 = payload.into();
-    let links = state.wan_link_service.get_store().net_iface_map().await?;
+    let links = state.managed.wan_link_service.get_store().net_iface_map().await?;
     fill_pd_depend_ifaces(&mut config, &links)?;
-    let pd_contexts = state.wan_link_service.get_pd_prefix_contexts().await;
+    let pd_contexts = state.managed.wan_link_service.get_pd_prefix_contexts().await;
     let existing_configs: Vec<LanIPv6ServiceConfigV2> =
-        state.lan_ipv6_service.list().await.unwrap_or_default();
+        state.managed.lan_ipv6_service.list().await.unwrap_or_default();
     validate_global_prefix_conflicts(&config, &existing_configs, Some(&pd_contexts))?;
     config.config.validate_with_pd_context(Some(&pd_contexts))?;
 
-    state.lan_ipv6_service.save_config(config).await?;
-    state.static_nat6_mapping_service.request_refresh();
+    state.managed.lan_ipv6_service.save_config(config).await?;
+    state.managed.static_nat6_mapping_service.request_refresh();
     LandscapeApiResp::success(())
 }
 
@@ -120,7 +122,7 @@ async fn delete_and_stop_lan_ipv6(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    let result = state.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await?;
-    state.static_nat6_mapping_service.request_refresh();
+    let result = state.managed.lan_ipv6_service.delete_and_stop_iface_service(iface_name).await?;
+    state.managed.static_nat6_mapping_service.request_refresh();
     LandscapeApiResp::success(result)
 }

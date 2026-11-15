@@ -27,7 +27,7 @@ pub fn get_firewall_blacklist_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_firewall_blacklists(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<FirewallBlacklistConfig>> {
-    let result = state.firewall_blacklist_service.list().await?;
+    let result = state.managed.firewall_blacklist_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -45,7 +45,7 @@ async fn get_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<FirewallBlacklistConfig> {
-    let result = state.firewall_blacklist_service.find_by_id(id).await?;
+    let result = state.managed.firewall_blacklist_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -64,7 +64,7 @@ async fn add_firewall_blacklist(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<FirewallBlacklistConfig>,
 ) -> LandscapeApiResult<FirewallBlacklistConfig> {
-    let result = state.firewall_blacklist_service.checked_set(config).await?;
+    let result = state.managed.firewall_blacklist_service.checked_set(config).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -82,6 +82,6 @@ async fn del_firewall_blacklist(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.firewall_blacklist_service.delete(id).await?;
+    state.managed.firewall_blacklist_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
