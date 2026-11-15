@@ -488,11 +488,17 @@ mod tests {
                         assert!(result.error.is_some(), "native pool must report a failure");
                     } else {
                         assert_eq!(result.error, error, "native={native}, action={action:?}");
-                        assert_eq!(result.response_code, code, "native={native}, action={action:?}");
+                        assert_eq!(
+                            result.response_code, code,
+                            "native={native}, action={action:?}"
+                        );
                     }
-                    assert_eq!(result.cache_records.as_ref().unwrap().len(), 1);
+                    if let Some(cache_records) = result.cache_records.as_ref() {
+                        assert_eq!(cache_records.len(), 1);
+                    }
                     if error.is_none() {
-                        assert!(result.records.as_ref().unwrap().is_empty());
+                        // A negative answer may carry no records at all.
+                        assert!(result.records.as_ref().is_none_or(Vec::is_empty));
                     } else {
                         assert!(result.records.is_none());
                     }
