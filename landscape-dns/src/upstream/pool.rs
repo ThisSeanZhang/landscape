@@ -159,7 +159,10 @@ mod tests {
             let resolver = pool.get_or_create(7, 0x8007, &upstream).unwrap();
             let answer = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
-                resolver.lookup("example.test.", RecordType::A),
+                resolver.lookup(
+                    &crate::domain::ParsedDomain::new("example.test.").unwrap(),
+                    RecordType::A,
+                ),
             )
             .await
             .unwrap()
@@ -173,7 +176,12 @@ mod tests {
         upstream.bind_config.resolved_wan = None;
         let blocked = pool.get_or_create(7, 0x8007, &upstream).unwrap();
         assert!(matches!(*blocked, LandscapeResolver::Unavailable));
-        assert!(blocked.lookup("example.test.", RecordType::A).await.is_err());
+        assert!(
+            blocked
+                .lookup(&crate::domain::ParsedDomain::new("example.test.").unwrap(), RecordType::A)
+                .await
+                .is_err()
+        );
         assert_eq!([counts[0].load(Ordering::SeqCst), counts[1].load(Ordering::SeqCst)], [2, 1]);
         for task in tasks {
             task.abort();
