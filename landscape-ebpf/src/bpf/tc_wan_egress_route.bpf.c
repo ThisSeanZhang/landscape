@@ -6,6 +6,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
+#include "route/connection.h"
 #include "route/route4_path.h"
 #include "route/route6_path.h"
 #include "route/route4_context.h"
@@ -51,7 +52,7 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
         .flow_id = resolved_flow_id,
         .slot = route4_target_slot(context->daddr),
     };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+    struct route4_target_info *target_info = route4_select_connection(context, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
@@ -125,7 +126,7 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
         .flow_id = resolved_flow_id,
         .slot = route6_target_slot(&context->daddr),
     };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    struct route6_target_info *target_info = route6_select_connection(context, &slot_key);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
@@ -366,13 +367,15 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     // SO_MARK in the HostDirect layout (bits 0-15 = chain id), e.g. the
     // DHCPv6-PD socket of a native PPPoE link.  The policy stages
     // self-skip on this mark (base/mark.h), so the packet rides the
-    // chain's terminal (PPP encapsulation) and exits untouched.
+    // chain's terminal (PPP encapsulation) and exits untouched. HostProbe
+    // uses the same pinned chain but MUST run NAT, so replies have connection
+    // state and are not rejected as unsolicited inbound traffic.
     u32 mark = skb_mark(skb);
-    if (unlikely(is_host_direct(mark))) {
+    if (unlikely(is_host_chain(mark))) {
         u32 chain = get_host_direct_chain_id(mark);
         bpf_tail_call(skb, &tc_wan_egress_roots, chain);
-        ld_from_wan_log("host-direct root tail failed chain %u; passing", chain);
-        return TC_ACT_UNSPEC;
+        ld_from_wan_log("host chain root tail failed chain %u", chain);
+        return is_host_direct(mark) ? TC_ACT_UNSPEC : TC_ACT_SHOT;
     }
 
     if (likely(current_l3_offset > 0)) {

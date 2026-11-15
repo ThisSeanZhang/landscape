@@ -1,4 +1,78 @@
 export default {
+  failover: {
+    trigger: "自动切换依据",
+    trigger_health: "外网健康探测",
+    trigger_link: "PPPoE 拨号／链路状态",
+    link_online: "拨号／出口路由在线",
+    link_hint:
+      "仅在拨号断开或该地址族出口路由消失时切换。DNS／网页探测仅供参考，不触发切换；拨号在线但外网不通时仍保持原出口。",
+
+    cause: {
+      available_wan: "发现可用出口",
+      manual_primary: "关闭自动切换，固定主 WAN",
+      priority_changed: "调整主备顺序",
+      link_unavailable: "原出口链路或路由断开",
+      health_failure: "原出口探测失败",
+      health_unknown: "原出口状态未知，重新选择出口",
+      unknown_grace_expired: "未知状态宽限期结束",
+      recovery: "高优先级线路恢复，稳定后回切",
+    },
+    health: {
+      healthy: "正常",
+      unhealthy: "探测失败",
+      unknown: "检测中",
+      disconnected: "未连接",
+    },
+
+    bind_default: "默认 Flow 也使用此主备策略",
+    bind_router: "路由器自身流量也跟随切换",
+    binding_hint:
+      "全局只能指定一个默认主备策略。路由器流量选项保留局域网和已有具体路由；DNS 上游可在 DNS 设置中单独绑定。",
+
+    advanced: "高级切换设置",
+    unknown_grace: "状态未知宽限期（秒）",
+    fail_open: "宽限结束后仍尝试状态未知的出口",
+    failback_delay: "恢复后持续正常多久才回切（秒）",
+    switch_hold: "两次非紧急切换的最短间隔（秒）",
+    failure_connection_policy: "故障时的连接策略",
+    recovery_connection_policy: "恢复回切时的连接策略",
+    new_connections_only: "只切换新连接，保留已有连接出口",
+    reset_existing: "重新选择已有连接出口（应用可能需要重连）",
+    router_applied: "路由器策略已应用",
+    router_failed: "路由器策略应用失败，正在重试",
+    router_pending: "路由器策略等待应用",
+    router_cleanup_pending: "路由器出口策略撤销中，等待恢复原路由",
+    router_cleanup_failed:
+      "路由器出口策略撤销失败，正在重试；旧出口规则可能仍生效",
+    connection_limits:
+      "连接保持按 TCP/UDP 五元组判断：TCP 空闲 2 小时、UDP 空闲 120 秒后过期；重启或缓存淘汰也会丢失绑定。重新选择出口不发送 TCP RST，也不清空 NAT，应用可能需要重连。",
+    failed_connection_warning:
+      "故障时保留已有连接可能继续使用故障 WAN；持续发送的 DNS、游戏等 UDP 会话可能持续失败，直到会话空闲过期或重新选择出口。",
+    active: "当前出口",
+    no_exit: "暂无可用出口",
+    status_unavailable: "无法获取当前出口状态",
+    remaining: "剩余 {seconds} 秒",
+    history: "最近切换记录（重启后清空）",
+    reason: {
+      manual_primary: "固定主 WAN",
+      healthy: "健康出口",
+      startup_grace: "状态未知，宽限中",
+      unknown_fail_open: "探测异常，继续尝试未知出口",
+      waiting_failback: "等待稳定后回切",
+      sticky_backup: "保持当前健康出口",
+      no_available_wan: "无可用线路",
+    },
+
+    restore_weighted: "恢复权重分流模式",
+    enable: "启用 WAN 主备切换",
+    auto_failback: "主 WAN 恢复后自动切回",
+    hint: "出口从上到下依次为主 WAN、备用 WAN。使用外网健康探测模式时，请先启用每条 WAN 的健康检测，只校验开启的探测地址族；关闭某地址族探测后沿用另一地址族的健康结果；优先使用检测正常的出口，未知状态按宽限期设置处理。关闭后固定走主 WAN，即使主 WAN 无法访问外网也不会切到备用。切换时已有连接可能需要重连。",
+    invalid_targets: "主备切换至少需要两条不同的 WAN，不能选择容器出口。",
+    primary: "主 WAN",
+    backup: "备用 WAN {index}",
+    move_up: "提高优先级",
+    move_down: "降低优先级",
+  },
   default_card: {
     title: "默认 Flow",
     target_ip: "目标 IP",

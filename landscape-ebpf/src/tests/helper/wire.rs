@@ -108,7 +108,11 @@ pub(crate) struct RouteContextV4 {
     pub daddr: u32,
     pub l4_protocol: u8,
     pub tos: u8,
+    pub src_port: u16,
+    pub dst_port: u16,
     pub smac: [u8; 6],
+    pub tcp_syn: u8,
+    pub tcp_syn_seq: u32,
 }
 
 /// C side `route6_context`.
@@ -119,7 +123,11 @@ pub(crate) struct RouteContextV6 {
     pub daddr: [u8; 16],
     pub l4_protocol: u8,
     pub tos: u8,
+    pub src_port: u16,
+    pub dst_port: u16,
     pub smac: [u8; 6],
+    pub tcp_syn: u8,
+    pub tcp_syn_seq: u32,
 }
 
 /// C side `route_view`.

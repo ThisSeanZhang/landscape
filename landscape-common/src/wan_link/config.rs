@@ -81,6 +81,37 @@ impl LandscapeDBStore<Uuid> for WanLinkConfig {
 }
 
 impl WanLinkConfig {
+    /// Enabled probe families need evidence. An explicitly disabled family
+    /// follows the other family's verdict; route availability is still separate.
+    pub fn validate_failover_health(&self) -> Result<(), ServiceConfigError> {
+        // An administratively stopped WAN has no routes and is skipped by
+        // failover. Allow maintenance without first removing every reference;
+        // enabling the WAN again runs the full health validation below.
+        if !self.active() {
+            return Ok(());
+        }
+        let (v4, v6) = self.health_check.probe_families();
+        let health = &self.health_check;
+        // Static.ipv6 is a legacy field ignored by the IPv4 runner. PD is
+        // the supported source of an IPv6 address/session on this link.
+        let ipv6_enabled = self.pd.enable;
+        let usable = (self.v4.enable && health.ipv4_probe_enabled && v4)
+            || (ipv6_enabled && health.ipv6_probe_enabled && v6);
+        if !health.enable
+            || !usable
+            || (self.v4.enable && health.ipv4_probe_enabled && !v4)
+            || (ipv6_enabled && health.ipv6_probe_enabled && !v6)
+        {
+            return Err(ServiceConfigError::InvalidConfig {
+                reason: format!(
+                    "WAN '{}' requires enabled health checks, at least one usable probe family and targets for each enabled probe switch before automatic failover (IPv4 probe: {v4}, IPv6 probe: {v6}); configure missing targets or disable that family's probe switch to follow the other family",
+                    self.attach_iface_name,
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// True when the link has an acquisition/anchor intent.
     /// - PPP kinds: gated by the service switch (`v4.enable`); PD cannot bring
     ///   the session up on its own.
@@ -250,11 +281,17 @@ pub const MAX_HEALTH_TARGETS: usize = 4;
 /// Health check section of a link: probes the link's connectivity through
 /// its own iface/source and reports a debounced verdict to the route
 /// service. Disabled by default.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WanLinkHealthCheckConfig {
     #[serde(default)]
     pub enable: bool,
+    /// When disabled, inherit the IPv6 probe verdict without probing IPv4.
+    #[serde(default = "probe_enabled_by_default")]
+    pub ipv4_probe_enabled: bool,
+    /// When disabled, inherit the IPv4 probe verdict without probing IPv6.
+    #[serde(default = "probe_enabled_by_default")]
+    pub ipv6_probe_enabled: bool,
     /// Probe method with its targets.
     #[serde(default)]
     pub probe: WanHealthProbeConfig,
@@ -277,13 +314,63 @@ pub struct WanLinkHealthCheckConfig {
     pub reliability: Option<u8>,
 }
 
+fn probe_enabled_by_default() -> bool {
+    true
+}
+
+impl Default for WanLinkHealthCheckConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            ipv4_probe_enabled: true,
+            ipv6_probe_enabled: true,
+            probe: Default::default(),
+            interval_secs: None,
+            timeout_ms: None,
+            failure_threshold: None,
+            recovery_threshold: None,
+            reliability: None,
+        }
+    }
+}
+
+impl WanLinkHealthCheckConfig {
+    pub fn probe_families(&self) -> (bool, bool) {
+        match &self.probe {
+            WanHealthProbeConfig::Multi { groups } => (
+                groups.iter().any(|g| g.targets.iter().any(|p| p.address().is_ipv4())),
+                groups.iter().any(|g| g.targets.iter().any(|p| p.address().is_ipv6())),
+            ),
+            WanHealthProbeConfig::Icmp { targets, probe_gateway } => {
+                (*probe_gateway || targets.iter().any(|ip| ip.is_ipv4()), false)
+            }
+            WanHealthProbeConfig::Dns { .. } | WanHealthProbeConfig::Http { .. } => (true, false),
+        }
+    }
+}
+
 /// Probe method of a health check; each variant owns its target
-/// representation. v1 implements ICMP only; further methods land as new
+/// representation. ICMP, DNS and HTTP are supported as separate
 /// (purely additive) variants.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum WanHealthProbeConfig {
+    /// Every group for an address family must pass; each group has its own quorum.
+    Multi { groups: Vec<WanProbeGroup> },
+    /// Resolve an A record through this WAN's chosen IPv4 DNS server.
+    Dns {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        server: std::net::Ipv4Addr,
+        domain: String,
+    },
+    /// HTTP(S) GET, including DNS resolution, confined to this WAN.
+    Http {
+        url: String,
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        dns_server: std::net::Ipv4Addr,
+    },
+
     /// ICMP echo bound to the section iface and source address.
     Icmp {
         /// Probe targets; v1 accepts IPv4 only. Empty means only the
@@ -298,10 +385,125 @@ pub enum WanHealthProbeConfig {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct WanProbeGroup {
+    pub name: String,
+    pub quorum: u8,
+    pub targets: Vec<WanProbeTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum WanProbeTarget {
+    Icmp {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        address: IpAddr,
+    },
+    Dns {
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        server: IpAddr,
+        domain: String,
+    },
+    Http {
+        url: String,
+        #[cfg_attr(feature = "openapi", schema(value_type = String))]
+        dns_server: IpAddr,
+    },
+}
+
+impl WanProbeTarget {
+    pub fn address(&self) -> IpAddr {
+        match self {
+            Self::Icmp { address } => *address,
+            Self::Dns { server, .. } => *server,
+            Self::Http { dns_server, .. } => *dns_server,
+        }
+    }
+}
+
+pub fn validate_probe_groups(groups: &[WanProbeGroup]) -> Result<(), ServiceConfigError> {
+    let invalid = |reason: &str| ServiceConfigError::InvalidConfig { reason: reason.into() };
+    if groups.is_empty() || groups.len() > 4 {
+        return Err(invalid("configure between 1 and 4 probe groups"));
+    }
+    for group in groups {
+        if group.targets.is_empty()
+            || group.targets.len() > MAX_HEALTH_TARGETS
+            || group.quorum == 0
+            || usize::from(group.quorum) > group.targets.len()
+        {
+            return Err(invalid(
+                "each probe group needs 1..4 targets and quorum within its target count",
+            ));
+        }
+        let ipv6 = group.targets[0].address().is_ipv6();
+        let mut unique = std::collections::HashSet::new();
+        for target in &group.targets {
+            let ip = target.address();
+            if ip.is_ipv6() != ipv6
+                || ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || matches!(ip, IpAddr::V4(v) if v.is_broadcast())
+                || (matches!(ip, IpAddr::V6(v) if v.is_unicast_link_local())
+                    && !matches!(target, WanProbeTarget::Icmp { .. }))
+            {
+                return Err(invalid(
+                    "probe targets in each group must use one address family and routable unicast addresses",
+                ));
+            }
+            if !unique.insert(serde_json::to_string(target).unwrap()) {
+                return Err(invalid("duplicate probe targets cannot count toward quorum"));
+            }
+            match target {
+                WanProbeTarget::Dns { domain, .. }
+                    if domain.trim().is_empty()
+                        || hickory_proto::rr::Name::from_ascii(domain).is_err() =>
+                {
+                    return Err(invalid("invalid DNS probe domain"));
+                }
+                WanProbeTarget::Http { url, .. } => {
+                    let valid = url::Url::parse(url).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.host_str().is_some()
+                            && url.username().is_empty()
+                            && url.password().is_none()
+                            && match url.host() {
+                                Some(url::Host::Ipv4(_)) => !ipv6,
+                                Some(url::Host::Ipv6(_)) => ipv6,
+                                _ => true,
+                            }
+                    });
+                    if !valid {
+                        return Err(invalid("HTTP probe URL must match its DNS address family"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Default for WanHealthProbeConfig {
     fn default() -> Self {
         Self::Icmp { targets: Vec::new(), probe_gateway: false }
     }
+}
+
+fn validate_health_dns_server(server: std::net::Ipv4Addr) -> Result<(), ServiceConfigError> {
+    if server.is_unspecified()
+        || server.is_loopback()
+        || server.is_multicast()
+        || server.is_broadcast()
+    {
+        return Err(ServiceConfigError::InvalidConfig {
+            reason: "health_check requires a unicast upstream IPv4 DNS server".into(),
+        });
+    }
+    Ok(())
 }
 
 impl ZoneAwareConfig for WanLinkConfig {
@@ -405,25 +607,67 @@ impl ValidatableConfig for WanLinkConfig {
         validate_nat_range("icmp_in_range", &self.nat.icmp_in_range)?;
 
         let health = &self.health_check;
-        let WanHealthProbeConfig::Icmp { targets, probe_gateway } = &health.probe;
-        if targets.iter().any(|target| !target.is_ipv4()) {
+        let (v4_probe, v6_probe) = health.probe_families();
+        if health.enable
+            && !(health.ipv4_probe_enabled && v4_probe || health.ipv6_probe_enabled && v6_probe)
+        {
             return Err(ServiceConfigError::InvalidConfig {
-                reason: "health_check icmp targets must be IPv4 addresses".to_string(),
+                reason: "health_check needs at least one enabled probe family with targets or probe_gateway".into(),
             });
         }
-        if health.enable && targets.is_empty() && !*probe_gateway {
-            return Err(ServiceConfigError::InvalidConfig {
+        let target_count = match &health.probe {
+            WanHealthProbeConfig::Multi { groups } => {
+                validate_probe_groups(groups)?;
+                1 // group quorums are independent from legacy reliability
+            }
+            WanHealthProbeConfig::Icmp { targets, probe_gateway } => {
+                if targets.iter().any(|target| !target.is_ipv4()) {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "health_check icmp targets must be IPv4 addresses".to_string(),
+                    });
+                }
+                if health.enable && targets.is_empty() && !*probe_gateway {
+                    return Err(ServiceConfigError::InvalidConfig {
                 reason: "health_check enabled but nothing to probe: set targets or probe_gateway"
                     .to_string(),
             });
-        }
-        if targets.len() > MAX_HEALTH_TARGETS {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "health_check icmp targets exceed the maximum of {MAX_HEALTH_TARGETS}"
-                ),
-            });
-        }
+                }
+                if targets.len() > MAX_HEALTH_TARGETS {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: format!(
+                            "health_check icmp targets exceed the maximum of {MAX_HEALTH_TARGETS}"
+                        ),
+                    });
+                }
+                targets.len() + usize::from(*probe_gateway)
+            }
+            WanHealthProbeConfig::Dns { server, domain } => {
+                validate_health_dns_server(*server)?;
+                if domain.trim().is_empty() || hickory_proto::rr::Name::from_ascii(domain).is_err()
+                {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "health_check DNS domain is invalid".into(),
+                    });
+                }
+                1
+            }
+            WanHealthProbeConfig::Http { url, dns_server } => {
+                validate_health_dns_server(*dns_server)?;
+                let valid = url::Url::parse(url).is_ok_and(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && !matches!(url.host(), Some(url::Host::Ipv6(_)))
+                });
+                if !valid {
+                    return Err(ServiceConfigError::InvalidConfig {
+                        reason: "health_check URL must be an absolute HTTP(S) URL".into(),
+                    });
+                }
+                1
+            }
+        };
         if let Some(reliability) = health.reliability {
             if !(1..=100).contains(&reliability) {
                 return Err(ServiceConfigError::InvalidConfig {
@@ -432,8 +676,10 @@ impl ValidatableConfig for WanLinkConfig {
                     ),
                 });
             }
-            let target_count = targets.len() + usize::from(*probe_gateway);
-            if target_count > 0 && reliability as usize > target_count {
+            if !matches!(health.probe, WanHealthProbeConfig::Multi { .. })
+                && target_count > 0
+                && reliability as usize > target_count
+            {
                 return Err(ServiceConfigError::InvalidConfig {
                     reason: format!(
                         "health_check reliability ({reliability}) must not exceed the target count ({target_count})"
@@ -503,6 +749,153 @@ mod tests {
     }
 
     #[test]
+    fn legacy_static_ipv6_cannot_supply_a_followed_probe_family() {
+        let mut config = minimal();
+        config.v4.enable = true;
+        config.v4.model = WanLinkV4Model::Static {
+            ipv4: Some("192.0.2.2".parse().unwrap()),
+            ipv4_mask: Some(24),
+            ipv6: Some("2001:db8::2".parse().unwrap()),
+            default_router: true,
+            default_router_ip: Some("192.0.2.1".parse().unwrap()),
+        };
+        config.health_check.enable = true;
+        config.health_check.ipv4_probe_enabled = false;
+        config.health_check.probe = WanHealthProbeConfig::Multi {
+            groups: vec![WanProbeGroup {
+                name: "IPv6".into(),
+                quorum: 1,
+                targets: vec![WanProbeTarget::Icmp { address: "2001:db8::1".parse().unwrap() }],
+            }],
+        };
+        assert!(config.validate().is_ok());
+        assert!(config.validate_failover_health().is_err());
+        config.pd.enable = true;
+        assert!(config.validate_failover_health().is_ok());
+    }
+
+    #[test]
+    fn administratively_disabled_wan_is_allowed_but_reenable_revalidates_health() {
+        let mut config = minimal();
+        config.kind = WanLinkKind::PppoeNative {
+            username: "fixture".into(),
+            password: "fixture".into(),
+            requested_mru: 1492,
+            ac_name: None,
+            lcp_echo_interval: None,
+            redial_backoff_base_secs: None,
+        };
+        config.v4.model = WanLinkV4Model::Ipcp { default_router: true };
+        assert!(!config.active());
+        assert!(config.validate_failover_health().is_ok());
+        // PD must not allow an administratively stopped PPP session to run.
+        config.pd.enable = true;
+        assert!(!config.active());
+        assert!(config.validate_failover_health().is_ok());
+        config.v4.enable = true;
+        assert!(config.active());
+        assert!(config.validate_failover_health().is_err());
+        config.health_check.enable = true;
+        config.health_check.ipv6_probe_enabled = false;
+        config.health_check.probe = WanHealthProbeConfig::Dns {
+            server: "192.0.2.53".parse().unwrap(),
+            domain: "example.com".into(),
+        };
+        assert!(config.validate_failover_health().is_ok());
+    }
+
+    #[test]
+    fn automatic_failover_requires_probes_for_enabled_families() {
+        let mut config = minimal();
+        config.v4.enable = true;
+        config.health_check.enable = true;
+        config.health_check.probe = WanHealthProbeConfig::Dns {
+            server: "223.5.5.5".parse().unwrap(),
+            domain: "www.baidu.com".into(),
+        };
+        assert!(config.validate_failover_health().is_ok());
+        config.pd.enable = true;
+        assert!(config.validate_failover_health().is_err());
+        config.health_check.probe = WanHealthProbeConfig::Multi {
+            groups: vec![
+                WanProbeGroup {
+                    name: "v4".into(),
+                    quorum: 1,
+                    targets: vec![WanProbeTarget::Icmp { address: "223.5.5.5".parse().unwrap() }],
+                },
+                WanProbeGroup {
+                    name: "v6".into(),
+                    quorum: 1,
+                    targets: vec![WanProbeTarget::Icmp {
+                        address: "2400:3200::1".parse().unwrap(),
+                    }],
+                },
+            ],
+        };
+        assert!(config.validate_failover_health().is_ok());
+        config.health_check.enable = false;
+        assert!(config.validate_failover_health().is_err());
+    }
+
+    #[test]
+    fn probe_switches_default_on_and_explicit_off_is_preserved() {
+        let old: WanLinkHealthCheckConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(old, WanLinkHealthCheckConfig::default());
+        assert!(old.ipv4_probe_enabled && old.ipv6_probe_enabled);
+        let mut config = minimal();
+        config.v4.enable = true;
+        config.pd.enable = true;
+        config.health_check.enable = true;
+        config.health_check.probe = WanHealthProbeConfig::Dns {
+            server: "223.5.5.5".parse().unwrap(),
+            domain: "www.baidu.com".into(),
+        };
+        assert!(config.validate_failover_health().is_err());
+        config.health_check.ipv6_probe_enabled = false;
+        assert!(config.validate_failover_health().is_ok());
+        let roundtrip: WanLinkConfig =
+            serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap();
+        assert!(!roundtrip.health_check.ipv6_probe_enabled);
+        config.health_check.ipv4_probe_enabled = false;
+        assert!(config.validate().is_err());
+        assert!(config.validate_failover_health().is_err());
+        config.health_check.ipv6_probe_enabled = true;
+        assert!(config.validate().is_err(), "legacy IPv4 target cannot drive IPv6-only probes");
+        config.health_check.probe = WanHealthProbeConfig::Multi {
+            groups: vec![WanProbeGroup {
+                name: "IPv6".into(),
+                quorum: 1,
+                targets: vec![WanProbeTarget::Icmp { address: "2400:3200::1".parse().unwrap() }],
+            }],
+        };
+        assert!(config.validate_failover_health().is_ok());
+        config.pd.enable = false;
+        assert!(
+            config.validate_failover_health().is_err(),
+            "cannot follow a family with no address acquisition"
+        );
+    }
+
+    #[test]
+    fn link_local_ipv6_is_supported_for_scoped_icmp_probes() {
+        let group = WanProbeGroup {
+            name: "gateway".into(),
+            quorum: 1,
+            targets: vec![WanProbeTarget::Icmp { address: "fe80::1".parse().unwrap() }],
+        };
+        assert!(validate_probe_groups(&[group]).is_ok());
+        let group = WanProbeGroup {
+            name: "DNS".into(),
+            quorum: 1,
+            targets: vec![WanProbeTarget::Dns {
+                server: "fe80::1".parse().unwrap(),
+                domain: "example.com".into(),
+            }],
+        };
+        assert!(validate_probe_groups(&[group]).is_err());
+    }
+
+    #[test]
     fn allocate_link_chain_id_picks_smallest_free_slot() {
         assert_eq!(allocate_link_chain_id([]), Some(LINK_CHAIN_ID_MIN));
         assert_eq!(allocate_link_chain_id([1, 2]), Some(3));
@@ -528,6 +921,63 @@ mod tests {
         assert!(config.validate().is_ok());
         config.link_chain_id = LINK_CHAIN_ID_MAX + 1;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn multi_probe_validates_quorum_and_address_family() {
+        let mut config = minimal();
+        config.health_check.enable = true;
+        let v4 = WanProbeTarget::Dns {
+            server: "223.5.5.5".parse().unwrap(),
+            domain: "www.baidu.com".into(),
+        };
+        let v6 = WanProbeTarget::Icmp { address: "2400:3200::1".parse().unwrap() };
+        let group = |targets, quorum| WanProbeGroup { name: "test".into(), targets, quorum };
+        config.health_check.probe = WanHealthProbeConfig::Multi {
+            groups: vec![group(vec![v4.clone()], 1), group(vec![v6.clone()], 1)],
+        };
+        assert!(config.validate().is_ok(), "separate IPv4 and IPv6 groups are valid");
+        for groups in [
+            vec![],
+            vec![group(vec![], 1)],
+            vec![group(vec![v4.clone()], 0)],
+            vec![group(vec![v4.clone()], 2)],
+            vec![group(vec![v4.clone(), v4.clone()], 1)],
+            vec![group(vec![v4, v6], 1)],
+        ] {
+            config.health_check.probe = WanHealthProbeConfig::Multi { groups };
+            assert!(config.validate().is_err(), "reject impossible or ambiguous group");
+        }
+    }
+
+    #[test]
+    fn application_health_probe_validation() {
+        let mut config = minimal();
+        config.health_check.enable = true;
+        config.health_check.probe = WanHealthProbeConfig::Dns {
+            server: "223.5.5.5".parse().unwrap(),
+            domain: "www.baidu.com".into(),
+        };
+        assert!(config.validate().is_ok());
+        config.health_check.reliability = Some(2);
+        assert!(config.validate().is_err(), "single application probe has reliability one");
+        config.health_check.reliability = Some(1);
+        for url in ["https://www.baidu.com", "http://example.com/health"] {
+            config.health_check.probe = WanHealthProbeConfig::Http {
+                url: url.into(),
+                dns_server: "223.5.5.5".parse().unwrap(),
+            };
+            assert!(config.validate().is_ok());
+        }
+        for url in
+            ["file:///etc/passwd", "https://", "http://[::1]", "http://user:password@example.com"]
+        {
+            config.health_check.probe = WanHealthProbeConfig::Http {
+                url: url.into(),
+                dns_server: "223.5.5.5".parse().unwrap(),
+            };
+            assert!(config.validate().is_err(), "invalid probe URL: {url}");
+        }
     }
 
     #[test]

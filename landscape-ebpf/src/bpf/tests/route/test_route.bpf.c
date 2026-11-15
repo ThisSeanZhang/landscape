@@ -16,46 +16,13 @@ const volatile u32 current_l3_offset = 14;
 
 static __always_inline int read_route6_context(struct __sk_buff *skb,
                                                struct route6_context *context) {
-    if ((u64)current_l3_offset + sizeof(struct ipv6hdr) > MAX_OFFSET) return TC_ACT_SHOT;
-    char *data = (char *)(long)skb->data;
-    char *data_end = (char *)(long)skb->data_end;
-    struct ipv6hdr *ip6h = (struct ipv6hdr *)(data + current_l3_offset);
-    if ((char *)(ip6h + 1) > data_end) {
-        __u32 need = current_l3_offset + sizeof(struct ipv6hdr);
-        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
-        data = (char *)(long)skb->data;
-        data_end = (char *)(long)skb->data_end;
-        ip6h = (struct ipv6hdr *)(data + current_l3_offset);
-        if ((char *)(ip6h + 1) > data_end) return TC_ACT_SHOT;
-    }
-
-    COPY_ADDR_FROM(context->saddr.in6_u.u6_addr32, ip6h->saddr.in6_u.u6_addr32);
-    COPY_ADDR_FROM(context->daddr.in6_u.u6_addr32, ip6h->daddr.in6_u.u6_addr32);
-    context->l4_protocol = ip6h->nexthdr;
-
-    return TC_ACT_OK;
+    struct route_view view = {.l3_protocol = LANDSCAPE_IPV6_TYPE, .l3_offset = current_l3_offset};
+    return route6_read_context_from_scan(skb, &view, context);
 }
-
 static __always_inline int read_route4_context(struct __sk_buff *skb,
                                                struct route4_context *context) {
-    if ((u64)current_l3_offset + sizeof(struct iphdr) > MAX_OFFSET) return TC_ACT_SHOT;
-    char *data = (char *)(long)skb->data;
-    char *data_end = (char *)(long)skb->data_end;
-    struct iphdr *iph = (struct iphdr *)(data + current_l3_offset);
-    if ((char *)(iph + 1) > data_end) {
-        __u32 need = current_l3_offset + sizeof(struct iphdr);
-        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
-        data = (char *)(long)skb->data;
-        data_end = (char *)(long)skb->data_end;
-        iph = (struct iphdr *)(data + current_l3_offset);
-        if ((char *)(iph + 1) > data_end) return TC_ACT_SHOT;
-    }
-
-    context->saddr = iph->saddr;
-    context->daddr = iph->daddr;
-    context->l4_protocol = iph->protocol;
-
-    return TC_ACT_OK;
+    struct route_view view = {.l3_protocol = LANDSCAPE_IPV4_TYPE, .l3_offset = current_l3_offset};
+    return route4_read_context_from_scan(skb, &view, context);
 }
 
 SEC("tc")

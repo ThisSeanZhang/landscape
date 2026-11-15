@@ -657,7 +657,12 @@ fn health_config(
     targets: Vec<std::net::Ipv4Addr>,
 ) -> landscape_common::wan_link::RuntimeWanLinkHealthCheckConfig {
     landscape_common::wan_link::RuntimeWanLinkHealthCheckConfig {
+        socket_mark: 0,
         enable: true,
+        ipv4_enabled: true,
+        ipv6_enabled: false,
+        ipv4_probe_enabled: true,
+        ipv6_probe_enabled: true,
         probe: landscape_common::wan_link::RuntimeWanHealthProbe::Icmp {
             targets,
             probe_gateway: false,
@@ -668,6 +673,44 @@ fn health_config(
         recovery_threshold: 1,
         reliability: 1,
     }
+}
+
+#[test]
+fn health_runtime_reports_probe_source_and_missing_enabled_family() {
+    use landscape_common::wan_link::{HealthEvaluator, TargetProbe, WanLinkHealthState};
+    let mut cfg = health_config(vec![]);
+    cfg.ipv6_enabled = true;
+    let mut evaluator = HealthEvaluator::new(Uuid::new_v4(), 1, 1, 1);
+    evaluator.apply_round(&[TargetProbe {
+        target: "192.0.2.1".parse().unwrap(),
+        rtt: Some(Duration::from_millis(7)),
+    }]);
+    let info = Some(evaluator.info());
+    let own_v4 = super::health_check::runtime_snapshot(&cfg, info, None, vec![]);
+    assert!(matches!(own_v4, HealthCheckRuntime::Running {
+        state: WanLinkHealthState::Unknown, ipv6: Some(ref v6), ..
+    } if v6.probe_enabled && v6.state == WanLinkHealthState::Unknown));
+
+    cfg.ipv6_probe_enabled = false;
+    let following_v6 = super::health_check::runtime_snapshot(&cfg, info, None, vec![]);
+    assert!(matches!(following_v6, HealthCheckRuntime::Running {
+        state: WanLinkHealthState::Healthy, ipv6: Some(ref v6), ..
+    } if !v6.probe_enabled && v6.state == WanLinkHealthState::Healthy && v6.rtt_ewma_ms == Some(7.0)));
+
+    cfg.ipv4_probe_enabled = false;
+    cfg.ipv6_probe_enabled = true;
+    let following_v4 = super::health_check::runtime_snapshot(&cfg, None, info, vec![]);
+    assert!(matches!(following_v4, HealthCheckRuntime::Running {
+        state: WanLinkHealthState::Healthy, ipv4: Some(ref v4), ..
+    } if !v4.probe_enabled && v4.state == WanLinkHealthState::Healthy));
+
+    cfg.ipv4_probe_enabled = true;
+    cfg.ipv6_enabled = false;
+    let ipv4_only = super::health_check::runtime_snapshot(&cfg, info, None, vec![]);
+    assert!(matches!(
+        ipv4_only,
+        HealthCheckRuntime::Running { state: WanLinkHealthState::Healthy, ipv6: None, .. }
+    ));
 }
 
 async fn wait_health(
@@ -692,4 +735,286 @@ async fn wait_status(handle: &ServiceHandle, want: ServiceStatus) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     panic!("section status did not reach {want:?} in time");
+}
+
+#[test]
+fn probe_family_toggle_only_restarts_health_section() {
+    let old = link_config(false);
+    let mut new = old.clone();
+    new.health_check.ipv6_probe_enabled = false;
+    assert_eq!(config_change_tags(&old, &new), vec![SectionTag::HealthCheck]);
+}
+
+#[tokio::test]
+async fn disabled_probe_family_inherits_faults_recovery_and_unknown_in_both_directions() {
+    use landscape_common::wan_link::{HealthEvaluator, WanLinkHealthState};
+    let routes = landscape_core::route::test_used_ip_route();
+    let id = Uuid::new_v4();
+    for source_v6 in [false, true] {
+        let mut cfg = health_config(vec!["223.5.5.5".parse().unwrap()]);
+        cfg.ipv4_probe_enabled = !source_v6;
+        cfg.ipv6_probe_enabled = source_v6;
+        for state in [
+            WanLinkHealthState::Healthy,
+            WanLinkHealthState::Unhealthy,
+            WanLinkHealthState::Healthy,
+            WanLinkHealthState::Unknown,
+        ] {
+            let mut info = HealthEvaluator::new(id, 1, 1, 1).info().clone();
+            info.state = state;
+            routes.update_link_health_for_family(info.clone(), source_v6).await;
+            super::health_check::sync_followed_family(&routes, id, &cfg).await;
+            assert_eq!(routes.get_link_health_for_family(id, !source_v6).await, Some(info));
+        }
+        routes.clear_link_health_for_family(id, source_v6).await;
+        super::health_check::sync_followed_family(&routes, id, &cfg).await;
+        assert!(routes.get_link_health_for_family(id, !source_v6).await.is_none());
+    }
+    let cfg = health_config(vec![]); // both switches on: independent verdicts
+    let mut info = HealthEvaluator::new(id, 1, 1, 1).info().clone();
+    info.state = WanLinkHealthState::Healthy;
+    routes.update_link_health(info).await;
+    super::health_check::sync_followed_family(&routes, id, &cfg).await;
+    assert!(routes.get_link_health_for_family(id, true).await.is_none());
+}
+
+#[tokio::test]
+async fn legacy_probe_runner_publishes_and_clears_the_disabled_family() {
+    use super::probe::{FakeProbe, WanHealthProbe};
+    use landscape_common::wan_link::WanLinkHealthState;
+    let routes = landscape_core::route::test_used_ip_route();
+    let id = Uuid::new_v4();
+    let (state, _rx) = LinkStateHandle::new(None);
+    state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+    let probe: Arc<dyn WanHealthProbe> =
+        Arc::new(FakeProbe(|_| Ok(Some(Duration::from_millis(1)))));
+    let mut cfg = health_config(vec!["223.5.5.5".parse().unwrap()]);
+    cfg.ipv6_probe_enabled = false;
+    let status = ServiceHandle::new();
+    status.just_change_status(ServiceStatus::Staring);
+    let runner = tokio::spawn(super::health_check::run(
+        id,
+        SessionIface::new(1, "eth0", None),
+        state,
+        cfg,
+        status.clone(),
+        probe,
+        routes.clone(),
+        runtime_slot(),
+    ));
+    wait_health(&routes, id, WanLinkHealthState::Healthy).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if routes
+                .get_link_health_for_family(id, true)
+                .await
+                .is_some_and(|h| h.state == WanLinkHealthState::Healthy)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), runner).await.unwrap().unwrap();
+    assert!(routes.get_link_health_for_family(id, true).await.is_none());
+}
+
+/// A controlled dual-stack probe lets the real section supervisor and multi
+/// runner process lease/prefix changes without touching the host network.
+struct ControlledProbe {
+    requests: tokio::sync::mpsc::UnboundedSender<ProbeRequest>,
+    run_id: usize,
+}
+#[derive(Debug)]
+struct ProbeRequest {
+    dev: String,
+    src: std::net::IpAddr,
+    mark: u32,
+    run_id: usize,
+    reply: tokio::sync::oneshot::Sender<Result<Option<Duration>, super::probe::ProbeError>>,
+}
+#[async_trait::async_trait]
+impl super::probe::WanHealthProbe for ControlledProbe {
+    async fn probe_target(
+        &self,
+        dev: &str,
+        src: std::net::IpAddr,
+        _target: &landscape_common::wan_link::WanProbeTarget,
+        _timeout: Duration,
+        mark: u32,
+    ) -> Result<Option<Duration>, super::probe::ProbeError> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.requests
+            .send(ProbeRequest {
+                dev: dev.into(),
+                src,
+                mark,
+                run_id: self.run_id,
+                reply,
+            })
+            .unwrap();
+        result.await.unwrap_or(Ok(None))
+    }
+
+    async fn ping_v4(
+        &self,
+        _dev: &str,
+        _src: std::net::Ipv4Addr,
+        _target: std::net::Ipv4Addr,
+        _timeout: Duration,
+    ) -> Result<Option<Duration>, super::probe::ProbeError> {
+        panic!("grouped probes must use the dual-stack injection point")
+    }
+}
+
+#[tokio::test]
+async fn running_health_rebinds_on_ipv4_renewal_and_ipv6_pd_address_change() {
+    use landscape_common::wan_link::{
+        RuntimeWanLinkConfig, WanHealthProbeConfig, WanLinkHealthState, WanProbeGroup,
+        WanProbeTarget, WanV6Prefix,
+    };
+    use std::net::IpAddr;
+    for ipv6_change in [false, true] {
+        let routes = landscape_core::route::test_used_ip_route();
+        let mut config = link_config(false);
+        config.link_chain_id = 7;
+        config.v4.enable = true;
+        config.pd.enable = true;
+        config.health_check.enable = true;
+        config.health_check.interval_secs = Some(600);
+        config.health_check.probe = WanHealthProbeConfig::Multi {
+            groups: ["192.0.2.1", "2001:db8::1"]
+                .into_iter()
+                .map(|address| WanProbeGroup {
+                    name: address.into(),
+                    quorum: 1,
+                    targets: vec![WanProbeTarget::Icmp { address: address.parse().unwrap() }],
+                })
+                .collect(),
+        };
+        let id = config.id;
+        let (state, state_rx) = LinkStateHandle::new(None);
+        state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 2])));
+        state.set_v6_prefix(v6_prefix(), Some(v6_addr()));
+        let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let runtime = runtime_slot();
+        let runner: SectionRunner = {
+            let routes = routes.clone();
+            let state = state.clone();
+            let starts = starts.clone();
+            Arc::new(move |iface, config, status| {
+                let routes = routes.clone();
+                let state = state.clone();
+                let runtime = runtime.clone();
+                let run_id = starts.fetch_add(1, Ordering::SeqCst) + 1;
+                let probe: Arc<dyn super::probe::WanHealthProbe> =
+                    Arc::new(ControlledProbe { requests: requests.clone(), run_id });
+                Box::pin(super::health_check::run(
+                    id,
+                    iface,
+                    state,
+                    RuntimeWanLinkConfig::from_config(&config).health_check,
+                    status,
+                    probe,
+                    routes,
+                    runtime,
+                ))
+            })
+        };
+        let (_cfg_tx, cfg_rx) = watch::channel(config);
+        let (_reconfig_tx, reconfig_rx) = broadcast::channel(8);
+        let link_status = ServiceHandle::new();
+        // Match the production link lifecycle: Stop -> Running is rejected,
+        // and would leave the later Stopping transition unable to cancel.
+        link_status.just_change_status(ServiceStatus::Staring);
+        link_status.just_change_status(ServiceStatus::Running);
+        assert!(link_status.is_running());
+        let supervisor = tokio::spawn(run_dependent_section(
+            link_status.clone(),
+            board(),
+            state_rx,
+            cfg_rx,
+            reconfig_rx,
+            SectionTag::HealthCheck,
+            SectionKind::HealthCheck,
+            "health-lease-regression",
+            |cfg| cfg.health_check.enable,
+            |state| state.has_v4_lease() || state.has_v6_prefix(),
+            SectionScope::SessionAndLease,
+            runner,
+            Duration::from_millis(1),
+        ));
+        for _ in 0..2 {
+            let request = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(request.dev, "eth0");
+            assert_eq!(request.mark, 0x0200_0007);
+            request.reply.send(Ok(Some(Duration::from_millis(1)))).unwrap();
+        }
+        let wait_healthy = || async {
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let v4 = routes.get_link_health_for_family(id, false).await;
+                    let v6 = routes.get_link_health_for_family(id, true).await;
+                    if [v4, v6]
+                        .iter()
+                        .all(|h| h.as_ref().is_some_and(|h| h.state == WanLinkHealthState::Healthy))
+                    {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        };
+        wait_healthy().await;
+        let new_source: IpAddr = if ipv6_change {
+            let address = "2001:db8:2::1234".parse().unwrap();
+            state.set_v6_prefix(
+                WanV6Prefix {
+                    prefix_ip: "2001:db8:2::".parse().unwrap(),
+                    prefix_len: 56,
+                },
+                Some(address),
+            );
+            address.into()
+        } else {
+            state.session_up(SessionIface::new(1, "eth0", None), Some(lease([10, 0, 0, 3])));
+            "10.0.0.3".parse().unwrap()
+        };
+        // Hold the new-source result pending: the old healthy verdict must
+        // already have been removed, rather than surviving the lease change.
+        let changed_request = loop {
+            let request = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(request.dev, "eth0");
+            assert_eq!(request.mark, 0x0200_0007);
+            if request.src == new_source && request.run_id == if ipv6_change { 1 } else { 2 } {
+                break request;
+            }
+            let _ = request.reply.send(Ok(Some(Duration::from_millis(1))));
+        };
+        assert!(routes.get_link_health_for_family(id, ipv6_change).await.is_none());
+        changed_request.reply.send(Ok(Some(Duration::from_millis(2)))).unwrap();
+        // The unchanged family may still be queued behind the changed one.
+        while let Ok(request) = received.try_recv() {
+            let _ = request.reply.send(Ok(Some(Duration::from_millis(1))));
+        }
+        wait_healthy().await;
+        assert_eq!(starts.load(Ordering::SeqCst), if ipv6_change { 1 } else { 2 });
+        link_status.just_change_status(ServiceStatus::Stopping);
+        assert!(link_status.stop_token().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(2), supervisor).await.unwrap().unwrap();
+        assert!(routes.get_link_health_for_family(id, false).await.is_none());
+        assert!(routes.get_link_health_for_family(id, true).await.is_none());
+    }
 }

@@ -13,3 +13,5 @@ mod pipeline;
 mod pppoe;
 mod tc_lan;
 mod wan_route;
+
+mod wan_failover;

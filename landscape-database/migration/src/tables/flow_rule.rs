@@ -8,6 +8,7 @@ pub enum FlowConfigs {
     FlowId,
     FlowMatchRules,
     PacketHandleIfaceName,
+    Failover,
     Name,
     Remark,
     UpdateAt,

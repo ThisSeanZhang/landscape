@@ -53,11 +53,30 @@ function target_label(target: FlowConfig["flow_targets"][number]["target"]) {
         }}
         <n-tag
           size="small"
-          v-for="each in config.flow_targets"
+          v-for="(each, index) in config.flow_targets"
           :bordered="false"
         >
+          <span
+            v-if="
+              config.failover?.enable ||
+              config.failover?.mode === 'primary_backup'
+            "
+            >{{
+              index === 0
+                ? t("flow.failover.primary")
+                : t("flow.failover.backup", { index })
+            }}:
+          </span>
           {{ frontEndStore.MASK_INFO(target_label(each.target)) }}
-          <span v-if="(each.weight ?? 1) !== 1"> ×{{ each.weight ?? 1 }}</span>
+          <span
+            v-if="
+              !config.failover?.enable &&
+              config.failover?.mode !== 'primary_backup' &&
+              (each.weight ?? 1) !== 1
+            "
+          >
+            ×{{ each.weight ?? 1 }}</span
+          >
           <template #icon>
             <n-icon
               :component="each.target.t === 'netns' ? Docker : NetworkWired"

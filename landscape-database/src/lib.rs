@@ -36,6 +36,7 @@ pub mod cert_account;
 pub mod dns_redirect;
 pub mod dns_rule;
 pub mod dns_upstream;
+mod dns_wan_validation;
 pub mod gateway;
 
 /// ID type.
@@ -62,8 +63,11 @@ pub(crate) type DBTimestamp = f64;
 /// 编译期强制。校验失败以 [`DbError::Validation`] 拒绝,零副作用。
 /// 盲写路径(`upsert`/`upsert_many`)不注入校验:可信系统路径(播种/
 /// ACME/geo/网关运行时/设备注册)。
+/// Optional `transactional_check` rechecks cross-table dependencies against
+/// the write transaction; a batch hook receives all proposed rows together.
+/// It does not replace content/zone/cross validation or optimistic locking.
 macro_rules! impl_repository {
-    ($repo:ty, $model:ty, $entity:ty, $active:ty, $data:ty, $id:ty) => {
+    ($repo:ty, $model:ty, $entity:ty, $active:ty, $data:ty, $id:ty $(, transactional_check = $hook:ident)?) => {
         #[async_trait::async_trait]
         impl crate::repository::Repository for $repo {
             type Model = $model;
@@ -135,9 +139,13 @@ macro_rules! impl_repository {
                 {
                     return Err(landscape_common::database::error::DbError::Validation(error));
                 }
-                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
-                    .checked_upsert(config)
-                    .await
+                use sea_orm::TransactionTrait as _;
+                let writer = crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone());
+                let (writer, config) = (&writer, &config);
+                crate::writer::txn_retry_loop!(self, |txn| async move {
+                    $(self.$hook(txn, std::slice::from_ref(config)).await?;)?
+                    writer.upsert_inner(txn, config.clone(), true).await
+                })
             }
             async fn upsert_many(
                 &self,
@@ -184,9 +192,13 @@ macro_rules! impl_repository {
                         return Err(landscape_common::database::error::DbError::Validation(error));
                     }
                 }
-                crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone())
-                    .checked_upsert_many(configs)
-                    .await
+                use sea_orm::TransactionTrait as _;
+                let writer = crate::writer::StoreWriter::<$entity, $data>::new(self.db.clone());
+                let (writer, configs) = (&writer, &configs);
+                crate::writer::txn_retry_loop!(self, |txn| async move {
+                    $(self.$hook(txn, configs).await?;)?
+                    writer.upsert_many_inner(txn, configs, true).await
+                })
             }
             async fn delete_and_get(
                 &self,

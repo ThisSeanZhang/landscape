@@ -6,7 +6,7 @@ use landscape_common::database::store::{Change, ConfigStore};
 use landscape_common::database::validator::StoreValidator;
 use landscape_common::service::ServiceConfigError;
 use landscape_common::wan_link::{RuntimeWanLinkConfig, WanLinkConfig, WanLinkKind};
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, EntityTrait, TransactionTrait};
 
 use super::entity::{WanLinkConfigActiveModel, WanLinkConfigEntity, WanLinkConfigModel};
 use crate::DBId;
@@ -22,6 +22,79 @@ pub struct WanLinkRepository {
 impl WanLinkRepository {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+
+    async fn check_failover_health_transaction(
+        &self,
+        txn: &sea_orm::DatabaseTransaction,
+        configs: &[WanLinkConfig],
+    ) -> Result<(), crate::writer::UpsertErr> {
+        use crate::{flow_rule::entity::FlowConfigEntity, writer::UpsertErr};
+        use landscape_common::flow::{FlowTarget, config::FlowConfig};
+        let flows: Vec<_> =
+            FlowConfigEntity::find().all(txn).await?.into_iter().map(FlowConfig::from).collect();
+        for config in configs {
+            if flows.iter().any(|flow| flow.enable && flow.failover.requires_health_checks() && flow.flow_targets.iter().any(|entry| matches!(entry.target, FlowTarget::Interface { link_id, .. } if link_id == config.id))) {
+                config.validate_failover_health().map_err(|error| UpsertErr::Database(DbError::Validation(error)))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Administrative disabling preserves references. Deleting a WAN does not:
+    /// require callers to move dependent flows and DNS groups first.
+    pub async fn delete_unreferenced(&self, id: DBId) -> Result<Option<WanLinkConfig>, DbError> {
+        use crate::{
+            dns_rule::entity::DNSRuleConfigEntity, dns_upstream::entity::DnsUpstreamConfigEntity,
+            flow_rule::entity::FlowConfigEntity, writer::UpsertErr,
+        };
+        use landscape_common::{
+            dns::{config::DnsUpstreamConfig, rule::DNSRuleConfig},
+            flow::{FlowTarget, config::FlowConfig},
+        };
+        crate::writer::txn_retry_loop!(self, |txn| async move {
+            let Some(link) = WanLinkConfigEntity::find_by_id(id).one(txn).await? else {
+                return Ok::<_, UpsertErr>(None);
+            };
+            let mut references = Vec::new();
+            for flow in FlowConfigEntity::find().all(txn).await?.into_iter().map(FlowConfig::from) {
+                if flow.flow_targets.iter().any(|entry| matches!(entry.target, FlowTarget::Interface { link_id, .. } if link_id == id)) {
+                    references.push(format!("分流 {} “{}”", flow.flow_id, flow.name));
+                }
+            }
+            for rule in
+                DNSRuleConfigEntity::find().all(txn).await?.into_iter().map(DNSRuleConfig::from)
+            {
+                if rule.wan_upstreams.iter().any(|mapping| mapping.link_id == id) {
+                    references.push(format!(
+                        "分流 {} 的 DNS 规则“{}” ({})",
+                        rule.flow_id, rule.name, rule.id
+                    ));
+                }
+            }
+            for upstream in DnsUpstreamConfigEntity::find()
+                .all(txn)
+                .await?
+                .into_iter()
+                .map(DnsUpstreamConfig::from)
+            {
+                if upstream.bind_config.wan_servers.iter().any(|servers| servers.link_id == id) {
+                    references.push(format!(
+                        "DNS 上游“{}” ({})",
+                        upstream.name.as_deref().unwrap_or(&upstream.remark),
+                        upstream.id
+                    ));
+                }
+            }
+            references.sort();
+            if !references.is_empty() {
+                return Err(UpsertErr::Database(DbError::Validation(
+                    ServiceConfigError::WanLinkInUse { references: references.join("、") },
+                )));
+            }
+            WanLinkConfigEntity::delete_by_id(id).exec(txn).await?;
+            Ok(Some(link.into()))
+        })
     }
 
     /// Maps every stored link's uuid to its net iface name (see
@@ -133,7 +206,8 @@ crate::impl_repository!(
     WanLinkConfigEntity,
     WanLinkConfigActiveModel,
     WanLinkConfig,
-    DBId
+    DBId,
+    transactional_check = check_failover_health_transaction
 );
 
 fn is_ethernet_class(kind: &WanLinkKind) -> bool {
@@ -150,6 +224,27 @@ impl StoreValidator<WanLinkConfig> for WanLinkRepository {
     /// netlink-dependent checks (live attach iface / live ppp device) stay
     /// in the webserver handler; see `validate_wan_link` there.
     async fn validate_cross(&self, config: &mut WanLinkConfig) -> Result<(), ServiceConfigError> {
+        {
+            let flows = crate::flow_rule::repository::FlowConfigRepository::new(self.db.clone())
+                .list()
+                .await
+                .map_err(ServiceConfigError::internal)?;
+            let referenced_by = flows.iter().find(|flow| {
+                flow.enable && flow.failover.requires_health_checks() && flow.flow_targets.iter().any(|entry| {
+                    matches!(entry.target, landscape_common::flow::FlowTarget::Interface { link_id, .. } if link_id == config.id)
+                })
+            });
+            if let Some(flow) = referenced_by
+                && let Err(error) = config.validate_failover_health()
+            {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "WAN is used by automatic failover flow {}: {}",
+                        flow.flow_id, error
+                    ),
+                });
+            }
+        }
         let others: Vec<WanLinkConfig> = self
             .list()
             .await

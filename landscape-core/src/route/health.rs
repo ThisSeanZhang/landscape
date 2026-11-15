@@ -15,6 +15,7 @@ use super::{IpRouteService, clone_locked_state};
 #[derive(Debug, Clone, PartialEq)]
 pub struct WanLinkHealthEvent {
     pub link_id: Uuid,
+    pub ipv6: bool,
     pub from: WanLinkHealthState,
     pub to: WanLinkHealthState,
     /// Snapshot at the moment of the transition.
@@ -30,12 +31,26 @@ impl IpRouteService {
 
     /// Upsert a link's health snapshot; broadcasts only on state flips.
     pub async fn update_link_health(&self, info: WanLinkHealthInfo) {
+        self.update_link_health_for_family(info, false).await;
+    }
+
+    pub async fn update_link_health_for_family(&self, info: WanLinkHealthInfo, ipv6: bool) {
         let flip = {
-            let mut lock = self.link_healths.write().await;
+            let mut lock = if ipv6 {
+                self.link_healths_v6.write().await
+            } else {
+                self.link_healths.write().await
+            };
             let from = lock.get(&info.link_id).map_or(WanLinkHealthState::Unknown, |old| old.state);
             let to = info.state;
             lock.insert(info.link_id, info.clone());
-            (from != to).then_some(WanLinkHealthEvent { link_id: info.link_id, from, to, info })
+            (from != to).then_some(WanLinkHealthEvent {
+                link_id: info.link_id,
+                ipv6,
+                from,
+                to,
+                info,
+            })
         };
         if let Some(event) = flip {
             let _ = self.health_events.send(event);
@@ -45,12 +60,22 @@ impl IpRouteService {
     /// Drop a link's entry (session gone / section stopped), broadcasting
     /// the removal as a flip to `Unknown`; silent when nothing is stored.
     pub async fn clear_link_health(&self, link_id: Uuid) {
-        let removed = self.link_healths.write().await.remove(&link_id);
+        self.clear_link_health_for_family(link_id, false).await;
+        self.clear_link_health_for_family(link_id, true).await;
+    }
+
+    pub async fn clear_link_health_for_family(&self, link_id: Uuid, ipv6: bool) {
+        let removed = if ipv6 {
+            self.link_healths_v6.write().await.remove(&link_id)
+        } else {
+            self.link_healths.write().await.remove(&link_id)
+        };
         if let Some(old) = removed
             && old.state != WanLinkHealthState::Unknown
         {
             let _ = self.health_events.send(WanLinkHealthEvent {
                 link_id,
+                ipv6,
                 from: old.state,
                 to: WanLinkHealthState::Unknown,
                 info: old,
@@ -59,11 +84,31 @@ impl IpRouteService {
     }
 
     pub async fn get_link_health(&self, link_id: Uuid) -> Option<WanLinkHealthInfo> {
-        self.link_healths.read().await.get(&link_id).cloned()
+        self.get_link_health_for_family(link_id, false).await
+    }
+
+    pub async fn get_link_health_for_family(
+        &self,
+        link_id: Uuid,
+        ipv6: bool,
+    ) -> Option<WanLinkHealthInfo> {
+        if ipv6 {
+            self.link_healths_v6.read().await.get(&link_id).cloned()
+        } else {
+            self.link_healths.read().await.get(&link_id).cloned()
+        }
     }
 
     pub async fn get_link_healths(&self) -> LinkHealths {
         self.clone_link_healths().await
+    }
+
+    pub async fn get_link_healths_for_family(&self, ipv6: bool) -> LinkHealths {
+        if ipv6 {
+            clone_locked_state(&self.link_healths_v6).await
+        } else {
+            self.clone_link_healths().await
+        }
     }
 
     pub fn subscribe_health_events(&self) -> broadcast::Receiver<WanLinkHealthEvent> {
@@ -88,7 +133,7 @@ mod tests {
             state,
             consecutive_failures: 0,
             targets: vec![TargetHealthStat {
-                target: Ipv4Addr::new(1, 1, 1, 1),
+                target: Ipv4Addr::new(1, 1, 1, 1).into(),
                 last_rtt_ms: Some(20),
                 rtt_ewma_ms: Some(20.0),
             }],
@@ -142,6 +187,23 @@ mod tests {
             (WanLinkHealthState::Healthy, WanLinkHealthState::Unhealthy)
         );
         assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn v4_failure_does_not_change_v6_health() {
+        let service = service();
+        let link = Uuid::new_v4();
+        service.update_link_health_for_family(info(link, WanLinkHealthState::Healthy), true).await;
+        service.update_link_health(info(link, WanLinkHealthState::Unhealthy)).await;
+        assert_eq!(
+            service.get_link_healths_for_family(true).await[&link].state,
+            WanLinkHealthState::Healthy
+        );
+        service.remove_ipv4_link_route(link).await;
+        assert_eq!(
+            service.get_link_healths_for_family(true).await[&link].state,
+            WanLinkHealthState::Healthy
+        );
     }
 
     #[tokio::test]

@@ -389,3 +389,11 @@ mod tests {
         assert!(!computer1.is_same_subnet(&dmz_host));
     }
 }
+
+/// None at the call site disables the opt-in policy. A missing family inside
+/// an enabled policy means no usable WAN and must install a blackhole default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RouterWanPolicy {
+    pub ipv4: Option<RouteTargetInfo>,
+    pub ipv6: Option<RouteTargetInfo>,
+}

@@ -17,6 +17,7 @@ use landscape_common::lan_service::lan_ipv6::dataplane::Ip6DaoFilterDataplane;
 use landscape_common::lan_service::lan_route::dataplane::LanRouteDataplane;
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
+use landscape_common::sys_service::route_service::WanRouteTarget;
 use landscape_common::sys_service::route_service::dataplane::RouteTableDataplane;
 use landscape_common::wan_service::firewall::dataplane::FirewallDataplane;
 use landscape_common::wan_service::nat::dataplane::NatDataplane;
@@ -256,6 +257,10 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
         maps::route::replace_wan_route_slots_v6(&self.rt.paths, flow_id, targets);
     }
 
+    fn set_connection_generation(&self, flow_id: u32, ipv6: bool, generation: Option<u64>) {
+        maps::route::set_connection_generation(&self.rt.paths, flow_id, ipv6, generation);
+    }
+
     fn del_wan_slots_v4(&self, flow_id: u32) {
         maps::route::del_wan_route_slots_v4(&self.rt.paths, flow_id);
     }
@@ -290,6 +295,17 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
                 false
             }
         }
+    }
+
+    async fn sync_bound_wan_routes(&self, targets: &[WanRouteTarget]) -> Result<(), String> {
+        maps::route::sync_bound_wan_routes(targets).await
+    }
+
+    async fn sync_router_wan_policy(
+        &self,
+        policy: Option<&landscape_common::sys_service::route_service::RouterWanPolicy>,
+    ) -> Result<(), String> {
+        maps::route::sync_router_wan_policy(policy).await
     }
 
     fn invalidate_lan_cache(&self) {

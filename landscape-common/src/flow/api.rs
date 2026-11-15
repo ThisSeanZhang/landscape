@@ -108,6 +108,8 @@ pub struct ApiFlowConfig {
     pub flow_match_rules: Vec<super::config::FlowEntryRule>,
     pub flow_targets: Vec<ApiWeightedFlowTarget>,
     #[serde(default)]
+    pub failover: super::config::FlowFailoverConfig,
+    #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
     pub name: String,
     pub remark: String,
@@ -124,6 +126,7 @@ impl From<FlowConfig> for ApiFlowConfig {
             flow_id: value.flow_id,
             flow_match_rules: value.flow_match_rules,
             flow_targets: value.flow_targets.into_iter().map(Into::into).collect(),
+            failover: value.failover,
             name: value.name,
             remark: value.remark,
             update_at: value.update_at,
@@ -139,6 +142,7 @@ impl From<ApiFlowConfig> for FlowConfig {
             flow_id: value.flow_id,
             flow_match_rules: value.flow_match_rules,
             flow_targets: value.flow_targets.into_iter().map(Into::into).collect(),
+            failover: value.failover,
             name: value.name,
             remark: value.remark,
             update_at: value.update_at,

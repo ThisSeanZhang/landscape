@@ -90,6 +90,14 @@ pub fn init_xdp_lan_route(
         "xdp_lan_route pin rt4_slot_map"
     )?;
     crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.rt_conn_policy, &paths.rt_conn_policy,),
+        "xdp_lan_route pin rt_conn_policy"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.rt_connections, &paths.rt_connections,),
+        "xdp_lan_route pin rt_connections"
+    )?;
+    crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
         "xdp_lan_route pin rt6_slot_map"
     )?;
@@ -166,6 +174,14 @@ pub fn init_xdp_lan_route(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut intro_open_skel.maps.rt4_slot_map, &paths.rt4_slot_map,),
         "tc_lan_ingress_route pin rt4_slot_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut intro_open_skel.maps.rt_conn_policy, &paths.rt_conn_policy,),
+        "tc_lan_ingress_route pin rt_conn_policy"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut intro_open_skel.maps.rt_connections, &paths.rt_connections,),
+        "tc_lan_ingress_route pin rt_connections"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut intro_open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),

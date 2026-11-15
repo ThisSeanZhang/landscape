@@ -24,6 +24,7 @@ pub struct Model {
     pub enable: bool,
     pub filter: DBJson,
     pub upstream_id: DBId,
+    pub wan_upstreams: DBJson,
     /// Kept in the table for legacy rows; no longer used by the rule model
     /// (source-address binding moved to the upstream config).
     pub bind_config: DBJson,
@@ -60,6 +61,8 @@ impl From<Model> for DNSRuleConfig {
             enable: entity.enable,
             filter: serde_json::from_value(entity.filter).unwrap(),
             upstream_id: entity.upstream_id,
+            wan_upstreams: serde_json::from_value(entity.wan_upstreams).unwrap(),
+            resolved_wan: None,
             mark: FlowMark::from(entity.mark as u16),
             source: serde_json::from_str(&entity.source).unwrap(),
             flow_id: entity.flow_id,
@@ -83,6 +86,7 @@ impl UpdateActiveModel<ActiveModel> for DNSRuleConfig {
         active.enable = Set(self.enable);
         active.filter = Set(serde_json::to_value(self.filter).unwrap());
         active.upstream_id = Set(self.upstream_id);
+        active.wan_upstreams = Set(serde_json::to_value(self.wan_upstreams).unwrap());
         active.mark = Set(self.mark.into());
         active.source = Set(serde_json::to_string(&self.source).unwrap());
         active.flow_id = Set(self.flow_id);

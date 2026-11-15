@@ -3,6 +3,7 @@ import type {
   WanLinkConfig,
   WanLinkKind,
   WanLinkV4Model,
+  WanProbeGroup,
 } from "@landscape-router/types/api/schemas";
 
 /** Placeholder for links that have not been persisted yet (server assigns). */
@@ -26,7 +27,13 @@ export const MAX_HEALTH_TARGETS = 4;
 
 export type HealthCheckConfig = {
   enable: boolean;
-  probe: { t: "icmp"; targets: string[]; probe_gateway: boolean };
+  ipv4_probe_enabled: boolean;
+  ipv6_probe_enabled: boolean;
+  probe:
+    | { t: "icmp"; targets: string[]; probe_gateway: boolean }
+    | { t: "dns"; server: string; domain: string }
+    | { t: "http"; url: string; dns_server: string }
+    | { t: "multi"; groups: WanProbeGroup[] };
   interval_secs: number;
   timeout_ms: number;
   failure_threshold: number;
@@ -37,6 +44,8 @@ export type HealthCheckConfig = {
 export function default_health_check(): HealthCheckConfig {
   return {
     enable: false,
+    ipv4_probe_enabled: true,
+    ipv6_probe_enabled: true,
     probe: { t: "icmp", targets: [], probe_gateway: false },
     interval_secs: DEFAULT_HEALTH_INTERVAL_SECS,
     timeout_ms: DEFAULT_HEALTH_TIMEOUT_MS,
@@ -210,8 +219,15 @@ function health_check_from_raw(raw_section: unknown): HealthCheckConfig {
   const section = raw_section as
     | {
         enable?: boolean;
+        ipv4_probe_enabled?: boolean;
+        ipv6_probe_enabled?: boolean;
         probe?: {
           t?: string;
+          groups?: WanProbeGroup[];
+          server?: string;
+          domain?: string;
+          url?: string;
+          dns_server?: string;
           targets?: string[] | null;
           probe_gateway?: boolean;
         };
@@ -228,14 +244,28 @@ function health_check_from_raw(raw_section: unknown): HealthCheckConfig {
   }
   return {
     enable: section.enable ?? false,
-    probe: {
-      t: "icmp",
-      targets: section.probe?.t === "icmp" ? (section.probe.targets ?? []) : [],
-      probe_gateway:
-        section.probe?.t === "icmp"
-          ? (section.probe.probe_gateway ?? false)
-          : false,
-    },
+    ipv4_probe_enabled: section.ipv4_probe_enabled ?? true,
+    ipv6_probe_enabled: section.ipv6_probe_enabled ?? true,
+    probe:
+      section.probe?.t === "multi"
+        ? { t: "multi", groups: structuredClone(section.probe.groups ?? []) }
+        : section.probe?.t === "dns"
+          ? {
+              t: "dns",
+              server: section.probe.server ?? "223.5.5.5",
+              domain: section.probe.domain ?? "www.baidu.com",
+            }
+          : section.probe?.t === "http"
+            ? {
+                t: "http",
+                url: section.probe.url ?? "https://www.baidu.com",
+                dns_server: section.probe.dns_server ?? "223.5.5.5",
+              }
+            : {
+                t: "icmp",
+                targets: section.probe?.targets ?? [],
+                probe_gateway: section.probe?.probe_gateway ?? false,
+              },
     interval_secs: section.interval_secs ?? DEFAULT_HEALTH_INTERVAL_SECS,
     timeout_ms: section.timeout_ms ?? DEFAULT_HEALTH_TIMEOUT_MS,
     failure_threshold:
