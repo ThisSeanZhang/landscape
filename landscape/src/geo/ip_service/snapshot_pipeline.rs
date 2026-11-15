@@ -30,37 +30,18 @@ impl GeoIpService {
         let raw_path = raw_dat_path("ip", source_id);
 
         if matches!(mode, GeoTaskMode::RestoreOnly) {
-            match self.ensure_snapshot(&config, &raw_path, &snapshot_path, cancel).await {
-                Ok(false) => return,
-                Err(GeoError::TaskCancelled) => return,
-                Err(error) => {
-                    tracing::warn!("restore geo ip source '{}' failed: {}", config.name, error);
-                    return;
-                }
-                Ok(true) => {}
-            }
-
-            self.tasks.advance(source_id, GeoTaskPhase::Applying);
-            match self.apply_snapshot(&config.name, &snapshot_path, true, cancel).await {
-                Ok(result) => {
-                    tracing::info!(
-                        "restored geo ip cache '{}' from snapshot {:?}",
-                        config.name,
-                        snapshot_path
-                    );
-                    self.notify_dst_ip_updated(result.changed_keys);
-                }
-                Err(GeoError::TaskCancelled) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        "restore geo ip cache '{}' from snapshot {:?} failed: {}",
-                        config.name,
-                        snapshot_path,
-                        error
-                    );
-                }
-            }
+            self.restore_cache(&config, &raw_path, &snapshot_path, cancel).await;
             return;
+        }
+        // Upgrades may only have the pre-snapshot journal. Restore it before
+        // attempting the network so a failed/slow download does not leave
+        // configured GeoIP rules empty.
+        if matches!(mode, GeoTaskMode::Download) && !snapshot_path.exists() && !raw_path.exists() {
+            self.restore_cache(&config, &raw_path, &snapshot_path, cancel).await;
+            if cancel.is_cancelled() {
+                return;
+            }
+            self.tasks.advance(source_id, GeoTaskPhase::Downloading);
         }
 
         if matches!(&mode, GeoTaskMode::Upload(_))
@@ -210,8 +191,48 @@ impl GeoIpService {
         self.notify_dst_ip_updated(apply_result.changed_keys);
     }
 
-    /// Build the snapshot from the raw file when it is missing. Used by the
-    /// restore path, which must not touch the network.
+    async fn restore_cache(
+        &self,
+        config: &GeoIpSourceConfig,
+        raw_path: &Path,
+        snapshot_path: &Path,
+        cancel: &CancellationToken,
+    ) {
+        let source_id = config.id;
+        match self.ensure_snapshot(config, raw_path, snapshot_path, cancel).await {
+            Ok(false) => return,
+            Err(GeoError::TaskCancelled) => return,
+            Err(error) => {
+                tracing::warn!("restore geo ip source '{}' failed: {}", config.name, error);
+                return;
+            }
+            Ok(true) => {}
+        }
+
+        self.tasks.advance(source_id, GeoTaskPhase::Applying);
+        match self.apply_snapshot(&config.name, snapshot_path, true, cancel).await {
+            Ok(result) => {
+                tracing::info!(
+                    "restored geo ip cache '{}' from snapshot {:?}",
+                    config.name,
+                    snapshot_path
+                );
+                self.notify_dst_ip_updated(result.changed_keys);
+            }
+            Err(GeoError::TaskCancelled) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "restore geo ip cache '{}' from snapshot {:?} failed: {}",
+                    config.name,
+                    snapshot_path,
+                    error
+                );
+            }
+        }
+    }
+
+    /// Restore a missing snapshot from a raw file, or from the legacy journal
+    /// when no modern source/cache exists. This must not touch the network.
     async fn ensure_snapshot(
         &self,
         config: &GeoIpSourceConfig,
@@ -223,7 +244,40 @@ impl GeoIpService {
             return Ok(true);
         }
         if !raw_path.exists() {
-            return Ok(false);
+            // Do not replace an already populated modern cache with an older
+            // journal, or migrate cache data into a direct source.
+            if !matches!(config.source, GeoIpSource::Url { .. })
+                || !self.cache.entry_hashes_for_name(&config.name).await?.is_empty()
+            {
+                return Ok(false);
+            }
+            if cancel.is_cancelled() {
+                return Err(GeoError::TaskCancelled);
+            }
+            let directory = landscape_common::args::LAND_HOME_PATH.join("geo_tmp/ip");
+            let name = config.name.clone();
+            let output = snapshot_path.to_path_buf();
+            let id = config.id;
+            let cancel_worker = cancel.clone();
+            let restored = tokio::task::spawn_blocking(move || {
+                landscape_protobuf::restore_legacy_geoip_snapshot(
+                    &directory,
+                    &name,
+                    &output,
+                    id,
+                    || cancel_worker.is_cancelled(),
+                )
+            })
+            .await
+            .map_err(|error| GeoError::RawDatReadFailed(format!("legacy GeoIP worker: {error}")))?
+            .map_err(|error| match error {
+                landscape_protobuf::LegacyGeoIpError::Cancelled => GeoError::TaskCancelled,
+                error => GeoError::RawDatReadFailed(format!("legacy GeoIP restore: {error}")),
+            })?;
+            if restored {
+                tracing::info!("restored legacy GeoIP journal for '{}'", config.name);
+            }
+            return Ok(restored);
         }
         let (format, txt_key) = match &config.source {
             GeoIpSource::Url { format, txt_key, .. } => (format.clone(), txt_key.clone()),

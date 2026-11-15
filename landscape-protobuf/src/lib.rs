@@ -14,6 +14,7 @@ pub mod adguard;
 pub mod geo_snapshot;
 pub mod ip_stream;
 mod ip_utils;
+mod legacy_geoip;
 mod protobuf_stream;
 mod protos;
 pub mod site_stream;
@@ -29,6 +30,7 @@ pub use geo_snapshot::{
     SiteSnapshotReader, SiteSnapshotWriter, geo_snapshot_hash_hex,
 };
 pub use ip_stream::{GeoIpDatStream, GeoIpStreamEvent, GeoIpTxtStream};
+pub use legacy_geoip::{LegacyGeoIpError, restore_legacy_geoip_snapshot};
 pub use site_stream::{GeoSiteStream, GeoSiteStreamEvent};
 
 pub const DEFAULT_TXT_GEO_KEY: &str = "DEFAULT";
