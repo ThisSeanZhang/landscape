@@ -255,7 +255,16 @@ static __always_inline int current_l3_protocol(struct __sk_buff *skb, u32 curren
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     barrier_var(data);
-    if (data + need > data_end) return TC_ACT_SHOT;
+    if (data + need > data_end) {
+        /* A short linear head does not imply a truncated packet. Pull only
+         * the bytes needed for protocol detection, including on L3 devices.
+         */
+        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
+        data = (void *)(long)skb->data;
+        data_end = (void *)(long)skb->data_end;
+        barrier_var(data);
+        if (data + need > data_end) return TC_ACT_SHOT;
+    }
 
     if (current_l3_offset != 0) {
         struct ethhdr *eth = (struct ethhdr *)data;
