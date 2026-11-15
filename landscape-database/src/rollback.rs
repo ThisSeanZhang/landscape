@@ -51,7 +51,7 @@ pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
         terminal_migration: "m20261008_240001_wan_link_health_check",
     },
     ReleaseBoundary {
-        version: "0.28.0",
+        version: "0.28.2",
         terminal_migration: "m20261102_010000_dns_wan_upstreams",
     },
 ];

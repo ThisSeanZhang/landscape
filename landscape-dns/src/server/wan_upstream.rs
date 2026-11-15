@@ -241,7 +241,10 @@ mod packet_tests {
             }
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(3),
-                resolver.lookup(&crate::domain::ParsedDomain::new("independent.test.").unwrap(), RecordType::A),
+                resolver.lookup(
+                    &crate::domain::ParsedDomain::new("independent.test.").unwrap(),
+                    RecordType::A,
+                ),
             )
             .await
             .unwrap()
@@ -256,7 +259,15 @@ mod packet_tests {
         rule.resolved_wan = None;
         let resolver = pool.get_or_create(20, 0x8014, &select(&rule, &groups).unwrap()).unwrap();
         assert!(matches!(*resolver, LandscapeResolver::Unavailable));
-        assert!(resolver.lookup(&crate::domain::ParsedDomain::new("independent.test.").unwrap(), RecordType::A).await.is_err());
+        assert!(
+            resolver
+                .lookup(
+                    &crate::domain::ParsedDomain::new("independent.test.").unwrap(),
+                    RecordType::A
+                )
+                .await
+                .is_err()
+        );
         assert_eq!([counts[0].load(Ordering::SeqCst), counts[1].load(Ordering::SeqCst)], [2, 1]);
         for task in tasks {
             task.abort();
