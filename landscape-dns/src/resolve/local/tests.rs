@@ -5,7 +5,7 @@ use hickory_proto::serialize::binary::BinEncodable;
 use landscape_common::{
     event::hub::{IPv6AssignEvent, Ipv6AssignAddress},
     net::MacAddr,
-    sys_config::LanHostnameConfig,
+    sys_config::LanHostnameRuntimeConfig,
 };
 use landscape_core::lan_device::DirectorySeedDevice;
 
@@ -46,8 +46,8 @@ fn seed(mac: [u8; 6], hostname: Option<&str>, ipv4: Option<Ipv4Addr>) -> Directo
     }
 }
 
-fn hostname_config(enable: bool, lan_suffix: &str) -> Arc<ArcSwap<LanHostnameConfig>> {
-    Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+fn hostname_config(enable: bool, lan_suffix: &str) -> Arc<ArcSwap<LanHostnameRuntimeConfig>> {
+    Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig {
         enable,
         lan_suffix: lan_suffix.to_string(),
     }))
@@ -79,7 +79,7 @@ fn v6_allocated(mac: [u8; 6], addrs: Vec<(Ipv6Addr, bool)>) -> IPv6AssignEvent {
 
 fn make_resolver(
     directory: Arc<LanDeviceDirectory>,
-    config: Arc<ArcSwap<LanHostnameConfig>>,
+    config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
 ) -> LocalResolver {
     LocalResolver::new(directory, config, None, None, None)
 }
@@ -595,7 +595,8 @@ async fn config_update_applies_suffix_without_touching_directory() {
     let config = hostname_config(true, "lan");
     let resolver = make_resolver(dir.clone(), config.clone());
 
-    config.store(Arc::new(LanHostnameConfig { enable: true, lan_suffix: "home".to_string() }));
+    config
+        .store(Arc::new(LanHostnameRuntimeConfig { enable: true, lan_suffix: "home".to_string() }));
 
     assert!(resolver.match_local_zone("nas.lan").is_none());
     assert!(resolver.match_local_zone("nas.home").is_some());
@@ -623,7 +624,8 @@ async fn disabled_config_stops_resolution_without_touching_directory() {
     let config = hostname_config(true, "lan");
     let resolver = make_resolver(dir.clone(), config.clone());
 
-    config.store(Arc::new(LanHostnameConfig { enable: false, lan_suffix: "lan".to_string() }));
+    config
+        .store(Arc::new(LanHostnameRuntimeConfig { enable: false, lan_suffix: "lan".to_string() }));
 
     assert!(resolver.match_local_zone("nas.lan").is_none());
     assert!(resolver.match_local_zone("nas.local").is_some());
@@ -631,7 +633,8 @@ async fn disabled_config_stops_resolution_without_touching_directory() {
     // Disabled config does not own managed PTR: falls through upstream.
     assert!(resolver.resolve_local(&pd("10.1.168.192.in-addr.arpa."), RecordType::PTR).is_none());
 
-    config.store(Arc::new(LanHostnameConfig { enable: true, lan_suffix: "lan".to_string() }));
+    config
+        .store(Arc::new(LanHostnameRuntimeConfig { enable: true, lan_suffix: "lan".to_string() }));
     match resolver.resolve_local(&pd("nas.lan."), RecordType::A).unwrap() {
         LocalAnswer::Answered { records, .. } => {
             assert!(matches!(&records[0].data, RData::A(a) if a.0 == ip));

@@ -4,7 +4,7 @@ use arc_swap::ArcSwap;
 use hickory_proto::rr::{Record, RecordType};
 use landscape_common::{
     metric::dns::DnsOutcome,
-    sys_config::{DohRuntimeConfig, LanHostnameConfig},
+    sys_config::{DohRuntimeConfig, LanHostnameRuntimeConfig},
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 
@@ -56,7 +56,7 @@ impl LocalAnswer {
 #[derive(Clone)]
 pub struct LocalResolver {
     directory: Arc<LanDeviceDirectory>,
-    hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+    hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     doh_runtime: Option<DohRuntimeConfig>,
@@ -65,7 +65,7 @@ pub struct LocalResolver {
 impl LocalResolver {
     pub fn new(
         directory: Arc<LanDeviceDirectory>,
-        hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+        hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
         doh_runtime: Option<DohRuntimeConfig>,

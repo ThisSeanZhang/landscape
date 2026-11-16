@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, watch } from "vue";
-import type { LandscapeUIConfig } from "@landscape-router/types/api/schemas";
+import type { LandscapeUiConfig } from "@landscape-router/types/api/schemas";
 import {
   get_ui_config,
   get_ui_config_edit,
@@ -55,7 +55,7 @@ export const usePreferenceStore = defineStore("preference", () => {
   }
 
   async function savePreference() {
-    const new_ui: LandscapeUIConfig = {
+    const new_ui: LandscapeUiConfig = {
       language: language.value === "zh" ? undefined : language.value,
       timezone: timezone.value === "Asia/Shanghai" ? undefined : timezone.value,
       theme: theme.value === "dark" ? undefined : theme.value,

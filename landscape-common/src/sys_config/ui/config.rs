@@ -25,7 +25,7 @@ pub struct LandscapeThemeStyleConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct LandscapeUIConfig {
+pub struct LandscapeUiConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub language: Option<String>,

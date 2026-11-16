@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use arc_swap::ArcSwap;
-use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 
 use crate::LandscapeSingleIpInfo;
 use crate::get_iface_by_name;
@@ -79,7 +79,7 @@ pub struct DHCPv4ServerStarter {
     api_tls_resolver: SharedSniResolver,
     dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
     /// Live LAN suffix, advertised as DHCP option 15/119.
-    lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
+    lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
     /// Feeds ARP scan observations into the LAN device directory.
     lan_discovery_sender: LanDiscoveryEventSender,
@@ -93,7 +93,7 @@ impl DHCPv4ServerStarter {
         db_provider: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
-        lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
+        lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
         lan_discovery_sender: LanDiscoveryEventSender,
         mac_binding: Arc<dyn MacBindingDataplane>,
@@ -309,7 +309,7 @@ impl DHCPv4ServerManagerService {
         store_service: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
         dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
-        lan_domain_state: Arc<ArcSwap<LanHostnameConfig>>,
+        lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
         lan_discovery_sender: LanDiscoveryEventSender,

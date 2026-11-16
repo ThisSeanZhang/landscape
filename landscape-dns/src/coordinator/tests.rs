@@ -8,7 +8,7 @@ use landscape_common::{
     flow::{NoopDnsResultSink, NoopFlowSocketRegistrar},
     sys_config::CacheRuntimeConfig,
     sys_config::DnsRuntimeConfig,
-    sys_config::LanHostnameConfig,
+    sys_config::LanHostnameRuntimeConfig,
 };
 use landscape_core::{
     geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry},
@@ -68,7 +68,7 @@ async fn test_coordinator(source: Arc<dyn DnsConfigSource>) -> Arc<DnsCoordinato
         local_answer_provider: None,
         doh_advertise_provider: None,
         lan_device_directory: LanDeviceDirectory::new_for_test(),
-        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default())),
+        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
         result_sink: Arc::new(NoopDnsResultSink),
         socket_registrar: Arc::new(NoopFlowSocketRegistrar),
     });

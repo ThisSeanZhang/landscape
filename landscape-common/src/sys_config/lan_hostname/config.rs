@@ -80,7 +80,7 @@ mod tests {
     use crate::sys_config::LandscapeConfig;
 
     use super::{LanHostnameError, LandscapeLanHostnameConfig, normalize_lan_suffix};
-    use crate::sys_config::lan_hostname::runtime::LanHostnameConfig;
+    use crate::sys_config::lan_hostname::runtime::LanHostnameRuntimeConfig;
 
     #[test]
     fn legacy_hostname_registry_key_deserializes_as_lan_hostname() {
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn runtime_config_updates_from_file_config() {
-        let runtime = LanHostnameConfig::from_file_config(&LandscapeLanHostnameConfig {
+        let runtime = LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig {
             lan_suffix: Some("home".to_string()),
             ..Default::default()
         })
@@ -141,7 +141,8 @@ mod tests {
     #[test]
     fn runtime_config_uses_default_when_suffix_is_omitted() {
         let runtime =
-            LanHostnameConfig::from_file_config(&LandscapeLanHostnameConfig::default()).unwrap();
+            LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig::default())
+                .unwrap();
 
         assert!(runtime.enable);
         assert_eq!(runtime.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn runtime_config_can_disable_lan_hostname_resolution() {
-        let runtime = LanHostnameConfig::from_file_config(&LandscapeLanHostnameConfig {
+        let runtime = LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig {
             enable: Some(false),
             lan_suffix: Some("home".to_string()),
         })
@@ -167,7 +168,7 @@ mod tests {
         }
         .normalized()
         .unwrap();
-        let runtime = LanHostnameConfig::from_file_config(&normalized).unwrap();
+        let runtime = LanHostnameRuntimeConfig::from_file_config(&normalized).unwrap();
 
         assert!(normalized.lan_suffix.is_none());
         assert_eq!(runtime.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);

@@ -11,7 +11,7 @@ use landscape_common::dns::{
 };
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
 use landscape_common::metric::dns::DnsMetricEvent;
-use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_common::sys_config::{CacheRuntimeConfig, DohRuntimeConfig};
 use landscape_core::lan_device::LanDeviceDirectory;
 use tokio::sync::{Mutex, mpsc};
@@ -57,7 +57,7 @@ pub struct LandscapeDnsServer {
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
     pub local_resolver: Arc<LocalResolver>,
     // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
-    lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+    lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     // DNS events
     pub msg_tx: MetricSenderState,
     // bound UDP DNS listen address
@@ -88,7 +88,7 @@ pub struct DnsServiceDeps {
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     pub lan_device_directory: Arc<LanDeviceDirectory>,
-    pub lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+    pub lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     pub result_sink: Arc<dyn DnsResultSink>,
     pub socket_registrar: Arc<dyn FlowSocketRegistrar>,
 }
@@ -295,7 +295,7 @@ impl LandscapeDnsServer {
         self.msg_tx.store(msg_tx.map(Arc::new));
     }
 
-    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
+    pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {
         self.lan_hostname_config.store(Arc::new(config));
     }
 
@@ -517,7 +517,7 @@ mod tests {
     use arc_swap::ArcSwap;
     use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
     use landscape_common::sys_config::CacheRuntimeConfig;
-    use landscape_common::sys_config::LanHostnameConfig;
+    use landscape_common::sys_config::LanHostnameRuntimeConfig;
     use landscape_core::lan_device::LanDeviceDirectory;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {
@@ -542,8 +542,8 @@ mod tests {
         ))
     }
 
-    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameConfig>> {
-        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default()))
+    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameRuntimeConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default()))
     }
 
     #[test]

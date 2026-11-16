@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use super::config::LandscapeUIConfig;
+use super::config::LandscapeUiConfig;
 
 #[derive(Serialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct GetUIConfigResponse {
-    pub ui: LandscapeUIConfig,
+pub struct GetUiConfigResponse {
+    pub ui: LandscapeUiConfig,
     pub hash: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct UpdateUIConfigRequest {
-    pub new_ui: LandscapeUIConfig,
+pub struct UpdateUiConfigRequest {
+    pub new_ui: LandscapeUiConfig,
     pub expected_hash: String,
 }

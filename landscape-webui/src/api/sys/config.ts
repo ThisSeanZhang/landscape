@@ -8,14 +8,14 @@ import type {
   GetMetricConfigResponse,
   LandscapeGatewayConfig,
   LandscapeLanHostnameConfig,
-  GetUIConfigResponse,
+  GetUiConfigResponse,
   LandscapeDnsConfig,
   LandscapeMetricConfig,
-  LandscapeUIConfig,
+  LandscapeUiConfig,
   UpdateGatewayConfigRequest,
   UpdateLanHostnameConfigRequest,
   UpdateMetricConfigRequest,
-  UpdateUIConfigRequest,
+  UpdateUiConfigRequest,
 } from "@landscape-router/types/api/schemas";
 import {
   getTimeConfig,
@@ -71,16 +71,16 @@ export async function import_init_config(file: File, upload_only: boolean) {
   return await importInitConfig({ file }, { upload_only });
 }
 
-export async function get_ui_config(): Promise<LandscapeUIConfig> {
+export async function get_ui_config(): Promise<LandscapeUiConfig> {
   return await getUiConfigFast();
 }
 
-export async function get_ui_config_edit(): Promise<GetUIConfigResponse> {
+export async function get_ui_config_edit(): Promise<GetUiConfigResponse> {
   return await getUiConfig();
 }
 
 export async function update_ui_config(
-  payload: UpdateUIConfigRequest,
+  payload: UpdateUiConfigRequest,
 ): Promise<void> {
   await updateUiConfig(payload);
 }

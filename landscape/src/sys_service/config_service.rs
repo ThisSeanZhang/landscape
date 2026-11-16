@@ -3,9 +3,10 @@ use landscape_common::config::InitConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameConfig, LandscapeConfig,
-    LandscapeDnsConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig,
-    LandscapeTimeConfig, LandscapeUIConfig, MetricRuntimeConfig, RuntimeConfig, TimeRuntimeConfig,
+    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameRuntimeConfig,
+    LandscapeConfig, LandscapeDnsConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig,
+    LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUiConfig, MetricRuntimeConfig,
+    RuntimeConfig, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -179,7 +180,7 @@ impl LandscapeConfigService {
         }
     }
 
-    pub fn get_ui_config_from_memory(&self) -> LandscapeUIConfig {
+    pub fn get_ui_config_from_memory(&self) -> LandscapeUiConfig {
         self.config.load().ui.clone()
     }
 
@@ -210,7 +211,7 @@ impl LandscapeConfigService {
         self.config.load().file_config.lan_hostname.clone()
     }
 
-    pub fn get_lan_hostname_runtime_config(&self) -> LanHostnameConfig {
+    pub fn get_lan_hostname_runtime_config(&self) -> LanHostnameRuntimeConfig {
         self.config.load().lan_hostname.clone()
     }
 
@@ -246,7 +247,7 @@ impl LandscapeConfigService {
         self.read_section_from_file(|config| config.gateway).unwrap_or_default()
     }
 
-    pub async fn get_ui_config_from_file(&self) -> Result<(LandscapeUIConfig, String), DbError> {
+    pub async fn get_ui_config_from_file(&self) -> Result<(LandscapeUiConfig, String), DbError> {
         self.read_section_from_file(|config| config.ui)
     }
 
@@ -262,7 +263,7 @@ impl LandscapeConfigService {
 
     pub async fn update_ui_config(
         &self,
-        new_ui: LandscapeUIConfig,
+        new_ui: LandscapeUiConfig,
         expected_hash: String,
     ) -> Result<(), DbError> {
         self.update_section(
@@ -336,7 +337,7 @@ impl LandscapeConfigService {
     ) -> Result<(), DbError> {
         let new_lan_hostname =
             new_lan_hostname.normalized().map_err(|error| DbError::Internal(error.to_string()))?;
-        let runtime_lan_hostname = LanHostnameConfig::from_file_config(&new_lan_hostname)
+        let runtime_lan_hostname = LanHostnameRuntimeConfig::from_file_config(&new_lan_hostname)
             .map_err(|error| DbError::Internal(error.to_string()))?;
         let file_lan_hostname = new_lan_hostname.clone();
         self.update_section(

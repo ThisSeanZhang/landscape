@@ -2,12 +2,12 @@ use super::config::{LandscapeLanHostnameConfig, normalize_lan_suffix};
 use super::error::LanHostnameError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LanHostnameConfig {
+pub struct LanHostnameRuntimeConfig {
     pub enable: bool,
     pub lan_suffix: String,
 }
 
-impl Default for LanHostnameConfig {
+impl Default for LanHostnameRuntimeConfig {
     fn default() -> Self {
         Self {
             enable: crate::DEFAULT_LAN_HOSTNAME_ENABLE,
@@ -16,7 +16,7 @@ impl Default for LanHostnameConfig {
     }
 }
 
-impl LanHostnameConfig {
+impl LanHostnameRuntimeConfig {
     pub fn from_file_config(config: &LandscapeLanHostnameConfig) -> Result<Self, LanHostnameError> {
         let mut runtime = Self::default();
         runtime.update_from_file_config(config)?;

@@ -5,9 +5,9 @@ use std::{
 
 use super::metric::{cleanup_budget_secs_to_ms, metric_db_max_mb_to_bytes};
 use super::{
-    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameConfig, LandscapeConfig,
-    LogRuntimeConfig, MetricRuntimeConfig, RuntimeConfig, StoreRuntimeConfig, TimeRuntimeConfig,
-    WebRuntimeConfig,
+    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameRuntimeConfig,
+    LandscapeConfig, LogRuntimeConfig, MetricRuntimeConfig, RuntimeConfig, StoreRuntimeConfig,
+    TimeRuntimeConfig, WebRuntimeConfig,
 };
 use crate::args::WebCommArgs;
 use crate::{
@@ -202,11 +202,11 @@ impl RuntimeConfig {
         let lan_hostname = match config.lan_hostname.clone().normalized() {
             Ok(normalized) => {
                 config.lan_hostname = normalized;
-                match LanHostnameConfig::from_file_config(&config.lan_hostname) {
+                match LanHostnameRuntimeConfig::from_file_config(&config.lan_hostname) {
                     Ok(runtime) => runtime,
                     Err(error) => {
                         tracing::warn!(%error, "normalized LAN hostname config was rejected; using defaults");
-                        LanHostnameConfig::default()
+                        LanHostnameRuntimeConfig::default()
                     }
                 }
             }
@@ -215,7 +215,7 @@ impl RuntimeConfig {
                     error = %error,
                     "invalid legacy LAN hostname config; LAN hostname resolution is disabled until the config is corrected"
                 );
-                LanHostnameConfig {
+                LanHostnameRuntimeConfig {
                     enable: false,
                     lan_suffix: crate::DEFAULT_DNS_LAN_SUFFIX.to_string(),
                 }

@@ -7,7 +7,7 @@ use landscape_common::dns::redirect::{DNSRedirectRuntimeRule, DnsRedirectAnswerM
 use landscape_common::dns::rule::{DomainConfig, DomainMatchType, FilterResult};
 use landscape_common::flow::{DnsRuntimeMarkInfo, NoopDnsResultSink};
 use landscape_common::metric::dns::DnsOutcome;
-use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_core::lan_device::LanDeviceDirectory;
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -160,7 +160,7 @@ pub(crate) fn redirect_test_handler_with_addrs(
         Arc::new(ArcSwapOption::new(None)),
         Arc::new(LocalResolver::new(
             LanDeviceDirectory::new_for_test(),
-            Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default())),
+            Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
             None,
             None,
             None,
@@ -241,7 +241,7 @@ mod tests {
     }
 
     fn test_handler_with_local(
-        hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+        hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         dns_rules: Vec<DNSRuntimeRule>,
         redirect_rules: Vec<DNSRedirectRuntimeRule>,
@@ -286,8 +286,8 @@ mod tests {
         ))
     }
 
-    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameConfig>> {
-        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default()))
+    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameRuntimeConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default()))
     }
 
     fn test_runtime_rule() -> DNSRuntimeRule {
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn disabled_lan_hostname_config_does_not_own_private_ptr_queries() {
         run_async_test(async {
-            let disabled_config = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+            let disabled_config = Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig {
                 enable: false,
                 lan_suffix: "lan".to_string(),
             }));

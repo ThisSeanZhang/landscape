@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
-use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_common::{
     dns::error::DnsServiceError,
     dns::{DnsServiceStatus, FlowDnsStatus},
@@ -85,7 +85,7 @@ impl LandscapeDnsService {
         cert_service: CertService,
         msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
         lan_device_directory: Arc<LanDeviceDirectory>,
-        lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+        lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         dns_result_sink: Arc<dyn DnsResultSink>,
         flow_socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
@@ -211,7 +211,7 @@ impl LandscapeDnsService {
         self.coordinator.server().update_metric_sender(msg_tx);
     }
 
-    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
+    pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {
         self.coordinator.server().update_lan_hostname_config(config);
     }
 

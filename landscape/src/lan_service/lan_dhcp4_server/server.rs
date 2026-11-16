@@ -26,7 +26,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::{
 };
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
-use landscape_common::sys_config::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 
 use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
@@ -434,7 +434,7 @@ pub struct DHCPv4Server {
     /// Live hostname-registry config; the LAN suffix it holds is advertised as
     /// option 15/119 and is re-read per response so a config edit applies
     /// without restarting the DHCP service.
-    pub lan_domain_state: Option<Arc<ArcSwap<LanHostnameConfig>>>,
+    pub lan_domain_state: Option<Arc<ArcSwap<LanHostnameRuntimeConfig>>>,
     pub address_lease_time: u32,
     pub iface_name: String,
     status: Arc<Mutex<DhcpV4AssignStatus>>,
@@ -444,7 +444,7 @@ impl DHCPv4Server {
     pub fn new(
         config: DHCPv4ServerConfig,
         dnr_context: Option<DhcpV4DnrRuntimeContext>,
-        lan_domain_state: Option<Arc<ArcSwap<LanHostnameConfig>>>,
+        lan_domain_state: Option<Arc<ArcSwap<LanHostnameRuntimeConfig>>>,
         status: Arc<Mutex<DhcpV4AssignStatus>>,
         iface_name: String,
     ) -> Self {
@@ -573,7 +573,7 @@ impl DHCPv4Server {
     #[cfg(test)]
     fn init_with_lan_suffix(config: DHCPv4ServerConfig, lan_suffix: &str) -> Self {
         let status = Arc::new(Mutex::new(DhcpV4AssignStatus::init_for_test(config.clone())));
-        let lan_domain_state = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+        let lan_domain_state = Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig {
             enable: true,
             lan_suffix: lan_suffix.to_string(),
         }));
@@ -901,8 +901,8 @@ mod tests {
 
     use super::{
         DHCPV4_DOMAIN_NAME_OPTION_CODE, DHCPV4_DOMAIN_SEARCH_OPTION_CODE, DHCPv4Server,
-        DhcpV4DnrRuntimeContext, LanHostnameConfig, ack_dest, client_chaddr, gen_ack, gen_offer,
-        handle_dhcp_message,
+        DhcpV4DnrRuntimeContext, LanHostnameRuntimeConfig, ack_dest, client_chaddr, gen_ack,
+        gen_offer, handle_dhcp_message,
     };
 
     fn option_payload(server: &DHCPv4Server, mac: &MacAddr, code: u8) -> Vec<u8> {
@@ -1072,7 +1072,7 @@ mod tests {
                 config.clone(),
             ),
         ));
-        let state = Arc::new(ArcSwap::from_pointee(LanHostnameConfig {
+        let state = Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig {
             enable: true,
             lan_suffix: "lan".to_string(),
         }));
@@ -1082,14 +1082,14 @@ mod tests {
         assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
                 DhcpV4Option::DomainName(ref d) if d == "lan"));
 
-        state.store(Arc::new(LanHostnameConfig {
+        state.store(Arc::new(LanHostnameRuntimeConfig {
             enable: true,
             lan_suffix: "home.arpa".to_string(),
         }));
         assert!(matches!(server.lan_domain_option(DHCPV4_DOMAIN_NAME_OPTION_CODE).unwrap(),
                 DhcpV4Option::DomainName(ref d) if d == "home.arpa"));
 
-        state.store(Arc::new(LanHostnameConfig {
+        state.store(Arc::new(LanHostnameRuntimeConfig {
             enable: false,
             lan_suffix: "home.arpa".to_string(),
         }));

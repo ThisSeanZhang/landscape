@@ -21,8 +21,8 @@ pub use gateway::{
     UpdateGatewayConfigRequest,
 };
 pub use lan_hostname::{
-    GetLanHostnameConfigResponse, LanHostnameConfig, LanHostnameError, LandscapeLanHostnameConfig,
-    UpdateLanHostnameConfigRequest,
+    GetLanHostnameConfigResponse, LanHostnameError, LanHostnameRuntimeConfig,
+    LandscapeLanHostnameConfig, UpdateLanHostnameConfigRequest,
 };
 pub use log::{LandscapeLogConfig, LogRuntimeConfig};
 pub use metric::{
@@ -34,7 +34,7 @@ pub use time::{
     GetTimeConfigResponse, LandscapeTimeConfig, TimeRuntimeConfig, UpdateTimeConfigRequest,
 };
 pub use ui::{
-    GetUIConfigResponse, LandscapeThemeStyleConfig, LandscapeUIConfig, UpdateUIConfigRequest,
+    GetUiConfigResponse, LandscapeThemeStyleConfig, LandscapeUiConfig, UpdateUiConfigRequest,
 };
 pub use web::{LandscapeWebConfig, WebRuntimeConfig};
 
@@ -68,7 +68,7 @@ pub struct LandscapeConfig {
     pub lan_hostname: LandscapeLanHostnameConfig,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
-    pub ui: LandscapeUIConfig,
+    pub ui: LandscapeUiConfig,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub time: LandscapeTimeConfig,
@@ -87,8 +87,8 @@ pub struct RuntimeConfig {
     pub store: StoreRuntimeConfig,
     pub metric: MetricRuntimeConfig,
     pub dns: DnsRuntimeConfig,
-    pub lan_hostname: LanHostnameConfig,
-    pub ui: LandscapeUIConfig,
+    pub lan_hostname: LanHostnameRuntimeConfig,
+    pub ui: LandscapeUiConfig,
     pub time: TimeRuntimeConfig,
     pub gateway: GatewayRuntimeConfig,
     pub auto: bool,
