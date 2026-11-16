@@ -11,8 +11,6 @@ use super::{
 };
 use crate::args::WebCommArgs;
 use crate::{
-    DEFAULT_TIME_ENABLE, DEFAULT_TIME_SAMPLES_PER_SERVER, DEFAULT_TIME_SERVERS,
-    DEFAULT_TIME_STEP_THRESHOLD_MS, DEFAULT_TIME_SYNC_INTERVAL_SECS, DEFAULT_TIME_TIMEOUT_SECS,
     LAND_CONFIG, LANDSCAPE_CONFIG_DIR_NAME, LANDSCAPE_LOG_DIR_NAME, LANDSCAPE_WEBROOT_DIR_NAME,
 };
 
@@ -199,24 +197,7 @@ impl RuntimeConfig {
                 .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_SLICE_WINDOW_SECS),
         };
 
-        let dns = DnsRuntimeConfig {
-            cache_capacity: config.dns.cache_capacity.unwrap_or(crate::DEFAULT_DNS_CACHE_CAPACITY),
-            cache_ttl: config.dns.cache_ttl.unwrap_or(crate::DEFAULT_DNS_CACHE_TTL),
-            negative_cache_ttl: config
-                .dns
-                .negative_cache_ttl
-                .unwrap_or(crate::DEFAULT_DNS_NEGATIVE_CACHE_TTL),
-            doh_listen_port: config
-                .dns
-                .doh_listen_port
-                .unwrap_or(crate::DEFAULT_DNS_DOH_LISTEN_PORT),
-            doh_http_endpoint: config
-                .dns
-                .doh_http_endpoint
-                .clone()
-                .unwrap_or_else(|| "/dns-query".to_string()),
-            tcp_enabled: config.dns.tcp_enabled.unwrap_or(crate::DEFAULT_DNS_TCP_ENABLE),
-        };
+        let dns = DnsRuntimeConfig::from_file_config(&config.dns);
 
         let lan_hostname = match config.lan_hostname.clone().normalized() {
             Ok(normalized) => {
@@ -241,26 +222,7 @@ impl RuntimeConfig {
             }
         };
 
-        let time = TimeRuntimeConfig {
-            enabled: config.time.enabled.unwrap_or(DEFAULT_TIME_ENABLE),
-            servers: config.time.servers.clone().unwrap_or_else(|| {
-                DEFAULT_TIME_SERVERS.iter().map(|server| (*server).to_string()).collect()
-            }),
-            sync_interval_secs: config
-                .time
-                .sync_interval_secs
-                .unwrap_or(DEFAULT_TIME_SYNC_INTERVAL_SECS),
-            timeout_secs: config.time.timeout_secs.unwrap_or(DEFAULT_TIME_TIMEOUT_SECS),
-            step_threshold_ms: config
-                .time
-                .step_threshold_ms
-                .unwrap_or(DEFAULT_TIME_STEP_THRESHOLD_MS),
-            samples_per_server: config
-                .time
-                .samples_per_server
-                .unwrap_or(DEFAULT_TIME_SAMPLES_PER_SERVER)
-                .max(1),
-        };
+        let time = TimeRuntimeConfig::from_file_config(&config.time);
 
         let gateway = GatewayRuntimeConfig::from_file_config(&config.gateway);
 

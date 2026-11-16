@@ -7,6 +7,8 @@ import { useLanHostnameConfigStore } from "@/stores/lan_hostname_config";
 import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 
+import { useTimeConfigStore } from "@/stores/time_config";
+import TimeConfigCard from "@/views/config_parts/TimeConfigCard.vue";
 import UIConfigCard from "@/views/config_parts/UIConfigCard.vue";
 import DNSConfigCard from "@/views/config_parts/DNSConfigCard.vue";
 import LanHostnameConfigCard from "@/views/config_parts/LanHostnameConfigCard.vue";
@@ -16,6 +18,7 @@ import PasswordConfigCard from "@/views/config_parts/PasswordConfigCard.vue";
 
 const { t } = useI18n();
 const prefStore = usePreferenceStore();
+const timeStore = useTimeConfigStore();
 const metricStore = useMetricConfigStore();
 const dnsStore = useDnsConfigStore();
 const lanHostnameStore = useLanHostnameConfigStore();
@@ -31,6 +34,7 @@ onMounted(async () => {
       prefStore.loadPreferenceForEdit(),
       metricStore.loadMetricConfig(),
       dnsStore.loadDnsConfig(),
+      timeStore.loadTimeConfig(),
       lanHostnameStore.loadLanHostnameConfig(),
     ]);
   } catch (e) {
@@ -48,6 +52,7 @@ onMounted(async () => {
       <n-space vertical size="large">
         <UIConfigCard />
         <DNSConfigCard />
+        <TimeConfigCard />
         <LanHostnameConfigCard />
         <MetricConfigCard />
         <PasswordConfigCard />
@@ -75,6 +80,7 @@ onMounted(async () => {
         >
           <n-anchor-link :title="t('config.ui_title')" href="#ui-config" />
           <n-anchor-link :title="t('config.dns_title')" href="#dns-config" />
+          <n-anchor-link :title="t('config.time_title')" href="#time-config" />
           <n-anchor-link
             :title="t('config.lan_hostname_title')"
             href="#lan-hostname-config"

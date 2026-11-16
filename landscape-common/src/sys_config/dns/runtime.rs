@@ -59,24 +59,47 @@ impl DnsRuntimeConfig {
         }
     }
 
-    pub fn update_from_file_config(&mut self, config: &LandscapeDnsConfig) {
-        if let Some(v) = config.cache_capacity {
-            self.cache_capacity = v;
+    /// Build a complete runtime configuration; omitted fields use defaults.
+    pub fn from_file_config(config: &LandscapeDnsConfig) -> Self {
+        Self {
+            cache_capacity: config.cache_capacity.unwrap_or(crate::DEFAULT_DNS_CACHE_CAPACITY),
+            cache_ttl: config.cache_ttl.unwrap_or(crate::DEFAULT_DNS_CACHE_TTL),
+            negative_cache_ttl: config
+                .negative_cache_ttl
+                .unwrap_or(crate::DEFAULT_DNS_NEGATIVE_CACHE_TTL),
+            doh_listen_port: config.doh_listen_port.unwrap_or(crate::DEFAULT_DNS_DOH_LISTEN_PORT),
+            doh_http_endpoint: config
+                .doh_http_endpoint
+                .clone()
+                .unwrap_or_else(|| "/dns-query".to_string()),
+            tcp_enabled: config.tcp_enabled.unwrap_or(crate::DEFAULT_DNS_TCP_ENABLE),
         }
-        if let Some(v) = config.cache_ttl {
-            self.cache_ttl = v;
-        }
-        if let Some(v) = config.negative_cache_ttl {
-            self.negative_cache_ttl = v;
-        }
-        if let Some(v) = config.doh_listen_port {
-            self.doh_listen_port = v;
-        }
-        if let Some(v) = &config.doh_http_endpoint {
-            self.doh_http_endpoint = v.clone();
-        }
-        if let Some(v) = config.tcp_enabled {
-            self.tcp_enabled = v;
-        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clearing_fields_restores_defaults_after_file_round_trip() {
+        let mut file_config = LandscapeDnsConfig {
+            cache_capacity: Some(1234),
+            cache_ttl: Some(42),
+            negative_cache_ttl: Some(7),
+            doh_listen_port: Some(8443),
+            doh_http_endpoint: Some("/custom".into()),
+            tcp_enabled: Some(false),
+        };
+        let customized = DnsRuntimeConfig::from_file_config(&file_config);
+        file_config = LandscapeDnsConfig::default();
+        let updated = DnsRuntimeConfig::from_file_config(&file_config);
+        let saved = toml::to_string(&file_config).unwrap();
+        let reloaded: LandscapeDnsConfig = toml::from_str(&saved).unwrap();
+        let restarted = DnsRuntimeConfig::from_file_config(&reloaded);
+        assert_eq!(updated, restarted);
+        assert_ne!(customized, updated);
+        assert_eq!(updated.doh_listen_port, crate::DEFAULT_DNS_DOH_LISTEN_PORT);
+        assert_eq!(updated.tcp_enabled, crate::DEFAULT_DNS_TCP_ENABLE);
     }
 }

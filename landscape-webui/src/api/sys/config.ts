@@ -1,4 +1,6 @@
 import type {
+  GetTimeConfigResponse,
+  UpdateTimeConfigRequest,
   GetDnsConfigResponse,
   GetDnsConfigResponse as GetDnsConfigFastResponse,
   GetGatewayConfigResponse,
@@ -16,6 +18,8 @@ import type {
   UpdateUIConfigRequest,
 } from "@landscape-router/types/api/schemas";
 import {
+  getTimeConfig,
+  updateTimeConfig,
   exportInitConfig,
   importInitConfig,
   getUiConfigFast,
@@ -135,4 +139,14 @@ export async function update_gateway_config(
   payload: UpdateGatewayConfigRequest,
 ): Promise<void> {
   await updateGatewayConfig(payload);
+}
+
+export async function get_time_config_edit(): Promise<GetTimeConfigResponse> {
+  return await getTimeConfig();
+}
+
+export async function update_time_config(
+  payload: UpdateTimeConfigRequest,
+): Promise<void> {
+  await updateTimeConfig(payload);
 }

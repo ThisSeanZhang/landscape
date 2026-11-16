@@ -3,9 +3,9 @@ use landscape_common::config::InitConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    GatewayRuntimeConfig, LanHostnameConfig, LandscapeConfig, LandscapeDnsConfig,
-    LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeTimeConfig,
-    LandscapeUIConfig, RuntimeConfig,
+    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameConfig, LandscapeConfig,
+    LandscapeDnsConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig,
+    LandscapeTimeConfig, LandscapeUIConfig, MetricRuntimeConfig, RuntimeConfig, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -183,7 +183,7 @@ impl LandscapeConfigService {
         self.config.load().ui.clone()
     }
 
-    pub fn get_auth_config(&self) -> landscape_common::sys_config::AuthRuntimeConfig {
+    pub fn get_auth_config(&self) -> AuthRuntimeConfig {
         self.config.load().auth.clone()
     }
 
@@ -191,7 +191,7 @@ impl LandscapeConfigService {
         self.config.load().file_config.metric.clone()
     }
 
-    pub fn get_metric_runtime_config(&self) -> landscape_common::sys_config::MetricRuntimeConfig {
+    pub fn get_metric_runtime_config(&self) -> MetricRuntimeConfig {
         self.config.load().metric.clone()
     }
 
@@ -202,7 +202,7 @@ impl LandscapeConfigService {
         (dns, hash)
     }
 
-    pub fn get_dns_runtime_config(&self) -> landscape_common::sys_config::DnsRuntimeConfig {
+    pub fn get_dns_runtime_config(&self) -> DnsRuntimeConfig {
         self.config.load().dns.clone()
     }
 
@@ -218,7 +218,7 @@ impl LandscapeConfigService {
         self.config.load().file_config.time.clone()
     }
 
-    pub fn get_time_runtime_config(&self) -> landscape_common::sys_config::TimeRuntimeConfig {
+    pub fn get_time_runtime_config(&self) -> TimeRuntimeConfig {
         self.config.load().time.clone()
     }
 
@@ -310,6 +310,7 @@ impl LandscapeConfigService {
         new_dns: LandscapeDnsConfig,
         expected_hash: String,
     ) -> Result<(), DbError> {
+        let runtime = DnsRuntimeConfig::from_file_config(&new_dns);
         self.update_section(
             "dns",
             &[],
@@ -319,7 +320,7 @@ impl LandscapeConfigService {
             |new_dns| {
                 self.config.rcu(|old| {
                     let mut new_config = (**old).clone();
-                    new_config.dns.update_from_file_config(new_dns);
+                    new_config.dns = runtime.clone();
                     new_config.file_config.dns = new_dns.clone();
                     new_config
                 });
@@ -362,6 +363,7 @@ impl LandscapeConfigService {
         new_time: LandscapeTimeConfig,
         expected_hash: String,
     ) -> Result<(), DbError> {
+        let runtime = TimeRuntimeConfig::from_file_config(&new_time);
         self.update_section(
             "time",
             &[],
@@ -371,7 +373,7 @@ impl LandscapeConfigService {
             |new_time| {
                 self.config.rcu(|old| {
                     let mut new_config = (**old).clone();
-                    new_config.time.update_from_file_config(new_time);
+                    new_config.time = runtime.clone();
                     new_config.file_config.time = new_time.clone();
                     new_config
                 });

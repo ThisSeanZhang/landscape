@@ -4,7 +4,7 @@ use crate::{
     DEFAULT_TIME_STEP_THRESHOLD_MS, DEFAULT_TIME_SYNC_INTERVAL_SECS, DEFAULT_TIME_TIMEOUT_SECS,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimeRuntimeConfig {
     pub enabled: bool,
     pub servers: Vec<String>,
@@ -28,24 +28,53 @@ impl Default for TimeRuntimeConfig {
 }
 
 impl TimeRuntimeConfig {
-    pub fn update_from_file_config(&mut self, config: &LandscapeTimeConfig) {
-        if let Some(v) = config.enabled {
-            self.enabled = v;
+    /// Build a complete runtime configuration; omitted fields use defaults.
+    pub fn from_file_config(config: &LandscapeTimeConfig) -> Self {
+        let defaults = Self::default();
+        Self {
+            enabled: config.enabled.unwrap_or(defaults.enabled),
+            servers: config.servers.clone().unwrap_or(defaults.servers),
+            sync_interval_secs: config.sync_interval_secs.unwrap_or(defaults.sync_interval_secs),
+            timeout_secs: config.timeout_secs.unwrap_or(defaults.timeout_secs),
+            step_threshold_ms: config.step_threshold_ms.unwrap_or(defaults.step_threshold_ms),
+            samples_per_server: config
+                .samples_per_server
+                .unwrap_or(defaults.samples_per_server)
+                .max(1),
         }
-        if let Some(v) = &config.servers {
-            self.servers = v.clone();
-        }
-        if let Some(v) = config.sync_interval_secs {
-            self.sync_interval_secs = v;
-        }
-        if let Some(v) = config.timeout_secs {
-            self.timeout_secs = v;
-        }
-        if let Some(v) = config.step_threshold_ms {
-            self.step_threshold_ms = v;
-        }
-        if let Some(v) = config.samples_per_server {
-            self.samples_per_server = v;
-        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clearing_fields_restores_defaults_after_file_round_trip() {
+        let mut file_config = LandscapeTimeConfig {
+            enabled: Some(true),
+            servers: Some(vec!["custom:123".into()]),
+            sync_interval_secs: Some(123),
+            timeout_secs: Some(10),
+            step_threshold_ms: Some(0),
+            samples_per_server: Some(5),
+        };
+        let customized = TimeRuntimeConfig::from_file_config(&file_config);
+        file_config = LandscapeTimeConfig::default();
+        let updated = TimeRuntimeConfig::from_file_config(&file_config);
+        let saved = toml::to_string(&file_config).unwrap();
+        let reloaded: LandscapeTimeConfig = toml::from_str(&saved).unwrap();
+        let restarted = TimeRuntimeConfig::from_file_config(&reloaded);
+        assert_eq!(updated, restarted);
+        assert_ne!(customized, updated);
+        assert_eq!(updated.servers, TimeRuntimeConfig::default().servers);
+        assert_eq!(
+            TimeRuntimeConfig::from_file_config(&LandscapeTimeConfig {
+                samples_per_server: Some(0),
+                ..Default::default()
+            })
+            .samples_per_server,
+            1
+        );
     }
 }
