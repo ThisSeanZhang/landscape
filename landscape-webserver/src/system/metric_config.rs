@@ -93,17 +93,9 @@ pub async fn update_metric_config(
                 restore_error
             );
         }
-        state
-            .system
-            .dns_service
-            .update_metric_sender(state.system.metric_service.get_dns_metric_channel());
         return Err(DbError::Internal(format!("failed to apply metric config: {error}")).into());
     }
 
-    state
-        .system
-        .dns_service
-        .update_metric_sender(state.system.metric_service.get_dns_metric_channel());
     LandscapeApiResp::success(())
 }
 

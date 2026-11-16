@@ -62,7 +62,7 @@ async fn test_coordinator(source: Arc<dyn DnsConfigSource>) -> Arc<DnsCoordinato
     let server = LandscapeDnsServer::new(DnsServiceDeps {
         listen_port: 0,
         tcp_enabled: false,
-        msg_tx: None,
+        metric_reporter: Default::default(),
         cache_runtime: CacheRuntimeConfig::default(),
         doh: None,
         local_answer_provider: None,

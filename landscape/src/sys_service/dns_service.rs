@@ -9,7 +9,7 @@ use landscape_common::{
     dns::{DnsServiceStatus, FlowDnsStatus},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
-    metric::dns::DnsMetricEvent,
+    metric::dns::DnsMetricReporter,
     sys_config::DnsRuntimeConfig,
 };
 use landscape_core::lan_device::LanDeviceDirectory;
@@ -83,7 +83,7 @@ impl LandscapeDnsService {
         route_service: IpRouteService,
         dns_config: DnsRuntimeConfig,
         cert_service: CertService,
-        msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
+        metric_reporter: DnsMetricReporter,
         lan_device_directory: Arc<LanDeviceDirectory>,
         lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         dns_result_sink: Arc<dyn DnsResultSink>,
@@ -124,7 +124,7 @@ impl LandscapeDnsService {
         let server = LandscapeDnsServer::new(DnsServiceDeps {
             listen_port: landscape_common::DNS_LISTEN_PORT,
             tcp_enabled: dns_config.dns_tcp_enabled(),
-            msg_tx,
+            metric_reporter,
             cache_runtime,
             doh,
             local_answer_provider: Some(Arc::new(RouteLocalAnswerProvider {
@@ -205,10 +205,6 @@ impl LandscapeDnsService {
         landscape_dns::restore_resolver_conf();
         self.coordinator.server().stop_service().await;
         tracing::info!("DNS service stopped");
-    }
-
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
-        self.coordinator.server().update_metric_sender(msg_tx);
     }
 
     pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {

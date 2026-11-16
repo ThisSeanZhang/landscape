@@ -233,7 +233,7 @@ pub(crate) async fn build_app(
             route_service.clone(),
             config.dns.clone(),
             cert_service.clone(),
-            metric_service.get_dns_metric_channel(),
+            metric_service.dns_metric_reporter(),
             lan_device_directory.clone(),
             lan_domain_state.clone(),
             Arc::new(ebpf_rt.dns_result_sink()),

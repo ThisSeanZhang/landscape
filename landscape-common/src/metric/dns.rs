@@ -1,3 +1,6 @@
+use arc_swap::ArcSwapOption;
+use tokio::sync::mpsc;
+
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::{Record, RecordType};
 use serde::{Deserialize, Serialize};
@@ -46,6 +49,30 @@ pub struct DnsMetricEvent {
     pub duration_ms: u32,
     pub src_ip: IpAddr,
     pub answers: Vec<Record>,
+}
+
+/// Stable, best-effort DNS metric ingress shared across engine generations.
+/// Clones observe target changes without rebuilding DNS handlers.
+#[derive(Clone, Default)]
+pub struct DnsMetricReporter {
+    sender: Arc<ArcSwapOption<mpsc::Sender<DnsMetricEvent>>>,
+}
+
+impl DnsMetricReporter {
+    /// Called by the metric lifecycle owner when installing or stopping an engine.
+    pub fn replace_sender(&self, sender: Option<mpsc::Sender<DnsMetricEvent>>) {
+        self.sender.store(sender.filter(|sender| !sender.is_closed()).map(Arc::new));
+    }
+
+    /// Never waits or retries. Returns whether the event was queued, not persisted.
+    /// Disabled/closed targets skip event construction entirely. Concurrent switches
+    /// may drop an event that already selected the previous engine's channel.
+    pub fn record_with(&self, event: impl FnOnce() -> DnsMetricEvent) -> bool {
+        let Some(sender) = self.sender.load_full().filter(|sender| !sender.is_closed()) else {
+            return false;
+        };
+        sender.try_send(event()).is_ok()
+    }
 }
 
 impl DnsMetricEvent {
@@ -123,4 +150,57 @@ pub struct DnsStatEntry {
     pub count: usize,
     #[cfg_attr(feature = "openapi", schema(nullable = false))]
     pub value: Option<f64>,
+}
+
+#[cfg(test)]
+mod reporter_tests {
+    use super::*;
+
+    fn event(flow_id: u32) -> DnsMetricEvent {
+        DnsMetricEvent {
+            flow_id,
+            domain: "example.com".into(),
+            query_type: RecordType::A,
+            response_code: ResponseCode::NoError,
+            status: DnsOutcome::Normal,
+            report_time: 1,
+            duration_ms: 1,
+            src_ip: "127.0.0.1".parse().unwrap(),
+            answers: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_clones_follow_replacements_without_forwarding_or_replay() {
+        let owner = DnsMetricReporter::default();
+        let dns = owner.clone();
+        let (first_tx, mut first_rx) = mpsc::channel(1);
+        owner.replace_sender(Some(first_tx));
+        assert!(dns.record_with(|| event(1)));
+        assert_eq!(first_rx.recv().await.unwrap().flow_id, 1);
+        owner.replace_sender(None);
+        assert!(!dns.record_with(|| panic!("disabled must skip event construction")));
+        let (next_tx, mut next_rx) = mpsc::channel(1);
+        owner.replace_sender(Some(next_tx));
+        assert!(dns.record_with(|| event(2)));
+        assert_eq!(next_rx.recv().await.unwrap().flow_id, 2);
+        assert!(first_rx.recv().await.is_none());
+        assert!(next_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn full_and_closed_channels_do_not_block() {
+        let reporter = DnsMetricReporter::default();
+        let (tx, mut rx) = mpsc::channel(1);
+        reporter.replace_sender(Some(tx));
+        assert!(reporter.record_with(|| event(1)));
+        assert!(!reporter.record_with(|| event(2)));
+        assert_eq!(rx.recv().await.unwrap().flow_id, 1);
+        drop(rx);
+        assert!(!reporter.record_with(|| panic!("closed must skip event construction")));
+        let (closed_tx, closed_rx) = mpsc::channel(1);
+        drop(closed_rx);
+        reporter.replace_sender(Some(closed_tx));
+        assert!(!reporter.record_with(|| panic!("closed replacement must stay disabled")));
+    }
 }

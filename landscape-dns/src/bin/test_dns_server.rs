@@ -18,7 +18,7 @@ async fn main() -> std::io::Result<()> {
     let server = LandscapeDnsServer::new(DnsServiceDeps {
         listen_port,
         tcp_enabled: true,
-        msg_tx: None,
+        metric_reporter: Default::default(),
         cache_runtime: CacheRuntimeConfig::default(),
         doh: None,
         local_answer_provider: None,

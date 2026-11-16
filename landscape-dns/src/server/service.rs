@@ -10,11 +10,11 @@ use landscape_common::dns::{
     DnsServicePhase, DnsServiceStatus, FlowDnsDependencies, FlowDnsPhase, FlowDnsStatus,
 };
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
-use landscape_common::metric::dns::DnsMetricEvent;
+use landscape_common::metric::dns::DnsMetricReporter;
 use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_common::sys_config::{CacheRuntimeConfig, DohRuntimeConfig};
 use landscape_core::lan_device::LanDeviceDirectory;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -30,7 +30,6 @@ use crate::{
         redirect::RedirectEngine,
     },
     server::{
-        MetricSenderState,
         flow_state::{FlowDependencySelector, FlowDnsEntry, FlowDnsRuntime},
         handler::{DnsRequestHandler, HandlerDeps},
     },
@@ -58,8 +57,8 @@ pub struct LandscapeDnsServer {
     pub local_resolver: Arc<LocalResolver>,
     // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
     lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
-    // DNS events
-    pub msg_tx: MetricSenderState,
+    // Stable DNS metric ingress, independent of engine generations
+    pub metric_reporter: DnsMetricReporter,
     // bound UDP DNS listen address
     pub udp_listener_addr: SocketAddr,
     // plain DNS-over-TCP enabled for this process
@@ -82,7 +81,7 @@ pub struct DnsServiceDeps {
     pub listen_port: u16,
     /// Serve plain DNS over TCP on `listen_port` next to DNS/UDP.
     pub tcp_enabled: bool,
-    pub msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
+    pub metric_reporter: DnsMetricReporter,
     pub cache_runtime: CacheRuntimeConfig,
     pub doh: Option<EffectiveDohListenerConfig>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
@@ -98,7 +97,7 @@ impl LandscapeDnsServer {
         let DnsServiceDeps {
             listen_port,
             tcp_enabled,
-            msg_tx,
+            metric_reporter,
             cache_runtime,
             doh,
             local_answer_provider,
@@ -136,7 +135,7 @@ impl LandscapeDnsServer {
                 0,
             )),
             tcp_enabled,
-            msg_tx: Arc::new(ArcSwapOption::from(msg_tx.map(Arc::new))),
+            metric_reporter,
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
             doh_listener,
             _mdns_service: mdns_service,
@@ -291,10 +290,6 @@ impl LandscapeDnsServer {
         }
     }
 
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
-        self.msg_tx.store(msg_tx.map(Arc::new));
-    }
-
     pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {
         self.lan_hostname_config.store(Arc::new(config));
     }
@@ -367,7 +362,7 @@ impl LandscapeDnsServer {
             HandlerDeps {
                 runtime_config: self.cache_live_config.clone(),
                 flow_id,
-                msg_tx: self.msg_tx.clone(),
+                metric_reporter: self.metric_reporter.clone(),
                 local_resolver: self.local_resolver.clone(),
                 sink: self.result_sink.clone(),
             },
@@ -556,7 +551,7 @@ mod tests {
                 HandlerDeps {
                     runtime_config: Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                     flow_id: 7,
-                    msg_tx: Arc::new(ArcSwapOption::new(None)),
+                    metric_reporter: DnsMetricReporter::default(),
                     local_resolver: test_local_resolver(),
                     sink: Arc::new(NoopDnsResultSink),
                 },
@@ -593,7 +588,7 @@ mod tests {
         let mut server = LandscapeDnsServer::new(DnsServiceDeps {
             listen_port: 53,
             tcp_enabled: false,
-            msg_tx: None,
+            metric_reporter: DnsMetricReporter::default(),
             cache_runtime: test_cache_runtime_config(),
             doh: None,
             local_answer_provider: None,

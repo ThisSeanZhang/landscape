@@ -10,7 +10,7 @@ use landscape_common::{
         ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat,
         IpRealtimeStat, MetricResolution,
     },
-    metric::dns::DnsMetricEvent,
+    metric::dns::DnsMetricReporter,
     metric::dns::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
@@ -24,7 +24,6 @@ use landscape_common::{
 use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
 use landscape_metric::MetricEngine;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc;
 
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
@@ -45,6 +44,7 @@ struct MetricServiceInner {
     runtime: RwLock<MetricRuntime>,
     switch_lock: Mutex<()>,
     source_factory: Arc<dyn MetricSourceFactory>,
+    dns_metric_reporter: DnsMetricReporter,
     /// 内存指标记录。非 persistent 构建下是 no-op 实现(stub),恒为 None,
     /// 因此本文件无需任何 cfg。
     mem_recording: Mutex<Option<landscape_metric::self_monitor_store::MemRecording>>,
@@ -92,6 +92,8 @@ impl MetricService {
             .await
             .map_err(|error| format!("failed to initialize metric engine: {error}"))?;
         let status = MetricStatus::new();
+        let dns_metric_reporter = DnsMetricReporter::default();
+        dns_metric_reporter.replace_sender(engine.get_dns_msg_channel());
 
         Ok(MetricService {
             status,
@@ -100,6 +102,7 @@ impl MetricService {
                 runtime: RwLock::new(MetricRuntime { config, engine, source: None }),
                 switch_lock: Mutex::new(()),
                 source_factory,
+                dns_metric_reporter,
                 mem_recording: Mutex::new(None),
             }),
         })
@@ -114,12 +117,17 @@ impl MetricService {
         landscape_metric::resolved_metric_mode(config.mode)
     }
 
-    pub fn get_dns_metric_channel(&self) -> Option<mpsc::Sender<DnsMetricEvent>> {
-        if matches!(self.current_mode(), MetricMode::Off) {
-            None
-        } else {
-            self.current_engine().get_dns_msg_channel()
-        }
+    /// Clones remain valid across mode changes, engine rebuilds and recovery.
+    pub fn dns_metric_reporter(&self) -> DnsMetricReporter {
+        self.inner.dns_metric_reporter.clone()
+    }
+
+    /// Every replacement, including recovery, publishes through the same ingress.
+    fn install_engine(&self, config: MetricRuntimeConfig, engine: MetricEngine) {
+        let mut runtime = self.write_runtime();
+        runtime.config = config;
+        runtime.engine = engine;
+        self.inner.dns_metric_reporter.replace_sender(runtime.engine.get_dns_msg_channel());
     }
 
     pub async fn start_service(&self) {
@@ -197,6 +205,7 @@ impl MetricService {
     /// Stop/Failed → 引擎收尾。事件源回收预算须小于调用方预期,保证配置
     /// 切换时最终状态已落定、新引擎能立即启动新事件源。
     async fn stop_service_locked(&self) {
+        self.inner.dns_metric_reporter.replace_sender(None);
         const EVENT_SOURCE_EXIT_TIMEOUT: Duration = Duration::from_secs(3);
 
         // 仅在服务真的在运行/启动中时才先经过 Stopping,避免对已处于
@@ -262,11 +271,7 @@ impl MetricService {
             }
         };
 
-        {
-            let mut runtime = self.write_runtime();
-            runtime.engine = new_engine;
-            runtime.config = config;
-        }
+        self.install_engine(config, new_engine);
 
         if !matches!(self.current_mode(), MetricMode::Off) {
             self.start_service_locked().await?;
@@ -283,9 +288,7 @@ impl MetricService {
             .await
         {
             Ok(engine) => {
-                let mut runtime = self.write_runtime();
-                runtime.engine = engine;
-                runtime.config = previous_config;
+                self.install_engine(previous_config, engine);
                 Ok(())
             }
             Err(error) => {
@@ -302,9 +305,7 @@ impl MetricService {
                         "failed to restore previous metric engine: {error}; failed to start memory fallback: {fallback_error}"
                     )
                 })?;
-                let mut runtime = self.write_runtime();
-                runtime.engine = fallback_engine;
-                runtime.config = fallback_config;
+                self.install_engine(fallback_config, fallback_engine);
                 Err(format!(
                     "failed to restore previous metric engine: {error}; running memory fallback"
                 ))
@@ -385,3 +386,6 @@ impl MetricService {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

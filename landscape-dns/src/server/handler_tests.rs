@@ -1,6 +1,6 @@
 use super::*;
 use crate::resolve::LocalDnsAnswerProvider;
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::Record;
 use landscape_common::dns::redirect::{DNSRedirectRuntimeRule, DnsRedirectAnswerMode};
@@ -24,7 +24,7 @@ impl DnsRequestHandler {
         init: ChainDnsServerInitInfo,
         runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
         flow_id: u32,
-        msg_tx: MetricSenderState,
+        metric_reporter: DnsMetricReporter,
         local_resolver: Arc<LocalResolver>,
     ) -> Self {
         let (redirect_engine, resolve_engine) = Self::test_engines_from_legacy(init);
@@ -34,7 +34,7 @@ impl DnsRequestHandler {
             HandlerDeps {
                 runtime_config,
                 flow_id,
-                msg_tx,
+                metric_reporter,
                 local_resolver,
                 sink: Arc::new(NoopDnsResultSink),
             },
@@ -157,7 +157,7 @@ pub(crate) fn redirect_test_handler_with_addrs(
             negative_cache_ttl: 5,
         })),
         1,
-        Arc::new(ArcSwapOption::new(None)),
+        DnsMetricReporter::default(),
         Arc::new(LocalResolver::new(
             LanDeviceDirectory::new_for_test(),
             Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
@@ -235,7 +235,7 @@ mod tests {
             ChainDnsServerInitInfo { dns_rules, redirect_rules },
             shared_cache_runtime_config(5),
             1,
-            Arc::new(ArcSwapOption::new(None)),
+            DnsMetricReporter::default(),
             test_local_resolver(),
         )
     }
@@ -250,7 +250,7 @@ mod tests {
             ChainDnsServerInitInfo { dns_rules, redirect_rules },
             shared_cache_runtime_config(5),
             1,
-            Arc::new(ArcSwapOption::new(None)),
+            DnsMetricReporter::default(),
             Arc::new(LocalResolver::new(
                 LanDeviceDirectory::new_for_test(),
                 hostname_config,
@@ -271,7 +271,7 @@ mod tests {
             ChainDnsServerInitInfo { dns_rules, redirect_rules },
             runtime_config,
             flow_id,
-            Arc::new(ArcSwapOption::new(None)),
+            DnsMetricReporter::default(),
             test_local_resolver(),
         )
     }
@@ -1013,4 +1013,41 @@ mod tests {
             assert_eq!(answer.redirect_id, Some(Uuid::nil()));
         });
     }
+}
+
+#[tokio::test]
+async fn metric_reporter_switches_targets_without_rebuilding_handler_or_affecting_answers() {
+    use crate::listener::wire::{DecodeOutcome, Protocol, decode};
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::Name;
+    use tokio::sync::mpsc;
+
+    let handler = redirect_test_handler("example.com", "192.0.2.1".parse().unwrap(), 60);
+    let owner = handler.metric_reporter.clone();
+    let mut message = Message::new(123, MessageType::Query, OpCode::Query);
+    message.add_query(Query::query(Name::from_ascii("example.com.").unwrap(), RecordType::A));
+    let bytes = message.to_vec().unwrap();
+    let DecodeOutcome::Request(req) =
+        decode(&bytes, "127.0.0.1:12345".parse().unwrap(), Protocol::Udp)
+    else {
+        panic!("valid DNS request expected");
+    };
+    let (first_tx, mut first_rx) = mpsc::channel(1);
+    owner.replace_sender(Some(first_tx));
+    let response = handler.handle(&req).await;
+    assert_eq!(response.answers.len(), 1);
+    assert_eq!(first_rx.recv().await.unwrap().flow_id, handler.flow_id);
+
+    let (next_tx, mut next_rx) = mpsc::channel(1);
+    owner.replace_sender(Some(next_tx));
+    assert_eq!(handler.handle(&req).await.answers.len(), 1);
+    assert_eq!(next_rx.recv().await.unwrap().domain.as_ref(), "example.com.");
+    assert!(first_rx.recv().await.is_none());
+    // Fill the queue and verify a subsequent query still returns its DNS answer.
+    assert_eq!(handler.handle(&req).await.answers.len(), 1);
+    assert_eq!(handler.handle(&req).await.answers.len(), 1);
+    owner.replace_sender(None);
+    assert_eq!(handler.handle(&req).await.answers.len(), 1);
+    drop(next_rx);
+    assert_eq!(handler.handle(&req).await.answers.len(), 1);
 }

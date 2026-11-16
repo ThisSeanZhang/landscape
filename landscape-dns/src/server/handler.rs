@@ -13,14 +13,13 @@ use crate::{
         RuntimeSnapshot, answer::DnsQueryAnswer, chain::ResolveChain, engine::ResolveEngine,
         local::LocalResolver, redirect::RedirectEngine,
     },
-    server::{
-        MetricSenderState,
-        snapshot::{SnapshotPatch, SnapshotStore},
-    },
+    server::snapshot::{SnapshotPatch, SnapshotStore},
 };
 use landscape_common::utils::time::now_ms;
 use landscape_common::{
-    dns::error::DnsServiceError, flow::DnsResultSink, metric::dns::DnsMetricEvent,
+    dns::error::DnsServiceError,
+    flow::DnsResultSink,
+    metric::dns::{DnsMetricEvent, DnsMetricReporter},
     sys_config::CacheRuntimeConfig,
 };
 
@@ -28,13 +27,13 @@ use landscape_common::{
 pub struct DnsRequestHandler {
     snapshot: Arc<SnapshotStore>,
     pub flow_id: u32,
-    pub msg_tx: MetricSenderState,
+    pub metric_reporter: DnsMetricReporter,
 }
 
 pub(crate) struct HandlerDeps {
     pub runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     pub flow_id: u32,
-    pub msg_tx: MetricSenderState,
+    pub metric_reporter: DnsMetricReporter,
     pub local_resolver: Arc<LocalResolver>,
     pub sink: Arc<dyn DnsResultSink>,
 }
@@ -48,7 +47,7 @@ impl DnsRequestHandler {
         let HandlerDeps {
             runtime_config,
             flow_id,
-            msg_tx,
+            metric_reporter,
             local_resolver,
             sink,
         } = deps;
@@ -62,7 +61,7 @@ impl DnsRequestHandler {
                 sink,
             )),
             flow_id,
-            msg_tx,
+            metric_reporter,
         }
     }
 
@@ -126,19 +125,17 @@ impl DnsRequestHandler {
         let (records, outcome, response_code) =
             (answer.records, answer.outcome, answer.response_code);
 
-        if let Some(msg_tx) = self.msg_tx.load_full() {
-            let _ = msg_tx.try_send(DnsMetricEvent {
-                flow_id: self.flow_id,
-                domain: req.domain.raw_arc().clone(),
-                query_type,
-                response_code,
-                status: outcome,
-                report_time: now_ms(),
-                duration_ms: start_time.elapsed().as_millis() as u32,
-                src_ip,
-                answers: records.clone(),
-            });
-        }
+        self.metric_reporter.record_with(|| DnsMetricEvent {
+            flow_id: self.flow_id,
+            domain: req.domain.raw_arc().clone(),
+            query_type,
+            response_code,
+            status: outcome,
+            report_time: now_ms(),
+            duration_ms: start_time.elapsed().as_millis() as u32,
+            src_ip,
+            answers: records.clone(),
+        });
 
         wire::build_response(req, response_code, records)
     }
