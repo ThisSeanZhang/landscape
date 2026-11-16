@@ -70,7 +70,7 @@ impl SyncTimeService {
         system_clock: Arc<dyn SystemClock>,
         config: TimeRuntimeConfig,
     ) -> Self {
-        let config = normalized_time_config(config);
+        let config = config.normalized();
         let enabled = config.enabled;
         let (config_tx, config_rx) = watch::channel(config);
         let status: StatusRef = Arc::new(ArcSwap::from_pointee(TimeSyncStatus {
@@ -106,7 +106,7 @@ impl SyncTimeService {
     }
 
     pub fn update_config(&self, config: TimeRuntimeConfig) {
-        let config = normalized_time_config(config);
+        let config = config.normalized();
         let _ = self.inner.config_tx.send(config.clone());
         store_status(&self.inner.status, |status| status.enabled = config.enabled);
     }
@@ -136,13 +136,6 @@ impl SyncTimeService {
             ),
         }
     }
-}
-
-fn normalized_time_config(mut config: TimeRuntimeConfig) -> TimeRuntimeConfig {
-    config.sync_interval_secs = config.sync_interval_secs.max(1);
-    config.timeout_secs = config.timeout_secs.max(1);
-    config.samples_per_server = config.samples_per_server.max(1);
-    config
 }
 
 fn store_status(status: &StatusRef, mutate: impl Fn(&mut TimeSyncStatus)) {

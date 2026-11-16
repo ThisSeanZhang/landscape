@@ -1,4 +1,6 @@
 export default {
+  "dns_service.doh_port_conflict":
+    "DoH 端口 {port} 已保留给 DNS/UDP 和 DNS/TCP",
   "dns_check.flow_not_found": "找不到 DNS Flow 运行时 (Flow: {0})",
   "dns_check.refresh_requires_rule":
     "当前域名没有匹配到可刷新的上游 DNS 规则: {0}",

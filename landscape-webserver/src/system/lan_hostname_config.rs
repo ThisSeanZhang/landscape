@@ -48,11 +48,10 @@ pub async fn update_lan_hostname_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateLanHostnameConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    let new_lan_hostname = payload.new_lan_hostname.normalized()?;
     state
         .system
         .config_service
-        .update_lan_hostname_config(new_lan_hostname, payload.expected_hash)
+        .update_lan_hostname_config(payload.new_lan_hostname, payload.expected_hash)
         .await?;
     let runtime = state.system.config_service.get_lan_hostname_runtime_config();
     state.system.dns_service.update_lan_hostname_config(runtime);

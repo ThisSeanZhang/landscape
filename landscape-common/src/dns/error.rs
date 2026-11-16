@@ -7,6 +7,10 @@ use crate::database::error::DbError;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum DnsServiceError {
+    #[error("DoH port {port} is reserved for DNS/UDP and DNS/TCP")]
+    #[api_error(id = "dns_service.doh_port_conflict", status = 422)]
+    DohPortConflict { port: u16 },
+
     #[error("Invalid domain name '{domain}'")]
     #[api_error(id = "dns_domain.invalid", status = 400)]
     Invalid { domain: String },

@@ -1,4 +1,8 @@
 export default {
+  "metric.invalid_db_max_mb":
+    "{field} 必须为 0（不限制）或介于 16～1048576 MB 之间，当前为 {value}",
+  "metric.invalid_cleanup_time_budget":
+    "cleanup_time_budget_secs 必须介于 1～60 秒之间，当前为 {value}",
   "init_config.file_not_found": "上传中未找到 Init 文件",
   "init_config.file_read_error": "Init 文件读取失败",
   "init_config.invalid": "Init 文件格式无效: {reason}",

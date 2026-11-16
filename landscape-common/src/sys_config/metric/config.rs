@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::service::ServiceConfigError;
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum MetricMode {
@@ -66,40 +64,10 @@ pub struct LandscapeMetricConfig {
     pub cleanup_slice_window_secs: Option<u64>,
 }
 
-impl LandscapeMetricConfig {
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
-        for (name, value) in
-            [("connect_db_max_mb", self.connect_db_max_mb), ("dns_db_max_mb", self.dns_db_max_mb)]
-        {
-            if let Some(v) = value
-                && v != 0
-                && !(crate::MIN_METRIC_DB_MAX_MB..=crate::MAX_METRIC_DB_MAX_MB).contains(&v)
-            {
-                return Err(ServiceConfigError::InvalidConfig {
-                    reason: format!(
-                        "{name} must be 0 (unlimited) or between {} and {} MB, got {v}",
-                        crate::MIN_METRIC_DB_MAX_MB,
-                        crate::MAX_METRIC_DB_MAX_MB,
-                    ),
-                });
-            }
-        }
-        if let Some(v) = self.cleanup_time_budget_secs
-            && !(1..=60).contains(&v)
-        {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "cleanup_time_budget_secs must be between 1 and 60 seconds, got {v}"
-                ),
-            });
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys_config::RuntimeConfigSource;
 
     #[test]
     fn validate_accepts_default_and_unlimited_caps() {

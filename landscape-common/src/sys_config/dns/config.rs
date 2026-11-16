@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::service::ServiceConfigError;
-
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapeDnsConfig {
@@ -26,27 +24,10 @@ pub struct LandscapeDnsConfig {
     pub tcp_enabled: Option<bool>,
 }
 
-impl LandscapeDnsConfig {
-    /// Reject configurations the listener cannot honour. DNS/UDP and DNS/TCP
-    /// own port 53; DoH must use a different port, otherwise one reuseport
-    /// group would need two dispatcher programs.
-    pub fn validate(&self) -> Result<(), ServiceConfigError> {
-        if self.doh_listen_port == Some(crate::DNS_LISTEN_PORT) {
-            return Err(ServiceConfigError::InvalidConfig {
-                reason: format!(
-                    "doh_listen_port must not be {} (reserved for DNS/UDP and DNS/TCP), got {}",
-                    crate::DNS_LISTEN_PORT,
-                    crate::DNS_LISTEN_PORT
-                ),
-            });
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys_config::RuntimeConfigSource;
 
     #[test]
     fn dns_config_rejects_doh_on_port_53() {

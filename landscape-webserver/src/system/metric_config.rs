@@ -51,7 +51,6 @@ pub async fn update_metric_config(
     State(state): State<LandscapeApp>,
     JsonBody(payload): JsonBody<UpdateMetricConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    payload.new_metric.validate()?;
     let _guard = METRIC_CONFIG_UPDATE_LOCK.lock().await;
 
     let (previous_file_config, current_hash) =
@@ -72,13 +71,15 @@ pub async fn update_metric_config(
         return Err(error.into());
     }
 
-    // update_section 提交后内存 runtime 已合并新文件配置,直接应用它,
+    // update_section 提交后内存 runtime 已由新文件配置重建,直接应用它,
     // 保证引擎与 config 内存/文件三者一致。
     let metric_runtime = state.system.config_service.get_metric_runtime_config();
     if let Err(error) = state.system.metric_service.apply_runtime_config(metric_runtime).await {
         // 引擎重建失败:apply_runtime_config 内部基于内存配置的 restore 此时
         // 读到的是已提交的新配置,不能依赖它还原引擎,这里显式回滚文件并重建上一引擎。
-        if let Err(rollback_error) = rollback_metric_config(&state, previous_file_config).await {
+        if let Err(rollback_error) =
+            rollback_metric_config(&state, previous_file_config, previous_runtime.clone()).await
+        {
             tracing::error!(
                 "failed to roll back metric config file after runtime apply failure: {}",
                 rollback_error
@@ -111,7 +112,12 @@ pub async fn update_metric_config(
 async fn rollback_metric_config(
     state: &LandscapeApp,
     previous_config: LandscapeMetricConfig,
+    previous_runtime: landscape_common::sys_config::MetricRuntimeConfig,
 ) -> Result<(), DbError> {
     let (_, current_hash) = state.system.config_service.get_metric_config_from_file().await?;
-    state.system.config_service.update_metric_config(previous_config, current_hash).await
+    state
+        .system
+        .config_service
+        .restore_metric_config(previous_config, previous_runtime, current_hash)
+        .await
 }

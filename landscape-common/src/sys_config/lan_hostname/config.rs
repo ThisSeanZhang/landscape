@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::dns::domain::normalize_domain_name;
-
-use super::LanHostnameError;
-
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LandscapeLanHostnameConfig {
@@ -15,72 +11,14 @@ pub struct LandscapeLanHostnameConfig {
     pub lan_suffix: Option<String>,
 }
 
-impl LandscapeLanHostnameConfig {
-    pub fn normalized(mut self) -> Result<Self, LanHostnameError> {
-        if let Some(suffix) = self.lan_suffix.take() {
-            let suffix = normalize_lan_suffix(&suffix)?;
-            self.lan_suffix = (!suffix.is_empty()).then_some(suffix);
-        }
-        Ok(self)
-    }
-}
-
-pub fn normalize_lan_suffix(suffix: &str) -> Result<String, LanHostnameError> {
-    let trimmed = suffix.trim();
-    if trimmed.is_empty() {
-        return Ok(String::new());
-    }
-
-    // Accept the surrounding dots operators commonly use when entering a DNS
-    // suffix, but reject empty labels inside the suffix.
-    let trimmed = trimmed.trim_matches('.');
-    if trimmed.is_empty() || trimmed.split('.').any(str::is_empty) {
-        return Err(LanHostnameError::EmptyLabel { suffix: suffix.to_string() });
-    }
-
-    let normalized = normalize_domain_name(trimmed)
-        .map_err(|_| LanHostnameError::InvalidIdna { suffix: suffix.to_string() })?;
-    if normalized.len() > 253 || normalized.split('.').any(|label| label.len() > 63) {
-        return Err(LanHostnameError::TooLong { suffix: suffix.to_string() });
-    }
-    if normalized.split('.').any(|label| label.starts_with('-') || label.ends_with('-')) {
-        return Err(LanHostnameError::InvalidHyphen { suffix: suffix.to_string() });
-    }
-    if !normalized
-        .split('.')
-        .all(|label| label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'))
-    {
-        return Err(LanHostnameError::InvalidCharacter { suffix: suffix.to_string() });
-    }
-    if conflicts_with_resolver_namespace(&normalized) {
-        return Err(LanHostnameError::Reserved { suffix: suffix.to_string() });
-    }
-
-    Ok(normalized)
-}
-
-fn conflicts_with_resolver_namespace(suffix: &str) -> bool {
-    const RESERVED_TLDS: &[&str] = &["invalid", "test", "onion", "localhost", "local"];
-    const RESERVED_ARPA_ZONES: &[&str] =
-        &["in-addr.arpa", "ip6.arpa", "resolver.arpa", "ipv4only.arpa"];
-
-    let tld = suffix.rsplit('.').next().unwrap_or_default();
-    RESERVED_TLDS.contains(&tld)
-        || suffix == "arpa"
-        || RESERVED_ARPA_ZONES.iter().any(|zone| is_same_or_subdomain(suffix, zone))
-}
-
-fn is_same_or_subdomain(name: &str, zone: &str) -> bool {
-    name == zone || name.strip_suffix(zone).is_some_and(|prefix| prefix.ends_with('.'))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::error::LdApiErrorInfo;
     use crate::sys_config::LandscapeConfig;
 
-    use super::{LanHostnameError, LandscapeLanHostnameConfig, normalize_lan_suffix};
-    use crate::sys_config::lan_hostname::runtime::LanHostnameRuntimeConfig;
+    use super::LandscapeLanHostnameConfig;
+    use crate::sys_config::lan_hostname::normalize_lan_suffix;
+    use crate::sys_config::{LanHostnameError, RuntimeConfigSource};
 
     #[test]
     fn legacy_hostname_registry_key_deserializes_as_lan_hostname() {
@@ -128,10 +66,11 @@ mod tests {
 
     #[test]
     fn runtime_config_updates_from_file_config() {
-        let runtime = LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig {
+        let runtime = (LandscapeLanHostnameConfig {
             lan_suffix: Some("home".to_string()),
             ..Default::default()
         })
+        .to_runtime()
         .unwrap();
 
         assert!(runtime.enable);
@@ -140,9 +79,7 @@ mod tests {
 
     #[test]
     fn runtime_config_uses_default_when_suffix_is_omitted() {
-        let runtime =
-            LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig::default())
-                .unwrap();
+        let runtime = (LandscapeLanHostnameConfig::default()).to_runtime().unwrap();
 
         assert!(runtime.enable);
         assert_eq!(runtime.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
@@ -150,10 +87,11 @@ mod tests {
 
     #[test]
     fn runtime_config_can_disable_lan_hostname_resolution() {
-        let runtime = LanHostnameRuntimeConfig::from_file_config(&LandscapeLanHostnameConfig {
+        let runtime = (LandscapeLanHostnameConfig {
             enable: Some(false),
             lan_suffix: Some("home".to_string()),
         })
+        .to_runtime()
         .unwrap();
 
         assert!(!runtime.enable);
@@ -162,15 +100,11 @@ mod tests {
 
     #[test]
     fn empty_lan_suffix_uses_default() {
-        let normalized = LandscapeLanHostnameConfig {
+        let config = LandscapeLanHostnameConfig {
             enable: Some(true),
             lan_suffix: Some("   ".to_string()),
-        }
-        .normalized()
-        .unwrap();
-        let runtime = LanHostnameRuntimeConfig::from_file_config(&normalized).unwrap();
-
-        assert!(normalized.lan_suffix.is_none());
+        };
+        let runtime = config.to_runtime().unwrap();
         assert_eq!(runtime.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
     }
 

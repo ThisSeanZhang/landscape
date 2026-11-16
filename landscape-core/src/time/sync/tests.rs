@@ -367,3 +367,37 @@ async fn sync_now_clears_failure_backoff() {
 
     service.stop().await;
 }
+
+#[tokio::test(start_paused = true)]
+async fn direct_start_normalizes_zero_runtime_before_querying() {
+    let ntp = FakeNtpClient::new(vec![ntp_ok(12.5)]);
+    let config = TimeRuntimeConfig {
+        sync_interval_secs: 0,
+        timeout_secs: 0,
+        samples_per_server: 0,
+        ..test_config()
+    };
+    let service = SyncTimeService::start_with(ntp.clone(), FakeClock::new(false), config);
+    // FakeNtpClient also asserts that timeout and samples are positive.
+    run_until(|| service.status().last_action == TimeSyncAction::InitialStep).await;
+    assert_eq!(service.inner.config_tx.borrow().sync_interval_secs, 1);
+    run_until(|| service.status().next_attempt_in_secs == Some(1)).await;
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn direct_update_normalizes_zero_runtime_before_reenabling() {
+    let ntp = FakeNtpClient::new(vec![ntp_ok(12.5)]);
+    let service =
+        SyncTimeService::start_with(ntp.clone(), FakeClock::new(false), disabled_config());
+    service.update_config(TimeRuntimeConfig {
+        sync_interval_secs: 0,
+        timeout_secs: 0,
+        samples_per_server: 0,
+        ..test_config()
+    });
+    run_until(|| service.status().last_action == TimeSyncAction::InitialStep).await;
+    assert_eq!(service.inner.config_tx.borrow().sync_interval_secs, 1);
+    run_until(|| service.status().next_attempt_in_secs == Some(1)).await;
+    service.stop().await;
+}

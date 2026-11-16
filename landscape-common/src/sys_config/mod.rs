@@ -1,7 +1,11 @@
+pub mod error;
+pub use error::ConfigUpdateError;
 pub mod auth;
 pub mod dns;
 pub mod gateway;
 pub mod loader;
+pub mod runtime;
+pub use runtime::RuntimeConfigSource;
 pub mod log;
 pub mod metric;
 pub mod store;

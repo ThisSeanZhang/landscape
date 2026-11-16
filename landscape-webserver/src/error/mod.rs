@@ -20,7 +20,7 @@ use landscape_common::flow::ip_mark::DstIpRuleError;
 use landscape_common::lan_service::lan_dhcpv4::DhcpError;
 use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
 use landscape_common::service::ServiceConfigError;
-use landscape_common::sys_config::LanHostnameError;
+use landscape_common::sys_config::{ConfigUpdateError, LanHostnameError};
 use landscape_common::sys_service::gateway::GatewayError;
 use landscape_common::sys_service::time_sync::TimeSyncError;
 use landscape_common::wan_service::firewall::FirewallError;
@@ -33,6 +33,8 @@ use landscape_common::database::error::DbError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum LandscapeApiError {
+    #[error(transparent)]
+    ConfigUpdate(#[from] ConfigUpdateError),
     // Domain errors — each carries its own error_id and HTTP status
     #[error(transparent)]
     Cert(#[from] CertError),
@@ -117,6 +119,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => e.error_id(),
             Self::LanHostname(e) => e.error_id(),
             Self::TimeSync(e) => e.error_id(),
+            Self::ConfigUpdate(e) => e.error_id(),
             Self::InitConfig(e) => e.error_id(),
             Self::Database(e) => e.error_id(),
             Self::GatewayUnsupportedTarget => "gateway.unsupported_target",
@@ -149,6 +152,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::LanHostname(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::TimeSync(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
+            Self::ConfigUpdate(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::InitConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Database(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::GatewayUnsupportedTarget => StatusCode::NOT_IMPLEMENTED,
@@ -181,6 +185,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => e.error_args(),
             Self::LanHostname(e) => e.error_args(),
             Self::TimeSync(e) => e.error_args(),
+            Self::ConfigUpdate(e) => e.error_args(),
             Self::InitConfig(e) => e.error_args(),
             Self::Database(e) => e.error_args(),
             Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
@@ -216,6 +221,7 @@ impl LandscapeApiError {
             Self::Gateway(e) => e.to_public_message(),
             Self::LanHostname(e) => e.to_public_message(),
             Self::TimeSync(e) => e.to_public_message(),
+            Self::ConfigUpdate(e) => e.to_public_message(),
             Self::InitConfig(e) => e.to_public_message(),
             Self::Database(e) => e.to_public_message(),
             Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
@@ -298,5 +304,23 @@ mod tests {
         let e = LandscapeApiError::Ddns(DdnsError::Internal(DbError::Conflict));
         let resp = e.into_response();
         assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+    #[test]
+    fn config_update_errors_preserve_domain_and_storage_metadata() {
+        let dns =
+            LandscapeApiError::from(ConfigUpdateError::from(DnsServiceError::DohPortConflict {
+                port: 53,
+            }));
+        assert_eq!(dns.error_id(), "dns_service.doh_port_conflict");
+        assert_eq!(dns.http_status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(dns.error_args()["port"], 53);
+        let metric = LandscapeApiError::from(ConfigUpdateError::from(
+            landscape_common::metric::MetricError::InvalidCleanupTimeBudget { value: 61 },
+        ));
+        assert_eq!(metric.error_id(), "metric.invalid_cleanup_time_budget");
+        assert_eq!(metric.http_status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let conflict = LandscapeApiError::from(ConfigUpdateError::from(DbError::Conflict));
+        assert_eq!(conflict.error_id(), "config.conflict");
+        assert_eq!(conflict.http_status(), StatusCode::CONFLICT);
     }
 }

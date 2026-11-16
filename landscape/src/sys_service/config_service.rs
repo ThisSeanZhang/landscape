@@ -3,10 +3,10 @@ use landscape_common::config::InitConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameRuntimeConfig,
-    LandscapeConfig, LandscapeDnsConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig,
-    LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUiConfig, MetricRuntimeConfig,
-    RuntimeConfig, TimeRuntimeConfig,
+    AuthRuntimeConfig, ConfigUpdateError, DnsRuntimeConfig, GatewayRuntimeConfig,
+    LanHostnameRuntimeConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeGatewayConfig,
+    LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUiConfig,
+    MetricRuntimeConfig, RuntimeConfig, RuntimeConfigSource, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -287,7 +287,8 @@ impl LandscapeConfigService {
         &self,
         new_metric: LandscapeMetricConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = new_metric.to_runtime()?;
         self.update_section(
             "metric",
             &[],
@@ -297,8 +298,35 @@ impl LandscapeConfigService {
             |new_metric| {
                 self.config.rcu(|old| {
                     let mut new_config = (**old).clone();
-                    new_config.metric.update_from_file_config(new_metric);
+                    new_config.metric = runtime.clone();
                     new_config.file_config.metric = new_metric.clone();
+                    new_config
+                });
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Restore an already-observed file/runtime pair after engine apply fails.
+    /// The source may be invalid legacy config whose runtime used startup defaults.
+    pub async fn restore_metric_config(
+        &self,
+        previous_config: LandscapeMetricConfig,
+        previous_runtime: MetricRuntimeConfig,
+        expected_hash: String,
+    ) -> Result<(), DbError> {
+        self.update_section(
+            "metric",
+            &[],
+            previous_config,
+            expected_hash,
+            |config| &config.metric,
+            |previous_config| {
+                self.config.rcu(|old| {
+                    let mut new_config = (**old).clone();
+                    new_config.metric = previous_runtime.clone();
+                    new_config.file_config.metric = previous_config.clone();
                     new_config
                 });
             },
@@ -310,8 +338,8 @@ impl LandscapeConfigService {
         &self,
         new_dns: LandscapeDnsConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
-        let runtime = DnsRuntimeConfig::from_file_config(&new_dns);
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = new_dns.to_runtime()?;
         self.update_section(
             "dns",
             &[],
@@ -327,18 +355,24 @@ impl LandscapeConfigService {
                 });
             },
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     pub async fn update_lan_hostname_config(
         &self,
         new_lan_hostname: LandscapeLanHostnameConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
-        let new_lan_hostname =
-            new_lan_hostname.normalized().map_err(|error| DbError::Internal(error.to_string()))?;
-        let runtime_lan_hostname = LanHostnameRuntimeConfig::from_file_config(&new_lan_hostname)
-            .map_err(|error| DbError::Internal(error.to_string()))?;
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime_lan_hostname = new_lan_hostname.to_runtime()?;
+        let mut new_lan_hostname = new_lan_hostname;
+        if new_lan_hostname.lan_suffix.is_some() {
+            new_lan_hostname.lan_suffix = new_lan_hostname
+                .lan_suffix
+                .as_ref()
+                .filter(|suffix| !suffix.trim().is_empty())
+                .map(|_| runtime_lan_hostname.lan_suffix.clone());
+        }
         let file_lan_hostname = new_lan_hostname.clone();
         self.update_section(
             "lan_hostname",
@@ -356,15 +390,16 @@ impl LandscapeConfigService {
                 });
             },
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     pub async fn update_time_config(
         &self,
         new_time: LandscapeTimeConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
-        let runtime = TimeRuntimeConfig::from_file_config(&new_time);
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = new_time.to_runtime()?;
         self.update_section(
             "time",
             &[],
@@ -380,7 +415,8 @@ impl LandscapeConfigService {
                 });
             },
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     pub async fn update_gateway_config(
@@ -422,5 +458,174 @@ impl LandscapeConfigService {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::args::WebCommArgs;
+
+    async fn service() -> (tempfile::TempDir, LandscapeConfigService) {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = RuntimeConfig::new_with_file_config(
+            WebCommArgs {
+                config_dir: Some(dir.path().to_path_buf()),
+                database_path: Some("sqlite::memory:".into()),
+                ..Default::default()
+            },
+            Some(LandscapeConfig::default()),
+        );
+        let store = LandscapeDBServiceProvider::mem_test_db().await;
+        (dir, LandscapeConfigService::new(runtime, store).await)
+    }
+
+    #[tokio::test]
+    async fn invalid_updates_do_not_change_file_or_memory() {
+        let (_dir, service) = service().await;
+        let content = "# preserve this file\n";
+        std::fs::write(service.get_config_path(), content).unwrap();
+        let before = Arc::clone(&service.config.load_full());
+        let result = service
+            .update_dns_config(
+                LandscapeDnsConfig { doh_listen_port: Some(53), ..Default::default() },
+                LandscapeConfigService::section_hash(&LandscapeDnsConfig::default()).unwrap(),
+            )
+            .await;
+        assert!(matches!(result, Err(ConfigUpdateError::Dns(_))));
+        let result = service
+            .update_metric_config(
+                LandscapeMetricConfig {
+                    cleanup_time_budget_secs: Some(61),
+                    ..Default::default()
+                },
+                LandscapeConfigService::section_hash(&LandscapeMetricConfig::default()).unwrap(),
+            )
+            .await;
+        assert!(matches!(result, Err(ConfigUpdateError::Metric(_))));
+        let result = service
+            .update_lan_hostname_config(
+                LandscapeLanHostnameConfig {
+                    lan_suffix: Some("corp.test".into()),
+                    ..Default::default()
+                },
+                LandscapeConfigService::section_hash(&LandscapeLanHostnameConfig::default())
+                    .unwrap(),
+            )
+            .await;
+        assert!(matches!(result, Err(ConfigUpdateError::LanHostname(_))));
+        assert!(Arc::ptr_eq(&before, &service.config.load_full()));
+        assert_eq!(std::fs::read_to_string(service.get_config_path()).unwrap(), content);
+    }
+
+    #[tokio::test]
+    async fn metric_clear_matches_restart_and_conflicts_do_not_commit() {
+        let (dir, service) = service().await;
+        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
+        service
+            .update_metric_config(
+                LandscapeMetricConfig {
+                    write_batch_size: Some(123),
+                    connect_1d_retention_days: Some(42),
+                    ..Default::default()
+                },
+                hash.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(service.get_metric_runtime_config().write_batch_size, 123);
+        let content = std::fs::read_to_string(service.get_config_path()).unwrap();
+        assert!(matches!(
+            service.update_metric_config(LandscapeMetricConfig::default(), hash).await,
+            Err(ConfigUpdateError::Storage(DbError::Conflict))
+        ));
+        assert_eq!(service.get_metric_runtime_config().write_batch_size, 123);
+        assert_eq!(std::fs::read_to_string(service.get_config_path()).unwrap(), content);
+        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
+        service.update_metric_config(LandscapeMetricConfig::default(), hash).await.unwrap();
+        let restarted = RuntimeConfig::new(WebCommArgs {
+            config_dir: Some(dir.path().to_path_buf()),
+            database_path: Some("sqlite::memory:".into()),
+            ..Default::default()
+        });
+        assert_eq!(service.get_metric_runtime_config(), restarted.metric);
+        assert_eq!(restarted.metric, (LandscapeMetricConfig::default()).to_runtime().unwrap());
+    }
+    #[tokio::test]
+    async fn rollback_restores_legacy_source_and_valid_runtime() {
+        let (_dir, service) = service().await;
+        let legacy = LandscapeMetricConfig {
+            cleanup_time_budget_secs: Some(61),
+            ..Default::default()
+        };
+        let source = LandscapeConfig { metric: legacy.clone(), ..Default::default() };
+        std::fs::write(service.get_config_path(), toml::to_string(&source).unwrap()).unwrap();
+        let previous_runtime = service.get_metric_runtime_config();
+        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
+        service
+            .update_metric_config(
+                LandscapeMetricConfig { write_batch_size: Some(123), ..Default::default() },
+                hash,
+            )
+            .await
+            .unwrap();
+        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
+        service.restore_metric_config(legacy, previous_runtime.clone(), hash).await.unwrap();
+        let (restored, _) = service.get_metric_config_from_file().await.unwrap();
+        assert_eq!(restored.cleanup_time_budget_secs, Some(61));
+        assert_eq!(service.get_metric_runtime_config(), previous_runtime);
+    }
+    #[tokio::test]
+    async fn time_update_uses_the_same_normalized_runtime_as_restart() {
+        let (dir, service) = service().await;
+        let (_, hash) = service.get_time_config_from_file().await;
+        service
+            .update_time_config(
+                LandscapeTimeConfig {
+                    sync_interval_secs: Some(0),
+                    timeout_secs: Some(0),
+                    samples_per_server: Some(0),
+                    ..Default::default()
+                },
+                hash,
+            )
+            .await
+            .unwrap();
+        let runtime = service.get_time_runtime_config();
+        assert_eq!(runtime.sync_interval_secs, 1);
+        assert_eq!(runtime.timeout_secs, 1);
+        assert_eq!(runtime.samples_per_server, 1);
+        let restarted = RuntimeConfig::new(WebCommArgs {
+            config_dir: Some(dir.path().to_path_buf()),
+            database_path: Some("sqlite::memory:".into()),
+            ..Default::default()
+        });
+        assert_eq!(runtime, restarted.time);
+    }
+    #[tokio::test]
+    async fn lan_save_keeps_canonical_suffix_and_blank_restores_default() {
+        let (_dir, service) = service().await;
+        for (input, saved, effective) in [
+            (" .Home.ARPA. ", Some("home.arpa"), "home.arpa"),
+            ("   ", None, landscape_common::DEFAULT_DNS_LAN_SUFFIX),
+        ] {
+            let (_, hash) = service.get_lan_hostname_config_from_file().await;
+            service
+                .update_lan_hostname_config(
+                    LandscapeLanHostnameConfig {
+                        enable: Some(true),
+                        lan_suffix: Some(input.into()),
+                    },
+                    hash,
+                )
+                .await
+                .unwrap();
+            let (file, _) = service.get_lan_hostname_config_from_file().await;
+            assert_eq!(file.lan_suffix.as_deref(), saved);
+            assert_eq!(service.get_lan_hostname_config_from_memory().lan_suffix.as_deref(), saved);
+            let runtime = service.get_lan_hostname_runtime_config();
+            assert!(runtime.enable);
+            assert_eq!(runtime.lan_suffix, effective);
+        }
     }
 }

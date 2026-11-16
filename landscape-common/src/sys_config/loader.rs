@@ -3,11 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-use super::metric::{cleanup_budget_secs_to_ms, metric_db_max_mb_to_bytes};
 use super::{
-    AuthRuntimeConfig, DnsRuntimeConfig, GatewayRuntimeConfig, LanHostnameRuntimeConfig,
-    LandscapeConfig, LogRuntimeConfig, MetricRuntimeConfig, RuntimeConfig, StoreRuntimeConfig,
-    TimeRuntimeConfig, WebRuntimeConfig,
+    AuthRuntimeConfig, GatewayRuntimeConfig, LandscapeConfig, LogRuntimeConfig, RuntimeConfig,
+    RuntimeConfigSource, StoreRuntimeConfig, WebRuntimeConfig,
 };
 use crate::args::WebCommArgs;
 use crate::{
@@ -88,7 +86,7 @@ impl RuntimeConfig {
             home_path = home_path.components().collect();
         }
 
-        let mut config = file_config.unwrap_or_else(|| read_home_config_file(home_path.clone()));
+        let config = file_config.unwrap_or_else(|| read_home_config_file(home_path.clone()));
 
         let auth = AuthRuntimeConfig {
             admin_user: read_value(&args.admin_user, &config.auth.admin_user, "root".to_string()),
@@ -128,101 +126,10 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| StoreRuntimeConfig::create_default_db_store(&home_path)),
         };
 
-        let connect_1d_retention_days = config
-            .metric
-            .connect_1d_retention_days
-            .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS);
-
-        let metric = MetricRuntimeConfig {
-            mode: config.metric.mode.clone().unwrap_or(crate::DEFAULT_METRIC_MODE),
-            connect_second_window_minutes: config
-                .metric
-                .connect_second_window_minutes
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_SECOND_WINDOW_MINUTES),
-            connect_1m_retention_days: config
-                .metric
-                .connect_1m_retention_days
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1M_RETENTION_DAYS),
-            connect_1h_retention_days: config
-                .metric
-                .connect_1h_retention_days
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_1H_RETENTION_DAYS),
-            connect_1d_retention_days,
-            connect_summary_retention_days: config
-                .metric
-                .connect_summary_retention_days
-                .unwrap_or(connect_1d_retention_days),
-            connect_summary_max_rows: config
-                .metric
-                .connect_summary_max_rows
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS),
-            connect_db_max_bytes: config
-                .metric
-                .connect_db_max_mb
-                .map(metric_db_max_mb_to_bytes)
-                .unwrap_or(crate::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES),
-            dns_retention_days: config
-                .metric
-                .dns_retention_days
-                .unwrap_or(crate::DEFAULT_DNS_METRIC_RETENTION_DAYS),
-            dns_1m_retention_days: config
-                .metric
-                .dns_1m_retention_days
-                .unwrap_or(crate::DEFAULT_DNS_METRIC_1M_RETENTION_DAYS),
-            dns_db_max_bytes: config
-                .metric
-                .dns_db_max_mb
-                .map(metric_db_max_mb_to_bytes)
-                .unwrap_or(crate::DEFAULT_DNS_METRIC_DB_MAX_BYTES),
-            write_batch_size: config
-                .metric
-                .write_batch_size
-                .unwrap_or(crate::DEFAULT_METRIC_WRITE_BATCH_SIZE),
-            write_flush_interval_secs: config
-                .metric
-                .write_flush_interval_secs
-                .unwrap_or(crate::DEFAULT_METRIC_WRITE_FLUSH_INTERVAL_SECS),
-            cleanup_interval_secs: config
-                .metric
-                .cleanup_interval_secs
-                .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_INTERVAL_SECS),
-            cleanup_time_budget_ms: config
-                .metric
-                .cleanup_time_budget_secs
-                .map(cleanup_budget_secs_to_ms)
-                .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_TIME_BUDGET_MS),
-            cleanup_slice_window_secs: config
-                .metric
-                .cleanup_slice_window_secs
-                .unwrap_or(crate::DEFAULT_METRIC_CLEANUP_SLICE_WINDOW_SECS),
-        };
-
-        let dns = DnsRuntimeConfig::from_file_config(&config.dns);
-
-        let lan_hostname = match config.lan_hostname.clone().normalized() {
-            Ok(normalized) => {
-                config.lan_hostname = normalized;
-                match LanHostnameRuntimeConfig::from_file_config(&config.lan_hostname) {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        tracing::warn!(%error, "normalized LAN hostname config was rejected; using defaults");
-                        LanHostnameRuntimeConfig::default()
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "invalid legacy LAN hostname config; LAN hostname resolution is disabled until the config is corrected"
-                );
-                LanHostnameRuntimeConfig {
-                    enable: false,
-                    lan_suffix: crate::DEFAULT_DNS_LAN_SUFFIX.to_string(),
-                }
-            }
-        };
-
-        let time = TimeRuntimeConfig::from_file_config(&config.time);
+        let metric = config.metric.build_runtime();
+        let dns = config.dns.build_runtime();
+        let lan_hostname = config.lan_hostname.build_runtime();
+        let time = config.time.build_runtime();
 
         let gateway = GatewayRuntimeConfig::from_file_config(&config.gateway);
 
@@ -303,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn new_with_file_config_disables_invalid_legacy_lan_suffix_without_panicking() {
+    fn new_with_file_config_disables_invalid_suffix_and_keeps_source() {
         let temp_dir = tempfile::tempdir().unwrap();
         let config = RuntimeConfig::new_with_file_config(
             WebCommArgs {
@@ -323,5 +230,54 @@ mod tests {
         assert_eq!(config.lan_hostname.lan_suffix, crate::DEFAULT_DNS_LAN_SUFFIX);
         assert_eq!(config.file_config.lan_hostname.enable, Some(true));
         assert_eq!(config.file_config.lan_hostname.lan_suffix.as_deref(), Some("corp.test"));
+    }
+    #[test]
+    fn invalid_fields_fall_back_independently_and_keep_source_config() {
+        use crate::sys_config::{LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig};
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = LandscapeConfig {
+            dns: LandscapeDnsConfig {
+                doh_listen_port: Some(crate::DNS_LISTEN_PORT),
+                cache_capacity: Some(123),
+                ..Default::default()
+            },
+            metric: LandscapeMetricConfig {
+                cleanup_time_budget_secs: Some(61),
+                write_batch_size: Some(123),
+                ..Default::default()
+            },
+            time: LandscapeTimeConfig { timeout_secs: Some(7), ..Default::default() },
+            ..Default::default()
+        };
+        let path = temp_dir.path().join(crate::LAND_CONFIG);
+        let content = toml::to_string(&source).unwrap();
+        std::fs::write(&path, &content).unwrap();
+        let runtime = RuntimeConfig::new(WebCommArgs {
+            config_dir: Some(temp_dir.path().to_path_buf()),
+            ..Default::default()
+        });
+        assert_eq!(runtime.dns.doh_listen_port, crate::DEFAULT_DNS_DOH_LISTEN_PORT);
+        assert_eq!(runtime.dns.cache_capacity, 123);
+        assert_eq!(runtime.metric.cleanup_time_budget_ms, 60_000);
+        assert_eq!(runtime.metric.write_batch_size, 123);
+        assert_eq!(runtime.time.timeout_secs, 7);
+        assert_eq!(runtime.file_config.dns.cache_capacity, Some(123));
+        assert_eq!(runtime.file_config.metric.cleanup_time_budget_secs, Some(61));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+    }
+    #[test]
+    fn startup_normalizes_effective_suffix_without_replacing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = "[lan_hostname]\nenable = true\nlan_suffix = ' .Home.ARPA. '\n";
+        let path = dir.path().join(crate::LAND_CONFIG);
+        std::fs::write(&path, source).unwrap();
+        let config = RuntimeConfig::new(WebCommArgs {
+            config_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+        assert!(config.lan_hostname.enable);
+        assert_eq!(config.lan_hostname.lan_suffix, "home.arpa");
+        assert_eq!(config.file_config.lan_hostname.lan_suffix.as_deref(), Some(" .Home.ARPA. "));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
     }
 }
