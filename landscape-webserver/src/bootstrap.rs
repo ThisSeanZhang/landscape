@@ -24,7 +24,7 @@ use landscape::{
     sys_service::route::IpRouteService,
     sys_service::{
         config_service::LandscapeConfigService, dns_service::LandscapeDnsService,
-        ebpf_service::LandscapeEbpfService,
+        ebpf_service::LandscapeEbpfService, gateway::GatewayService,
     },
     wan_link_service::WanLinkServiceManagerService,
     wan_link_service::probe::IcmpV4Probe,
@@ -39,7 +39,6 @@ use landscape_common::{
     event::hub::EventHub,
     sys_config::{AuthRuntimeConfig, RuntimeConfig},
 };
-use landscape_core::cert::build_tls_server_config_with_shared_resolver;
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_core::pd_prefix::IAPrefixMap;
 use landscape_core::time::SyncTimeService;
@@ -50,7 +49,6 @@ use landscape_ebpf::runtime::EbpfRuntime;
 use tokio::sync::mpsc;
 
 use crate::app::{LandscapeApp, ManagedServices, SystemServices};
-use crate::gateway_runtime::{GatewayService, GatewayTlsConfig};
 use crate::{DNS_EVENT_CHANNEL_SIZE, DST_IP_EVENT_CHANNEL_SIZE, StartupError, log_startup_phase};
 
 pub(crate) struct BootstrappedApp {
@@ -173,37 +171,18 @@ pub(crate) async fn build_app(
         return Err(StartupError::Cert(format!("failed to load api tls certificates: {e}")));
     }
     log_startup_phase("cert_service.reload_api_tls_mapping", phase_start, startup_start);
-    #[cfg(feature = "gateway")]
-    let gateway_tls_config = {
-        let phase_start = Instant::now();
-        let gateway_tls_mapping_count = match cert_service.reload_gateway_tls_mapping().await {
-            Ok(count) => count,
-            Err(e) => {
-                return Err(StartupError::Cert(format!(
-                    "failed to load gateway tls certificates: {e}"
-                )));
-            }
-        };
-        if gateway_tls_mapping_count == 0 {
-            tracing::warn!(
-                "No valid for_gateway certificate found; gateway HTTPS listener will start but reject TLS handshakes until a certificate is loaded"
-            );
-        }
-        let mut gateway_server_config =
-            build_tls_server_config_with_shared_resolver(cert_service.gateway_tls_resolver());
-        gateway_server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        log_startup_phase("cert_service.reload_gateway_tls_mapping", phase_start, startup_start);
-        Some(GatewayTlsConfig::new(std::sync::Arc::new(gateway_server_config)))
-    };
-    #[cfg(not(feature = "gateway"))]
-    let gateway_tls_config: Option<GatewayTlsConfig> = None;
-
     // Gateway
     let gateway_store = db_store_provider.gateway_http_upstream_store();
     let gateway_service = startup_phase!(
         "gateway_service.init_service",
-        GatewayService::init_service(gateway_store, config.gateway.clone(), gateway_tls_config)
-            .await
+        GatewayService::init_service(
+            gateway_store,
+            config.gateway.clone(),
+            &cert_service,
+            dns_redirect_service.clone(),
+        )
+        .await
+        .map_err(|e| StartupError::Cert(format!("failed to load gateway tls certificates: {e}")))?
     );
 
     let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {

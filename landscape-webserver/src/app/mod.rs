@@ -24,6 +24,7 @@ use landscape::{
     lan_service::lan_ipv6_service::LanIPv6ManagerService,
     lan_service::lan_route_service::RouteLanServiceManagerService,
     metric::MetricService,
+    sys_service::gateway::GatewayService,
     sys_service::route::IpRouteService,
     sys_service::{
         config_service::LandscapeConfigService, dns_service::LandscapeDnsService,
@@ -35,8 +36,6 @@ use landscape::{
 };
 
 use landscape_common::{memtrack::MemoryHistory, sys_config::AuthRuntimeConfig};
-
-use crate::gateway_runtime::GatewayService;
 
 mod iface_lifecycle;
 mod shutdown;

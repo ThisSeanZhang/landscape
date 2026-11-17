@@ -5,6 +5,9 @@ use crate::config::ConfigId;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum GatewayError {
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Database(#[from] crate::database::error::DbError),
     #[error("Gateway rule '{0}' not found")]
     #[api_error(id = "gateway.rule_not_found", status = 404)]
     NotFound(ConfigId),

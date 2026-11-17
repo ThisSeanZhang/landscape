@@ -43,7 +43,6 @@ mod error;
 mod firewall;
 mod flow;
 mod gateway;
-mod gateway_runtime;
 mod geo;
 mod interfaces;
 mod metrics;
@@ -154,7 +153,7 @@ async fn run_system(
     let auth_share = bootstrap.auth;
     let ebpf_paths = bootstrap.ebpf_paths;
 
-    gateway::sync_gateway_dynamic_dns_redirects(&landscape_app_status).await;
+    landscape_app_status.managed.gateway_service.sync_dynamic_dns_redirects().await;
 
     // 初始化结束
     let tls_config = build_tls_server_config_with_shared_resolver(

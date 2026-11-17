@@ -15,7 +15,6 @@ landscape-common = { path = "../landscape-common", features = ["openapi"] }
 landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }
 landscape-ebpf = { path = "../landscape-ebpf" }
-landscape-gateway = { path = "../landscape-gateway", optional = true }
 
 arc-swap = { workspace = true }
 
@@ -75,7 +74,7 @@ sea-orm = { workspace = true }
 
 [features]
 default = ["gateway", "metric-persistent"]
-gateway = ["dep:landscape-gateway"]
+gateway = ["landscape/gateway"]
 static = ["landscape-ebpf/static"]
 metric-persistent = ["landscape/metric-persistent"]
 mem-track = ["landscape/mem-track"]

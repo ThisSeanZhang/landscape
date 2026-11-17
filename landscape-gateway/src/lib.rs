@@ -1,5 +1,4 @@
 pub mod proxy_service;
-pub mod service;
 pub mod sni_proxy;
 
 use std::io::ErrorKind;
@@ -41,7 +40,7 @@ pub struct GatewayTlsConfig {
     pub server_config: Arc<ServerConfig>,
 }
 
-pub struct GatewayManager {
+pub struct GatewayServer {
     rules: SharedRules,
     state: Mutex<Option<GatewayRun>>,
     /// 上一次运行的终态:无运行时对外展示(线程崩溃后可见 Failed)
@@ -72,7 +71,7 @@ enum GatewayRunFailure {
     HttpsDriverPanicked,
 }
 
-impl GatewayManager {
+impl GatewayServer {
     pub fn new(
         initial_rules: Vec<HttpUpstreamRuleConfig>,
         config: GatewayRuntimeConfig,
@@ -178,8 +177,8 @@ impl GatewayManager {
         }
     }
 
-    /// Signal gateway to stop (non-blocking). The thread will actually be
-    /// joined when the GatewayManager is dropped (or join() is called).
+    /// Signal gateway to stop without blocking. Call join() after completion
+    /// to reap the thread; Drop detaches it if shutdown is still in progress.
     pub fn shutdown(&self) {
         let state = self.state.lock().unwrap();
         if let Some(run) = state.as_ref() {
@@ -239,7 +238,7 @@ impl GatewayManager {
     }
 }
 
-impl Drop for GatewayManager {
+impl Drop for GatewayServer {
     fn drop(&mut self) {
         self.shutdown();
         let stopped = {
@@ -254,7 +253,7 @@ impl Drop for GatewayManager {
         if let Some(runtime_state) = self.state.lock().unwrap().take() {
             runtime_state.cancel.cancel();
             tracing::warn!(
-                "Dropping gateway manager before gateway thread fully stopped; detaching thread"
+                "Dropping gateway server before gateway thread fully stopped; detaching thread"
             );
         }
     }
@@ -431,7 +430,7 @@ async fn run_https_server_inner(
 
     // Pingora's `ServerApp::process_new` requires a `watch::Receiver<bool>` as the
     // per-connection shutdown signal, so this channel is the token->watch bridge at
-    // the pingora boundary; it is flipped when the manager's stop token fires.
+    // the pingora boundary; it is flipped when the server's stop token fires.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
@@ -708,12 +707,12 @@ mod tests {
 
     #[test]
     fn start_refuses_while_previous_run_is_stopping() {
-        let manager = GatewayManager::new(Vec::new(), GatewayRuntimeConfig::default(), None);
-        *manager.state.lock().unwrap() = Some(stopping_run());
+        let server = GatewayServer::new(Vec::new(), GatewayRuntimeConfig::default(), None);
+        *server.state.lock().unwrap() = Some(stopping_run());
 
-        manager.start();
+        server.start();
 
-        let state = manager.state.lock().unwrap();
+        let state = server.state.lock().unwrap();
         let run = state.as_ref().expect("previous run must be preserved, not overwritten");
         assert_eq!(run.status.current(), ServiceStatus::Stopping);
     }
