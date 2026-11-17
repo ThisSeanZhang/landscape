@@ -82,8 +82,6 @@ pub enum LandscapeApiError {
     TimeSync(#[from] TimeSyncError),
     #[error(transparent)]
     InitConfig(#[from] InitConfigError),
-    #[error("gateway is not supported on this target architecture")]
-    GatewayUnsupportedTarget,
     #[error(transparent)]
     Database(#[from] DbError),
 
@@ -122,7 +120,6 @@ impl LandscapeApiError {
             Self::ConfigUpdate(e) => e.error_id(),
             Self::InitConfig(e) => e.error_id(),
             Self::Database(e) => e.error_id(),
-            Self::GatewayUnsupportedTarget => "gateway.unsupported_target",
             Self::JsonError(_) => "request.invalid_json",
             Self::JsonRejection(_) => "request.invalid_body",
         }
@@ -155,7 +152,6 @@ impl LandscapeApiError {
             Self::ConfigUpdate(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::InitConfig(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
             Self::Database(e) => StatusCode::from_u16(e.http_status_code()).unwrap(),
-            Self::GatewayUnsupportedTarget => StatusCode::NOT_IMPLEMENTED,
             Self::JsonError(_) => StatusCode::BAD_REQUEST,
             Self::JsonRejection(r) => r.status(),
         }
@@ -188,7 +184,7 @@ impl LandscapeApiError {
             Self::ConfigUpdate(e) => e.error_args(),
             Self::InitConfig(e) => e.error_args(),
             Self::Database(e) => e.error_args(),
-            Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
+            Self::JsonError(_) | Self::JsonRejection(_) => {
                 serde_json::json!({})
             }
         }
@@ -224,9 +220,7 @@ impl LandscapeApiError {
             Self::ConfigUpdate(e) => e.to_public_message(),
             Self::InitConfig(e) => e.to_public_message(),
             Self::Database(e) => e.to_public_message(),
-            Self::GatewayUnsupportedTarget | Self::JsonError(_) | Self::JsonRejection(_) => {
-                self.to_string()
-            }
+            Self::JsonError(_) | Self::JsonRejection(_) => self.to_string(),
         }
     }
 }
@@ -256,6 +250,30 @@ mod tests {
     use landscape_common::flow::FlowRuleError;
     use landscape_common::lan_service::lan_ipv6::LanIPv6Error;
     use sea_orm::DbErr;
+
+    #[tokio::test]
+    async fn unsupported_gateway_preserves_http_error_contract() {
+        let error = LandscapeApiError::from(GatewayError::Unsupported);
+        assert_eq!(error.error_id(), "gateway.unsupported_target");
+        assert_eq!(error.http_status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(error.error_args(), serde_json::json!({}));
+        assert_eq!(
+            error.to_public_message(),
+            "gateway is not supported on this target architecture"
+        );
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "data": null,
+                "error_id": "gateway.unsupported_target",
+                "message": "gateway is not supported on this target architecture",
+            })
+        );
+    }
 
     #[test]
     fn direct_db_error_conflict_maps_to_409_conflict() {

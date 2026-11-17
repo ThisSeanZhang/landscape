@@ -5,6 +5,9 @@ use crate::config::ConfigId;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum GatewayError {
+    #[error("gateway is not supported on this target architecture")]
+    #[api_error(id = "gateway.unsupported_target", status = 501)]
+    Unsupported,
     #[error(transparent)]
     #[api_error(transparent)]
     Database(#[from] crate::database::error::DbError),

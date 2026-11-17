@@ -2,14 +2,17 @@
 //! and the lifecycle of the optional proxy server.
 
 mod rules;
+#[cfg(feature = "gateway")]
+mod runtime;
+#[cfg(not(feature = "gateway"))]
+#[path = "runtime_unsupported.rs"]
+mod runtime;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use arc_swap::ArcSwap;
 use landscape_common::cert::CertError;
 use landscape_common::config::ConfigId;
-use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_config::GatewayRuntimeConfig;
@@ -18,12 +21,10 @@ use landscape_database::gateway::repository::GatewayHttpUpstreamRepository;
 use landscape_database::repository::Repository;
 use tokio::sync::Mutex;
 
-#[cfg(feature = "gateway")]
-use landscape_gateway::{GatewayServer, GatewayTlsConfig};
-
 use crate::cert::order_service::CertService;
 use crate::dns::redirect_service::DNSRedirectService;
 use rules::{build_gateway_dynamic_dns_redirect_batch, validate_gateway_rule};
+use runtime::GatewayRuntime;
 
 #[derive(Clone)]
 pub struct GatewayService {
@@ -32,12 +33,7 @@ pub struct GatewayService {
     /// Serialize mutations so that a concurrent reload cannot publish stale rules
     /// or update a server that is being replaced.
     operation_lock: Arc<Mutex<()>>,
-    #[cfg(feature = "gateway")]
-    server: Arc<ArcSwap<GatewayServer>>,
-    #[cfg(feature = "gateway")]
-    tls_config: GatewayTlsConfig,
-    #[cfg(not(feature = "gateway"))]
-    config: Arc<ArcSwap<GatewayRuntimeConfig>>,
+    runtime: GatewayRuntime,
 }
 
 impl GatewayService {
@@ -47,176 +43,114 @@ impl GatewayService {
         cert_service: &CertService,
         dns_redirect_service: DNSRedirectService,
     ) -> Result<Self, CertError> {
-        #[cfg(feature = "gateway")]
-        let tls_config = {
-            let count = cert_service.reload_gateway_tls_mapping().await?;
-            if count == 0 {
-                tracing::warn!(
-                    "No valid for_gateway certificate found; gateway HTTPS listener will start but reject TLS handshakes until a certificate is loaded"
-                );
-            }
-            let mut server_config =
-                landscape_core::cert::build_tls_server_config_with_shared_resolver(
-                    cert_service.gateway_tls_resolver(),
-                );
-            server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-            GatewayTlsConfig { server_config: Arc::new(server_config) }
+        let initial_rules = if GatewayRuntime::is_supported() {
+            store.list().await.unwrap_or_default()
+        } else {
+            Vec::new()
         };
-        #[cfg(feature = "gateway")]
-        let server = Self::create_server(&store, config, tls_config.clone()).await;
-        #[cfg(not(feature = "gateway"))]
-        let _ = cert_service;
-
+        let runtime = GatewayRuntime::new(initial_rules, config, cert_service).await?;
         Ok(Self {
             store,
             dns_redirect_service,
             operation_lock: Arc::new(Mutex::new(())),
-            #[cfg(feature = "gateway")]
-            server: Arc::new(ArcSwap::from(server)),
-            #[cfg(feature = "gateway")]
-            tls_config,
-            #[cfg(not(feature = "gateway"))]
-            config: Arc::new(ArcSwap::from_pointee(config)),
+            runtime,
         })
     }
 
-    #[cfg(feature = "gateway")]
-    async fn create_server(
-        store: &GatewayHttpUpstreamRepository,
-        config: GatewayRuntimeConfig,
-        tls_config: GatewayTlsConfig,
-    ) -> Arc<GatewayServer> {
-        let initial_rules = store.list().await.unwrap_or_default();
-        let server = Arc::new(GatewayServer::new(initial_rules, config, Some(tls_config)));
-        if server.config().enable {
-            server.start();
-        }
-        server
-    }
-
     pub fn is_supported(&self) -> bool {
-        cfg!(feature = "gateway")
+        GatewayRuntime::is_supported()
     }
 
     pub fn status(&self) -> ServiceStatus {
-        #[cfg(feature = "gateway")]
-        return self.server.load().status();
-        #[cfg(not(feature = "gateway"))]
-        ServiceStatus::Stop
+        self.runtime.status()
     }
 
     pub fn has_https_listener(&self) -> bool {
-        #[cfg(feature = "gateway")]
-        return self.server.load().has_https_listener();
-        #[cfg(not(feature = "gateway"))]
-        false
+        self.runtime.has_https_listener()
     }
 
-    pub fn config(&self) -> GatewayRuntimeConfig {
-        #[cfg(feature = "gateway")]
-        return self.server.load().config().clone();
-        #[cfg(not(feature = "gateway"))]
-        (*self.config.load_full()).clone()
+    /// Configuration used by the proxy server, absent when gateway support is not compiled.
+    pub fn runtime_config(&self) -> Option<GatewayRuntimeConfig> {
+        self.runtime.config()
     }
 
     pub async fn shutdown_and_wait(&self, timeout: Duration) {
         let _guard = self.operation_lock.lock().await;
-        #[cfg(feature = "gateway")]
-        Self::stop_server(&self.server.load_full(), timeout).await;
-        #[cfg(not(feature = "gateway"))]
-        let _ = timeout;
+        self.runtime.shutdown_and_wait(timeout).await;
     }
 
-    #[cfg(feature = "gateway")]
-    async fn stop_server(server: &GatewayServer, timeout: Duration) {
-        server.shutdown();
-        let Some(mut done_rx) = server.done_receiver() else {
-            return;
-        };
-        let terminal = done_rx
-            .wait_for(|status| matches!(status, ServiceStatus::Stop | ServiceStatus::Failed));
-        match tokio::time::timeout(timeout, terminal).await {
-            Ok(_) => tracing::info!("Gateway run finished: {:?}", server.status()),
-            Err(_) => tracing::warn!(
-                "Gateway did not stop within {}s timeout, proceeding.",
-                timeout.as_secs()
-            ),
-        }
-    }
-
-    pub async fn restart(&self, config: GatewayRuntimeConfig, timeout: Duration) {
-        let _guard = self.operation_lock.lock().await;
-        #[cfg(feature = "gateway")]
-        {
-            Self::stop_server(&self.server.load_full(), timeout).await;
-            let server = Self::create_server(&self.store, config, self.tls_config.clone()).await;
-            self.server.store(server);
-        }
-        #[cfg(not(feature = "gateway"))]
-        {
-            let _ = timeout;
-            self.config.store(Arc::new(config));
-        }
-    }
-
-    fn ensure_supported(&self) -> Result<(), DbError> {
-        if self.is_supported() {
-            Ok(())
-        } else {
-            Err(DbError::Internal(
-                "gateway is not supported on this target architecture".to_string(),
-            ))
-        }
-    }
-
-    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, DbError> {
+    pub async fn restart(
+        &self,
+        config: GatewayRuntimeConfig,
+        timeout: Duration,
+    ) -> Result<(), GatewayError> {
         self.ensure_supported()?;
-        self.store.list().await
+        let _guard = self.operation_lock.lock().await;
+        let rules = self.store.list().await.unwrap_or_default();
+        self.runtime.restart(rules, config, timeout).await
+    }
+
+    fn ensure_supported(&self) -> Result<(), GatewayError> {
+        if self.is_supported() { Ok(()) } else { Err(GatewayError::Unsupported) }
+    }
+
+    pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, GatewayError> {
+        self.ensure_supported()?;
+        self.store.list().await.map_err(Into::into)
     }
 
     pub async fn save_rule(
         &self,
         rule: HttpUpstreamRuleConfig,
     ) -> Result<HttpUpstreamRuleConfig, GatewayError> {
-        let _guard = self.operation_lock.lock().await;
         self.ensure_supported()?;
+        let _guard = self.operation_lock.lock().await;
         let existing_rules = self.store.list().await?;
         validate_gateway_rule(&rule, &existing_rules)?;
         let saved = self.store.upsert(rule).await?.new;
-        self.reload_rules_inner().await;
+        self.reload_rules_inner().await?;
         Ok(saved)
     }
 
-    pub async fn find_rule(&self, id: ConfigId) -> Result<Option<HttpUpstreamRuleConfig>, DbError> {
+    pub async fn find_rule(
+        &self,
+        id: ConfigId,
+    ) -> Result<Option<HttpUpstreamRuleConfig>, GatewayError> {
         self.ensure_supported()?;
-        Repository::find_by_id(&self.store, id).await
+        Repository::find_by_id(&self.store, id).await.map_err(Into::into)
     }
 
-    pub async fn delete_rule(&self, id: ConfigId) -> Result<(), DbError> {
-        let _guard = self.operation_lock.lock().await;
+    pub async fn delete_rule(&self, id: ConfigId) -> Result<(), GatewayError> {
         self.ensure_supported()?;
+        let _guard = self.operation_lock.lock().await;
         self.store.delete_and_get(id).await?;
-        self.reload_rules_inner().await;
+        self.reload_rules_inner().await?;
         Ok(())
     }
 
-    pub async fn reload_rules(&self) {
+    pub async fn reload_rules(&self) -> Result<(), GatewayError> {
+        self.ensure_supported()?;
         let _guard = self.operation_lock.lock().await;
-        self.reload_rules_inner().await;
+        self.reload_rules_inner().await?;
+        Ok(())
     }
 
-    async fn reload_rules_inner(&self) {
+    async fn reload_rules_inner(&self) -> Result<(), GatewayError> {
         let rules = self.list_rules().await.unwrap_or_default();
         self.dns_redirect_service
             .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(&rules))
             .await;
-        #[cfg(feature = "gateway")]
-        self.server.load().reload_rules(rules);
+        self.runtime.reload_rules(rules)
     }
 
     pub async fn sync_dynamic_dns_redirects(&self) {
         let _guard = self.operation_lock.lock().await;
-        let rules = self.list_rules().await.unwrap_or_default();
+        // Unsupported builds must remove any gateway DNS batch without reading rules.
+        let rules = if self.is_supported() {
+            self.store.list().await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         self.dns_redirect_service
             .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(&rules))
             .await;
@@ -270,18 +204,20 @@ mod tests {
     #[tokio::test]
     async fn rule_mutations_update_storage_server_and_dns() {
         let (service, certs, _events_rx) = service().await;
+        assert!(service.runtime_config().is_some());
+        service.reload_rules().await.unwrap();
         let rule = service.save_rule(rule()).await.unwrap();
         assert_eq!(service.find_rule(rule.id).await.unwrap().unwrap().domains, rule.domains);
-        assert_eq!(service.server.load().shared_rules().load().len(), 1);
+        assert_eq!(service.runtime.shared_rules().load().len(), 1);
         let batches = service.dns_redirect_service.list_dynamic_batches().await;
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].records.len(), 1);
 
         // Restart recreates the server from persistent rules without binding ports
         // when the gateway is disabled.
-        service.restart(GatewayRuntimeConfig::default(), Duration::from_secs(1)).await;
+        service.restart(GatewayRuntimeConfig::default(), Duration::from_secs(1)).await.unwrap();
         assert_eq!(service.status(), ServiceStatus::Stop);
-        assert_eq!(service.server.load().shared_rules().load().len(), 1);
+        assert_eq!(service.runtime.shared_rules().load().len(), 1);
 
         let mut conflict = rule.clone();
         conflict.id = uuid::Uuid::new_v4();
@@ -296,11 +232,11 @@ mod tests {
             Err(GatewayError::DomainsRequired { .. })
         ));
         assert_eq!(service.stored_rule_count().await, 1);
-        assert_eq!(service.server.load().shared_rules().load()[0].domains, rule.domains);
+        assert_eq!(service.runtime.shared_rules().load()[0].domains, rule.domains);
 
         service.delete_rule(rule.id).await.unwrap();
         assert!(service.find_rule(rule.id).await.unwrap().is_none());
-        assert!(service.server.load().shared_rules().load().is_empty());
+        assert!(service.runtime.shared_rules().load().is_empty());
         assert!(service.dns_redirect_service.list_dynamic_batches().await.is_empty());
         service.shutdown_and_wait(Duration::from_secs(1)).await;
         certs.shutdown_and_wait(Duration::from_secs(1)).await;
@@ -313,17 +249,61 @@ mod tests {
         assert!(!service.is_supported());
         assert!(!service.has_https_listener());
         assert_eq!(service.status(), ServiceStatus::Stop);
-        assert!(service.save_rule(rule()).await.is_err());
-        assert!(service.list_rules().await.is_err());
-        assert_eq!(service.stored_rule_count().await, 0);
+        assert!(service.runtime_config().is_none());
+        let cloned = service.clone();
+        let stored = service.store.upsert(rule()).await.unwrap().new;
         service
+            .dns_redirect_service
+            .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(std::slice::from_ref(
+                &stored,
+            )))
+            .await;
+        let before_dns = service.dns_redirect_service.list_dynamic_batches().await;
+        assert_eq!(before_dns.len(), 1);
+
+        assert!(matches!(service.save_rule(rule()).await, Err(GatewayError::Unsupported)));
+        assert!(matches!(service.list_rules().await, Err(GatewayError::Unsupported)));
+        assert!(matches!(service.find_rule(stored.id).await, Err(GatewayError::Unsupported)));
+        assert!(matches!(service.delete_rule(stored.id).await, Err(GatewayError::Unsupported)));
+        assert!(matches!(service.reload_rules().await, Err(GatewayError::Unsupported)));
+        let result = service
             .restart(
                 GatewayRuntimeConfig { enable: true, http_port: 8080, https_port: 8443 },
                 Duration::from_secs(1),
             )
             .await;
-        assert_eq!(service.config().http_port, 8080);
+        assert!(matches!(result, Err(GatewayError::Unsupported)));
+        assert!(service.runtime_config().is_none());
+        assert!(cloned.runtime_config().is_none());
         assert_eq!(service.status(), ServiceStatus::Stop);
+        let after_rules = service.store.list().await.unwrap();
+        assert_eq!(after_rules.len(), 1);
+        assert_eq!(after_rules[0].id, stored.id);
+        assert_eq!(after_rules[0].domains, stored.domains);
+        assert_eq!(service.stored_rule_count().await, 1);
+        let after_dns = service.dns_redirect_service.list_dynamic_batches().await;
+        assert_eq!(after_dns.len(), before_dns.len());
+        assert_eq!(after_dns[0].source_id, before_dns[0].source_id);
+        assert_eq!(after_dns[0].scope, before_dns[0].scope);
+        let snapshot = |batch: &landscape_common::dns::redirect::DynamicDnsRedirectBatch| {
+            batch
+                .records
+                .iter()
+                .map(|record| {
+                    (
+                        record.match_rule.clone(),
+                        record.answer_mode,
+                        record.result_info.clone(),
+                        record.ttl_secs,
+                        record.block_metadata_queries,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(snapshot(&after_dns[0]), snapshot(&before_dns[0]));
+
+        // Startup synchronization explicitly removes stale gateway DNS records,
+        // even when persistent rules exist in an unsupported build.
         service.sync_dynamic_dns_redirects().await;
         assert!(service.dns_redirect_service.list_dynamic_batches().await.is_empty());
         service.shutdown_and_wait(Duration::from_secs(1)).await;
