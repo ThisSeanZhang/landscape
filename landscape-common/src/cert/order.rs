@@ -42,6 +42,12 @@ impl Default for ChallengeType {
 pub enum DnsProviderConfig {
     #[default]
     Manual,
+    /// Cloudflare-compatible DNS API inside the E2E lab.
+    #[cfg(feature = "e2e-acme")]
+    E2e {
+        api_url: String,
+        api_token: String,
+    },
     Cloudflare {
         api_token: String,
     },

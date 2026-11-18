@@ -73,6 +73,7 @@ tracing = { workspace = true }
 sea-orm = { workspace = true }
 
 [features]
+e2e-acme = ["landscape/e2e-acme"]
 default = ["gateway", "metric-persistent"]
 gateway = ["landscape/gateway"]
 static = ["landscape-ebpf/static"]

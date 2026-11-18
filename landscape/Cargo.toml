@@ -94,6 +94,7 @@ etherparse = { workspace = true }
 workspace = true
 
 [features]
+e2e-acme = ["landscape-common/e2e-acme"]
 default = ["metric-persistent"]
 gateway = ["dep:landscape-gateway"]
 metric-persistent = ["landscape-metric/metric-persistent"]

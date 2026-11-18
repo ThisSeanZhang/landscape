@@ -1,0 +1,8 @@
+{
+  "pebble": {
+    "listenAddress": "198.51.100.1:14000",
+    "managementListenAddress": "198.51.100.1:15000",
+    "certificate": "server.pem",
+    "privateKey": "server.key"
+  }
+}

@@ -54,14 +54,9 @@ ready() {
 
 run_lab() {
     local source_topology=$1 init_config=$2 lan_node=$3
-    local target_dir binary version deadline
+    local build_dir binary version deadline
     cd "$lab_root/../../.."
-    target_dir=${CARGO_TARGET_DIR:-target}
-    cargo build --locked --profile fast --target-dir "$target_dir" -p landscape-webserver --bin landscape-webserver
-    binary=$(realpath "$target_dir/fast/landscape-webserver")
-
     work=$(mktemp -d)
-    cd "$work"
     export LANDSCAPE_LAB_NAME="ld-e2e-$(cat /proc/sys/kernel/random/uuid)"
     image="landscape-e2e:$LANDSCAPE_LAB_NAME"
     router="clab-$LANDSCAPE_LAB_NAME-router"
@@ -74,11 +69,18 @@ run_lab() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
+    # Share compiled dependencies, but stage each run's feature-specific executable separately.
+    build_dir=${CARGO_BUILD_BUILD_DIR:-${CARGO_TARGET_DIR:-target}}
+    CARGO_BUILD_BUILD_DIR=$(realpath -m "$build_dir") cargo build --locked --profile fast \
+        --target-dir "$work/artifacts" -p landscape-webserver --bin landscape-webserver "${case_cargo_args[@]}"
+    binary="$work/artifacts/fast/landscape-webserver"
+    cd "$work"
     mkdir build
     strip -o build/landscape-webserver "$binary"
     # Use the build host's resolver while fetching Debian packages. The lab nodes
     # themselves only have their point-to-point data links.
-    docker build --network host --secret id=resolver,src=/etc/resolv.conf -t "$image" -f "$lab_root/Dockerfile" build
+    docker build --target "${case_image_target:-lab}" --network host \
+        --secret id=resolver,src=/etc/resolv.conf -t "$image" -f "$lab_root/Dockerfile" build
     cp "$source_topology" "$topology"
     deploy_started=true
     containerlab deploy -t "$topology"
@@ -86,7 +88,7 @@ run_lab() {
     # Use a private bpffs and container-local config/SQLite on each run.
     docker exec "$router" mount -t bpf bpf /sys/fs/bpf
     docker exec "$router" mkdir -p /var/lib/landscape
-    version=$("$binary" --version)
+    version=$(docker exec "$router" landscape-webserver --version)
     printf 'version = "%s"\n' "${version##* }" > landscape_init.toml
     # A case can append its own tables after the topology's base configuration.
     cat "$init_config" "${@:4}" >> landscape_init.toml

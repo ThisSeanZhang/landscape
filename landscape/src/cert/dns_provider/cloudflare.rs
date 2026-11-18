@@ -108,7 +108,7 @@ impl CloudflareSolver {
         Ok(body.result.and_then(|zones| zones.into_iter().next()).map(|zone| zone.id))
     }
 
-    async fn validate_credentials(&self) -> Result<(), CertError> {
+    pub(super) async fn validate_credentials(&self) -> Result<(), CertError> {
         let url = self.api_url("/zones?page=1&per_page=1");
         let resp =
             self.client.get(url).header(AUTHORIZATION, self.auth_header()).send().await.map_err(
@@ -134,7 +134,7 @@ impl CloudflareSolver {
         }
     }
 
-    async fn validate_zone_access(&self, zone_name: &str) -> Result<(), CertError> {
+    pub(super) async fn validate_zone_access(&self, zone_name: &str) -> Result<(), CertError> {
         if self.lookup_zone_id(zone_name).await?.is_some() {
             Ok(())
         } else {
@@ -144,7 +144,7 @@ impl CloudflareSolver {
         }
     }
 
-    async fn validate_domain_access(&self, domain: &str) -> Result<(), CertError> {
+    pub(super) async fn validate_domain_access(&self, domain: &str) -> Result<(), CertError> {
         for candidate in super::common::candidate_zones(domain) {
             if self.lookup_zone_id(&candidate).await?.is_some() {
                 return Ok(());

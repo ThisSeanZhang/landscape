@@ -65,11 +65,6 @@ impl CertAccountService {
             return Err(CertError::StagingNotSupported);
         }
 
-        // Set status to Registering
-        config.status = AccountStatus::Registering;
-        config.status_message = None;
-        let _ = self.store.upsert(config.clone()).await;
-
         // Determine directory URL
         let directory_url = match &config.provider_config {
             ProviderConfig::LetsEncrypt => {
@@ -80,7 +75,22 @@ impl CertAccountService {
                 }
             }
             ProviderConfig::ZeroSsl { .. } => ZeroSsl::Production.url(),
+            #[cfg(feature = "e2e-acme")]
+            ProviderConfig::E2e { directory_url } => directory_url.as_str(),
+            // Cargo can enable landscape-common/e2e-acme without enabling the service feature.
+            #[cfg(not(feature = "e2e-acme"))]
+            #[allow(unreachable_patterns)]
+            _ => {
+                return Err(CertError::RegistrationFailed(
+                    "ACME provider unavailable in this build".into(),
+                ));
+            }
         };
+
+        // Set status to Registering
+        config.status = AccountStatus::Registering;
+        config.status_message = None;
+        let _ = self.store.upsert(config.clone()).await;
 
         // Build EAB if ZeroSSL
         let eab = match &config.provider_config {

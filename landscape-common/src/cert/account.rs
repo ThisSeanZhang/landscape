@@ -12,6 +12,11 @@ use crate::utils::time::get_f64_timestamp;
 pub enum ProviderConfig {
     #[default]
     LetsEncrypt,
+    /// Private ACME directory served by the lab.
+    #[cfg(feature = "e2e-acme")]
+    E2e {
+        directory_url: String,
+    },
     ZeroSsl {
         eab_kid: String,
         eab_hmac_key: String,
