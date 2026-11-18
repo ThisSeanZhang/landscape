@@ -9,6 +9,7 @@ use landscape_common::cert::CertError;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_config::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::{GatewayError, HttpUpstreamRuleConfig};
+pub(super) use landscape_gateway::routes::CompiledGatewayRoutes as PreparedRoutes;
 use landscape_gateway::{GatewayServer, GatewayTlsConfig};
 
 use crate::cert::order_service::CertService;
@@ -21,7 +22,7 @@ pub(super) struct GatewayRuntime {
 
 impl GatewayRuntime {
     pub(super) async fn new(
-        rules: Vec<HttpUpstreamRuleConfig>,
+        routes: PreparedRoutes,
         config: GatewayRuntimeConfig,
         cert_service: &CertService,
     ) -> Result<Self, CertError> {
@@ -36,7 +37,7 @@ impl GatewayRuntime {
         );
         server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         let tls_config = GatewayTlsConfig { server_config: Arc::new(server_config) };
-        let server = Self::create_server(rules, config, tls_config.clone());
+        let server = Self::create_server(routes, config, tls_config.clone());
         Ok(Self {
             server: Arc::new(ArcSwap::from(server)),
             tls_config,
@@ -44,11 +45,11 @@ impl GatewayRuntime {
     }
 
     fn create_server(
-        rules: Vec<HttpUpstreamRuleConfig>,
+        routes: PreparedRoutes,
         config: GatewayRuntimeConfig,
         tls_config: GatewayTlsConfig,
     ) -> Arc<GatewayServer> {
-        let server = Arc::new(GatewayServer::new(rules, config, Some(tls_config)));
+        let server = Arc::new(GatewayServer::new(routes, config, Some(tls_config)));
         if server.config().enable {
             server.start();
         }
@@ -57,6 +58,12 @@ impl GatewayRuntime {
 
     pub(super) fn is_supported() -> bool {
         true
+    }
+
+    pub(super) fn prepare_rules(
+        rules: &[HttpUpstreamRuleConfig],
+    ) -> Result<PreparedRoutes, GatewayError> {
+        PreparedRoutes::compile(rules)
     }
 
     pub(super) fn status(&self) -> ServiceStatus {
@@ -90,26 +97,22 @@ impl GatewayRuntime {
 
     pub(super) async fn restart(
         &self,
-        rules: Vec<HttpUpstreamRuleConfig>,
+        routes: PreparedRoutes,
         config: GatewayRuntimeConfig,
         timeout: Duration,
     ) -> Result<(), GatewayError> {
         self.shutdown_and_wait(timeout).await;
-        let server = Self::create_server(rules, config, self.tls_config.clone());
+        let server = Self::create_server(routes, config, self.tls_config.clone());
         self.server.store(server);
         Ok(())
     }
 
-    pub(super) fn reload_rules(
-        &self,
-        rules: Vec<HttpUpstreamRuleConfig>,
-    ) -> Result<(), GatewayError> {
-        self.server.load().reload_rules(rules);
-        Ok(())
+    pub(super) fn publish_routes(&self, routes: PreparedRoutes) {
+        self.server.load().publish_routes(routes);
     }
 
     #[cfg(test)]
-    pub(super) fn shared_rules(&self) -> landscape_gateway::SharedRules {
-        self.server.load().shared_rules()
+    pub(super) fn shared_routes(&self) -> landscape_gateway::SharedGatewayRoutes {
+        self.server.load().shared_routes()
     }
 }

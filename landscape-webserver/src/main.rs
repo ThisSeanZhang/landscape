@@ -12,7 +12,9 @@ use axum::{
 use axum_server::tls_rustls::RustlsConfig;
 use colored::Colorize;
 
-use landscape::boot::{boot_check, log::init_logger, write_config_toml, write_init_lock};
+use landscape::boot::{
+    boot_check, log::init_logger, prepare_init_config_import, write_config_toml, write_init_lock,
+};
 use landscape_common::lan_service::lan_route::RouteLanServiceConfig;
 use landscape_common::{
     VERSION,
@@ -51,6 +53,8 @@ mod openapi;
 mod redirect_https;
 mod self_monitor;
 mod services;
+#[cfg(test)]
+mod startup_tests;
 mod system;
 mod websocket;
 
@@ -84,8 +88,12 @@ pub enum StartupError {
     Boot(#[from] landscape::boot::BootError),
     #[error(transparent)]
     Database(#[from] DbError),
+    #[error(transparent)]
+    InitConfig(#[from] landscape_common::config::InitConfigError),
     #[error("{0}")]
     Cert(String),
+    #[error("gateway: {0}")]
+    Gateway(#[from] landscape::sys_service::gateway::GatewayServiceInitError),
     #[error("metric: {0}")]
     Metric(String),
     #[error("config: {0}")]
@@ -108,6 +116,15 @@ async fn prepare_startup_init(
         }};
     }
 
+    // Validate the same candidate as upload preflight, before opening the live
+    // database or replacing any configuration files and initialization lock.
+    let init_config_to_import = match init_config_to_import {
+        Some(init_config) => Some(startup_phase!(
+            "prepare_init_config_import",
+            prepare_init_config_import(init_config).await?
+        )),
+        None => None,
+    };
     let init_file_config_to_persist = init_config_to_import
         .as_ref()
         .filter(|init_config| !init_config.version.is_empty())
@@ -123,8 +140,6 @@ async fn prepare_startup_init(
 
     if let Some(init_config) = init_config_to_import {
         startup_phase!("db_store_provider.truncate_and_fit_from", {
-            LandscapeDBServiceProvider::validate_init_config_can_import(init_config.clone())
-                .await?;
             db_store_provider
                 .truncate_and_fit_from_before_commit(init_config, || {
                     if let Some(config) = init_file_config_to_persist {

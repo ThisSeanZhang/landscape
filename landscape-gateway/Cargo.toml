@@ -22,3 +22,4 @@ serde = { workspace = true }
 arc-swap = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }
+http = { workspace = true }

@@ -14,6 +14,7 @@ use std::time::Duration;
 use landscape_common::cert::CertError;
 use landscape_common::config::ConfigId;
 use landscape_common::database::store::ConfigStore;
+use landscape_common::dns::redirect::DynamicDnsRedirectBatch;
 use landscape_common::service::ServiceStatus;
 use landscape_common::sys_config::GatewayRuntimeConfig;
 use landscape_common::sys_service::gateway::{GatewayError, HttpUpstreamRuleConfig};
@@ -23,16 +24,53 @@ use tokio::sync::Mutex;
 
 use crate::cert::order_service::CertService;
 use crate::dns::redirect_service::DNSRedirectService;
-use rules::{build_gateway_dynamic_dns_redirect_batch, validate_gateway_rule};
-use runtime::GatewayRuntime;
+use rules::{
+    build_gateway_dynamic_dns_redirect_batch, normalize_persisted_gateway_rules,
+    validate_gateway_rule, validate_persisted_gateway_rules,
+};
+use runtime::{GatewayRuntime, PreparedRoutes};
+
+#[derive(Debug, thiserror::Error)]
+pub enum GatewayServiceInitError {
+    #[error(transparent)]
+    Rules(#[from] GatewayError),
+    #[error(transparent)]
+    Certificate(#[from] CertError),
+}
+
+/// All fallible preparation finishes before persistence or publication.
+struct PreparedGatewayRules {
+    routes: PreparedRoutes,
+    dns_batch: DynamicDnsRedirectBatch,
+}
+
+impl PreparedGatewayRules {
+    fn compile(rules: &mut [HttpUpstreamRuleConfig]) -> Result<Self, GatewayError> {
+        normalize_persisted_gateway_rules(rules);
+        validate_persisted_gateway_rules(rules)?;
+        Ok(Self {
+            routes: GatewayRuntime::prepare_rules(rules)?,
+            dns_batch: build_gateway_dynamic_dns_redirect_batch(rules),
+        })
+    }
+}
+
+/// Prepare imported rules using the same compatibility, validation and
+/// compilation path as startup and reload, before an importer writes anything.
+/// The caller receives canonical persisted values, including SNI header policy.
+pub fn prepare_gateway_rules_for_import(
+    rules: &mut [HttpUpstreamRuleConfig],
+) -> Result<(), GatewayError> {
+    PreparedGatewayRules::compile(rules).map(|_| ())
+}
 
 #[derive(Clone)]
 pub struct GatewayService {
     store: GatewayHttpUpstreamRepository,
     dns_redirect_service: DNSRedirectService,
-    /// Serialize mutations so that a concurrent reload cannot publish stale rules
-    /// or update a server that is being replaced.
-    operation_lock: Arc<Mutex<()>>,
+    /// Retain the DNS batch for the published routes. This lock also serializes
+    /// mutations, DNS syncs and lifecycle changes so none publish stale state.
+    published_dns: Arc<Mutex<DynamicDnsRedirectBatch>>,
     runtime: GatewayRuntime,
 }
 
@@ -42,17 +80,21 @@ impl GatewayService {
         config: GatewayRuntimeConfig,
         cert_service: &CertService,
         dns_redirect_service: DNSRedirectService,
-    ) -> Result<Self, CertError> {
-        let initial_rules = if GatewayRuntime::is_supported() {
-            store.list().await.unwrap_or_default()
+    ) -> Result<Self, GatewayServiceInitError> {
+        let prepared = if GatewayRuntime::is_supported() {
+            let mut rules = store.list().await.map_err(GatewayError::from)?;
+            PreparedGatewayRules::compile(&mut rules)?
         } else {
-            Vec::new()
+            PreparedGatewayRules {
+                routes: PreparedRoutes::default(),
+                dns_batch: build_gateway_dynamic_dns_redirect_batch(&[]),
+            }
         };
-        let runtime = GatewayRuntime::new(initial_rules, config, cert_service).await?;
+        let runtime = GatewayRuntime::new(prepared.routes, config, cert_service).await?;
         Ok(Self {
             store,
             dns_redirect_service,
-            operation_lock: Arc::new(Mutex::new(())),
+            published_dns: Arc::new(Mutex::new(prepared.dns_batch)),
             runtime,
         })
     }
@@ -75,7 +117,7 @@ impl GatewayService {
     }
 
     pub async fn shutdown_and_wait(&self, timeout: Duration) {
-        let _guard = self.operation_lock.lock().await;
+        let _guard = self.published_dns.lock().await;
         self.runtime.shutdown_and_wait(timeout).await;
     }
 
@@ -85,9 +127,14 @@ impl GatewayService {
         timeout: Duration,
     ) -> Result<(), GatewayError> {
         self.ensure_supported()?;
-        let _guard = self.operation_lock.lock().await;
-        let rules = self.store.list().await.unwrap_or_default();
-        self.runtime.restart(rules, config, timeout).await
+        let mut published_dns = self.published_dns.lock().await;
+        let mut rules = self.store.list().await?;
+        let prepared = PreparedGatewayRules::compile(&mut rules)?;
+        // Read and compile before stopping the current server.
+        self.runtime.restart(prepared.routes, config, timeout).await?;
+        *published_dns = prepared.dns_batch;
+        self.dns_redirect_service.set_dynamic_batch(published_dns.clone()).await;
+        Ok(())
     }
 
     fn ensure_supported(&self) -> Result<(), GatewayError> {
@@ -96,7 +143,9 @@ impl GatewayService {
 
     pub async fn list_rules(&self) -> Result<Vec<HttpUpstreamRuleConfig>, GatewayError> {
         self.ensure_supported()?;
-        self.store.list().await.map_err(Into::into)
+        let mut rules = self.store.list().await?;
+        normalize_persisted_gateway_rules(&mut rules);
+        Ok(rules)
     }
 
     pub async fn save_rule(
@@ -104,11 +153,18 @@ impl GatewayService {
         rule: HttpUpstreamRuleConfig,
     ) -> Result<HttpUpstreamRuleConfig, GatewayError> {
         self.ensure_supported()?;
-        let _guard = self.operation_lock.lock().await;
-        let existing_rules = self.store.list().await?;
-        validate_gateway_rule(&rule, &existing_rules)?;
+        let mut published_dns = self.published_dns.lock().await;
+        let mut candidate = self.store.list().await?;
+        validate_gateway_rule(&rule, &candidate)?;
+        if let Some(existing) = candidate.iter_mut().find(|existing| existing.id == rule.id) {
+            *existing = rule.clone();
+        } else {
+            candidate.push(rule.clone());
+        }
+        let prepared = PreparedGatewayRules::compile(&mut candidate)?;
+        // Persistence only changes update_at, which is not part of routing.
         let saved = self.store.upsert(rule).await?.new;
-        self.reload_rules_inner().await?;
+        self.publish_rules(prepared, &mut published_dns).await;
         Ok(saved)
     }
 
@@ -117,43 +173,51 @@ impl GatewayService {
         id: ConfigId,
     ) -> Result<Option<HttpUpstreamRuleConfig>, GatewayError> {
         self.ensure_supported()?;
-        Repository::find_by_id(&self.store, id).await.map_err(Into::into)
+        let mut rule = Repository::find_by_id(&self.store, id).await?;
+        if let Some(rule) = &mut rule {
+            normalize_persisted_gateway_rules(std::slice::from_mut(rule));
+        }
+        Ok(rule)
     }
 
     pub async fn delete_rule(&self, id: ConfigId) -> Result<(), GatewayError> {
         self.ensure_supported()?;
-        let _guard = self.operation_lock.lock().await;
+        let mut published_dns = self.published_dns.lock().await;
+        let mut candidate = self.store.list().await?;
+        candidate.retain(|rule| rule.id != id);
+        let prepared = PreparedGatewayRules::compile(&mut candidate)?;
         self.store.delete_and_get(id).await?;
-        self.reload_rules_inner().await?;
+        self.publish_rules(prepared, &mut published_dns).await;
         Ok(())
     }
 
     pub async fn reload_rules(&self) -> Result<(), GatewayError> {
         self.ensure_supported()?;
-        let _guard = self.operation_lock.lock().await;
-        self.reload_rules_inner().await?;
+        let mut published_dns = self.published_dns.lock().await;
+        let mut rules = self.store.list().await?;
+        let prepared = PreparedGatewayRules::compile(&mut rules)?;
+        self.publish_rules(prepared, &mut published_dns).await;
         Ok(())
     }
 
-    async fn reload_rules_inner(&self) -> Result<(), GatewayError> {
-        let rules = self.list_rules().await.unwrap_or_default();
-        self.dns_redirect_service
-            .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(&rules))
-            .await;
-        self.runtime.reload_rules(rules)
+    async fn publish_rules(
+        &self,
+        prepared: PreparedGatewayRules,
+        published_dns: &mut DynamicDnsRedirectBatch,
+    ) {
+        // HTTP, HTTPS and SNI switch atomically. Publish routing before DNS so
+        // newly advertised domains have routes. DNS notification is asynchronous;
+        // the two subsystems do not form a cross-system transaction.
+        self.runtime.publish_routes(prepared.routes);
+        *published_dns = prepared.dns_batch;
+        self.dns_redirect_service.set_dynamic_batch(published_dns.clone()).await;
     }
 
     pub async fn sync_dynamic_dns_redirects(&self) {
-        let _guard = self.operation_lock.lock().await;
-        // Unsupported builds must remove any gateway DNS batch without reading rules.
-        let rules = if self.is_supported() {
-            self.store.list().await.unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        self.dns_redirect_service
-            .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(&rules))
-            .await;
+        let published_dns = self.published_dns.lock().await;
+        // Synchronize the active version, never a fresh unvalidated database read.
+        // Unsupported builds retain an empty batch to remove stale gateway DNS.
+        self.dns_redirect_service.set_dynamic_batch(published_dns.clone()).await;
     }
 
     pub async fn stored_rule_count(&self) -> usize {
@@ -162,151 +226,4 @@ impl GatewayService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cert::account_service::CertAccountService;
-    use landscape_common::event::dns::DnsEvent;
-    use landscape_database::provider::LandscapeDBServiceProvider;
-
-    async fn service() -> (GatewayService, CertService, tokio::sync::mpsc::Receiver<DnsEvent>) {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let db = LandscapeDBServiceProvider::mem_test_db().await;
-        let (events_tx, events_rx) = tokio::sync::mpsc::channel(32);
-        let dns = DNSRedirectService::new(db.clone(), events_tx).await;
-        let accounts = CertAccountService::new(db.clone()).await;
-        let certs = CertService::new(db.clone(), accounts, Some(dns.clone())).await;
-        let service = GatewayService::init_service(
-            db.gateway_http_upstream_store(),
-            GatewayRuntimeConfig::default(),
-            &certs,
-            dns,
-        )
-        .await
-        .unwrap();
-        (service, certs, events_rx)
-    }
-
-    fn rule() -> HttpUpstreamRuleConfig {
-        serde_json::from_value(serde_json::json!({
-            "id": uuid::Uuid::new_v4(),
-            "name": "app",
-            "enable": true,
-            "domains": ["app.example.com"],
-            "match_rule": { "t": "host" },
-            "upstream": {
-                "targets": [{ "address": "127.0.0.1", "port": 8080 }]
-            }
-        }))
-        .unwrap()
-    }
-
-    #[cfg(feature = "gateway")]
-    #[tokio::test]
-    async fn rule_mutations_update_storage_server_and_dns() {
-        let (service, certs, _events_rx) = service().await;
-        assert!(service.runtime_config().is_some());
-        service.reload_rules().await.unwrap();
-        let rule = service.save_rule(rule()).await.unwrap();
-        assert_eq!(service.find_rule(rule.id).await.unwrap().unwrap().domains, rule.domains);
-        assert_eq!(service.runtime.shared_rules().load().len(), 1);
-        let batches = service.dns_redirect_service.list_dynamic_batches().await;
-        assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].records.len(), 1);
-
-        // Restart recreates the server from persistent rules without binding ports
-        // when the gateway is disabled.
-        service.restart(GatewayRuntimeConfig::default(), Duration::from_secs(1)).await.unwrap();
-        assert_eq!(service.status(), ServiceStatus::Stop);
-        assert_eq!(service.runtime.shared_rules().load().len(), 1);
-
-        let mut conflict = rule.clone();
-        conflict.id = uuid::Uuid::new_v4();
-        assert!(matches!(
-            service.save_rule(conflict).await,
-            Err(GatewayError::HostConflict { .. })
-        ));
-        let mut invalid = rule.clone();
-        invalid.domains.clear();
-        assert!(matches!(
-            service.save_rule(invalid).await,
-            Err(GatewayError::DomainsRequired { .. })
-        ));
-        assert_eq!(service.stored_rule_count().await, 1);
-        assert_eq!(service.runtime.shared_rules().load()[0].domains, rule.domains);
-
-        service.delete_rule(rule.id).await.unwrap();
-        assert!(service.find_rule(rule.id).await.unwrap().is_none());
-        assert!(service.runtime.shared_rules().load().is_empty());
-        assert!(service.dns_redirect_service.list_dynamic_batches().await.is_empty());
-        service.shutdown_and_wait(Duration::from_secs(1)).await;
-        certs.shutdown_and_wait(Duration::from_secs(1)).await;
-    }
-
-    #[cfg(not(feature = "gateway"))]
-    #[tokio::test]
-    async fn without_gateway_feature_service_remains_available_but_rejects_rules() {
-        let (service, certs, _events_rx) = service().await;
-        assert!(!service.is_supported());
-        assert!(!service.has_https_listener());
-        assert_eq!(service.status(), ServiceStatus::Stop);
-        assert!(service.runtime_config().is_none());
-        let cloned = service.clone();
-        let stored = service.store.upsert(rule()).await.unwrap().new;
-        service
-            .dns_redirect_service
-            .set_dynamic_batch(build_gateway_dynamic_dns_redirect_batch(std::slice::from_ref(
-                &stored,
-            )))
-            .await;
-        let before_dns = service.dns_redirect_service.list_dynamic_batches().await;
-        assert_eq!(before_dns.len(), 1);
-
-        assert!(matches!(service.save_rule(rule()).await, Err(GatewayError::Unsupported)));
-        assert!(matches!(service.list_rules().await, Err(GatewayError::Unsupported)));
-        assert!(matches!(service.find_rule(stored.id).await, Err(GatewayError::Unsupported)));
-        assert!(matches!(service.delete_rule(stored.id).await, Err(GatewayError::Unsupported)));
-        assert!(matches!(service.reload_rules().await, Err(GatewayError::Unsupported)));
-        let result = service
-            .restart(
-                GatewayRuntimeConfig { enable: true, http_port: 8080, https_port: 8443 },
-                Duration::from_secs(1),
-            )
-            .await;
-        assert!(matches!(result, Err(GatewayError::Unsupported)));
-        assert!(service.runtime_config().is_none());
-        assert!(cloned.runtime_config().is_none());
-        assert_eq!(service.status(), ServiceStatus::Stop);
-        let after_rules = service.store.list().await.unwrap();
-        assert_eq!(after_rules.len(), 1);
-        assert_eq!(after_rules[0].id, stored.id);
-        assert_eq!(after_rules[0].domains, stored.domains);
-        assert_eq!(service.stored_rule_count().await, 1);
-        let after_dns = service.dns_redirect_service.list_dynamic_batches().await;
-        assert_eq!(after_dns.len(), before_dns.len());
-        assert_eq!(after_dns[0].source_id, before_dns[0].source_id);
-        assert_eq!(after_dns[0].scope, before_dns[0].scope);
-        let snapshot = |batch: &landscape_common::dns::redirect::DynamicDnsRedirectBatch| {
-            batch
-                .records
-                .iter()
-                .map(|record| {
-                    (
-                        record.match_rule.clone(),
-                        record.answer_mode,
-                        record.result_info.clone(),
-                        record.ttl_secs,
-                        record.block_metadata_queries,
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(snapshot(&after_dns[0]), snapshot(&before_dns[0]));
-
-        // Startup synchronization explicitly removes stale gateway DNS records,
-        // even when persistent rules exist in an unsupported build.
-        service.sync_dynamic_dns_redirects().await;
-        assert!(service.dns_redirect_service.list_dynamic_batches().await.is_empty());
-        service.shutdown_and_wait(Duration::from_secs(1)).await;
-        certs.shutdown_and_wait(Duration::from_secs(1)).await;
-    }
-}
+mod tests;

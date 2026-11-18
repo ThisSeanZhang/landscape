@@ -181,8 +181,7 @@ pub(crate) async fn build_app(
             &cert_service,
             dns_redirect_service.clone(),
         )
-        .await
-        .map_err(|e| StartupError::Cert(format!("failed to load gateway tls certificates: {e}")))?
+        .await?
     );
 
     let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {

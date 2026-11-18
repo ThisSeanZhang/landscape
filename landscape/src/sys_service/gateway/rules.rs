@@ -11,12 +11,44 @@ use std::collections::HashSet;
 
 const GATEWAY_DYNAMIC_DNS_REDIRECT_SOURCE_ID: &str = "gateway-auto-local-ips";
 
+/// Older SNI rules omitted this HTTP-only field, or persisted its default after
+/// being exported. Passthrough never used it; normalize only loaded/imported data
+/// so newly submitted rules still receive strict validation.
+pub(super) fn normalize_persisted_gateway_rules(rules: &mut [HttpUpstreamRuleConfig]) {
+    for rule in rules {
+        if matches!(rule.match_rule, HttpUpstreamMatchRule::SniProxy) {
+            rule.upstream.client_ip_headers = ClientIpHeaderPolicy::None;
+        }
+    }
+}
+
 pub(super) fn validate_gateway_rule(
     config: &HttpUpstreamRuleConfig,
     existing_rules: &[HttpUpstreamRuleConfig],
 ) -> Result<(), GatewayError> {
     validate_rule_shape(config)?;
     check_domain_conflicts(&config.domains, config, existing_rules)
+}
+
+/// Existing legacy rules remain loadable, but every candidate must be valid
+/// before it can replace the live routes and their DNS batch.
+pub(super) fn validate_persisted_gateway_rules(
+    rules: &[HttpUpstreamRuleConfig],
+) -> Result<(), GatewayError> {
+    for rule in rules {
+        if let HttpUpstreamMatchRule::LegacyPathPrefix { prefix } = &rule.match_rule {
+            // An explicitly supplied but empty domain list after normalization
+            // must not turn into an unrestricted legacy fallback.
+            if !rule.domains.is_empty() {
+                validate_domains(rule)?;
+            }
+            normalize_prefix(prefix)?;
+            validate_http_upstream(&rule.upstream)?;
+        } else {
+            validate_gateway_rule(rule, rules)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_rule_shape(config: &HttpUpstreamRuleConfig) -> Result<(), GatewayError> {
@@ -39,7 +71,7 @@ fn validate_rule_shape(config: &HttpUpstreamRuleConfig) -> Result<(), GatewayErr
 }
 
 fn validate_domains(config: &HttpUpstreamRuleConfig) -> Result<(), GatewayError> {
-    if config.domains.iter().any(|domain| !domain.trim().is_empty()) {
+    if config.domains.iter().any(|domain| normalize_gateway_domain(domain).is_some()) {
         Ok(())
     } else {
         Err(GatewayError::DomainsRequired { rule_name: config.name.clone() })
@@ -113,11 +145,15 @@ fn check_domain_conflicts(
         }
 
         for new_domain in new_domains {
-            let new_lower = new_domain.to_ascii_lowercase();
+            let Some(new_lower) = normalize_gateway_domain(new_domain) else {
+                continue;
+            };
             let new_is_wildcard = new_lower.starts_with("*.");
 
             for existing_domain in &existing.domains {
-                let existing_lower = existing_domain.to_ascii_lowercase();
+                let Some(existing_lower) = normalize_gateway_domain(existing_domain) else {
+                    continue;
+                };
                 let existing_is_wildcard = existing_lower.starts_with("*.");
 
                 if new_lower == existing_lower {
@@ -129,7 +165,7 @@ fn check_domain_conflicts(
 
                 if new_is_wildcard
                     && !existing_is_wildcard
-                    && wildcard_matches(new_domain, existing_domain)
+                    && wildcard_matches(&new_lower, &existing_lower)
                 {
                     return Err(GatewayError::WildcardCoversDomain {
                         wildcard: new_domain.clone(),
@@ -140,7 +176,7 @@ fn check_domain_conflicts(
 
                 if existing_is_wildcard
                     && !new_is_wildcard
-                    && wildcard_matches(existing_domain, new_domain)
+                    && wildcard_matches(&existing_lower, &new_lower)
                 {
                     return Err(GatewayError::WildcardCoversDomain {
                         wildcard: existing_domain.clone(),
@@ -151,7 +187,7 @@ fn check_domain_conflicts(
 
                 if new_is_wildcard
                     && existing_is_wildcard
-                    && wildcard_patterns_overlap(new_domain, existing_domain)
+                    && wildcard_patterns_overlap(&new_lower, &existing_lower)
                 {
                     return Err(GatewayError::DomainPatternOverlap {
                         domain: new_domain.clone(),
@@ -506,5 +542,100 @@ mod tests {
             normalize_gateway_domain("Api.Example.Com."),
             Some("api.example.com".to_string())
         );
+    }
+
+    #[test]
+    fn domain_conflicts_use_the_same_normalization_as_routes_and_dns() {
+        let existing = rule(
+            "host-rule",
+            &["api.example.com"],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        let normalized_duplicate = rule(
+            "duplicate",
+            &["  API.Example.COM.  "],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        assert!(matches!(
+            validate_gateway_rule(&normalized_duplicate, std::slice::from_ref(&existing)),
+            Err(GatewayError::HostConflict { .. })
+        ));
+        assert!(matches!(
+            validate_persisted_gateway_rules(&[existing, normalized_duplicate]),
+            Err(GatewayError::HostConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn domain_conflicts_normalize_wildcards_before_checking_coverage() {
+        let wildcard = rule(
+            "wildcard",
+            &["  *.Example.COM.  "],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        let specific = rule(
+            "specific",
+            &[" API.EXAMPLE.COM. "],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        assert!(matches!(
+            validate_gateway_rule(&specific, std::slice::from_ref(&wildcard)),
+            Err(GatewayError::WildcardCoversDomain { .. })
+        ));
+        assert!(matches!(
+            validate_gateway_rule(&wildcard, &[specific]),
+            Err(GatewayError::WildcardCoversDomain { .. })
+        ));
+        let nested = rule(
+            "nested",
+            &[" *.API.EXAMPLE.COM. "],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        assert!(matches!(
+            validate_gateway_rule(&nested, &[wildcard]),
+            Err(GatewayError::DomainPatternOverlap { .. })
+        ));
+    }
+
+    #[test]
+    fn persisted_legacy_rules_remain_readable_but_cannot_be_saved() {
+        let legacy = rule(
+            "legacy-fallback",
+            &[],
+            HttpUpstreamMatchRule::LegacyPathPrefix { prefix: "/api/".into() },
+        );
+        assert!(validate_persisted_gateway_rules(std::slice::from_ref(&legacy)).is_ok());
+        assert!(matches!(
+            validate_gateway_rule(&legacy, &[]),
+            Err(GatewayError::LegacyPathPrefixUnsupported)
+        ));
+    }
+
+    #[test]
+    fn persisted_candidates_reject_invalid_rules_including_legacy_headers() {
+        let valid = rule(
+            "valid",
+            &["valid.example.com"],
+            HttpUpstreamMatchRule::Host { path_groups: vec![] },
+        );
+        let invalid_host =
+            rule("empty-domain", &[" . "], HttpUpstreamMatchRule::Host { path_groups: vec![] });
+        assert!(matches!(
+            validate_persisted_gateway_rules(&[valid.clone(), invalid_host]),
+            Err(GatewayError::DomainsRequired { .. })
+        ));
+        let mut invalid_legacy = rule(
+            "invalid-legacy",
+            &[],
+            HttpUpstreamMatchRule::LegacyPathPrefix { prefix: "/legacy".into() },
+        );
+        invalid_legacy.upstream.request_headers = vec![ProxyRequestHeader {
+            name: "x-injected".into(),
+            value: "value\r\nx-extra: injected".into(),
+        }];
+        assert!(matches!(
+            validate_persisted_gateway_rules(&[valid, invalid_legacy]),
+            Err(GatewayError::InvalidHeaderValue { .. })
+        ));
     }
 }

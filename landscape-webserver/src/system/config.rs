@@ -1,17 +1,21 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
+use landscape::boot::prepare_init_config_import;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
 use landscape_common::{INIT_FILE_NAME, INIT_LOCK_FILE_NAME};
 use serde::{Deserialize, Serialize};
-use std::io::{ErrorKind, Write};
+use std::{
+    io::{ErrorKind, Write},
+    path::Path,
+};
 use tempfile::NamedTempFile;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::LandscapeApp;
 use crate::api::{LandscapeApiResp, UploadFileForm};
-use crate::error::LandscapeApiResult;
+use crate::error::{LandscapeApiError, LandscapeApiResult};
 
 const UPLOAD_INIT_CONFIG_SIZE_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -48,17 +52,6 @@ fn parse_and_validate_init_config(content: &str) -> Result<InitConfig, InitConfi
     let init_config: InitConfig =
         toml::from_str(content).map_err(|e| InitConfigError::Invalid { reason: e.to_string() })?;
     landscape::boot::validate_init_config_version(&init_config)?;
-    Ok(init_config)
-}
-
-async fn validate_init_config_can_import(
-    init_config: InitConfig,
-) -> Result<InitConfig, InitConfigError> {
-    landscape_database::provider::LandscapeDBServiceProvider::validate_init_config_can_import(
-        init_config.clone(),
-    )
-    .await
-    .map_err(|e| InitConfigError::Invalid { reason: e.to_string() })?;
     Ok(init_config)
 }
 
@@ -154,26 +147,37 @@ async fn import_init_config(
 
     let content = std::str::from_utf8(&bytes)
         .map_err(|e| InitConfigError::Invalid { reason: e.to_string() })?;
-    let init_config =
-        validate_init_config_can_import(parse_and_validate_init_config(content)?).await?;
+    LandscapeApiResp::success(
+        import_init_config_content(&state.home_path, content, query.upload_only).await?,
+    )
+}
 
-    let filename = if query.upload_only {
+async fn import_init_config_content(
+    home_path: &Path,
+    content: &str,
+    upload_only: bool,
+) -> Result<ImportInitConfigResponse, LandscapeApiError> {
+    // Complete the same preparation used by startup before replacing the init
+    // file or removing its lock. Persist the normalized configuration on success.
+    let init_config = prepare_init_config_import(parse_and_validate_init_config(content)?).await?;
+
+    let filename = if upload_only {
         None
     } else {
         let init_config_content = toml::to_string(&init_config)
             .map_err(|e| InitConfigError::Invalid { reason: e.to_string() })?;
-        let config_path = state.home_path.join(INIT_FILE_NAME);
+        let config_path = home_path.join(INIT_FILE_NAME);
         let previous_init_config = match std::fs::read(&config_path) {
             Ok(bytes) => Some(bytes),
             Err(e) if e.kind() == ErrorKind::NotFound => None,
             Err(e) => return Err(DbError::from(e))?,
         };
-        let mut temp_file = NamedTempFile::new_in(&state.home_path).map_err(DbError::from)?;
+        let mut temp_file = NamedTempFile::new_in(home_path).map_err(DbError::from)?;
         temp_file.write_all(init_config_content.as_bytes()).map_err(DbError::from)?;
         temp_file.as_file().sync_all().map_err(DbError::from)?;
         temp_file.persist(&config_path).map_err(|e| DbError::from(e.error))?;
 
-        let lock_path = state.home_path.join(INIT_LOCK_FILE_NAME);
+        let lock_path = home_path.join(INIT_LOCK_FILE_NAME);
         match std::fs::remove_file(lock_path) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -199,10 +203,10 @@ async fn import_init_config(
         Some(INIT_FILE_NAME.to_string())
     };
 
-    LandscapeApiResp::success(ImportInitConfigResponse {
+    Ok(ImportInitConfigResponse {
         version: init_config.version,
         filename,
-        upload_only: query.upload_only,
+        upload_only,
     })
 }
 
@@ -214,12 +218,18 @@ mod tests {
         extract::{Multipart, Request},
         routing::post,
     };
-    use landscape_common::{VERSION, config::InitConfig};
+    use landscape_common::{
+        INIT_FILE_NAME, INIT_LOCK_FILE_NAME, LAND_CONFIG, VERSION,
+        config::{InitConfig, InitConfigError},
+        sys_service::gateway::ClientIpHeaderPolicy,
+    };
     use tower::ServiceExt;
 
     use super::{
-        parse_and_validate_init_config, read_init_config_upload, validate_init_config_can_import,
+        import_init_config_content, parse_and_validate_init_config, prepare_init_config_import,
+        read_init_config_upload,
     };
+    use crate::error::LandscapeApiError;
 
     const BOUNDARY: &str = "landscape-test-boundary";
 
@@ -264,10 +274,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_init_config_can_import_accepts_valid_config() {
+    async fn prepare_init_config_import_accepts_valid_config() {
         let init_config = InitConfig { version: VERSION.to_string(), ..Default::default() };
 
-        validate_init_config_can_import(init_config).await.unwrap();
+        prepare_init_config_import(init_config).await.unwrap();
+    }
+
+    fn gateway_rule_content(name: &str, kind: &str, upstream_options: &str) -> String {
+        format!(
+            r#"
+[[gateway_rules]]
+enable = true
+name = "{name}"
+domains = ["{name}.example.com"]
+[gateway_rules.match_rule]
+t = "{kind}"
+[gateway_rules.upstream]
+targets = [{{ address = "127.0.0.1", port = 443 }}]
+{upstream_options}
+"#
+        )
+    }
+
+    #[tokio::test]
+    async fn invalid_gateway_upload_preserves_existing_files_and_lock() {
+        let cases = [
+            ("host", r#"request_headers = [{ name = "bad header", value = "x" }]"#, "bad header"),
+            (
+                "sni_proxy",
+                r#"request_headers = [{ name = "x-test", value = "x" }]"#,
+                "SNI passthrough",
+            ),
+        ];
+        for (kind, upstream_options, expected_error) in cases {
+            for upload_only in [true, false] {
+                let home = tempfile::tempdir().unwrap();
+                let original_files = [
+                    (INIT_FILE_NAME, "original init config"),
+                    (LAND_CONFIG, "original system config"),
+                    (INIT_LOCK_FILE_NAME, "original init lock"),
+                ];
+                for (name, content) in original_files {
+                    std::fs::write(home.path().join(name), content).unwrap();
+                }
+                let content = format!(
+                    "version = \"{VERSION}\"\n{}",
+                    gateway_rule_content("invalid", kind, upstream_options),
+                );
+
+                let error = import_init_config_content(home.path(), &content, upload_only)
+                    .await
+                    .unwrap_err();
+                let LandscapeApiError::InitConfig(InitConfigError::Invalid { reason }) = error
+                else {
+                    panic!("expected invalid import error, got {error:?}");
+                };
+                assert!(reason.contains(expected_error), "unexpected validation error: {reason}");
+                for (name, content) in original_files {
+                    assert_eq!(std::fs::read(home.path().join(name)).unwrap(), content.as_bytes());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_sni_upload_persists_none_and_preserves_http_default() {
+        for old_policy in ["", "client_ip_headers = \"standard\""] {
+            let home = tempfile::tempdir().unwrap();
+            std::fs::write(home.path().join(INIT_FILE_NAME), "original init config").unwrap();
+            std::fs::write(home.path().join(LAND_CONFIG), "original system config").unwrap();
+            std::fs::write(home.path().join(INIT_LOCK_FILE_NAME), "original init lock").unwrap();
+            let content = format!(
+                "version = \"{VERSION}\"\n{}{}",
+                gateway_rule_content("sni", "sni_proxy", old_policy),
+                gateway_rule_content("http", "host", ""),
+            );
+
+            let preview = import_init_config_content(home.path(), &content, true).await.unwrap();
+            assert!(preview.upload_only);
+            assert!(preview.filename.is_none());
+            assert_eq!(
+                std::fs::read_to_string(home.path().join(INIT_FILE_NAME)).unwrap(),
+                "original init config",
+            );
+            assert_eq!(
+                std::fs::read_to_string(home.path().join(INIT_LOCK_FILE_NAME)).unwrap(),
+                "original init lock",
+            );
+
+            let staged = import_init_config_content(home.path(), &content, false).await.unwrap();
+            assert!(!staged.upload_only);
+            assert_eq!(staged.filename.as_deref(), Some(INIT_FILE_NAME));
+            let persisted: InitConfig =
+                toml::from_str(&std::fs::read_to_string(home.path().join(INIT_FILE_NAME)).unwrap())
+                    .unwrap();
+            assert!(matches!(
+                persisted.gateway_rules[0].upstream.client_ip_headers,
+                ClientIpHeaderPolicy::None,
+            ));
+            assert!(matches!(
+                persisted.gateway_rules[1].upstream.client_ip_headers,
+                ClientIpHeaderPolicy::Standard,
+            ));
+            assert!(!home.path().join(INIT_LOCK_FILE_NAME).exists());
+            assert_eq!(
+                std::fs::read_to_string(home.path().join(LAND_CONFIG)).unwrap(),
+                "original system config",
+            );
+        }
     }
 
     #[tokio::test]

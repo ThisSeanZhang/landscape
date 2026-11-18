@@ -12,9 +12,12 @@ use crate::cert::order_service::CertService;
 #[derive(Clone)]
 pub(super) struct GatewayRuntime;
 
+#[derive(Default)]
+pub(super) struct PreparedRoutes;
+
 impl GatewayRuntime {
     pub(super) async fn new(
-        _rules: Vec<HttpUpstreamRuleConfig>,
+        _routes: PreparedRoutes,
         _config: GatewayRuntimeConfig,
         _cert_service: &CertService,
     ) -> Result<Self, CertError> {
@@ -23,6 +26,14 @@ impl GatewayRuntime {
 
     pub(super) fn is_supported() -> bool {
         false
+    }
+
+    pub(super) fn prepare_rules(
+        _rules: &[HttpUpstreamRuleConfig],
+    ) -> Result<PreparedRoutes, GatewayError> {
+        // Import preflight still performs shared business validation, but there
+        // is no proxy backend to compile on this build. CRUD remains unsupported.
+        Ok(PreparedRoutes)
     }
 
     pub(super) fn status(&self) -> ServiceStatus {
@@ -41,17 +52,12 @@ impl GatewayRuntime {
 
     pub(super) async fn restart(
         &self,
-        _rules: Vec<HttpUpstreamRuleConfig>,
+        _routes: PreparedRoutes,
         _config: GatewayRuntimeConfig,
         _timeout: Duration,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::Unsupported)
     }
 
-    pub(super) fn reload_rules(
-        &self,
-        _rules: Vec<HttpUpstreamRuleConfig>,
-    ) -> Result<(), GatewayError> {
-        Err(GatewayError::Unsupported)
-    }
+    pub(super) fn publish_routes(&self, _routes: PreparedRoutes) {}
 }

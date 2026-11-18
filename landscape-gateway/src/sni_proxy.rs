@@ -1,67 +1,32 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::sys_service::gateway::{
-    HttpUpstreamMatchRule, HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod,
-};
+use landscape_common::sys_service::gateway::{HttpUpstreamTarget, LoadBalanceMethod};
 use tokio::io::{self, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::SharedRules;
+use crate::SharedGatewayRoutes;
+use crate::routes::CompiledSniRoute;
 
 pub struct SniProxyRouter {
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
     round_robin_counter: AtomicUsize,
 }
 
 impl SniProxyRouter {
-    pub fn new(rules: SharedRules) -> Self {
-        Self { rules, round_robin_counter: AtomicUsize::new(0) }
+    pub fn new(routes: SharedGatewayRoutes) -> Self {
+        Self { routes, round_robin_counter: AtomicUsize::new(0) }
     }
 
     pub fn has_sni_proxy_rules(&self) -> bool {
-        self.rules
-            .load()
-            .iter()
-            .any(|rule| rule.enable && matches!(rule.match_rule, HttpUpstreamMatchRule::SniProxy))
+        self.routes.load().has_sni_routes()
     }
 
     pub fn match_target(&self, sni: &str) -> Option<MatchedSniTarget> {
-        let rules = self.rules.load();
-
-        for rule in rules.iter() {
-            if !rule.enable {
-                continue;
-            }
-
-            if let HttpUpstreamMatchRule::SniProxy = &rule.match_rule {
-                for domain in &rule.domains {
-                    if domain.starts_with("*.") {
-                        continue;
-                    }
-                    if domain.eq_ignore_ascii_case(sni) {
-                        return MatchedSniTarget::new(rule, &self.round_robin_counter, sni);
-                    }
-                }
-            }
-        }
-
-        for rule in rules.iter() {
-            if !rule.enable {
-                continue;
-            }
-
-            if let HttpUpstreamMatchRule::SniProxy = &rule.match_rule {
-                for domain in &rule.domains {
-                    if domain.starts_with("*.") && match_wildcard(domain, sni) {
-                        return MatchedSniTarget::new(rule, &self.round_robin_counter, sni);
-                    }
-                }
-            }
-        }
-
-        None
+        let routes = self.routes.load();
+        let route = routes.match_sni_route(sni)?;
+        MatchedSniTarget::new(&route, &self.round_robin_counter, sni)
     }
 }
 
@@ -73,13 +38,13 @@ pub struct MatchedSniTarget {
 }
 
 impl MatchedSniTarget {
-    fn new(rule: &HttpUpstreamRuleConfig, counter: &AtomicUsize, sni: &str) -> Option<Self> {
+    fn new(rule: &CompiledSniRoute, counter: &AtomicUsize, sni: &str) -> Option<Self> {
         let target =
             select_target(&rule.upstream.targets, &rule.upstream.load_balance, counter, sni)
                 .cloned()?;
 
         Some(Self {
-            rule_name: rule.name.clone(),
+            rule_name: rule.rule_name.clone(),
             sni: sni.to_string(),
             target,
         })
@@ -244,20 +209,6 @@ fn parse_sni_extension(data: &[u8]) -> Option<String> {
     None
 }
 
-fn match_wildcard(pattern: &str, host: &str) -> bool {
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        let suffix_lower = suffix.to_ascii_lowercase();
-        let host_lower = host.to_ascii_lowercase();
-        if host_lower.ends_with(&suffix_lower) {
-            let prefix_len = host_lower.len() - suffix_lower.len();
-            if prefix_len > 0 && host_lower.as_bytes()[prefix_len - 1] == b'.' {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn select_target<'a>(
     targets: &'a [HttpUpstreamTarget],
     method: &LoadBalanceMethod,
@@ -321,7 +272,8 @@ mod tests {
     use std::sync::Arc;
 
     use landscape_common::sys_service::gateway::{
-        ClientIpHeaderPolicy, HttpUpstreamConfig, ProxyHeaderConflictMode,
+        ClientIpHeaderPolicy, HttpUpstreamConfig, HttpUpstreamMatchRule, HttpUpstreamRuleConfig,
+        ProxyHeaderConflictMode,
     };
 
     fn target(address: &str, port: u16, weight: u32) -> HttpUpstreamTarget {
@@ -357,8 +309,10 @@ mod tests {
         }
     }
 
-    fn shared_rules(rules: Vec<HttpUpstreamRuleConfig>) -> SharedRules {
-        Arc::new(ArcSwap::new(Arc::new(rules)))
+    fn shared_routes(rules: Vec<HttpUpstreamRuleConfig>) -> SharedGatewayRoutes {
+        Arc::new(ArcSwap::from_pointee(
+            crate::routes::CompiledGatewayRoutes::compile(&rules).unwrap(),
+        ))
     }
 
     fn build_client_hello_with_sni(host: &str) -> Vec<u8> {
@@ -403,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_router_without_rules() {
-        let router = SniProxyRouter::new(shared_rules(vec![]));
+        let router = SniProxyRouter::new(shared_routes(vec![]));
         assert!(!router.has_sni_proxy_rules());
         assert!(router.match_target("example.com").is_none());
     }
@@ -423,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_exact_match_wins_over_wildcard() {
-        let router = SniProxyRouter::new(shared_rules(vec![
+        let router = SniProxyRouter::new(shared_routes(vec![
             sni_rule("wildcard", &["*.example.com"], vec![target("10.0.0.2", 443, 1)]),
             sni_rule("exact", &["api.example.com"], vec![target("10.0.0.3", 8443, 1)]),
         ]));
@@ -436,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_wildcard_match_requires_a_subdomain() {
-        let router = SniProxyRouter::new(shared_rules(vec![sni_rule(
+        let router = SniProxyRouter::new(shared_routes(vec![sni_rule(
             "wildcard",
             &["*.example.com"],
             vec![target("10.0.0.2", 443, 1)],
@@ -450,7 +404,7 @@ mod tests {
     fn test_disabled_rules_are_ignored() {
         let mut rule = sni_rule("disabled", &["api.example.com"], vec![target("10.0.0.2", 443, 1)]);
         rule.enable = false;
-        let router = SniProxyRouter::new(shared_rules(vec![rule]));
+        let router = SniProxyRouter::new(shared_routes(vec![rule]));
 
         assert!(!router.has_sni_proxy_rules());
         assert!(router.match_target("api.example.com").is_none());
@@ -458,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_round_robin_selects_multiple_targets() {
-        let router = SniProxyRouter::new(shared_rules(vec![sni_rule(
+        let router = SniProxyRouter::new(shared_routes(vec![sni_rule(
             "rr",
             &["api.example.com"],
             vec![target("10.0.0.2", 443, 1), target("10.0.0.3", 443, 1)],
@@ -472,8 +426,52 @@ mod tests {
     }
 
     #[test]
+    fn reload_preserves_selected_target_and_round_robin_position() {
+        let routes = shared_routes(vec![sni_rule(
+            "old",
+            &["api.example.com"],
+            vec![target("10.0.0.2", 443, 1), target("10.0.0.3", 443, 1)],
+        )]);
+        let router = SniProxyRouter::new(routes.clone());
+        let selected_before_reload = router.match_target("api.example.com").unwrap();
+
+        let replacement = sni_rule(
+            "new",
+            &["api.example.com"],
+            vec![target("10.0.0.4", 8443, 1), target("10.0.0.5", 8443, 1)],
+        );
+        routes.store(Arc::new(
+            crate::routes::CompiledGatewayRoutes::compile(&[replacement]).unwrap(),
+        ));
+
+        let selected_after_reload = router.match_target("api.example.com").unwrap();
+        assert_eq!(selected_after_reload.rule_name, "new");
+        assert_eq!(selected_after_reload.target.address, "10.0.0.5");
+        assert_eq!(selected_after_reload.target.port, 8443);
+        assert_eq!(selected_before_reload.rule_name, "old");
+        assert_eq!(selected_before_reload.target.address, "10.0.0.2");
+        assert_eq!(selected_before_reload.target.port, 443);
+
+        routes.store(Arc::new(crate::routes::CompiledGatewayRoutes::default()));
+        assert!(!router.has_sni_proxy_rules());
+        assert!(router.match_target("api.example.com").is_none());
+        assert_eq!(selected_before_reload.target.address, "10.0.0.2");
+    }
+
+    #[test]
+    fn exact_rule_without_targets_does_not_fall_back_to_wildcard() {
+        let router = SniProxyRouter::new(shared_routes(vec![
+            sni_rule("wildcard", &["*.example.com"], vec![target("10.0.0.2", 443, 1)]),
+            sni_rule("exact", &["api.example.com"], vec![]),
+        ]));
+
+        assert!(router.match_target("api.example.com").is_none());
+        assert!(router.match_target("other.example.com").is_some());
+    }
+
+    #[test]
     fn test_rule_without_targets_is_not_selected() {
-        let router = SniProxyRouter::new(shared_rules(vec![sni_rule(
+        let router = SniProxyRouter::new(shared_routes(vec![sni_rule(
             "empty",
             &["api.example.com"],
             vec![],

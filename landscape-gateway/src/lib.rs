@@ -1,4 +1,5 @@
 pub mod proxy_service;
+pub mod routes;
 pub mod sni_proxy;
 
 use std::io::ErrorKind;
@@ -11,10 +12,10 @@ use std::os::unix::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
 
+use crate::routes::CompiledGatewayRoutes;
 use arc_swap::ArcSwap;
 use landscape_common::concurrency::{runtime_thread_name_fn, spawn_named_thread, thread_name};
 use landscape_common::sys_config::GatewayRuntimeConfig;
-use landscape_common::sys_service::gateway::HttpUpstreamRuleConfig;
 
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use pingora::apps::ServerApp;
@@ -33,7 +34,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::sni_proxy::{SniProxyRouter, parse_sni_from_client_hello, proxy_tls_passthrough};
 
-pub type SharedRules = Arc<ArcSwap<Vec<HttpUpstreamRuleConfig>>>;
+pub type SharedGatewayRoutes = Arc<ArcSwap<CompiledGatewayRoutes>>;
 
 #[derive(Debug, Clone)]
 pub struct GatewayTlsConfig {
@@ -41,7 +42,7 @@ pub struct GatewayTlsConfig {
 }
 
 pub struct GatewayServer {
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
     state: Mutex<Option<GatewayRun>>,
     /// 上一次运行的终态:无运行时对外展示(线程崩溃后可见 Failed)
     last_terminal: ArcSwap<ServiceStatus>,
@@ -73,12 +74,12 @@ enum GatewayRunFailure {
 
 impl GatewayServer {
     pub fn new(
-        initial_rules: Vec<HttpUpstreamRuleConfig>,
+        initial_routes: CompiledGatewayRoutes,
         config: GatewayRuntimeConfig,
         tls_config: Option<GatewayTlsConfig>,
     ) -> Self {
         Self {
-            rules: Arc::new(ArcSwap::new(Arc::new(initial_rules))),
+            routes: Arc::new(ArcSwap::new(Arc::new(initial_routes))),
             state: Mutex::new(None),
             last_terminal: ArcSwap::from_pointee(ServiceStatus::Stop),
             config,
@@ -87,13 +88,14 @@ impl GatewayServer {
         }
     }
 
-    pub fn shared_rules(&self) -> SharedRules {
-        self.rules.clone()
+    pub fn shared_routes(&self) -> SharedGatewayRoutes {
+        self.routes.clone()
     }
 
-    pub fn reload_rules(&self, new_rules: Vec<HttpUpstreamRuleConfig>) {
-        self.rules.store(Arc::new(new_rules));
-        tracing::info!("Gateway rules reloaded ({} rules)", self.rules.load().len());
+    pub fn publish_routes(&self, routes: CompiledGatewayRoutes) {
+        let rule_count = routes.len();
+        self.routes.store(Arc::new(routes));
+        tracing::info!("Gateway routes published ({rule_count} source rules)");
     }
 
     pub fn start(&self) {
@@ -113,7 +115,7 @@ impl GatewayServer {
         let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
 
-        let rules = self.rules.clone();
+        let routes = self.routes.clone();
         let http_port = self.config.http_port;
         let https_port = self.config.https_port;
         let tls_config = self.tls_config.clone();
@@ -129,7 +131,7 @@ impl GatewayServer {
             // catch_unwind:线程 panic 收敛为 Failed 终态,而非静默消失
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_pingora_server(
-                    rules,
+                    routes,
                     http_port,
                     https_port,
                     tls_config,
@@ -262,7 +264,7 @@ impl Drop for GatewayServer {
 /// 运行 pingora 直到完全停止。正常返回 `Ok(())`;若 HTTPS 驱动线程 panic
 /// 则返回 [`GatewayRunFailure::HttpsDriverPanicked`],由上层收敛为 Failed。
 fn run_pingora_server(
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
     http_port: u16,
     https_port: u16,
     tls_config: Option<GatewayTlsConfig>,
@@ -284,16 +286,16 @@ fn run_pingora_server(
         rt.spawn(forward_execution_phase(status, phases));
     }
 
-    let proxy = LandscapeReverseProxy::new(rules.clone());
+    let proxy = LandscapeReverseProxy::new(routes.clone());
     let mut http_service = pingora::proxy::http_proxy_service(&server.configuration, proxy);
     http_service.add_tcp(&format!("[::]:{http_port}"));
     server.add_service(http_service);
 
     let https_handle = tls_config.map(|tls_config| {
-        let rules = rules.clone();
+        let routes = routes.clone();
         let cancel = cancel.child_token();
         spawn_named_thread(thread_name::fixed::GATEWAY_HTTPS_DRIVER, move || {
-            run_https_server(rules, https_port, tls_config, server_conf, cancel);
+            run_https_server(routes, https_port, tls_config, server_conf, cancel);
         })
         .expect("failed to spawn gateway https driver thread")
     });
@@ -347,7 +349,7 @@ async fn forward_execution_phase(
 }
 
 fn run_https_server(
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
     https_port: u16,
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
@@ -361,7 +363,7 @@ fn run_https_server(
 
     runtime.block_on(async move {
         if let Err(error) =
-            run_https_server_inner(rules, https_port, tls_config, server_conf, cancel).await
+            run_https_server_inner(routes, https_port, tls_config, server_conf, cancel).await
             && !error.already_logged
         {
             tracing::error!(
@@ -386,7 +388,7 @@ struct GatewayHttpsRunError {
 }
 
 async fn run_https_server_inner(
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
     https_port: u16,
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
@@ -425,8 +427,9 @@ async fn run_https_server_inner(
         }
     };
     let acceptor = TlsAcceptor::from(tls_config.server_config);
-    let sni_proxy_router = Arc::new(SniProxyRouter::new(rules.clone()));
-    let app = Arc::new(pingora::proxy::http_proxy(&server_conf, LandscapeReverseProxy::new(rules)));
+    let sni_proxy_router = Arc::new(SniProxyRouter::new(routes.clone()));
+    let app =
+        Arc::new(pingora::proxy::http_proxy(&server_conf, LandscapeReverseProxy::new(routes)));
 
     // Pingora's `ServerApp::process_new` requires a `watch::Receiver<bool>` as the
     // per-connection shutdown signal, so this channel is the token->watch bridge at
@@ -707,7 +710,11 @@ mod tests {
 
     #[test]
     fn start_refuses_while_previous_run_is_stopping() {
-        let server = GatewayServer::new(Vec::new(), GatewayRuntimeConfig::default(), None);
+        let server = GatewayServer::new(
+            CompiledGatewayRoutes::default(),
+            GatewayRuntimeConfig::default(),
+            None,
+        );
         *server.state.lock().unwrap() = Some(stopping_run());
 
         server.start();

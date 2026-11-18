@@ -101,6 +101,7 @@ mem-track = ["landscape-common/mem-track", "landscape-metric/mem-track"]
 
 [dev-dependencies]
 axum = { workspace = true }
+sea-orm = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 libbpf-rs = { workspace = true }
