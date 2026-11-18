@@ -185,7 +185,6 @@ impl ServiceStatusCell {
 /// - docker:`DockerRun`(landscape/src/docker/run.rs,状态+token+tracker,per-run)
 /// - dns:无状态持有者,由 per-flow 运行时投影(landscape-dns/src/server.rs)
 /// - gateway:`GatewayRun`(landscape-gateway/src/lib.rs,专用线程 per-run)
-/// - metric:`MetricStatus`(landscape/src/metric/state.rs,纯展示状态)
 #[derive(Clone)]
 pub struct ServiceHandle {
     inner: Arc<HandleInner>,

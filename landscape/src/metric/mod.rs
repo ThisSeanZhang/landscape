@@ -1,10 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use std::time::Duration;
 
 use landscape_common::{
     LANDSCAPE_METRIC_DIR_NAME,
+    concurrency::{spawn_task, task_label},
     database::error::DbError,
+    memtrack::MemorySeriesResponse,
     metric::connect::{
         ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
         ConnectMetricPoint, ConnectRealtimeStatus, IfaceRealtimeStat, IpHistoryStat,
@@ -15,314 +18,155 @@ use landscape_common::{
         DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
         DnsSummaryQueryParams, DnsSummaryResponse,
     },
-    self_monitor::memory::{
-        DEFAULT_MEM_METRIC_RETENTION_DAYS, MemHistoryQueryParams, MemHistoryResponse,
-    },
+    self_monitor::memory::{MemHistoryQueryParams, MemHistoryResponse},
     service::ServiceStatus,
-    sys_config::{MetricMode, MetricRuntimeConfig},
+    sys_config::{ConnectMetricRuntimeConfig, DnsMetricRuntimeConfig, SelfMonitorRuntimeConfig},
 };
-use landscape_ebpf::metric::{EventSourceStopOutcome, MetricSourceFactory, MetricSourceHandle};
-use landscape_metric::MetricEngine;
-use tokio::sync::Mutex;
+use landscape_ebpf::metric::MetricSourceFactory;
+use tokio::sync::{Mutex, oneshot, watch};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 pub mod memory_store {
     pub use landscape_metric::MemoryMetricStore;
 }
 
+mod connect;
+mod dns;
+mod self_monitor;
 mod state;
+mod supervisor;
 
-pub use state::MetricStatus;
+use connect::ConnectMetricService;
+use dns::DnsMetricService;
+use self_monitor::SelfMonitorService;
+use supervisor::MetricComponent;
 
-struct MetricRuntime {
-    config: MetricRuntimeConfig,
-    engine: MetricEngine,
-    source: Option<Box<dyn MetricSourceHandle>>,
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const INITIAL_RETRY: Duration = Duration::from_secs(1);
+const MAX_RETRY: Duration = Duration::from_secs(30);
+
+struct MetricRun {
+    stop: CancellationToken,
+    tasks: Vec<JoinHandle<()>>,
 }
 
-struct MetricServiceInner {
-    home_path: PathBuf,
-    runtime: RwLock<MetricRuntime>,
-    switch_lock: Mutex<()>,
-    source_factory: Arc<dyn MetricSourceFactory>,
-    dns_metric_reporter: DnsMetricReporter,
-    /// 内存指标记录。非 persistent 构建下是 no-op 实现(stub),恒为 None,
-    /// 因此本文件无需任何 cfg。
-    mem_recording: Mutex<Option<landscape_metric::self_monitor_store::MemRecording>>,
+impl Drop for MetricRun {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
+
+impl MetricRun {
+    async fn join(&mut self) -> Result<(), tokio::time::error::Elapsed> {
+        // Keep unfinished handles on timeout so the next start waits for the same workers.
+        tokio::time::timeout(STOP_TIMEOUT, async {
+            while let Some(task) = self.tasks.last_mut() {
+                if let Err(error) = task.await {
+                    tracing::error!(%error, "metric supervisor exited");
+                }
+                self.tasks.pop();
+            }
+        })
+        .await
+    }
 }
 
 #[derive(Clone)]
 pub struct MetricService {
-    /// 运行状态(仅展示,无 token/tracker;停止语义由事件源自管)
-    pub status: MetricStatus,
-    inner: Arc<MetricServiceInner>,
-}
-
-fn ensure_metric_path(home_path: &Path) -> PathBuf {
-    let metric_path = home_path.join(LANDSCAPE_METRIC_DIR_NAME);
-    if !metric_path.exists()
-        && let Err(e) = std::fs::create_dir_all(&metric_path)
-    {
-        tracing::error!("Failed to create metric directory: {}", e);
-    }
-    metric_path
+    connect: Arc<ConnectMetricService>,
+    dns: Arc<DnsMetricService>,
+    self_monitor: Arc<SelfMonitorService>,
+    run: Arc<Mutex<Option<MetricRun>>>,
 }
 
 impl MetricService {
-    fn read_runtime(&self) -> RwLockReadGuard<'_, MetricRuntime> {
-        self.inner.runtime.read().unwrap_or_else(|poisoned| {
-            tracing::error!("metric service runtime lock poisoned; recovering the inner state");
-            poisoned.into_inner()
-        })
-    }
-
-    fn write_runtime(&self) -> RwLockWriteGuard<'_, MetricRuntime> {
-        self.inner.runtime.write().unwrap_or_else(|poisoned| {
-            tracing::error!("metric service runtime lock poisoned; recovering the inner state");
-            poisoned.into_inner()
-        })
-    }
-
-    pub async fn new(
+    pub fn new(
         home_path: PathBuf,
-        config: MetricRuntimeConfig,
+        connect: watch::Receiver<ConnectMetricRuntimeConfig>,
+        dns: watch::Receiver<DnsMetricRuntimeConfig>,
+        self_monitor: watch::Receiver<SelfMonitorRuntimeConfig>,
         source_factory: Arc<dyn MetricSourceFactory>,
-    ) -> Result<Self, String> {
-        let metric_path = ensure_metric_path(&home_path);
-        let engine = MetricEngine::new(metric_path, config.clone())
-            .await
-            .map_err(|error| format!("failed to initialize metric engine: {error}"))?;
-        let status = MetricStatus::new();
-        let dns_metric_reporter = DnsMetricReporter::default();
-        dns_metric_reporter.replace_sender(engine.get_dns_msg_channel());
-
-        Ok(MetricService {
-            status,
-            inner: Arc::new(MetricServiceInner {
-                home_path,
-                runtime: RwLock::new(MetricRuntime { config, engine, source: None }),
-                switch_lock: Mutex::new(()),
-                source_factory,
-                dns_metric_reporter,
-                mem_recording: Mutex::new(None),
-            }),
-        })
+    ) -> Self {
+        let path = home_path.join(LANDSCAPE_METRIC_DIR_NAME);
+        Self {
+            connect: Arc::new(ConnectMetricService::new(path.clone(), connect, source_factory)),
+            dns: Arc::new(DnsMetricService::new(path, dns)),
+            self_monitor: Arc::new(SelfMonitorService::new(home_path, self_monitor)),
+            run: Arc::new(Mutex::new(None)),
+        }
     }
-
-    fn current_engine(&self) -> MetricEngine {
-        self.read_runtime().engine.clone()
-    }
-
-    fn current_mode(&self) -> MetricMode {
-        let config = self.read_runtime().config.clone();
-        landscape_metric::resolved_metric_mode(config.mode)
-    }
-
-    /// Clones remain valid across mode changes, engine rebuilds and recovery.
     pub fn dns_metric_reporter(&self) -> DnsMetricReporter {
-        self.inner.dns_metric_reporter.clone()
+        self.dns.reporter.clone()
     }
 
-    /// Every replacement, including recovery, publishes through the same ingress.
-    fn install_engine(&self, config: MetricRuntimeConfig, engine: MetricEngine) {
-        let mut runtime = self.write_runtime();
-        runtime.config = config;
-        runtime.engine = engine;
-        self.inner.dns_metric_reporter.replace_sender(runtime.engine.get_dns_msg_channel());
+    pub fn status(&self) -> ServiceStatus {
+        let states = [self.connect.status(), self.dns.status(), self.self_monitor.status.current()];
+        [
+            ServiceStatus::Failed,
+            ServiceStatus::Stopping,
+            ServiceStatus::Staring,
+            ServiceStatus::Running,
+        ]
+        .into_iter()
+        .find(|s| states.contains(s))
+        .unwrap_or(ServiceStatus::Stop)
     }
 
-    pub async fn start_service(&self) {
-        let _guard = self.inner.switch_lock.lock().await;
-        if let Err(error) = self.start_service_locked().await {
-            tracing::error!("failed to start metric service: {error}");
-        }
-    }
-
-    /// 启动流程全同步内联:模式/状态检查 → 取引擎通道 → spawn 事件源 → Running。
-    /// 事件源构建失败(map 缺失等)立即落定 Failed 并返回 Err,由调用方决定
-    /// 是否回滚,而非让任务 panic 后在停止时才被察觉。
-    async fn start_service_locked(&self) -> Result<(), String> {
-        if matches!(self.current_mode(), MetricMode::Off) {
-            tracing::info!("Metric service disabled by mode=off");
-            return Ok(());
-        }
-
-        let status = self.status.clone();
-        if !status.is_stop() {
-            tracing::info!("Metric Service is not stopped");
-            return Ok(());
-        }
-        let Some(connect_msg_tx) = self.current_engine().get_connect_msg_channel() else {
-            let error = "metric backend did not expose a connect channel during startup";
-            tracing::error!("{error}");
-            status.just_change_status(ServiceStatus::Failed);
-            return Err(error.to_string());
-        };
-
-        status.just_change_status(ServiceStatus::Staring);
-        match self.inner.source_factory.spawn(connect_msg_tx) {
-            Ok(source) => {
-                self.write_runtime().source = Some(source);
-                status.just_change_status(ServiceStatus::Running);
-                self.ensure_memory_recording().await;
-                Ok(())
+    pub async fn start_service(&self) -> Result<(), tokio::time::error::Elapsed> {
+        let mut slot = self.run.lock().await;
+        if let Some(run) = slot.as_mut() {
+            if !run.stop.is_cancelled() && run.tasks.iter().any(|task| !task.is_finished()) {
+                return Ok(());
             }
-            Err(error) => {
-                tracing::error!("failed to spawn metric event source: {error}");
-                status.just_change_status(ServiceStatus::Failed);
-                Err(error.to_string())
-            }
+            run.join().await?;
         }
-    }
-
-    /// 内存指标记录:仅 persistent 模式与 persistent 构建启用(非 persistent
-    /// 构建下 `start_memory_recording` 恒返回 None,自然退化);打开失败或
-    /// 记录任务异常都不影响 metric 主流程(历史查询返回空)。
-    async fn ensure_memory_recording(&self) {
-        if !matches!(self.current_mode(), MetricMode::Persistent) {
-            return;
-        }
-        let mut mem = self.inner.mem_recording.lock().await;
-        match mem.as_mut() {
-            // 已打开:恢复被 stop_service 停掉的 recorder。
-            Some(recording) => recording.spawn_recorder(DEFAULT_MEM_METRIC_RETENTION_DAYS),
-            None => {
-                let home_path = self.inner.home_path.clone();
-                *mem = landscape_metric::self_monitor_store::start_memory_recording(
-                    home_path,
-                    DEFAULT_MEM_METRIC_RETENTION_DAYS,
-                )
-                .await;
-            }
-        }
-    }
-
-    pub async fn stop_service(&self) {
-        let _guard = self.inner.switch_lock.lock().await;
-        self.stop_service_locked().await;
-    }
-
-    /// 停止流程全同步内联:置 Stopping → 回收事件源(限时 3s) → 落定
-    /// Stop/Failed → 引擎收尾。事件源回收预算须小于调用方预期,保证配置
-    /// 切换时最终状态已落定、新引擎能立即启动新事件源。
-    async fn stop_service_locked(&self) {
-        self.inner.dns_metric_reporter.replace_sender(None);
-        const EVENT_SOURCE_EXIT_TIMEOUT: Duration = Duration::from_secs(3);
-
-        // 仅在服务真的在运行/启动中时才先经过 Stopping,避免对已处于
-        // Stop/Failed 的服务(如从未启动)产生无效状态转换的告警噪音。
-        if self.status.is_active() {
-            self.status.just_change_status(ServiceStatus::Stopping);
-        }
-        let source = self.write_runtime().source.take();
-        let outcome = match source {
-            Some(source) => source.stop_with_budget(EVENT_SOURCE_EXIT_TIMEOUT).await,
-            None => {
-                tracing::debug!("no metric event source to stop");
-                EventSourceStopOutcome::Clean
-            }
-        };
-        let final_status = match outcome {
-            EventSourceStopOutcome::Clean => ServiceStatus::Stop,
-            EventSourceStopOutcome::Panicked | EventSourceStopOutcome::Aborted => {
-                ServiceStatus::Failed
-            }
-        };
-        self.status.just_change_status(final_status);
-        // 停止内存指标记录(收尾写入当前分钟);store 保留供历史查询,
-        // 下次 start_service 时 recorder 会被重新拉起。
-        {
-            let mut mem = self.inner.mem_recording.lock().await;
-            if let Some(recording) = mem.as_mut() {
-                recording.stop_recorder().await;
-            }
-        }
-        self.current_engine().shutdown().await;
-    }
-
-    pub async fn apply_runtime_config(&self, config: MetricRuntimeConfig) -> Result<(), String> {
-        let _guard = self.inner.switch_lock.lock().await;
-
-        self.stop_service_locked().await;
-
-        let new_engine = match MetricEngine::new(
-            ensure_metric_path(&self.inner.home_path),
-            config.clone(),
-        )
-        .await
-        {
-            Ok(engine) => engine,
-            Err(error) => {
-                tracing::error!(
-                    "failed to rebuild metric engine for new config, restoring previous config: {}",
-                    error
-                );
-                let recovery_error = self.restore_previous_engine().await.err();
-                if !matches!(self.current_mode(), MetricMode::Off)
-                    && let Err(start_error) = self.start_service_locked().await
-                {
-                    tracing::error!(
-                        "failed to restart metric service after engine rebuild failure: {start_error}"
-                    );
-                }
-                return Err(match recovery_error {
-                    Some(recovery_error) => format!("{error}; {recovery_error}"),
-                    None => error,
-                });
-            }
-        };
-
-        self.install_engine(config, new_engine);
-
-        if !matches!(self.current_mode(), MetricMode::Off) {
-            self.start_service_locked().await?;
-        }
+        let stop = CancellationToken::new();
+        let (connect_tx, connect_rx) = oneshot::channel();
+        let (dns_tx, dns_rx) = oneshot::channel();
+        let connect = self.connect.clone();
+        let dns = self.dns.clone();
+        let monitor = self.self_monitor.clone();
+        let (monitor_tx, monitor_rx) = oneshot::channel();
+        let connect_stop = stop.clone();
+        let dns_stop = stop.clone();
+        let monitor_stop = stop.clone();
+        let tasks = vec![
+            spawn_task(task_label::task::METRIC_CONNECT_SERVICE, async move {
+                connect.supervise(&connect_stop, connect_tx).await
+            }),
+            spawn_task(task_label::task::METRIC_DNS_SERVICE, async move {
+                dns.supervise(&dns_stop, dns_tx).await
+            }),
+            spawn_task(task_label::task::MEM_SAMPLE, async move {
+                monitor.run(&monitor_stop, monitor_tx).await
+            }),
+        ];
+        *slot = Some(MetricRun { stop, tasks });
+        drop(slot);
+        let _ = tokio::join!(connect_rx, dns_rx, monitor_rx);
         Ok(())
     }
 
-    async fn restore_previous_engine(&self) -> Result<(), String> {
-        let previous_config = {
-            let runtime = self.read_runtime();
-            runtime.config.clone()
-        };
-        match MetricEngine::new(ensure_metric_path(&self.inner.home_path), previous_config.clone())
-            .await
-        {
-            Ok(engine) => {
-                self.install_engine(previous_config, engine);
-                Ok(())
-            }
-            Err(error) => {
-                tracing::error!("failed to restore metric engine with previous config: {}", error);
-                let mut fallback_config = previous_config;
-                fallback_config.mode = MetricMode::Memory;
-                let fallback_engine = MetricEngine::new(
-                    ensure_metric_path(&self.inner.home_path),
-                    fallback_config.clone(),
-                )
-                .await
-                .map_err(|fallback_error| {
-                    format!(
-                        "failed to restore previous metric engine: {error}; failed to start memory fallback: {fallback_error}"
-                    )
-                })?;
-                self.install_engine(fallback_config, fallback_engine);
-                Err(format!(
-                    "failed to restore previous metric engine: {error}; running memory fallback"
-                ))
-            }
+    pub async fn stop_service(&self) -> Result<(), tokio::time::error::Elapsed> {
+        let mut slot = self.run.lock().await;
+        if let Some(run) = slot.as_mut() {
+            run.stop.cancel();
+            run.join().await?;
+            *slot = None;
         }
+        Ok(())
     }
-
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
-        self.current_engine().connect_infos().await
+        self.connect.engine().connect_infos().await
     }
 
     pub async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        self.current_engine().get_realtime_ip_stats(is_src).await
+        self.connect.engine().get_realtime_ip_stats(is_src).await
     }
 
     pub async fn get_realtime_iface_stats(&self) -> Vec<IfaceRealtimeStat> {
-        self.current_engine().get_realtime_iface_stats().await
+        self.connect.engine().get_realtime_iface_stats().await
     }
 
     pub async fn query_metric_by_key(
@@ -330,60 +174,62 @@ impl MetricService {
         key: ConnectKey,
         resolution: MetricResolution,
     ) -> Vec<ConnectMetricPoint> {
-        self.current_engine().query_metric_by_key(key, resolution).await
+        self.connect.engine().query_metric_by_key(key, resolution).await
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> ConnectHistoryResponse {
-        self.current_engine().history_summaries_complex(params).await
+        self.connect.engine().history_summaries_complex(params).await
     }
 
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> Vec<IpHistoryStat> {
-        self.current_engine().history_src_ip_stats(params).await
+        self.connect.engine().history_src_ip_stats(params).await
     }
 
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
     ) -> Vec<IpHistoryStat> {
-        self.current_engine().history_dst_ip_stats(params).await
+        self.connect.engine().history_dst_ip_stats(params).await
     }
 
     pub async fn get_global_stats(
         &self,
         force_refresh: bool,
     ) -> Result<ConnectGlobalStats, DbError> {
-        self.current_engine().get_global_stats(force_refresh).await
+        self.connect.engine().get_global_stats(force_refresh).await
     }
 
     pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        self.current_engine().query_dns_history(params).await
+        self.dns.engine().query_dns_history(params).await
     }
 
     pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        self.current_engine().get_dns_summary(params).await
+        self.dns.engine().get_dns_summary(params).await
     }
 
     pub async fn get_dns_lightweight_summary(
         &self,
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
-        self.current_engine().get_dns_lightweight_summary(params).await
+        self.dns.engine().get_dns_lightweight_summary(params).await
     }
 
-    /// 已持久化的内存指标分钟历史(persistent 构建;未启用/无数据返回空)。
-    /// 最近实时数据走 `/api/v1/self-monitor/memory` 的 RAM 环形缓冲,两条链路相互独立。
-    pub async fn query_memory_history(&self, params: MemHistoryQueryParams) -> MemHistoryResponse {
-        let mem = self.inner.mem_recording.lock().await;
-        match mem.as_ref() {
-            Some(recording) => recording.query_history(&params).await,
-            None => MemHistoryResponse::default(),
-        }
+    pub fn recent_memory_series(
+        &self,
+        limit: usize,
+        subsystem: Option<&str>,
+    ) -> MemorySeriesResponse {
+        self.self_monitor.history.recent_series(limit, subsystem)
+    }
+
+    pub async fn query_memory_history(&self, params: &MemHistoryQueryParams) -> MemHistoryResponse {
+        self.self_monitor.query_history(params).await
     }
 }
 

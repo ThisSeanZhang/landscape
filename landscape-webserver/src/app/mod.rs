@@ -36,10 +36,10 @@ use landscape::{
     wifi::WifiServiceManagerService,
 };
 
+use landscape_common::sys_config::AuthRuntimeConfig;
 use landscape_common::sys_config::{
     ConfigUpdateError, UpdateDnsCacheConfigRequest, UpdateDohConfigRequest,
 };
-use landscape_common::{memtrack::MemoryHistory, sys_config::AuthRuntimeConfig};
 
 mod iface_lifecycle;
 mod shutdown;
@@ -55,8 +55,6 @@ pub struct LandscapeApp {
     /// LAN device directory: authoritative runtime view of LAN devices
     /// (identity + addresses) for API point reads.
     pub(crate) lan_device_directory: Arc<LanDeviceDirectory>,
-    /// 进程内存快照环形缓冲(1s 采样,最近 1 小时),服务 /system/memory 实时查询。
-    pub(crate) memory_history: MemoryHistory,
     pub(crate) docker_service: LandscapeDockerService,
     pub(crate) ebpf_service: LandscapeEbpfService,
 

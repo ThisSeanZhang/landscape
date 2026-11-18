@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::MetricKind;
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
@@ -11,15 +12,14 @@ use landscape_common::metric::connect::{
     ConnectMetricPoint, IpHistoryStat, MetricResolution,
 };
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
-    DnsSummaryQueryParams, DnsSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsMetric, DnsSummaryQueryParams, DnsSummaryResponse,
 };
-use landscape_common::sys_config::MetricRuntimeConfig;
+use landscape_common::sys_config::{ConnectMetricRuntimeConfig, DnsMetricRuntimeConfig};
 use landscape_common::utils::time::now_ms;
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
-use super::MetricSink;
+use super::{ConnectMetricSink, DnsMetricSink, MetricStorage};
 use crate::agg::Batch;
 use crate::agg::batch::BucketKind;
 use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
@@ -42,43 +42,17 @@ const BUSY_RETRY_DELAYS_MS: [u64; BUSY_RETRY_ATTEMPTS] = [200, 1_000, 2_000];
 /// 持久化 sink:聚合批次以单事务批量写入 sqlite,历史查询直接查库。
 #[derive(Clone)]
 pub(crate) struct PersistentMetricStore {
-    connect_pool: SqlitePool,
-    dns_pool: SqlitePool,
-    connect_db_path: PathBuf,
-    dns_db_path: PathBuf,
-    connect_db_max_bytes: u64,
-    dns_db_max_bytes: u64,
+    pool: SqlitePool,
+    db_path: PathBuf,
+    max_bytes: u64,
     rebuild_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl PersistentMetricStore {
-    /// 仅供测试使用:以默认配置构建存储。生产路径统一走 `new_with_config`。
-    #[cfg(test)]
-    pub(crate) async fn new(base_path: PathBuf) -> Result<Self, String> {
-        let config = MetricRuntimeConfig {
-            mode: landscape_common::sys_config::MetricMode::Persistent,
-            connect_second_window_minutes: 5,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 7,
-            connect_1d_retention_days: 30,
-            connect_summary_retention_days: 30,
-            connect_summary_max_rows: landscape_common::DEFAULT_METRIC_CONNECT_SUMMARY_MAX_ROWS,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 7,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 20_000,
-            write_flush_interval_secs: 30,
-            cleanup_interval_secs: 300,
-            cleanup_time_budget_ms: 2_000,
-            cleanup_slice_window_secs: 300,
-        };
-        Self::new_with_config(base_path, &config).await
-    }
-
-    pub(crate) async fn new_with_config(
+    pub(crate) async fn open(
         base_path: PathBuf,
-        config: &MetricRuntimeConfig,
+        kind: MetricKind,
+        max_bytes: u64,
     ) -> Result<Self, String> {
         if !base_path.exists() {
             std::fs::create_dir_all(&base_path).map_err(|error| {
@@ -93,26 +67,20 @@ impl PersistentMetricStore {
         let version = landscape_common::LANDSCAPE_METRIC_DB_VERSION;
         // 库文件按版本号命名:结构变更时递增 LANDSCAPE_METRIC_DB_VERSION 即得新库,
         // 旧库文件不再读写(见 landscape-common::LANDSCAPE_METRIC_DB_VERSION 的注释约定)。
-        let connect_db_path = base_path.join(format!("metrics_v{version}_connect.sqlite"));
-        let dns_db_path = base_path.join(format!("metrics_v{version}_dns.sqlite"));
-
-        let connect_pool =
-            sqlite::open_connect_pool(&connect_db_path, config.connect_db_max_bytes).await?;
-        let dns_pool = sqlite::open_dns_pool(&dns_db_path, config.dns_db_max_bytes).await?;
-
-        tracing::info!(
-            "persistent metric store ready: connect_db={} dns_db={}",
-            connect_db_path.display(),
-            dns_db_path.display()
-        );
-
+        let name = match kind {
+            MetricKind::Connect => "connect",
+            MetricKind::Dns => "dns",
+        };
+        let db_path = base_path.join(format!("metrics_v{version}_{name}.sqlite"));
+        let pool = match kind {
+            MetricKind::Connect => sqlite::open_connect_pool(&db_path, max_bytes).await?,
+            MetricKind::Dns => sqlite::open_dns_pool(&db_path, max_bytes).await?,
+        };
+        tracing::info!(path=%db_path.display(),"persistent metric store ready");
         Ok(Self {
-            connect_pool,
-            dns_pool,
-            connect_db_path,
-            dns_db_path,
-            connect_db_max_bytes: config.connect_db_max_bytes,
-            dns_db_max_bytes: config.dns_db_max_bytes,
+            pool,
+            db_path,
+            max_bytes,
             rebuild_handle: Arc::new(Mutex::new(None)),
         })
     }
@@ -126,12 +94,12 @@ impl PersistentMetricStore {
     /// 全表重建修正,默认间隔 5 分钟)或每日漂移重建;为避免满库时每次 FULL
     /// 都全表扫描重建缓存,这里刻意不做修正。
     async fn reclaim_connect_space(&self) -> bool {
-        if self.connect_db_max_bytes == 0 {
+        if self.max_bytes == 0 {
             // 未配置容量上限:SQLITE_FULL 说明磁盘真的满了,删数据也无法缩容。
             return false;
         }
         let deleted = match sqlite::connect::enforce_database_size(
-            &self.connect_pool,
+            &self.pool,
             None,
             HOT_RECLAIM_MAX_DELETE_ROWS,
             false,
@@ -147,33 +115,30 @@ impl PersistentMetricStore {
         if deleted == 0 {
             return false;
         }
-        if let Err(error) = sqlite::checkpoint_and_compact(&self.connect_pool).await {
+        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
             tracing::warn!("failed to compact connect sqlite: {}", error);
         }
         true
     }
 
     async fn reclaim_dns_space(&self) -> bool {
-        if self.dns_db_max_bytes == 0 {
+        if self.max_bytes == 0 {
             return false;
         }
-        let deleted = match sqlite::dns::enforce_database_size(
-            &self.dns_pool,
-            None,
-            HOT_RECLAIM_MAX_DELETE_ROWS,
-        )
-        .await
-        {
-            Ok(deleted) => deleted,
-            Err(error) => {
-                tracing::error!("failed to reclaim persistent dns database space: {}", error);
-                return false;
-            }
-        };
+        let deleted =
+            match sqlite::dns::enforce_database_size(&self.pool, None, HOT_RECLAIM_MAX_DELETE_ROWS)
+                .await
+            {
+                Ok(deleted) => deleted,
+                Err(error) => {
+                    tracing::error!("failed to reclaim persistent dns database space: {}", error);
+                    return false;
+                }
+            };
         if deleted == 0 {
             return false;
         }
-        if let Err(error) = sqlite::checkpoint_and_compact(&self.dns_pool).await {
+        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
             tracing::warn!("failed to compact dns sqlite: {}", error);
         }
         true
@@ -181,7 +146,7 @@ impl PersistentMetricStore {
 }
 
 #[async_trait::async_trait]
-impl MetricSink for PersistentMetricStore {
+impl ConnectMetricSink for PersistentMetricStore {
     async fn apply_connect_batch(&self, batch: &Batch) -> bool {
         if batch.is_empty() {
             return true;
@@ -190,12 +155,12 @@ impl MetricSink for PersistentMetricStore {
         // SQLITE_FULL 先热回收再重试一次;SQLITE_BUSY 有限退避重试。
         let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
         loop {
-            match sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await {
+            match sqlite::connect::apply_connect_batch(&self.pool, batch).await {
                 Ok(()) => return true,
                 Err(error) => {
                     if sqlite::is_sqlite_full(&error) && self.reclaim_connect_space().await {
                         if let Err(retry_error) =
-                            sqlite::connect::apply_connect_batch(&self.connect_pool, batch).await
+                            sqlite::connect::apply_connect_batch(&self.pool, batch).await
                         {
                             tracing::error!(
                                 "failed to write persistent connect batch (retry after reclaim), dropping it: {}",
@@ -239,18 +204,231 @@ impl MetricSink for PersistentMetricStore {
         }
     }
 
+    async fn cleanup_connect(&self, config: &ConnectMetricRuntimeConfig) {
+        let now_ms = now_ms();
+
+        let summary_cutoff =
+            now_ms.saturating_sub(config.summary_retention_days.saturating_mul(MS_PER_DAY));
+        if let Err(error) = sqlite::connect::cleanup_old_summaries(&self.pool, summary_cutoff).await
+        {
+            tracing::error!("failed to cleanup persistent conn_summaries: {}", error);
+        }
+
+        if let Err(error) =
+            sqlite::connect::enforce_summary_max_rows(&self.pool, config.summary_max_rows).await
+        {
+            tracing::error!("failed to enforce persistent conn_summaries max rows: {}", error);
+        }
+
+        let cutoffs = [
+            (
+                BucketKind::Minute,
+                now_ms.saturating_sub(config.retention_1m_days.saturating_mul(MS_PER_DAY)),
+            ),
+            (
+                BucketKind::Hour,
+                now_ms.saturating_sub(config.retention_1h_days.saturating_mul(MS_PER_DAY)),
+            ),
+            (
+                BucketKind::Day,
+                now_ms.saturating_sub(config.retention_1d_days.saturating_mul(MS_PER_DAY)),
+            ),
+        ];
+        if let Err(error) = sqlite::connect::cleanup_old_buckets(
+            &self.pool,
+            cutoffs,
+            config.store.cleanup_time_budget_ms,
+            config.store.cleanup_slice_window_secs,
+        )
+        .await
+        {
+            tracing::error!("failed to cleanup persistent connect buckets: {}", error);
+        }
+        // 容量控制:以上限的 90% 为清理目标提前删除最旧数据(而非等塞满再删),
+        // 给本 cleanup 间隔内的写入留出余量,避免触达 max_page_count 而 SQLITE_FULL。
+        if self.max_bytes > 0 {
+            let target = self.max_bytes - self.max_bytes / 10;
+            match sqlite::connect::enforce_database_size(
+                &self.pool,
+                Some(target),
+                CLEANUP_MAX_DELETE_ROWS,
+                true,
+            )
+            .await
+            {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(
+                            "phase=persistent_connect.size_enforce deleted_rows={} target_bytes={}",
+                            deleted,
+                            target
+                        );
+                        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
+                            tracing::warn!("failed to compact connect sqlite: {}", error);
+                        }
+                    }
+                    // 收敛保护:删除预算耗尽仍未回到目标以下时明确告警,
+                    // 下一轮 cleanup 会继续收敛。
+                    match sqlite::logical_main_size_bytes(&self.pool).await {
+                        Ok(logical) if logical > target => {
+                            tracing::warn!(
+                                path = %self.db_path.display(),
+                                logical_bytes = logical,
+                                target_bytes = target,
+                                "connect metric database is still over the cleanup target; \
+                                 delete budget exhausted, will continue on the next round"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                "failed to measure connect database size after cleanup: {}",
+                                error
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(
+                        "failed to enforce persistent connect database size: {}",
+                        error
+                    );
+                }
+            }
+        }
+        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
+            tracing::warn!("failed to compact connect sqlite: {}", error);
+        }
+
+        // 回收已结束的后台任务。失败或 panic 后下一轮允许重试。
+        let finished_handle = {
+            let mut guard =
+                self.rebuild_handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if guard.as_ref().map(|handle| handle.is_finished()).unwrap_or(false) {
+                guard.take()
+            } else {
+                None
+            }
+        };
+        if let Some(handle) = finished_handle {
+            let _ = handle.await;
+        }
+
+        // 每日漂移校正:缓存超过 24h 未重建时,后台异步全量重建;
+        // 同一时刻至多一个重建任务。
+        match sqlite::connect::global_stats_stale(&self.pool, GLOBAL_STATS_REBUILD_INTERVAL_SECS)
+            .await
+        {
+            Ok(true) => {
+                let mut guard =
+                    self.rebuild_handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if guard.is_none() {
+                    tracing::info!(
+                        "phase=persistent_connect.global_stats_rebuild starting daily drift correction rebuild"
+                    );
+                    let rebuild_pool = self.pool.clone();
+                    *guard = Some(spawn_task(task_label::task::METRIC_STATS_REBUILD, async move {
+                        if let Err(error) =
+                            sqlite::connect::rebuild_global_stats_cache(&rebuild_pool).await
+                        {
+                            tracing::error!(
+                                "failed to rebuild persistent connect global stats cache: {}",
+                                error
+                            );
+                        }
+                    }));
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(
+                    "failed to check persistent connect global stats cache staleness: {}",
+                    error
+                );
+            }
+        }
+    }
+
+    async fn query_metric_by_key(
+        &self,
+        key: ConnectKey,
+        resolution: MetricResolution,
+    ) -> Vec<ConnectMetricPoint> {
+        match sqlite::connect::query_metric_by_key(&self.pool, &key, resolution).await {
+            Ok(points) => points,
+            Err(error) => {
+                tracing::error!("failed to query persistent connect metrics by key: {}", error);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn history_summaries_complex(
+        &self,
+        params: ConnectHistoryQueryParams,
+    ) -> ConnectHistoryResponse {
+        match sqlite::connect::query_historical_summaries_complex(&self.pool, params).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!("failed to query persistent connect history summaries: {}", error);
+                ConnectHistoryResponse::default()
+            }
+        }
+    }
+
+    async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
+        match sqlite::connect::query_connection_ip_history(&self.pool, params, true).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!("failed to query persistent connect src ip history: {}", error);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
+        match sqlite::connect::query_connection_ip_history(&self.pool, params, false).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::error!("failed to query persistent connect dst ip history: {}", error);
+                Vec::new()
+            }
+        }
+    }
+
+    async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {
+        if force_refresh {
+            sqlite::connect::rebuild_global_stats_cache(&self.pool).await.map_err(|error| {
+                DbError::Internal(format!(
+                    "failed to rebuild persistent connect global stats cache: {}",
+                    error
+                ))
+            })
+        } else {
+            sqlite::connect::query_global_stats(&self.pool).await.map_err(|error| {
+                DbError::Internal(format!(
+                    "failed to query persistent connect global stats cache: {}",
+                    error
+                ))
+            })
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DnsMetricSink for PersistentMetricStore {
     async fn apply_dns_batch(&self, metrics: Vec<DnsMetric>) -> bool {
         if metrics.is_empty() {
             return true;
         }
         let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
         loop {
-            match sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await {
+            match sqlite::dns::insert_dns_batch(&self.pool, &metrics).await {
                 Ok(()) => return true,
                 Err(error) => {
                     if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
                         if let Err(retry_error) =
-                            sqlite::dns::insert_dns_batch(&self.dns_pool, &metrics).await
+                            sqlite::dns::insert_dns_batch(&self.pool, &metrics).await
                         {
                             tracing::error!(
                                 "failed to write persistent dns batch (retry after reclaim), dropping it: {}",
@@ -297,12 +475,12 @@ impl MetricSink for PersistentMetricStore {
         }
         let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
         loop {
-            match sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await {
+            match sqlite::dns::insert_dns_bucket_rows(&self.pool, &rows).await {
                 Ok(()) => return true,
                 Err(error) => {
                     if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
                         if let Err(retry_error) =
-                            sqlite::dns::insert_dns_bucket_rows(&self.dns_pool, &rows).await
+                            sqlite::dns::insert_dns_bucket_rows(&self.pool, &rows).await
                         {
                             tracing::error!(
                                 "failed to write persistent dns metric buckets (retry after reclaim), dropping them: {}",
@@ -346,166 +524,13 @@ impl MetricSink for PersistentMetricStore {
         }
     }
 
-    async fn cleanup_connect(&self, config: &MetricRuntimeConfig) {
-        let now_ms = now_ms();
-
-        let summary_cutoff =
-            now_ms.saturating_sub(config.connect_summary_retention_days.saturating_mul(MS_PER_DAY));
-        if let Err(error) =
-            sqlite::connect::cleanup_old_summaries(&self.connect_pool, summary_cutoff).await
-        {
-            tracing::error!("failed to cleanup persistent conn_summaries: {}", error);
-        }
-
-        if let Err(error) = sqlite::connect::enforce_summary_max_rows(
-            &self.connect_pool,
-            config.connect_summary_max_rows,
-        )
-        .await
-        {
-            tracing::error!("failed to enforce persistent conn_summaries max rows: {}", error);
-        }
-
-        let cutoffs = [
-            (
-                BucketKind::Minute,
-                now_ms.saturating_sub(config.connect_1m_retention_days.saturating_mul(MS_PER_DAY)),
-            ),
-            (
-                BucketKind::Hour,
-                now_ms.saturating_sub(config.connect_1h_retention_days.saturating_mul(MS_PER_DAY)),
-            ),
-            (
-                BucketKind::Day,
-                now_ms.saturating_sub(config.connect_1d_retention_days.saturating_mul(MS_PER_DAY)),
-            ),
-        ];
-        if let Err(error) = sqlite::connect::cleanup_old_buckets(
-            &self.connect_pool,
-            cutoffs,
-            config.cleanup_time_budget_ms,
-            config.cleanup_slice_window_secs,
-        )
-        .await
-        {
-            tracing::error!("failed to cleanup persistent connect buckets: {}", error);
-        }
-        // 容量控制:以上限的 90% 为清理目标提前删除最旧数据(而非等塞满再删),
-        // 给本 cleanup 间隔内的写入留出余量,避免触达 max_page_count 而 SQLITE_FULL。
-        if self.connect_db_max_bytes > 0 {
-            let target = self.connect_db_max_bytes - self.connect_db_max_bytes / 10;
-            match sqlite::connect::enforce_database_size(
-                &self.connect_pool,
-                Some(target),
-                CLEANUP_MAX_DELETE_ROWS,
-                true,
-            )
-            .await
-            {
-                Ok(deleted) => {
-                    if deleted > 0 {
-                        tracing::info!(
-                            "phase=persistent_connect.size_enforce deleted_rows={} target_bytes={}",
-                            deleted,
-                            target
-                        );
-                        if let Err(error) = sqlite::checkpoint_and_compact(&self.connect_pool).await
-                        {
-                            tracing::warn!("failed to compact connect sqlite: {}", error);
-                        }
-                    }
-                    // 收敛保护:删除预算耗尽仍未回到目标以下时明确告警,
-                    // 下一轮 cleanup 会继续收敛。
-                    match sqlite::logical_main_size_bytes(&self.connect_pool).await {
-                        Ok(logical) if logical > target => {
-                            tracing::warn!(
-                                path = %self.connect_db_path.display(),
-                                logical_bytes = logical,
-                                target_bytes = target,
-                                "connect metric database is still over the cleanup target; \
-                                 delete budget exhausted, will continue on the next round"
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(error) => {
-                            tracing::warn!(
-                                "failed to measure connect database size after cleanup: {}",
-                                error
-                            );
-                        }
-                    }
-                }
-                Err(error) => {
-                    tracing::error!(
-                        "failed to enforce persistent connect database size: {}",
-                        error
-                    );
-                }
-            }
-        }
-        if let Err(error) = sqlite::checkpoint_and_compact(&self.connect_pool).await {
-            tracing::warn!("failed to compact connect sqlite: {}", error);
-        }
-
-        // 回收已结束的后台任务。失败或 panic 后下一轮允许重试。
-        let finished_handle = {
-            let mut guard =
-                crate::lock_or_recover(&self.rebuild_handle, "persistent rebuild handle");
-            if guard.as_ref().map(|handle| handle.is_finished()).unwrap_or(false) {
-                guard.take()
-            } else {
-                None
-            }
-        };
-        if let Some(handle) = finished_handle {
-            let _ = handle.await;
-        }
-
-        // 每日漂移校正:缓存超过 24h 未重建时,后台异步全量重建;
-        // 同一时刻至多一个重建任务。
-        match sqlite::connect::global_stats_stale(
-            &self.connect_pool,
-            GLOBAL_STATS_REBUILD_INTERVAL_SECS,
-        )
-        .await
-        {
-            Ok(true) => {
-                let mut guard =
-                    crate::lock_or_recover(&self.rebuild_handle, "persistent rebuild handle");
-                if guard.is_none() {
-                    tracing::info!(
-                        "phase=persistent_connect.global_stats_rebuild starting daily drift correction rebuild"
-                    );
-                    let rebuild_pool = self.connect_pool.clone();
-                    *guard = Some(spawn_task(task_label::task::METRIC_STATS_REBUILD, async move {
-                        if let Err(error) =
-                            sqlite::connect::rebuild_global_stats_cache(&rebuild_pool).await
-                        {
-                            tracing::error!(
-                                "failed to rebuild persistent connect global stats cache: {}",
-                                error
-                            );
-                        }
-                    }));
-                }
-            }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::error!(
-                    "failed to check persistent connect global stats cache staleness: {}",
-                    error
-                );
-            }
-        }
-    }
-
-    async fn cleanup_dns(&self, config: &MetricRuntimeConfig) {
-        let cutoff = now_ms().saturating_sub(config.dns_retention_days.saturating_mul(MS_PER_DAY));
+    async fn cleanup_dns(&self, config: &DnsMetricRuntimeConfig) {
+        let cutoff = now_ms().saturating_sub(config.retention_days.saturating_mul(MS_PER_DAY));
         match sqlite::dns::cleanup_old_dns(
-            &self.dns_pool,
+            &self.pool,
             cutoff,
-            config.cleanup_time_budget_ms,
-            config.cleanup_slice_window_secs,
+            config.store.cleanup_time_budget_ms,
+            config.store.cleanup_slice_window_secs,
         )
         .await
         {
@@ -518,22 +543,22 @@ impl MetricSink for PersistentMetricStore {
         }
 
         let bucket_cutoff =
-            now_ms().saturating_sub(config.dns_1m_retention_days.saturating_mul(MS_PER_DAY));
+            now_ms().saturating_sub(config.retention_1m_days.saturating_mul(MS_PER_DAY));
         if let Err(error) = sqlite::dns::cleanup_old_dns_buckets(
-            &self.dns_pool,
+            &self.pool,
             bucket_cutoff,
-            config.cleanup_time_budget_ms,
-            config.cleanup_slice_window_secs,
+            config.store.cleanup_time_budget_ms,
+            config.store.cleanup_slice_window_secs,
         )
         .await
         {
             tracing::error!("failed to cleanup persistent dns metric buckets: {}", error);
         }
         // 容量控制:同 connect,以上限的 90% 为清理目标提前删除最旧数据。
-        if self.dns_db_max_bytes > 0 {
-            let target = self.dns_db_max_bytes - self.dns_db_max_bytes / 10;
+        if self.max_bytes > 0 {
+            let target = self.max_bytes - self.max_bytes / 10;
             match sqlite::dns::enforce_database_size(
-                &self.dns_pool,
+                &self.pool,
                 Some(target),
                 CLEANUP_MAX_DELETE_ROWS,
             )
@@ -546,14 +571,14 @@ impl MetricSink for PersistentMetricStore {
                             deleted,
                             target
                         );
-                        if let Err(error) = sqlite::checkpoint_and_compact(&self.dns_pool).await {
+                        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
                             tracing::warn!("failed to compact dns sqlite: {}", error);
                         }
                     }
-                    match sqlite::logical_main_size_bytes(&self.dns_pool).await {
+                    match sqlite::logical_main_size_bytes(&self.pool).await {
                         Ok(logical) if logical > target => {
                             tracing::warn!(
-                                path = %self.dns_db_path.display(),
+                                path = %self.db_path.display(),
                                 logical_bytes = logical,
                                 target_bytes = target,
                                 "dns metric database is still over the cleanup target; \
@@ -574,90 +599,13 @@ impl MetricSink for PersistentMetricStore {
                 }
             }
         }
-        if let Err(error) = sqlite::checkpoint_and_compact(&self.dns_pool).await {
+        if let Err(error) = sqlite::checkpoint_and_compact(&self.pool).await {
             tracing::warn!("failed to compact dns sqlite: {}", error);
         }
     }
 
-    async fn close(&self) {
-        let handle =
-            crate::lock_or_recover(&self.rebuild_handle, "persistent rebuild handle").take();
-        if let Some(handle) = handle {
-            let _ = handle.await;
-        }
-        self.connect_pool.close().await;
-        self.dns_pool.close().await;
-    }
-
-    async fn query_metric_by_key(
-        &self,
-        key: ConnectKey,
-        resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
-        match sqlite::connect::query_metric_by_key(&self.connect_pool, &key, resolution).await {
-            Ok(points) => points,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect metrics by key: {}", error);
-                Vec::new()
-            }
-        }
-    }
-
-    async fn history_summaries_complex(
-        &self,
-        params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
-        match sqlite::connect::query_historical_summaries_complex(&self.connect_pool, params).await
-        {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect history summaries: {}", error);
-                ConnectHistoryResponse::default()
-            }
-        }
-    }
-
-    async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match sqlite::connect::query_connection_ip_history(&self.connect_pool, params, true).await {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect src ip history: {}", error);
-                Vec::new()
-            }
-        }
-    }
-
-    async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match sqlite::connect::query_connection_ip_history(&self.connect_pool, params, false).await
-        {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect dst ip history: {}", error);
-                Vec::new()
-            }
-        }
-    }
-
-    async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {
-        if force_refresh {
-            sqlite::connect::rebuild_global_stats_cache(&self.connect_pool).await.map_err(|error| {
-                DbError::Internal(format!(
-                    "failed to rebuild persistent connect global stats cache: {}",
-                    error
-                ))
-            })
-        } else {
-            sqlite::connect::query_global_stats(&self.connect_pool).await.map_err(|error| {
-                DbError::Internal(format!(
-                    "failed to query persistent connect global stats cache: {}",
-                    error
-                ))
-            })
-        }
-    }
-
     async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        match sqlite::dns::query_dns_history(&self.dns_pool, params).await {
+        match sqlite::dns::query_dns_history(&self.pool, params).await {
             Ok(response) => response,
             Err(error) => {
                 tracing::error!("failed to query persistent dns history: {}", error);
@@ -667,24 +615,11 @@ impl MetricSink for PersistentMetricStore {
     }
 
     async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        match sqlite::dns::query_dns_summary(&self.dns_pool, params).await {
+        match sqlite::dns::query_dns_summary(&self.pool, params).await {
             Ok(response) => response,
             Err(error) => {
                 tracing::error!("failed to query persistent dns summary: {}", error);
                 DnsSummaryResponse::default()
-            }
-        }
-    }
-
-    async fn get_dns_lightweight_summary(
-        &self,
-        params: DnsSummaryQueryParams,
-    ) -> DnsLightweightSummaryResponse {
-        match sqlite::dns::query_dns_lightweight_summary(&self.dns_pool, params).await {
-            Ok(response) => response,
-            Err(error) => {
-                tracing::error!("failed to query persistent dns lightweight summary: {}", error);
-                DnsLightweightSummaryResponse::default()
             }
         }
     }
@@ -695,14 +630,25 @@ impl MetricSink for PersistentMetricStore {
         end_ms: u64,
         flow_id: Option<u32>,
     ) -> DnsSummaryParts {
-        match sqlite::dns::query_dns_summary_parts(&self.dns_pool, start_ms, end_ms, flow_id).await
-        {
+        match sqlite::dns::query_dns_summary_parts(&self.pool, start_ms, end_ms, flow_id).await {
             Ok(parts) => parts,
             Err(error) => {
                 tracing::error!("failed to query persistent dns summary parts: {}", error);
                 DnsSummaryParts::default()
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl MetricStorage for PersistentMetricStore {
+    async fn close(&self) {
+        let handle =
+            self.rebuild_handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
+        if let Some(handle) = handle {
+            let _ = handle.await;
+        }
+        self.pool.close().await;
     }
 }
 
@@ -714,25 +660,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::{Duration, Instant};
 
-    fn test_config() -> MetricRuntimeConfig {
-        MetricRuntimeConfig {
-            mode: landscape_common::sys_config::MetricMode::Persistent,
-            connect_second_window_minutes: 5,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 7,
-            connect_1d_retention_days: 30,
-            connect_summary_retention_days: 30,
-            connect_summary_max_rows: 0,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 7,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 16,
-            write_flush_interval_secs: 1,
-            cleanup_interval_secs: 3600,
-            cleanup_time_budget_ms: 1_000,
-            cleanup_slice_window_secs: 60,
-        }
+    fn test_config() -> ConnectMetricRuntimeConfig {
+        use landscape_common::sys_config::{ConnectMetricConfig, RuntimeConfigSource};
+        ConnectMetricConfig::default().build_runtime()
     }
 
     fn test_metric(
@@ -765,8 +695,14 @@ mod tests {
     #[tokio::test]
     async fn cleanup_connect_rebuilds_stale_global_stats_cache() {
         let temp = tempfile::tempdir().unwrap();
-        let store = PersistentMetricStore::new(temp.path().to_path_buf()).await.unwrap();
-        let pool = store.connect_pool.clone();
+        let store = PersistentMetricStore::open(
+            temp.path().to_path_buf(),
+            MetricKind::Connect,
+            test_config().store.max_bytes,
+        )
+        .await
+        .unwrap();
+        let pool = store.pool.clone();
         let now_ms = now_ms();
 
         // 1. 经 sink 写入一条 summary(缓存同步更新)。
@@ -834,10 +770,14 @@ mod tests {
     async fn sqlite_full_triggers_hot_reclaim_and_retry_succeeds() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = test_config();
-        config.connect_db_max_bytes = 1024 * 1024;
-        let store = PersistentMetricStore::new_with_config(temp.path().to_path_buf(), &config)
-            .await
-            .unwrap();
+        config.store.max_bytes = 1024 * 1024;
+        let store = PersistentMetricStore::open(
+            temp.path().to_path_buf(),
+            MetricKind::Connect,
+            config.store.max_bytes,
+        )
+        .await
+        .unwrap();
 
         // 写入量远超 1MB 上限:中途必然触达 max_page_count 而 SQLITE_FULL,
         // 每次 apply 都必须经"热回收 + 重试一次"成功返回 true。
@@ -857,7 +797,7 @@ mod tests {
 
         // 容量强制确实发生过删除:库内行数少于累计写入量,且非空。
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conn_summaries")
-            .fetch_one(&store.connect_pool)
+            .fetch_one(&store.pool)
             .await
             .unwrap();
         assert!(count > 0, "database must not be fully emptied");
@@ -887,10 +827,16 @@ mod tests {
     #[tokio::test]
     async fn busy_write_lock_recovers_via_retry() {
         let temp = tempfile::tempdir().unwrap();
-        let store = PersistentMetricStore::new(temp.path().to_path_buf()).await.unwrap();
+        let store = PersistentMetricStore::open(
+            temp.path().to_path_buf(),
+            MetricKind::Dns,
+            landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
+        )
+        .await
+        .unwrap();
 
         // 占住写锁 ~5.3s(超过一次 busy_timeout),由后台任务释放。
-        let mut holder = store.dns_pool.acquire().await.unwrap();
+        let mut holder = store.pool.acquire().await.unwrap();
         sqlx::query("BEGIN IMMEDIATE").execute(&mut *holder).await.unwrap();
         sqlx::query(
             "INSERT INTO dns_metrics (
@@ -913,7 +859,7 @@ mod tests {
         );
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dns_metrics")
-            .fetch_one(&store.dns_pool)
+            .fetch_one(&store.pool)
             .await
             .unwrap();
         assert_eq!(count, 2, "both the held row and the retried batch row persisted");
@@ -941,7 +887,13 @@ mod tests {
             return;
         }
 
-        let store = PersistentMetricStore::new(mount_point.to_path_buf()).await.unwrap();
+        let store = PersistentMetricStore::open(
+            mount_point.to_path_buf(),
+            MetricKind::Dns,
+            landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
+        )
+        .await
+        .unwrap();
 
         // 填满 tmpfs,此后 WAL 无法增长。
         let junk_path = mount_point.join("junk.bin");
@@ -950,7 +902,7 @@ mod tests {
         while junk.write_all(&chunk).is_ok() {}
 
         let metrics = vec![dns_test_metric(1, 100_000)];
-        let error = sqlite::dns::insert_dns_batch(&store.dns_pool, &metrics).await.unwrap_err();
+        let error = sqlite::dns::insert_dns_batch(&store.pool, &metrics).await.unwrap_err();
         assert!(
             sqlite::is_sqlite_full(&error),
             "full disk must surface as SQLITE_FULL, got: {error}"

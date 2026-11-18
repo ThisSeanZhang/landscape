@@ -225,6 +225,8 @@ pub mod task_label {
         pub const DOCKER_IMAGE_OP: &str = "docker.image.op";
 
         // ── metric 引擎内部 ─────────────────────────────────────────
+        pub const METRIC_CONNECT_SERVICE: &str = "metric.connect.service";
+        pub const METRIC_DNS_SERVICE: &str = "metric.dns.service";
         /// Metric connect aggregation worker.
         pub const METRIC_CONNECT_WORKER: &str = "metric.connect.worker";
         /// Metric DNS aggregation worker.

@@ -2,8 +2,8 @@ use futures_util::StreamExt;
 use hdrhistogram::serialization::{Deserializer, Serializer, V2Serializer};
 use landscape_common::metric::connect::SortOrder;
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
-    DnsSortKey, DnsStatEntry, DnsSummaryQueryParams, DnsSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsMetric, DnsSortKey, DnsStatEntry,
+    DnsSummaryQueryParams, DnsSummaryResponse,
 };
 use std::time::{Duration, Instant};
 
@@ -806,86 +806,6 @@ fn dns_metric_from_row(row: &sqlx::sqlite::SqliteRow) -> DnsMetric {
     }
 }
 
-fn push_range_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
-    params: &DnsSummaryQueryParams,
-    has_where: &mut bool,
-) {
-    if params.start_time > 0 {
-        push_clause(qb, has_where, "report_time >= ");
-        qb.push_bind(params.start_time as i64);
-    }
-    if params.end_time > 0 {
-        push_clause(qb, has_where, "report_time < ");
-        qb.push_bind(params.end_time as i64);
-    }
-    if let Some(flow_id) = params.flow_id {
-        push_clause(qb, has_where, "flow_id = ");
-        qb.push_bind(flow_id as i64);
-    }
-}
-
-/// 轻量 summary(SQL 回退路径):仅基础计数与延迟分位数,语义与内存窗口一致。
-/// 调用方负责将时间范围规范化为分钟对齐的半开区间 [start, end)。
-pub(crate) async fn query_dns_lightweight_summary(
-    pool: &SqlitePool,
-    params: DnsSummaryQueryParams,
-) -> Result<DnsLightweightSummaryResponse, sqlx::Error> {
-    let mut base_qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT
-            COUNT(*),
-            COUNT(CASE WHEN status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'A' AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'A' AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN query_type = 'AAAA' AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'AAAA' AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN query_type NOT IN ('A', 'AAAA') AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type NOT IN ('A', 'AAAA') AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"block\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"filter\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"nxdomain\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"error\"' THEN 1 END),
-            AVG(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN duration_ms END),
-            MAX(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN duration_ms END),
-            COUNT(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN 1 END)
-        FROM dns_metrics"
-    ));
-    let mut has_where = false;
-    push_range_filters(&mut base_qb, &params, &mut has_where);
-    let row = base_qb.build().fetch_one(pool).await?;
-    let latency_count = row.get::<i64, _>(15).max(0) as usize;
-
-    let mut duration_qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT duration_ms FROM dns_metrics WHERE status NOT IN ({LATENCY_EXCLUDE})"
-    ));
-    let mut duration_has_where = true;
-    push_range_filters(&mut duration_qb, &params, &mut duration_has_where);
-    let [p50_duration_ms, p95_duration_ms, p99_duration_ms] =
-        stream_latency_percentiles(pool, &mut duration_qb, latency_count).await?;
-
-    Ok(DnsLightweightSummaryResponse {
-        total_queries: row.get::<i64, _>(0).max(0) as usize,
-        total_effective_queries: row.get::<i64, _>(2).max(0) as usize,
-        cache_hit_count: row.get::<i64, _>(1).max(0) as usize,
-        hit_count_v4: row.get::<i64, _>(4).max(0) as usize,
-        hit_count_v6: row.get::<i64, _>(6).max(0) as usize,
-        hit_count_other: row.get::<i64, _>(8).max(0) as usize,
-        total_v4: row.get::<i64, _>(3).max(0) as usize,
-        total_v6: row.get::<i64, _>(5).max(0) as usize,
-        total_other: row.get::<i64, _>(7).max(0) as usize,
-        block_count: row.get::<i64, _>(9).max(0) as usize,
-        filter_count: row.get::<i64, _>(10).max(0) as usize,
-        nxdomain_count: row.get::<i64, _>(11).max(0) as usize,
-        error_count: row.get::<i64, _>(12).max(0) as usize,
-        avg_duration_ms: row.get::<Option<f64>, _>(13).unwrap_or(0.0),
-        p50_duration_ms,
-        p95_duration_ms,
-        p99_duration_ms,
-        max_duration_ms: row.get::<Option<i64>, _>(14).unwrap_or(0) as f64,
-    })
-}
-
 pub(crate) async fn cleanup_old_dns(
     pool: &SqlitePool,
     cutoff: u64,
@@ -1160,54 +1080,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lightweight_summary_matches_counts_and_respects_range() {
-        let (_dir, pool) = test_pool().await;
-        let metrics = vec![
-            dns_metric(1, "a.com", "A", DnsOutcome::Normal, 100_000, 10),
-            dns_metric(2, "b.com", "A", DnsOutcome::Hit, 100_001, 1),
-            dns_metric(3, "c.com", "AAAA", DnsOutcome::Normal, 100_002, 30),
-            dns_metric(4, "d.com", "TXT", DnsOutcome::Block, 100_003, 5),
-            dns_metric(5, "e.com", "A", DnsOutcome::NxDomain, 100_004, 50),
-            dns_metric(6, "f.com", "A", DnsOutcome::Error, 100_005, 2),
-        ];
-        insert_dns_batch(&pool, &metrics).await.unwrap();
-
-        let summary = query_dns_lightweight_summary(
-            &pool,
-            DnsSummaryQueryParams {
-                start_time: 100_000,
-                end_time: 200_000,
-                flow_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(summary.total_queries, 6);
-        assert_eq!(summary.cache_hit_count, 1);
-        assert_eq!(summary.total_effective_queries, 4);
-        assert_eq!(summary.total_v4, 3);
-        assert_eq!(summary.hit_count_v4, 1);
-        assert_eq!(summary.total_v6, 1);
-        assert_eq!(summary.block_count, 1);
-        assert_eq!(summary.nxdomain_count, 1);
-        assert_eq!(summary.error_count, 1);
-        assert_eq!(summary.avg_duration_ms, 30.0, "only normal/nxdomain latency counted");
-        assert_eq!(summary.max_duration_ms, 50.0);
-
-        let narrowed = query_dns_lightweight_summary(
-            &pool,
-            DnsSummaryQueryParams {
-                start_time: 100_004,
-                end_time: 200_000,
-                flow_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(narrowed.total_queries, 2);
-    }
-
-    #[tokio::test]
     async fn cleanup_old_dns_deletes_expired_rows() {
         let (_dir, pool) = test_pool().await;
         insert_dns_batch(
@@ -1347,11 +1219,6 @@ mod tests {
         assert!(summary_sql.contains("report_time >= "));
         assert!(summary_sql.contains("report_time < "));
         assert!(summary_sql.contains("flow_id = "));
-
-        let mut range_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
-        let mut has_where = false;
-        push_range_filters(&mut range_qb, &params, &mut has_where);
-        assert_eq!(range_qb.sql(), summary_sql, "range filters share semantics");
 
         let mut empty_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
         let mut has_where = false;

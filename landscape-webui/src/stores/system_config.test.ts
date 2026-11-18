@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useDnsConfigStore } from "./dns_config";
+import { useMetricConfigStore } from "./metric_config";
 import { useTimeConfigStore } from "./time_config";
 import {
+  getConnectMetricConfig,
+  getDnsMetricConfig,
+  updateDnsMetricConfig,
+  updateConnectMetricConfig,
+  getSelfMonitorConfig,
   getDnsCacheConfig,
   updateDnsCacheConfig,
   getDohConfig,
@@ -12,6 +18,12 @@ import {
 } from "@/api/sys/config";
 
 vi.mock("@/api/sys/config", () => ({
+  getConnectMetricConfig: vi.fn(),
+  getDnsMetricConfig: vi.fn(),
+  updateConnectMetricConfig: vi.fn(),
+  updateDnsMetricConfig: vi.fn(),
+  getSelfMonitorConfig: vi.fn(),
+  updateSelfMonitorConfig: vi.fn(),
   getDnsCacheConfig: vi.fn(),
   updateDnsCacheConfig: vi.fn(),
   getDohConfig: vi.fn(),
@@ -150,5 +162,31 @@ describe("time settings", () => {
     finish();
     await pending;
     expect(store.saving).toBe(false);
+  });
+});
+
+describe("metric settings", () => {
+  it("saves DNS without reloading pending connection settings or fetching self-monitor", async () => {
+    vi.mocked(getConnectMetricConfig).mockResolvedValue({
+      config: { store: { backend: "memory" } },
+      hash: "connect",
+    });
+    vi.mocked(getDnsMetricConfig).mockResolvedValue({
+      config: { store: {} },
+      hash: "dns",
+    });
+    const store = useMetricConfigStore();
+    await Promise.all([store.connect.load(), store.dns.load()]);
+    store.connect.config.write_batch_size = 123;
+    store.dns.config.enabled = false;
+    await store.dns.save();
+    expect(updateDnsMetricConfig).toHaveBeenCalledWith({
+      config: { enabled: false, store: {} },
+      expected_hash: "dns",
+    });
+    expect(getConnectMetricConfig).toHaveBeenCalledTimes(1);
+    expect(updateConnectMetricConfig).not.toHaveBeenCalled();
+    expect(store.connect.config.write_batch_size).toBe(123);
+    expect(getSelfMonitorConfig).not.toHaveBeenCalled();
   });
 });

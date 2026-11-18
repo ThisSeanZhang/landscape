@@ -12,6 +12,8 @@ import TimeConfigCard from "@/views/config_parts/TimeConfigCard.vue";
 import UIConfigCard from "@/views/config_parts/UIConfigCard.vue";
 import DNSConfigCard from "@/views/config_parts/DNSConfigCard.vue";
 import LanHostnameConfigCard from "@/views/config_parts/LanHostnameConfigCard.vue";
+import SelfMonitorConfigCard from "@/views/config_parts/SelfMonitorConfigCard.vue";
+import { useCapabilityStore } from "@/stores/capability";
 import MetricConfigCard from "@/views/config_parts/MetricConfigCard.vue";
 import BackupConfigCard from "@/views/config_parts/BackupConfigCard.vue";
 import PasswordConfigCard from "@/views/config_parts/PasswordConfigCard.vue";
@@ -19,6 +21,7 @@ import PasswordConfigCard from "@/views/config_parts/PasswordConfigCard.vue";
 const { t } = useI18n();
 const prefStore = usePreferenceStore();
 const timeStore = useTimeConfigStore();
+const capabilities = useCapabilityStore();
 const metricStore = useMetricConfigStore();
 const dnsStore = useDnsConfigStore();
 const lanHostnameStore = useLanHostnameConfigStore();
@@ -32,7 +35,9 @@ onMounted(async () => {
   try {
     await Promise.all([
       prefStore.loadPreferenceForEdit(),
-      metricStore.loadMetricConfig(),
+      capabilities.LOAD(),
+      metricStore.connect.load(),
+      metricStore.dns.load(),
       dnsStore.loadCache(),
       dnsStore.loadDoh(),
       timeStore.loadTimeConfig(),
@@ -55,7 +60,9 @@ onMounted(async () => {
         <DNSConfigCard />
         <TimeConfigCard />
         <LanHostnameConfigCard />
-        <MetricConfigCard />
+        <MetricConfigCard kind="connect" />
+        <MetricConfigCard kind="dns" />
+        <SelfMonitorConfigCard v-if="capabilities.HAS('mem_track')" />
         <PasswordConfigCard />
         <BackupConfigCard />
         <div style="height: 400px"></div>
@@ -88,8 +95,17 @@ onMounted(async () => {
             href="#lan-hostname-config"
           />
           <n-anchor-link
-            :title="t('config.metric_title')"
-            href="#metric-config"
+            :title="t('config.connect_metric_title')"
+            href="#connect-metric-config"
+          />
+          <n-anchor-link
+            :title="t('config.dns_metric_title')"
+            href="#dns-metric-config"
+          />
+          <n-anchor-link
+            v-if="capabilities.HAS('mem_track')"
+            :title="t('config.self_monitor_title')"
+            href="#self-monitor-config"
           />
           <n-anchor-link
             :title="t('config.password_title')"

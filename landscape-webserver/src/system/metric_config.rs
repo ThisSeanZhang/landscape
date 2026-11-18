@@ -1,28 +1,33 @@
-use axum::extract::State;
+use axum::extract::{FromRef, State};
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::database::error::DbError;
 use landscape_common::sys_config::{
-    GetMetricConfigResponse, LandscapeMetricConfig, UpdateMetricConfigRequest,
+    GetConnectMetricConfigResponse, GetDnsMetricConfigResponse, GetSelfMonitorConfigResponse,
+    LandscapeMetricConfig, UpdateConnectMetricConfigRequest, UpdateDnsMetricConfigRequest,
+    UpdateSelfMonitorConfigRequest,
 };
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
 
-static METRIC_CONFIG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+impl FromRef<LandscapeApp> for LandscapeConfigService {
+    fn from_ref(app: &LandscapeApp) -> Self {
+        app.system.config_service.clone()
+    }
+}
 
-#[utoipa::path(
-    get,
-    path = "/config/edit/metric",
-    tag = "System Config",
-    operation_id = "get_metric_config",
-    responses((status = 200, description = "Success", body = CommonApiResp<GetMetricConfigResponse>))
-)]
-pub async fn get_metric_config(
-    State(state): State<LandscapeApp>,
-) -> LandscapeApiResult<GetMetricConfigResponse> {
-    let (metric, hash) = state.system.config_service.get_metric_config_from_file().await?;
-    LandscapeApiResp::success(GetMetricConfigResponse { metric, hash })
+pub(super) fn paths<S>() -> OpenApiRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+    LandscapeConfigService: FromRef<S>,
+{
+    OpenApiRouter::new()
+        .routes(routes!(get_metric_config_fast))
+        .routes(routes!(get_connect_metric_config, update_connect_metric_config))
+        .routes(routes!(get_dns_metric_config, update_dns_metric_config))
+        .routes(routes!(get_self_monitor_config, update_self_monitor_config))
 }
 
 #[utoipa::path(
@@ -33,83 +38,66 @@ pub async fn get_metric_config(
     responses((status = 200, description = "Success", body = CommonApiResp<LandscapeMetricConfig>))
 )]
 pub async fn get_metric_config_fast(
-    State(state): State<LandscapeApp>,
+    State(configs): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<LandscapeMetricConfig> {
-    let metric_config = state.system.config_service.get_metric_config_from_memory();
+    let metric_config = configs.get_metric_config_from_memory();
     LandscapeApiResp::success(metric_config)
 }
 
-#[utoipa::path(
-    post,
-    path = "/config/edit/metric",
-    tag = "System Config",
-    operation_id = "update_metric_config",
-    request_body = UpdateMetricConfigRequest,
-    responses((status = 200, description = "Success"))
-)]
-pub async fn update_metric_config(
-    State(state): State<LandscapeApp>,
-    JsonBody(payload): JsonBody<UpdateMetricConfigRequest>,
+#[utoipa::path(get,path="/config/edit/metric/connect",tag="System Config",operation_id="get_connect_metric_config",
+        responses((status=200,description="Success",body=CommonApiResp<GetConnectMetricConfigResponse>)))]
+pub async fn get_connect_metric_config(
+    State(configs): State<LandscapeConfigService>,
+) -> LandscapeApiResult<GetConnectMetricConfigResponse> {
+    let (config, hash) = configs.get_connect_metric_from_file()?;
+    LandscapeApiResp::success(GetConnectMetricConfigResponse { config, hash })
+}
+
+#[utoipa::path(post,path="/config/edit/metric/connect",tag="System Config",operation_id="update_connect_metric_config",request_body=UpdateConnectMetricConfigRequest,
+        responses((status=200,description="Success")))]
+pub async fn update_connect_metric_config(
+    State(configs): State<LandscapeConfigService>,
+    JsonBody(payload): JsonBody<UpdateConnectMetricConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    let _guard = METRIC_CONFIG_UPDATE_LOCK.lock().await;
+    configs.update_connect_metric_config(payload.config, payload.expected_hash).await?;
+    LandscapeApiResp::success(())
+}
+#[utoipa::path(get,path="/config/edit/metric/dns",tag="System Config",operation_id="get_dns_metric_config",
+        responses((status=200,description="Success",body=CommonApiResp<GetDnsMetricConfigResponse>)))]
+pub async fn get_dns_metric_config(
+    State(configs): State<LandscapeConfigService>,
+) -> LandscapeApiResult<GetDnsMetricConfigResponse> {
+    let (config, hash) = configs.get_dns_metric_from_file()?;
+    LandscapeApiResp::success(GetDnsMetricConfigResponse { config, hash })
+}
 
-    let (previous_file_config, current_hash) =
-        state.system.config_service.get_metric_config_from_file().await?;
-    if current_hash != payload.expected_hash {
-        return Err(DbError::Conflict.into());
-    }
-    let previous_runtime = state.system.config_service.get_metric_runtime_config();
+#[utoipa::path(post,path="/config/edit/metric/dns",tag="System Config",operation_id="update_dns_metric_config",request_body=UpdateDnsMetricConfigRequest,
+        responses((status=200,description="Success")))]
+pub async fn update_dns_metric_config(
+    State(configs): State<LandscapeConfigService>,
+    JsonBody(payload): JsonBody<UpdateDnsMetricConfigRequest>,
+) -> LandscapeApiResult<()> {
+    configs.update_dns_metric_config(payload.config, payload.expected_hash).await?;
+    LandscapeApiResp::success(())
+}
+#[utoipa::path(get,path="/config/edit/self_monitor",tag="System Config",operation_id="get_self_monitor_config",
+        responses((status=200,description="Success",body=CommonApiResp<GetSelfMonitorConfigResponse>)))]
+pub async fn get_self_monitor_config(
+    State(configs): State<LandscapeConfigService>,
+) -> LandscapeApiResult<GetSelfMonitorConfigResponse> {
+    let (config, hash) = configs.get_self_monitor_from_file()?;
+    LandscapeApiResp::success(GetSelfMonitorConfigResponse { config, hash })
+}
 
-    // 先落盘(原子替换 + CAS)再应用运行时:进程在任意时刻崩溃,重启后都会
-    // 从文件重建运行时,不会出现"运行时新、文件旧"的配置漂移。
-    if let Err(error) = state
-        .system
-        .config_service
-        .update_metric_config(payload.new_metric, payload.expected_hash)
-        .await
-    {
-        return Err(error.into());
-    }
-
-    // update_section 提交后内存 runtime 已由新文件配置重建,直接应用它,
-    // 保证引擎与 config 内存/文件三者一致。
-    let metric_runtime = state.system.config_service.get_metric_runtime_config();
-    if let Err(error) = state.system.metric_service.apply_runtime_config(metric_runtime).await {
-        // 引擎重建失败:apply_runtime_config 内部基于内存配置的 restore 此时
-        // 读到的是已提交的新配置,不能依赖它还原引擎,这里显式回滚文件并重建上一引擎。
-        if let Err(rollback_error) =
-            rollback_metric_config(&state, previous_file_config, previous_runtime.clone()).await
-        {
-            tracing::error!(
-                "failed to roll back metric config file after runtime apply failure: {}",
-                rollback_error
-            );
-        }
-        if let Err(restore_error) =
-            state.system.metric_service.apply_runtime_config(previous_runtime).await
-        {
-            tracing::error!(
-                "failed to restore previous metric runtime after apply failure: {}",
-                restore_error
-            );
-        }
-        return Err(DbError::Internal(format!("failed to apply metric config: {error}")).into());
-    }
-
+#[utoipa::path(post,path="/config/edit/self_monitor",tag="System Config",operation_id="update_self_monitor_config",request_body=UpdateSelfMonitorConfigRequest,
+        responses((status=200,description="Success")))]
+pub async fn update_self_monitor_config(
+    State(configs): State<LandscapeConfigService>,
+    JsonBody(payload): JsonBody<UpdateSelfMonitorConfigRequest>,
+) -> LandscapeApiResult<()> {
+    configs.update_self_monitor_config(payload.config, payload.expected_hash).await?;
     LandscapeApiResp::success(())
 }
 
-/// 以刚读到的文件 hash 作为 expected_hash,用上一版配置覆盖当前文件
-/// (同时把内存配置还原)。
-async fn rollback_metric_config(
-    state: &LandscapeApp,
-    previous_config: LandscapeMetricConfig,
-    previous_runtime: landscape_common::sys_config::MetricRuntimeConfig,
-) -> Result<(), DbError> {
-    let (_, current_hash) = state.system.config_service.get_metric_config_from_file().await?;
-    state
-        .system
-        .config_service
-        .restore_metric_config(previous_config, previous_runtime, current_hash)
-        .await
-}
+#[cfg(test)]
+mod tests;

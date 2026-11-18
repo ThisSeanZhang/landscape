@@ -92,8 +92,8 @@ pub enum StartupError {
     InitConfig(#[from] landscape_common::config::InitConfigError),
     #[error("{0}")]
     Cert(String),
-    #[error("metric: {0}")]
-    Metric(String),
+    #[error("previous metric service is still stopping: {0}")]
+    MetricStop(#[from] tokio::time::error::Elapsed),
     #[error("config: {0}")]
     Config(String),
 }

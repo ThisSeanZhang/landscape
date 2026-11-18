@@ -143,16 +143,20 @@ pub(crate) async fn build_app(
         DNSRedirectService::new(db_store_provider.clone(), dns_service_tx.clone()).await
     );
 
+    let config_service =
+        LandscapeConfigService::new(config.clone(), db_store_provider.clone()).await;
     let metric_service = startup_phase!(
         "metric_service.new",
         MetricService::new(
             home_path.clone(),
-            config.metric.clone(),
+            config_service.subscribe_connect_metric(),
+            config_service.subscribe_dns_metric(),
+            config_service.subscribe_self_monitor(),
             Arc::new(ebpf_rt.metric_source_factory()),
         )
-        .await
-        .map_err(StartupError::Metric)?
     );
+
+    startup_phase!("metric_service.start_service", metric_service.start_service().await?);
 
     let cert_account_service = startup_phase!(
         "cert_account_service.new",
@@ -198,8 +202,6 @@ pub(crate) async fn build_app(
     // Shared LAN hostname config: hot-reloaded by the config service and read
     // by the DNS local resolver and the DHCPv4 server (options 15/119).
     let lan_domain_state = Arc::new(ArcSwap::from_pointee(config.lan_hostname.clone()));
-    let config_service =
-        LandscapeConfigService::new(config.clone(), db_store_provider.clone()).await;
 
     let dns_service = startup_phase!(
         "dns_service.new",
@@ -349,16 +351,12 @@ pub(crate) async fn build_app(
         docker_service.start_to_listen_event().await
     );
 
-    startup_phase!("metric_service.start_service", metric_service.start_service().await);
-    // RAM 环形缓冲仅服务实时查询;分钟级持久化由 metric_service(MemRecording)独立负责。
-    let memory_history = landscape_common::memtrack::start_sampler();
     let auth_share = Arc::new(ArcSwap::from_pointee(config.auth.clone()));
     let app = LandscapeApp {
         home_path,
         ebpf_paths: ebpf_paths.clone(),
         route_service,
         lan_device_directory,
-        memory_history,
         docker_service,
         ebpf_service,
         system: SystemServices {

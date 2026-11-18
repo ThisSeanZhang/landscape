@@ -59,12 +59,10 @@ async fn get_memory_modules_history(
     State(state): State<LandscapeApp>,
     Query(params): Query<MemoryRecentParams>,
 ) -> LandscapeApiResult<MemorySeriesResponse> {
-    LandscapeApiResp::success(
-        state.memory_history.recent_series(
-            params.limit.unwrap_or(DEFAULT_HISTORY_LIMIT),
-            params.subsystem.as_deref(),
-        ),
-    )
+    LandscapeApiResp::success(state.system.metric_service.recent_memory_series(
+        params.limit.unwrap_or(DEFAULT_HISTORY_LIMIT),
+        params.subsystem.as_deref(),
+    ))
 }
 
 #[utoipa::path(
@@ -79,5 +77,5 @@ async fn get_memory_persisted_history(
     State(state): State<LandscapeApp>,
     Query(params): Query<MemHistoryQueryParams>,
 ) -> LandscapeApiResult<MemHistoryResponse> {
-    LandscapeApiResp::success(state.system.metric_service.query_memory_history(params).await)
+    LandscapeApiResp::success(state.system.metric_service.query_memory_history(&params).await)
 }

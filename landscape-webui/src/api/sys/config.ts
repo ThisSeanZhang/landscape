@@ -3,7 +3,6 @@ import type {
   UpdateTimeConfigRequest,
   GetGatewayConfigResponse,
   GetLanHostnameConfigResponse,
-  GetMetricConfigResponse,
   LandscapeGatewayConfig,
   LandscapeLanHostnameConfig,
   GetUiConfigResponse,
@@ -11,7 +10,6 @@ import type {
   LandscapeUiConfig,
   UpdateGatewayConfigRequest,
   UpdateLanHostnameConfigRequest,
-  UpdateMetricConfigRequest,
   UpdateUiConfigRequest,
 } from "@landscape-router/types/api/schemas";
 import {
@@ -23,8 +21,6 @@ import {
   getUiConfig,
   updateUiConfig,
   getMetricConfigFast,
-  getMetricConfig,
-  updateMetricConfig,
   getLanHostnameConfigFast,
   getLanHostnameConfig,
   updateLanHostnameConfig,
@@ -35,6 +31,12 @@ import {
 import i18n from "@/i18n";
 
 export {
+  getConnectMetricConfig,
+  updateConnectMetricConfig,
+  getDnsMetricConfig,
+  updateDnsMetricConfig,
+  getSelfMonitorConfig,
+  updateSelfMonitorConfig,
   getDnsCacheConfig,
   updateDnsCacheConfig,
   getDohConfig,
@@ -82,16 +84,6 @@ export async function update_ui_config(
 
 export async function get_metric_config(): Promise<LandscapeMetricConfig> {
   return await getMetricConfigFast();
-}
-
-export async function get_metric_config_edit(): Promise<GetMetricConfigResponse> {
-  return await getMetricConfig();
-}
-
-export async function update_metric_config(
-  payload: UpdateMetricConfigRequest,
-): Promise<void> {
-  await updateMetricConfig(payload);
 }
 
 export async function get_lan_hostname_config(): Promise<LandscapeLanHostnameConfig> {

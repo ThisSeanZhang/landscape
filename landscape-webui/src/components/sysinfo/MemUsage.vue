@@ -6,6 +6,8 @@ import { useThemeVars } from "naive-ui";
 import { ChartLine } from "@vicons/carbon";
 import { useSysInfo } from "@/stores/systeminfo";
 
+import { useCapabilityStore } from "@/stores/capability";
+const capabilities = useCapabilityStore();
 const sysinfo = useSysInfo();
 const router = useRouter();
 const { t } = useI18n({ useScope: "global" });
@@ -52,7 +54,7 @@ const getUsageColor = (percentage: number) => {
       <n-flex align="center" justify="space-between">
         <n-flex align="center" :size="4">
           <span>{{ t("sysinfo.mem") }}</span>
-          <n-tooltip trigger="hover">
+          <n-tooltip v-if="capabilities.HAS('mem_track')" trigger="hover">
             <template #trigger>
               <n-button
                 quaternary

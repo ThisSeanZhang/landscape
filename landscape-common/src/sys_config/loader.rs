@@ -126,7 +126,9 @@ impl RuntimeConfig {
                 .unwrap_or_else(|| StoreRuntimeConfig::create_default_db_store(&home_path)),
         };
 
-        let metric = config.metric.build_runtime();
+        let metric_connect = config.metric.connect.build_runtime();
+        let metric_dns = config.metric.dns.build_runtime();
+        let self_monitor = config.self_monitor.build_runtime();
         let dns_cache = config.dns.cache.build_runtime();
         let doh = config.dns.doh.build_runtime();
         let lan_hostname = config.lan_hostname.build_runtime();
@@ -140,7 +142,9 @@ impl RuntimeConfig {
             log,
             web,
             store,
-            metric,
+            metric_connect,
+            metric_dns,
+            self_monitor,
             dns_cache,
             doh,
             lan_hostname,
@@ -249,8 +253,14 @@ mod tests {
                 cache: LandscapeDnsCacheConfig { capacity: Some(123), ..Default::default() },
             },
             metric: LandscapeMetricConfig {
-                cleanup_time_budget_secs: Some(61),
-                write_batch_size: Some(123),
+                connect: crate::sys_config::ConnectMetricConfig {
+                    store: crate::sys_config::MetricStoreConfig {
+                        cleanup_time_budget_secs: Some(61),
+                        ..Default::default()
+                    },
+                    write_batch_size: Some(123),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             time: LandscapeTimeConfig { timeout_secs: Some(7), ..Default::default() },
@@ -265,11 +275,11 @@ mod tests {
         });
         assert_eq!(runtime.doh.listen_port, crate::DEFAULT_DNS_DOH_LISTEN_PORT);
         assert_eq!(runtime.dns_cache.cache_capacity, 123);
-        assert_eq!(runtime.metric.cleanup_time_budget_ms, 60_000);
-        assert_eq!(runtime.metric.write_batch_size, 123);
+        assert_eq!(runtime.metric_connect.store.cleanup_time_budget_ms, 60_000);
+        assert_eq!(runtime.metric_connect.write_batch_size, 123);
         assert_eq!(runtime.time.timeout_secs, 7);
         assert_eq!(runtime.file_config.dns.cache.capacity, Some(123));
-        assert_eq!(runtime.file_config.metric.cleanup_time_budget_secs, Some(61));
+        assert_eq!(runtime.file_config.metric.connect.store.cleanup_time_budget_secs, Some(61));
         assert_eq!(std::fs::read_to_string(path).unwrap(), content);
     }
     #[test]

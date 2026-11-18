@@ -10,7 +10,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-landscape = { path = "../landscape" }
+landscape = { path = "../landscape", default-features = false }
 landscape-common = { path = "../landscape-common", features = ["openapi"] }
 landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }

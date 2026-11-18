@@ -1,151 +1,34 @@
+import backup from "./backup";
+import dns from "./dns";
+import lanHostname from "./lan_hostname";
+import metric from "./metric/index";
+import password from "./password";
+import selfMonitor from "./self_monitor";
+import time from "./time";
+import ui from "./ui";
+
 export default {
-  time_title: "时间同步配置",
-  save_time: "保存时间同步配置",
+  directory: "配置目录",
+  welcome: "欢迎, {username}",
+
   default_enabled: "默认（启用）",
   default_disabled: "默认（禁用）",
   option_enabled: "启用",
   option_disabled: "禁用",
-  doh_listen_port: "DoH 监听端口",
-  doh_http_endpoint: "DoH 请求路径",
-  doh_port_reserved: "端口 53 已保留给 DNS，不能用于 DoH",
-  doh_port_desc: "留空使用默认端口 6053；不能使用端口 53。",
   empty_uses_default: "留空使用默认值，保存后立即生效。",
-  time_enabled: "启用时间同步",
-  time_servers: "时间服务器",
-  time_servers_desc:
-    "每行一个服务器（主机名:端口）；留空使用上方提示中的默认服务器。",
-  time_interval: "同步间隔（秒）",
-  time_timeout: "请求超时（秒）",
-  time_threshold: "校时阈值（毫秒）",
-  time_samples: "每个服务器采样数",
-
-  directory: "配置目录",
-  ui_title: "系统偏好设置",
-  save_cache: "保存缓存配置",
-  dns_transports: "DNS 同时监听 UDP/53 和 TCP/53。",
-  doh_title: "DNS over HTTPS（DoH）",
-  save_doh: "保存 DoH 配置",
-  doh_dhcp_renewal:
-    "端点切换后，已有 DHCPv4 客户端可能会继续使用旧端点，直到下次续租。",
-  dns_title: "DNS 缓存",
-  lan_hostname_title: "局域网主机名配置",
-  metric_title: "指标监控配置",
-  backup_title: "备份与导出",
 
   save_ui: "保存设置",
-  save_lan_hostname: "保存局域网主机名配置",
-  save_metric: "保存指标配置",
-
-  lan_hostname_enable: "启用局域网主机名解析",
-  lan_suffix: "局域网域名后缀",
-  lan_suffix_placeholder: "例如 lan 或 home.arpa",
-  lan_suffix_desc:
-    "用于局域网设备主机名解析和 PTR 记录；支持多标签域名，国际化字符会转换为 Punycode；留空将使用默认后缀：lan。",
-
-  metric_mode: "指标模式",
-  metric_mode_desc: "关闭、仅内存实时、或启用历史持久化",
-  metric_mode_off: "关闭 (OFF)",
-  metric_mode_memory: "内存实时 (MEM)",
-  metric_mode_persistent: "持久化 (SQLite)",
-
-  language: "语言设定",
-  theme: "外观主题",
-  theme_placeholder: "浅色模式适配中，暂不可用",
-  timezone: "系统时区",
-  timezone_placeholder: "请选择或搜索，例如: Asia/Shanghai",
-
-  cache_capacity: "缓存容量",
-  cache_capacity_desc: "DNS 缓存允许保存的最大记录数",
-  cache_ttl: "缓存 TTL (秒)",
-  cache_ttl_desc: "DNS 缓存记录的最长保存时间",
-  cache_negative_ttl: "否定缓存 TTL (秒)",
-  cache_negative_ttl_desc: "DNS 否定缓存（NXDOMAIN/NODATA）记录的保存时间",
-
-  conn_retention_mins: "连接指标设置",
-  connect_second_window_mins: "秒级热窗口 (分钟)",
-  connect_second_window_mins_desc: "秒级连接图表在内存中的保留窗口",
-  conn_retention_minute_days: "聚合数据保存 (分钟级)",
-  conn_retention_minute_days_desc: "按分钟聚合的连接指标保存期限（天）",
-  conn_retention_hour_days: "聚合数据保存 (小时级)",
-  conn_retention_hour_days_desc: "按小时聚合的连接指标保存期限（天）",
-  conn_retention_day_days: "聚合数据保存 (天级)",
-  conn_retention_day_days_desc: "按天聚合的连接指标保存期限（天）",
-  conn_detail_settings: "连接明细设置",
-  conn_summary_retention_days: "明细保存天数",
-  conn_summary_retention_days_desc: "单连接明细汇总行的保存期限（天）",
-  conn_summary_max_rows: "明细行数上限",
-  conn_summary_max_rows_desc:
-    "conn_summaries 表保留的最大明细汇总行数（0 = 不限制）",
-  connect_db_max_mb: "连接指标数据库容量上限（MB）",
-  connect_db_max_mb_desc:
-    "连接指标数据库的最大容量（0 = 不限制，非 0 最小 16MB）；接近上限时会提前清理最旧数据以保留写入余量",
-  dns_retention_days: "DNS 数据保存天数",
-  dns_retention_days_desc: "DNS 查询日志和指标的保存期限（天）",
-  dns_1m_retention_days: "DNS 1分钟聚合桶保留天数",
-  dns_1m_retention_days_desc:
-    "1 分钟预聚合桶的保存期限（天），用于状态卡与仪表盘统计，通常大于原始日志保留期",
-  dns_db_max_mb: "DNS 指标数据库容量上限（MB）",
-  dns_db_max_mb_desc:
-    "DNS 指标数据库的最大容量（0 = 不限制，非 0 最小 16MB）；接近上限时会提前清理最旧数据以保留写入余量",
-  db_cap_min_hint: "容量上限需为 0（不限制）或不小于 16MB",
-
-  performance_settings: "性能与维护参数",
-  write_batch_size: "写入批处理大小",
-  write_batch_size_desc: "指标数据每次刷盘的最大记录数",
-  write_flush_interval: "强制提交间隔 (秒)",
-  write_flush_interval_desc:
-    "指标数据写入磁盘的强制刷新时间间隔；DNS 日志实际按 ≤15 秒强制落库",
-
-  maintenance_settings: "自动清理设置",
-  cleanup_interval: "数据清理间隔 (秒)",
-  cleanup_interval_desc: "执行过期指标历史清理任务的时间间隔",
-  cleanup_budget: "清理时间预算 (秒)",
-  cleanup_budget_desc: "单次清理任务允许运行的最大秒数（切片清理）",
-  cleanup_slice_window: "清理分片窗口 (秒)",
-  cleanup_slice_window_desc: "单次清理事务处理的时间范围粒度",
-
-  backup_desc:
-    "你可以将当前路由器的所有配置（除 Docker 相关）导出为一个初始化文件，用于快速恢复或迁移。",
-  export_init: "导出当前所有配置为 Init 文件",
-  import_init_desc:
-    "上传 Init 文件会先校验版本。关闭“仅上传”后，会把该文件保存为下一次初始化使用的 landscape_init.toml。",
-  select_init_file: "选择 Init 文件",
-  upload_only: "仅上传并校验",
-  import_init: "导入 Init 文件",
-  import_file_required: "请选择一个 Init 文件",
-  import_validate_success: "Init 文件校验成功，版本: {version}",
-  import_install_success:
-    "Init 文件已保存为下一次初始化文件，版本: {version}，初始化 lock 已处理",
-  import_install_warning:
-    "关闭仅上传会覆盖配置目录中的 landscape_init.toml，并删除初始化 lock。下次重启将按该 Init 文件重新初始化。",
-
-  // 修改密码
-  password_title: "修改密码",
-  current_password: "当前密码",
-  current_password_placeholder: "请输入当前密码",
-  new_password: "新密码",
-  new_password_placeholder: "请输入新密码（≥8位，含大小写字母和数字）",
-  confirm_password: "确认新密码",
-  confirm_password_placeholder: "请再次输入新密码",
-  change_password: "修改密码",
-  password_change_success: "密码修改成功，请重新登录",
-  password_mismatch: "两次输入的新密码不一致",
-  password_same_as_old: "新密码不能与旧密码相同",
-  password_min_length: "密码长度不能少于 8 位",
-  password_need_lowercase: "密码必须包含小写字母",
-  password_need_uppercase: "密码必须包含大写字母",
-  password_need_digit: "密码必须包含数字",
-  current_password_required: "请输入当前密码",
-
   load_failed: "加载配置失败",
   save_success: "保存成功",
   save_failed: "保存失败",
   conflict: "配置冲突，请刷新后重试",
 
-  chinese_simplified: "简体中文",
-  english: "English",
-  dark_mode: "深色模式",
-  light_mode: "浅色模式",
-  welcome: "欢迎, {username}",
-  console_download_failed: "下载配置失败",
+  ...backup,
+  ...dns,
+  ...lanHostname,
+  ...metric,
+  ...password,
+  ...selfMonitor,
+  ...time,
+  ...ui,
 };

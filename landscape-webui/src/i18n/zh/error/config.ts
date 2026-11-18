@@ -1,4 +1,6 @@
 export default {
+  "self_monitor.invalid_retention": "内存历史记录至少保留一天。",
+  "metric.sqlite_unavailable": "当前构建未启用 SQLite 指标存储。",
   "metric.invalid_db_max_mb":
     "{field} 必须为 0（不限制）或介于 16～1048576 MB 之间，当前为 {value}",
   "metric.invalid_cleanup_time_budget":

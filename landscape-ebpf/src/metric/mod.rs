@@ -30,6 +30,8 @@ pub enum EventSourceStopOutcome {
 pub trait MetricSourceHandle: Send + Sync {
     /// 触发取消信号,让后台任务尽快退出(只发信号,不等待回收)。
     fn request_stop(&self);
+    /// Wait for an unsolicited exit. Cancel-safe when racing a configuration change.
+    async fn wait_for_exit(&mut self);
     /// 限时回收:正常退出/panic/超时 abort,返回实际终止方式。消费句柄。
     async fn stop_with_budget(self: Box<Self>, budget: Duration) -> EventSourceStopOutcome;
 }
@@ -151,6 +153,10 @@ impl Drop for ConnectMetricEventSource {
 impl MetricSourceHandle for ConnectMetricEventSource {
     fn request_stop(&self) {
         self.cancel.cancel();
+    }
+
+    async fn wait_for_exit(&mut self) {
+        let _ = (&mut self.handle).await;
     }
 
     async fn stop_with_budget(mut self: Box<Self>, budget: Duration) -> EventSourceStopOutcome {

@@ -1,4 +1,8 @@
 export default {
+  "self_monitor.invalid_retention":
+    "Memory history retention must be at least one day.",
+  "metric.sqlite_unavailable":
+    "SQLite metric storage is unavailable in this build.",
   "metric.invalid_db_max_mb":
     "{field} must be 0 (unlimited) or between 16 and 1048576 MB, got {value}",
   "metric.invalid_cleanup_time_budget":

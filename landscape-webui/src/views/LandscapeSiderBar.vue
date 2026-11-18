@@ -34,7 +34,6 @@ const menu_capability: Record<string, string> = {
   gateway: "gateway",
   "metrics/conn/history": "metric_persistent",
   "metrics/dns": "metric_persistent",
-  "self-monitor/memory": "mem_track",
 };
 
 function applyCapability(options: MenuOption[]): MenuOption[] {
@@ -208,10 +207,14 @@ const menuOptions = computed<MenuOption[]>(() =>
           label: t("routes.dns-metric"),
           key: "metrics/dns",
         },
-        {
-          label: t("routes.self-monitor-memory"),
-          key: "self-monitor/memory",
-        },
+        ...(capabilityStore.HAS("mem_track")
+          ? [
+              {
+                label: t("routes.self-monitor-memory"),
+                key: "self-monitor/memory",
+              },
+            ]
+          : []),
         {
           label: t("routes.connect-live"),
           key: "metrics/conn/live",

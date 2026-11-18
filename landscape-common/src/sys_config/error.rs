@@ -18,5 +18,8 @@ pub enum ConfigUpdateError {
     Time(#[from] crate::sys_service::time_sync::TimeSyncError),
     #[error(transparent)]
     #[api_error(transparent)]
+    SelfMonitor(#[from] super::self_monitor::SelfMonitorConfigError),
+    #[error(transparent)]
+    #[api_error(transparent)]
     Storage(#[from] crate::database::error::DbError),
 }

@@ -72,8 +72,9 @@ impl LandscapeApp {
         landscape_ebpf::maps::cleanup_pinned_maps();
 
         run_shutdown_phase("metric_service", || async {
-            self.system.metric_service.stop_service().await;
-            tracing::info!("Metric service stopped");
+            if let Err(error) = self.system.metric_service.stop_service().await {
+                tracing::warn!(%error, "metric shutdown still draining");
+            }
         })
         .await;
 

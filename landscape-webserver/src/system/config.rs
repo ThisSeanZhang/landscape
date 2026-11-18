@@ -85,11 +85,7 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
         ))
         .routes(routes!(super::ui_config::get_ui_config_fast))
         .routes(routes!(super::ui_config::get_ui_config, super::ui_config::update_ui_config))
-        .routes(routes!(super::metric_config::get_metric_config_fast))
-        .routes(routes!(
-            super::metric_config::get_metric_config,
-            super::metric_config::update_metric_config
-        ))
+        .merge(super::metric_config::paths())
         .routes(routes!(
             super::dns_config::get_dns_cache_config,
             super::dns_config::update_dns_cache_config

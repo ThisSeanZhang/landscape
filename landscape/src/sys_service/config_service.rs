@@ -3,11 +3,12 @@ use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    AuthRuntimeConfig, CacheRuntimeConfig, ConfigUpdateError, DohRuntimeConfig,
+    AuthRuntimeConfig, CacheRuntimeConfig, ConfigUpdateError, ConnectMetricConfig,
+    ConnectMetricRuntimeConfig, DnsMetricConfig, DnsMetricRuntimeConfig, DohRuntimeConfig,
     GatewayRuntimeConfig, LanHostnameRuntimeConfig, LandscapeConfig, LandscapeDnsCacheConfig,
     LandscapeDohConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig,
-    LandscapeTimeConfig, LandscapeUiConfig, MetricRuntimeConfig, RuntimeConfig,
-    RuntimeConfigSource, TimeRuntimeConfig,
+    LandscapeSelfMonitorConfig, LandscapeTimeConfig, LandscapeUiConfig, RuntimeConfig,
+    RuntimeConfigSource, SelfMonitorRuntimeConfig, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -24,6 +25,9 @@ use uuid::Uuid;
 pub struct LandscapeConfigService {
     config: Arc<ArcSwap<RuntimeConfig>>,
     store: LandscapeDBServiceProvider,
+    connect_metric_tx: watch::Sender<ConnectMetricRuntimeConfig>,
+    dns_metric_tx: watch::Sender<DnsMetricRuntimeConfig>,
+    self_monitor_tx: watch::Sender<SelfMonitorRuntimeConfig>,
     dns_cache_tx: watch::Sender<CacheRuntimeConfig>,
     doh_tx: watch::Sender<DohRuntimeConfig>,
     write_lock: Arc<Mutex<()>>,
@@ -32,6 +36,9 @@ pub struct LandscapeConfigService {
 impl LandscapeConfigService {
     pub async fn new(config: RuntimeConfig, store: LandscapeDBServiceProvider) -> Self {
         LandscapeConfigService {
+            connect_metric_tx: watch::Sender::new(config.metric_connect.clone()),
+            dns_metric_tx: watch::Sender::new(config.metric_dns.clone()),
+            self_monitor_tx: watch::Sender::new(config.self_monitor.clone()),
             dns_cache_tx: watch::Sender::new(config.dns_cache.clone()),
             doh_tx: watch::Sender::new(config.doh.clone()),
             config: Arc::new(ArcSwap::from_pointee(config)),
@@ -72,6 +79,82 @@ impl LandscapeConfigService {
         let section = Self::parse_document(&content)?;
         table[name] = section.as_item().clone();
         Ok(())
+    }
+
+    // The flat keys can supply defaults to more than one section. Materialize those
+    // values before the first independent edit so clearing a field survives restart.
+    fn migrate_flat_metric(
+        document: &mut DocumentMut,
+        config: &LandscapeConfig,
+    ) -> Result<(), DbError> {
+        const LEGACY_KEYS: &[&str] = &[
+            "mode",
+            "connect_second_window_minutes",
+            "connect_1m_retention_days",
+            "connect_1h_retention_days",
+            "connect_1d_retention_days",
+            "connect_summary_retention_days",
+            "connect_summary_max_rows",
+            "connect_db_max_mb",
+            "dns_retention_days",
+            "dns_1m_retention_days",
+            "dns_db_max_mb",
+            "write_batch_size",
+            "write_flush_interval_secs",
+            "cleanup_interval_secs",
+            "cleanup_time_budget_secs",
+            "cleanup_slice_window_secs",
+        ];
+        let Some(item) = document.get_mut("metric") else {
+            return Ok(());
+        };
+        if !item
+            .as_table_like()
+            .is_some_and(|table| LEGACY_KEYS.iter().any(|key| table.contains_key(key)))
+        {
+            return Ok(());
+        }
+        let table = item.as_table_like_mut().expect("legacy keys found in table");
+        for key in LEGACY_KEYS {
+            table.remove(key);
+        }
+        let serialized =
+            toml::to_string(&config.metric).map_err(|err| DbError::Internal(err.to_string()))?;
+        let canonical = Self::parse_document(&serialized)?;
+        Self::fill_missing_fields(table, canonical.as_table());
+
+        if let Some(enabled) = config.self_monitor.history_enabled {
+            let section = document
+                .entry("self_monitor")
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let table = section
+                .as_table_like_mut()
+                .ok_or_else(|| DbError::Internal("expected self_monitor table".into()))?;
+            if !table.contains_key("history_enabled") {
+                table.insert("history_enabled", toml_edit::value(enabled));
+            }
+        }
+        Ok(())
+    }
+
+    fn fill_missing_fields(
+        target: &mut dyn toml_edit::TableLike,
+        defaults: &dyn toml_edit::TableLike,
+    ) {
+        for (name, value) in defaults.iter() {
+            match target.get_mut(name) {
+                None => {
+                    target.insert(name, value.clone());
+                }
+                Some(current) => {
+                    if let (Some(current), Some(defaults)) =
+                        (current.as_table_like_mut(), value.as_table_like())
+                    {
+                        Self::fill_missing_fields(current, defaults);
+                    }
+                }
+            }
+        }
     }
 
     fn write_config_file(path: &Path, content: &str) -> Result<(), DbError> {
@@ -142,10 +225,13 @@ impl LandscapeConfigService {
         Self::ensure_expected_hash(select(&current_config), &expected_hash)?;
 
         let mut document = Self::parse_document(&content)?;
+        if matches!(section_path.first(), Some(&"metric" | &"self_monitor")) {
+            Self::migrate_flat_metric(&mut document, &current_config)?;
+        }
         let (section_name, parents) = section_path.split_last().expect("nonempty section path");
         let mut table = document.as_table_mut();
         for parent in parents {
-            let item = table.entry(*parent).or_insert(toml_edit::Item::None);
+            let item = table.entry(parent).or_insert(toml_edit::Item::None);
             if !item.is_table() {
                 *item =
                     match std::mem::take(item) {
@@ -212,8 +298,16 @@ impl LandscapeConfigService {
         self.config.load().file_config.metric.clone()
     }
 
-    pub fn get_metric_runtime_config(&self) -> MetricRuntimeConfig {
-        self.config.load().metric.clone()
+    pub fn subscribe_connect_metric(&self) -> watch::Receiver<ConnectMetricRuntimeConfig> {
+        self.connect_metric_tx.subscribe()
+    }
+
+    pub fn subscribe_dns_metric(&self) -> watch::Receiver<DnsMetricRuntimeConfig> {
+        self.dns_metric_tx.subscribe()
+    }
+
+    pub fn subscribe_self_monitor(&self) -> watch::Receiver<SelfMonitorRuntimeConfig> {
+        self.self_monitor_tx.subscribe()
     }
 
     pub fn subscribe_dns_cache(&self) -> watch::Receiver<CacheRuntimeConfig> {
@@ -272,10 +366,18 @@ impl LandscapeConfigService {
         self.read_section_from_file(|config| config.ui)
     }
 
-    pub async fn get_metric_config_from_file(
+    pub fn get_connect_metric_from_file(&self) -> Result<(ConnectMetricConfig, String), DbError> {
+        self.read_section_from_file(|config| config.metric.connect)
+    }
+
+    pub fn get_dns_metric_from_file(&self) -> Result<(DnsMetricConfig, String), DbError> {
+        self.read_section_from_file(|config| config.metric.dns)
+    }
+
+    pub fn get_self_monitor_from_file(
         &self,
-    ) -> Result<(LandscapeMetricConfig, String), DbError> {
-        self.read_section_from_file(|config| config.metric)
+    ) -> Result<(LandscapeSelfMonitorConfig, String), DbError> {
+        self.read_section_from_file(|config| config.self_monitor)
     }
 
     pub fn get_config_path(&self) -> std::path::PathBuf {
@@ -304,24 +406,31 @@ impl LandscapeConfigService {
         )
         .await
     }
-    pub async fn update_metric_config(
+    pub async fn update_connect_metric_config(
         &self,
-        new_metric: LandscapeMetricConfig,
+        section: ConnectMetricConfig,
         expected_hash: String,
     ) -> Result<(), ConfigUpdateError> {
-        let runtime = new_metric.to_runtime()?;
+        let runtime = section.to_runtime()?;
         self.update_section(
-            &["metric"],
+            &["metric", "connect"],
             &[],
-            new_metric,
+            section,
             expected_hash,
-            |config| &config.metric,
-            |new_metric| {
+            |cfg| &cfg.metric.connect,
+            |section| {
                 self.config.rcu(|old| {
-                    let mut new_config = (**old).clone();
-                    new_config.metric = runtime.clone();
-                    new_config.file_config.metric = new_metric.clone();
-                    new_config
+                    let mut next = (**old).clone();
+                    next.file_config.metric.connect = section.clone();
+                    next.metric_connect = runtime.clone();
+                    next
+                });
+                self.connect_metric_tx.send_if_modified(|current| {
+                    if *current == runtime {
+                        return false;
+                    }
+                    *current = runtime;
+                    true
                 });
             },
         )
@@ -329,30 +438,68 @@ impl LandscapeConfigService {
         Ok(())
     }
 
-    /// Restore an already-observed file/runtime pair after engine apply fails.
-    /// The source may be invalid legacy config whose runtime used startup defaults.
-    pub async fn restore_metric_config(
+    pub async fn update_dns_metric_config(
         &self,
-        previous_config: LandscapeMetricConfig,
-        previous_runtime: MetricRuntimeConfig,
+        section: DnsMetricConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = section.to_runtime()?;
         self.update_section(
-            &["metric"],
+            &["metric", "dns"],
             &[],
-            previous_config,
+            section,
             expected_hash,
-            |config| &config.metric,
-            |previous_config| {
+            |cfg| &cfg.metric.dns,
+            |section| {
                 self.config.rcu(|old| {
-                    let mut new_config = (**old).clone();
-                    new_config.metric = previous_runtime.clone();
-                    new_config.file_config.metric = previous_config.clone();
-                    new_config
+                    let mut next = (**old).clone();
+                    next.file_config.metric.dns = section.clone();
+                    next.metric_dns = runtime.clone();
+                    next
+                });
+                self.dns_metric_tx.send_if_modified(|current| {
+                    if *current == runtime {
+                        return false;
+                    }
+                    *current = runtime;
+                    true
                 });
             },
         )
-        .await
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_self_monitor_config(
+        &self,
+        section: LandscapeSelfMonitorConfig,
+        expected_hash: String,
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = section.to_runtime()?;
+        self.update_section(
+            &["self_monitor"],
+            &[],
+            section,
+            expected_hash,
+            |cfg| &cfg.self_monitor,
+            |section| {
+                self.config.rcu(|old| {
+                    let mut next = (**old).clone();
+                    next.file_config.self_monitor = section.clone();
+                    next.self_monitor = runtime.clone();
+                    next
+                });
+                self.self_monitor_tx.send_if_modified(|current| {
+                    if *current == runtime {
+                        return false;
+                    }
+                    *current = runtime;
+                    true
+                });
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn update_dns_cache_config(
@@ -569,12 +716,15 @@ mod tests {
             .await;
         assert!(matches!(result, Err(ConfigUpdateError::Dns(_))));
         let result = service
-            .update_metric_config(
-                LandscapeMetricConfig {
-                    cleanup_time_budget_secs: Some(61),
+            .update_connect_metric_config(
+                ConnectMetricConfig {
+                    store: landscape_common::sys_config::MetricStoreConfig {
+                        cleanup_time_budget_secs: Some(61),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                LandscapeConfigService::section_hash(&LandscapeMetricConfig::default()).unwrap(),
+                LandscapeConfigService::section_hash(&ConnectMetricConfig::default()).unwrap(),
             )
             .await;
         assert!(matches!(result, Err(ConfigUpdateError::Metric(_))));
@@ -665,60 +815,74 @@ mod tests {
     #[tokio::test]
     async fn metric_clear_matches_restart_and_conflicts_do_not_commit() {
         let (dir, service) = service().await;
-        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
+        let mut metric = service.subscribe_connect_metric();
+        let (_, hash) = service.get_connect_metric_from_file().unwrap();
         service
-            .update_metric_config(
-                LandscapeMetricConfig {
+            .update_connect_metric_config(
+                ConnectMetricConfig {
                     write_batch_size: Some(123),
-                    connect_1d_retention_days: Some(42),
+                    retention_1d_days: Some(42),
                     ..Default::default()
                 },
                 hash.clone(),
             )
             .await
             .unwrap();
-        assert_eq!(service.get_metric_runtime_config().write_batch_size, 123);
+        assert_eq!(metric.borrow_and_update().write_batch_size, 123);
         let content = std::fs::read_to_string(service.get_config_path()).unwrap();
         assert!(matches!(
-            service.update_metric_config(LandscapeMetricConfig::default(), hash).await,
+            service.update_connect_metric_config(ConnectMetricConfig::default(), hash).await,
             Err(ConfigUpdateError::Storage(DbError::Conflict))
         ));
-        assert_eq!(service.get_metric_runtime_config().write_batch_size, 123);
+        assert!(!metric.has_changed().unwrap());
+        assert_eq!(metric.borrow().write_batch_size, 123);
         assert_eq!(std::fs::read_to_string(service.get_config_path()).unwrap(), content);
-        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
-        service.update_metric_config(LandscapeMetricConfig::default(), hash).await.unwrap();
+        let (_, hash) = service.get_connect_metric_from_file().unwrap();
+        service.update_connect_metric_config(ConnectMetricConfig::default(), hash).await.unwrap();
         let restarted = RuntimeConfig::new(WebCommArgs {
             config_dir: Some(dir.path().to_path_buf()),
             database_path: Some("sqlite::memory:".into()),
             ..Default::default()
         });
-        assert_eq!(service.get_metric_runtime_config(), restarted.metric);
-        assert_eq!(restarted.metric, (LandscapeMetricConfig::default()).to_runtime().unwrap());
+        assert!(metric.has_changed().unwrap());
+        assert_eq!(*metric.borrow_and_update(), restarted.metric_connect);
+        let (_, hash) = service.get_connect_metric_from_file().unwrap();
+        service.update_connect_metric_config(ConnectMetricConfig::default(), hash).await.unwrap();
+        assert!(!metric.has_changed().unwrap());
+        assert_eq!(
+            restarted.metric_connect,
+            (ConnectMetricConfig::default()).to_runtime().unwrap()
+        );
     }
     #[tokio::test]
-    async fn rollback_restores_legacy_source_and_valid_runtime() {
+    async fn editing_legacy_sections_preserves_sibling_values_and_hashes() {
         let (_dir, service) = service().await;
-        let legacy = LandscapeMetricConfig {
-            cleanup_time_budget_secs: Some(61),
-            ..Default::default()
-        };
-        let source = LandscapeConfig { metric: legacy.clone(), ..Default::default() };
-        std::fs::write(service.get_config_path(), toml::to_string(&source).unwrap()).unwrap();
-        let previous_runtime = service.get_metric_runtime_config();
-        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
-        service
-            .update_metric_config(
-                LandscapeMetricConfig { write_batch_size: Some(123), ..Default::default() },
-                hash,
-            )
-            .await
-            .unwrap();
-        let (_, hash) = service.get_metric_config_from_file().await.unwrap();
-        service.restore_metric_config(legacy, previous_runtime.clone(), hash).await.unwrap();
-        let (restored, _) = service.get_metric_config_from_file().await.unwrap();
-        assert_eq!(restored.cleanup_time_budget_secs, Some(61));
-        assert_eq!(service.get_metric_runtime_config(), previous_runtime);
+        std::fs::write(
+            service.get_config_path(),
+            "[metric]\nmode='memory'\ncleanup_interval_secs=42\n[metric.dns]\n# keep DNS comment\nfuture_option=true\n[time]\ntimezone='UTC'\n",
+        )
+        .unwrap();
+        let dns = service.subscribe_dns_metric();
+        let monitor = service.subscribe_self_monitor();
+        let (old_dns, dns_hash) = service.get_dns_metric_from_file().unwrap();
+        let (old_monitor, monitor_hash) = service.get_self_monitor_from_file().unwrap();
+        let (_, hash) = service.get_connect_metric_from_file().unwrap();
+        service.update_connect_metric_config(ConnectMetricConfig::default(), hash).await.unwrap();
+        assert_eq!(
+            service.get_connect_metric_from_file().unwrap().0,
+            ConnectMetricConfig::default()
+        );
+        assert_eq!(service.get_dns_metric_from_file().unwrap(), (old_dns.clone(), dns_hash));
+        let saved = std::fs::read_to_string(service.get_config_path()).unwrap();
+        assert!(saved.contains("# keep DNS comment"));
+        assert!(saved.contains("future_option=true"));
+        assert_eq!(old_dns.store.cleanup_interval_secs, Some(42));
+        assert_eq!(old_monitor.history_enabled, Some(false));
+        assert_eq!(service.get_self_monitor_from_file().unwrap(), (old_monitor, monitor_hash));
+        assert!(!dns.has_changed().unwrap());
+        assert!(!monitor.has_changed().unwrap());
     }
+
     #[tokio::test]
     async fn time_update_uses_the_same_normalized_runtime_as_restart() {
         let (dir, service) = service().await;

@@ -57,7 +57,7 @@ async fn get_iface_stats(
     responses((status = 200, description = "Success", body = CommonApiResp<ServiceStatus>))
 )]
 async fn get_metric_status(State(state): State<LandscapeApp>) -> LandscapeApiResult<ServiceStatus> {
-    let status = state.system.metric_service.status.current();
+    let status = state.system.metric_service.status();
     LandscapeApiResp::success(status)
 }
 

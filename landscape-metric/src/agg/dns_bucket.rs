@@ -361,12 +361,12 @@ impl DnsSummaryParts {
     }
 
     /// 已记录延迟样本的均值(ms);无样本时为 0。
-    #[cfg(test)]
+    #[cfg(all(test, feature = "metric-persistent"))]
     pub(crate) fn avg_duration_ms(&self) -> f64 {
         if self.latency.is_empty() { 0.0 } else { self.latency.mean() }
     }
 
-    /// 组装轻量摘要(计数 + 延迟分位数,与 sqlite 回退路径同语义)。
+    /// 组装首页内存窗口的轻量摘要(计数 + 延迟分位数)。
     pub(crate) fn into_lightweight_response(self) -> DnsLightweightSummaryResponse {
         let record_count = self.latency.len();
         DnsLightweightSummaryResponse {

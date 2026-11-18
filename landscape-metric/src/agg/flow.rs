@@ -2,7 +2,7 @@ use landscape_common::metric::connect::{
     ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectRealtimeStatus, ConnectStatusType,
     IfaceRealtimeStat, IpAggregatedStats, IpRealtimeStat,
 };
-use landscape_common::sys_config::MetricRuntimeConfig;
+use landscape_common::sys_config::ConnectMetricRuntimeConfig;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -47,11 +47,11 @@ pub(crate) fn day_refresh_slot(report_time: u64) -> u64 {
     bucket_start(report_time, MS_PER_HOUR)
 }
 
-pub(crate) fn second_window_ms(config: &MetricRuntimeConfig) -> u64 {
-    config.connect_second_window_minutes.max(1).saturating_mul(MS_PER_MINUTE)
+pub(crate) fn second_window_ms(config: &ConnectMetricRuntimeConfig) -> u64 {
+    config.second_window_minutes.max(1).saturating_mul(MS_PER_MINUTE)
 }
 
-pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
+pub(crate) fn second_ring_capacity(config: &ConnectMetricRuntimeConfig) -> usize {
     let target_points = second_window_ms(config) / DEFAULT_CONNECT_SAMPLE_INTERVAL_MS;
     target_points.saturating_add(8).clamp(32, 4096) as usize
 }
@@ -789,25 +789,14 @@ mod tests {
         assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
     }
 
-    fn test_config(window_minutes: u64) -> MetricRuntimeConfig {
-        MetricRuntimeConfig {
-            mode: landscape_common::sys_config::MetricMode::Memory,
-            connect_second_window_minutes: window_minutes,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 7,
-            connect_1d_retention_days: 30,
-            connect_summary_retention_days: 30,
-            connect_summary_max_rows: 0,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 7,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 2,
-            write_flush_interval_secs: 3600,
-            cleanup_interval_secs: 3600,
-            cleanup_time_budget_ms: 1_000,
-            cleanup_slice_window_secs: 60,
-        }
+    fn test_config(window_minutes: u64) -> ConnectMetricRuntimeConfig {
+        use landscape_common::sys_config::{ConnectMetricConfig, RuntimeConfigSource};
+        let mut config = ConnectMetricConfig::default().build_runtime();
+        config.second_window_minutes = window_minutes;
+        config.write_batch_size = 2;
+        config.store.cleanup_interval_secs = 3600;
+        config.store.write_flush_interval_secs = 3600;
+        config
     }
 
     #[test]

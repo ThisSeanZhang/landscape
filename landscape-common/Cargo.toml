@@ -58,6 +58,7 @@ utoipa = { workspace = true, optional = true }
 e2e-acme = []
 openapi = ["utoipa"]
 mem-track = []
+metric-persistent = []
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -30,9 +30,16 @@ pub use lan_hostname::{
     LandscapeLanHostnameConfig, UpdateLanHostnameConfigRequest,
 };
 pub use log::{LandscapeLogConfig, LogRuntimeConfig};
+pub mod self_monitor;
 pub use metric::{
-    GetMetricConfigResponse, LandscapeMetricConfig, MetricMode, MetricRuntimeConfig,
-    UpdateMetricConfigRequest,
+    ConnectMetricConfig, ConnectMetricRuntimeConfig, DnsMetricConfig, DnsMetricRuntimeConfig,
+    GetConnectMetricConfigResponse, GetDnsMetricConfigResponse, LandscapeMetricConfig,
+    MetricStoreBackend, MetricStoreConfig, MetricStoreRuntimeConfig,
+    UpdateConnectMetricConfigRequest, UpdateDnsMetricConfigRequest,
+};
+pub use self_monitor::{
+    GetSelfMonitorConfigResponse, LandscapeSelfMonitorConfig, SelfMonitorRuntimeConfig,
+    UpdateSelfMonitorConfigRequest,
 };
 pub use store::{LandscapeStoreConfig, StoreRuntimeConfig};
 pub use time::{
@@ -49,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(remote = "Self")]
 pub struct LandscapeConfig {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
@@ -66,6 +74,8 @@ pub struct LandscapeConfig {
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub metric: LandscapeMetricConfig,
     #[serde(default)]
+    pub self_monitor: LandscapeSelfMonitorConfig,
+    #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = true))]
     pub dns: LandscapeDnsConfig,
     #[serde(default, alias = "hostname_registry")]
@@ -82,6 +92,20 @@ pub struct LandscapeConfig {
     pub gateway: LandscapeGatewayConfig,
 }
 
+impl Serialize for LandscapeConfig {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, s)
+    }
+}
+impl<'de> Deserialize<'de> for LandscapeConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut file = Self::deserialize(d)?;
+        file.self_monitor.history_enabled =
+            file.self_monitor.history_enabled.or(file.metric.legacy_history_enabled.take());
+        Ok(file)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub home_path: PathBuf,
@@ -90,7 +114,9 @@ pub struct RuntimeConfig {
     pub log: LogRuntimeConfig,
     pub web: WebRuntimeConfig,
     pub store: StoreRuntimeConfig,
-    pub metric: MetricRuntimeConfig,
+    pub metric_connect: ConnectMetricRuntimeConfig,
+    pub metric_dns: DnsMetricRuntimeConfig,
+    pub self_monitor: SelfMonitorRuntimeConfig,
     pub dns_cache: CacheRuntimeConfig,
     pub doh: DohRuntimeConfig,
     pub lan_hostname: LanHostnameRuntimeConfig,
@@ -133,23 +159,9 @@ impl RuntimeConfig {
          Database Connect: {}\n\
          \n\
          [Metric]\n\
-         Mode: {:?}\n\
-         Connect Second Window: {} mins\n\
-         Connect 1m Retention: {} days\n\
-         Connect 1h Retention: {} days\n\
-         Connect 1d Retention: {} days\n\
-         Connect Summary Retention: {} days\n\
-         Connect Summary Max Rows: {}\n\
-         Connect Database Max Size: {} bytes\n\
-         DNS Retention: {} days\n\
-         DNS 1m Retention: {} days\n\
-         DNS Database Max Size: {} bytes\n\
-             Write Batch Size: {}\n\
-         Write Flush Interval: {}s\n\
-         Cleanup Interval: {}s\n\
-         Cleanup Budget: {}ms\n\
-          Cleanup Slice Window: {}s\n\
-          \n\
+         Connect: {:?}\n\
+         DNS: {:?}\n\
+         Self-monitor: {:?}\n\
           [Time]\n\
           Enabled: {}\n\
           NTP Servers: {}\n\
@@ -167,22 +179,9 @@ impl RuntimeConfig {
             address_http_str,
             address_https_str,
             self.store.database_path,
-            self.metric.mode,
-            self.metric.connect_second_window_minutes,
-            self.metric.connect_1m_retention_days,
-            self.metric.connect_1h_retention_days,
-            self.metric.connect_1d_retention_days,
-            self.metric.connect_summary_retention_days,
-            self.metric.connect_summary_max_rows,
-            self.metric.connect_db_max_bytes,
-            self.metric.dns_retention_days,
-            self.metric.dns_1m_retention_days,
-            self.metric.dns_db_max_bytes,
-            self.metric.write_batch_size,
-            self.metric.write_flush_interval_secs,
-            self.metric.cleanup_interval_secs,
-            self.metric.cleanup_time_budget_ms,
-            self.metric.cleanup_slice_window_secs,
+            self.metric_connect,
+            self.metric_dns,
+            self.self_monitor,
             self.time.enabled,
             self.time.servers.join(", "),
             self.time.sync_interval_secs,

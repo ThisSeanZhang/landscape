@@ -1,17 +1,30 @@
+use super::config::{ConnectMetricConfig, DnsMetricConfig};
 use serde::{Deserialize, Serialize};
 
-use super::config::LandscapeMetricConfig;
-
-#[derive(Serialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct GetMetricConfigResponse {
-    pub metric: LandscapeMetricConfig,
+pub struct GetConnectMetricConfigResponse {
+    pub config: ConnectMetricConfig,
     pub hash: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct UpdateMetricConfigRequest {
-    pub new_metric: LandscapeMetricConfig,
+pub struct UpdateConnectMetricConfigRequest {
+    pub config: ConnectMetricConfig,
+    pub expected_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct GetDnsMetricConfigResponse {
+    pub config: DnsMetricConfig,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct UpdateDnsMetricConfigRequest {
+    pub config: DnsMetricConfig,
     pub expected_hash: String,
 }

@@ -532,13 +532,12 @@ onUnmounted(() => {
         </n-flex>
       </n-tab-pane>
 
-      <n-tab-pane name="history" :tab="t('self_monitor.mem.history')">
-        <n-empty
-          v-if="!hasPersistent"
-          :description="t('self_monitor.mem.need_persistent')"
-          style="height: 360px; justify-content: center"
-        />
-        <n-flex v-else vertical :size="12" style="flex: 1; min-height: 0">
+      <n-tab-pane
+        v-if="hasPersistent"
+        name="history"
+        :tab="t('self_monitor.mem.history')"
+      >
+        <n-flex vertical :size="12" style="flex: 1; min-height: 0">
           <n-flex align="center" :wrap="true" size="small">
             <n-select
               v-model:value="timeRange"

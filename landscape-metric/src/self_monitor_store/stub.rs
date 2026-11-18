@@ -2,7 +2,7 @@
 //!
 //! 与 `super::persistent` 的 [`MemRecording`]/[`start_memory_recording`]
 //! API 完全同签名:行为退化为"无记录能力、查询返回空",调用方
-//! (MetricService)因此无需任何 cfg 分叉。
+//! (SelfMonitorService)因此无需任何 cfg 分叉。
 
 use std::path::PathBuf;
 
@@ -12,6 +12,10 @@ use landscape_common::self_monitor::memory::{MemHistoryQueryParams, MemHistoryRe
 pub struct MemRecording;
 
 impl MemRecording {
+    pub async fn open_existing(_home: &std::path::Path) -> Option<Self> {
+        None
+    }
+
     /// 恒返回空:非 persistent 构建不落库。
     pub async fn query_history(&self, _params: &MemHistoryQueryParams) -> MemHistoryResponse {
         MemHistoryResponse::default()

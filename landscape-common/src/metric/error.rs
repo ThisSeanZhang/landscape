@@ -3,6 +3,10 @@ use landscape_macro::LdApiError;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum MetricError {
+    #[error("SQLite metric storage is unavailable in this build")]
+    #[api_error(id = "metric.sqlite_unavailable", status = 422)]
+    SqliteUnavailable,
+
     #[error(
         "{field} must be 0 (unlimited) or between {} and {} MB, got {value}",
         crate::MIN_METRIC_DB_MAX_MB,
