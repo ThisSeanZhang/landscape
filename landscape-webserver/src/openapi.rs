@@ -441,6 +441,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "writes the OpenAPI schema for client generation"]
     fn export_openapi_json() {
         let openapi = build_full_openapi_spec();
         let json = openapi.to_pretty_json().expect("Failed to serialize OpenAPI spec");

@@ -92,7 +92,7 @@ jobs:
 
       - name: Export OpenAPI spec
         if: matrix.settings.architecture == 'aarch64'
-        run: cargo test --locked -p landscape-webserver export_openapi_json -- --nocapture
+        run: cargo test --locked -p landscape-webserver export_openapi_json -- --ignored --nocapture
 
       - name: Upload OpenAPI spec
         if: matrix.settings.architecture == 'aarch64'
