@@ -1,0 +1,12 @@
+[[gateway_rules]]
+name = "orders"
+enable = true
+domains = ["app.lab.test"]
+[gateway_rules.upstream]
+targets = [{ address = "192.0.2.10", port = 8080 }]
+[gateway_rules.match_rule]
+t = "host"
+[[gateway_rules.match_rule.path_groups]]
+prefix = "/api"
+rewrite_mode = "strip_prefix"
+upstream = { targets = [{ address = "192.0.2.10", port = 8080 }] }
