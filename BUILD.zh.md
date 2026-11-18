@@ -7,7 +7,7 @@
 在仓库中运行 `just --list` 查看可用任务。Debian 13 可用 `sudo apt install just` 安装。
 
 - 首次开发运行 `just init`，日常后端开发使用 `just build` 和 `just test`，前端开发服务器用 `./web.sh` 启动。
-- 格式化使用 `just fmt`，可传入 `--rust` 等选项。Containerlab 端到端测试使用 `just e2e`，也可以用 `just e2e-gateway` 等任务单独运行一组用例。
+- 格式化使用 `just fmt`，可传入 `--rust` 等选项。Containerlab 端到端测试按改动范围选跑，例如 Gateway 模块可运行 `just e2e-gateway`。[E2E 用例选择说明](tests/e2e/containerlab/README.md#按改动范围选择用例)
 - 整仓联调或发布使用 `./build.sh -t <arch>`。它会重建前端、整理静态资源并构建后端。
 
 ## 环境要求

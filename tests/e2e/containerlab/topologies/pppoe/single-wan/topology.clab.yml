@@ -1,0 +1,20 @@
+name: ${LANDSCAPE_LAB_NAME}
+mgmt:
+  skip-when-unused: true
+
+topology:
+  defaults:
+    kind: linux
+    image: landscape-e2e:${LANDSCAPE_LAB_NAME}
+    image-pull-policy: Never
+    network-mode: none
+    restart-policy: "no"
+  nodes:
+    router:
+      privileged: true
+    client: {}
+    wan:
+      privileged: true
+  links:
+    - endpoints: ["client:eth1", "router:lan0"]
+    - endpoints: ["router:wan0", "wan:eth1"]

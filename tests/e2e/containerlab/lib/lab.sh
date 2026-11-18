@@ -85,6 +85,10 @@ run_lab() {
     deploy_started=true
     containerlab deploy -t "$topology"
 
+    if declare -F prepare_peers >/dev/null; then
+        prepare_peers
+    fi
+
     # Use a private bpffs and container-local config/SQLite on each run.
     docker exec "$router" mount -t bpf bpf /sys/fs/bpf
     docker exec "$router" mkdir -p /var/lib/landscape

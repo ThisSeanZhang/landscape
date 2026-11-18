@@ -35,10 +35,10 @@ fmt *args:
     ./fmt.sh "$@"
 
 # Run all Containerlab cases in sequence
-e2e: e2e-lan e2e-gateway e2e-acme
+e2e: e2e-lan e2e-gateway e2e-acme e2e-pppoe
 
-# Run LAN forwarding and lease acquisition cases
-e2e-lan: e2e-lan-static e2e-lan-dhcp
+# Run LAN forwarding, DHCP acquisition and renewal cases
+e2e-lan: e2e-lan-static e2e-lan-dhcp e2e-lan-dhcp-renew
 
 # Check IPv4 forwarding and NAT with a static client address
 e2e-lan-static:
@@ -47,6 +47,17 @@ e2e-lan-static:
 # Acquire a DHCPv4 lease and reach the WAN
 e2e-lan-dhcp:
     ./tests/e2e/containerlab/cases/lan/dhcp-acquire/run.sh
+
+# Renew a DHCPv4 lease and verify that the client can still reach the WAN
+e2e-lan-dhcp-renew:
+    ./tests/e2e/containerlab/cases/lan/dhcp-renew/run.sh
+
+# Run all PPPoE cases
+e2e-pppoe: e2e-pppoe-redial-udp
+
+# Verify an existing UDP socket recovers after a forced PPPoE redial
+e2e-pppoe-redial-udp:
+    ./tests/e2e/containerlab/cases/pppoe/redial-udp/run.sh
 
 # Run all Gateway cases
 e2e-gateway: e2e-gateway-rewrite e2e-gateway-sni e2e-gateway-update

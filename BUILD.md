@@ -7,7 +7,7 @@ This is the canonical local development guide for the repository.
 Run `just --list` in the repository to see available tasks. On Debian 13, install the runner with `sudo apt install just`.
 
 - Run `just init` for initial setup. Use `just build` and `just test` for daily backend development and `./web.sh` for the frontend dev server.
-- Use `just fmt` for formatting, with options such as `--rust`. Run the Containerlab suite with `just e2e` or a case group such as `just e2e-gateway`.
+- Use `just fmt` for formatting, with options such as `--rust`. Run the relevant Containerlab cases, for example `just e2e-gateway` for Gateway changes. [E2E test selection](tests/e2e/containerlab/README.md#按改动范围选择用例)
 - Use `./build.sh -t <arch>` for full integration or release builds. It rebuilds the frontend, stages static assets, and builds the backend.
 
 ## Requirements

@@ -62,6 +62,8 @@ pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
 ```
 
+For changes affecting network behavior or the lab, run the relevant Containerlab cases. [E2E test selection](tests/e2e/containerlab/README.md#按改动范围选择用例)
+
 ## Code Conventions
 
 ### General
