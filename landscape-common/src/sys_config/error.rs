@@ -6,6 +6,9 @@ use landscape_macro::LdApiError;
 pub enum ConfigUpdateError {
     #[error(transparent)]
     #[api_error(transparent)]
+    Password(#[from] super::auth::api::PasswordChangeError),
+    #[error(transparent)]
+    #[api_error(transparent)]
     Dns(#[from] crate::dns::error::DnsServiceError),
     #[error(transparent)]
     #[api_error(transparent)]

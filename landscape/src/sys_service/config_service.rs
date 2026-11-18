@@ -3,12 +3,13 @@ use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    AuthRuntimeConfig, CacheRuntimeConfig, ConfigUpdateError, ConnectMetricConfig,
-    ConnectMetricRuntimeConfig, DnsMetricConfig, DnsMetricRuntimeConfig, DohRuntimeConfig,
-    GatewayRuntimeConfig, LanHostnameRuntimeConfig, LandscapeConfig, LandscapeDnsCacheConfig,
-    LandscapeDohConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig,
-    LandscapeSelfMonitorConfig, LandscapeTimeConfig, LandscapeUiConfig, RuntimeConfig,
-    RuntimeConfigSource, SelfMonitorRuntimeConfig, TimeRuntimeConfig,
+    AuthRuntimeConfig, CacheRuntimeConfig, ChangePasswordRequest, ConfigUpdateError,
+    ConnectMetricConfig, ConnectMetricRuntimeConfig, DnsMetricConfig, DnsMetricRuntimeConfig,
+    DohRuntimeConfig, GatewayRuntimeConfig, LanHostnameRuntimeConfig, LandscapeConfig,
+    LandscapeDnsCacheConfig, LandscapeDohConfig, LandscapeGatewayConfig,
+    LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeSelfMonitorConfig,
+    LandscapeTimeConfig, LandscapeUiConfig, RuntimeConfig, RuntimeConfigSource,
+    SelfMonitorRuntimeConfig, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -30,12 +31,16 @@ pub struct LandscapeConfigService {
     self_monitor_tx: watch::Sender<SelfMonitorRuntimeConfig>,
     dns_cache_tx: watch::Sender<CacheRuntimeConfig>,
     doh_tx: watch::Sender<DohRuntimeConfig>,
+    auth: Arc<ArcSwap<AuthRuntimeConfig>>,
+    lan_hostname: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     write_lock: Arc<Mutex<()>>,
 }
 
 impl LandscapeConfigService {
     pub async fn new(config: RuntimeConfig, store: LandscapeDBServiceProvider) -> Self {
         LandscapeConfigService {
+            auth: Arc::new(ArcSwap::from_pointee(config.auth.clone())),
+            lan_hostname: Arc::new(ArcSwap::from_pointee(config.lan_hostname.clone())),
             connect_metric_tx: watch::Sender::new(config.metric_connect.clone()),
             dns_metric_tx: watch::Sender::new(config.metric_dns.clone()),
             self_monitor_tx: watch::Sender::new(config.self_monitor.clone()),
@@ -290,8 +295,12 @@ impl LandscapeConfigService {
         self.config.load().ui.clone()
     }
 
-    pub fn get_auth_config(&self) -> AuthRuntimeConfig {
-        self.config.load().auth.clone()
+    pub fn shared_auth(&self) -> Arc<ArcSwap<AuthRuntimeConfig>> {
+        self.auth.clone()
+    }
+
+    pub fn shared_lan_hostname(&self) -> Arc<ArcSwap<LanHostnameRuntimeConfig>> {
+        self.lan_hostname.clone()
     }
 
     pub fn get_metric_config_from_memory(&self) -> LandscapeMetricConfig {
@@ -342,8 +351,8 @@ impl LandscapeConfigService {
         self.config.load().gateway.clone()
     }
 
-    pub async fn get_time_config_from_file(&self) -> (LandscapeTimeConfig, String) {
-        self.read_section_from_file(|config| config.time).unwrap_or_default()
+    pub fn get_time_config_from_file(&self) -> Result<(LandscapeTimeConfig, String), DbError> {
+        self.read_section_from_file(|config| config.time)
     }
 
     pub fn get_dns_cache_from_file(&self) -> Result<(LandscapeDnsCacheConfig, String), DbError> {
@@ -354,12 +363,16 @@ impl LandscapeConfigService {
         self.read_section_from_file(|config| config.dns.doh)
     }
 
-    pub async fn get_lan_hostname_config_from_file(&self) -> (LandscapeLanHostnameConfig, String) {
-        self.read_section_from_file(|config| config.lan_hostname).unwrap_or_default()
+    pub fn get_lan_hostname_config_from_file(
+        &self,
+    ) -> Result<(LandscapeLanHostnameConfig, String), DbError> {
+        self.read_section_from_file(|config| config.lan_hostname)
     }
 
-    pub async fn get_gateway_config_from_file(&self) -> (LandscapeGatewayConfig, String) {
-        self.read_section_from_file(|config| config.gateway).unwrap_or_default()
+    pub fn get_gateway_config_from_file(
+        &self,
+    ) -> Result<(LandscapeGatewayConfig, String), DbError> {
+        self.read_section_from_file(|config| config.gateway)
     }
 
     pub async fn get_ui_config_from_file(&self) -> Result<(LandscapeUiConfig, String), DbError> {
@@ -587,6 +600,7 @@ impl LandscapeConfigService {
                     new_config.file_config.lan_hostname = file_lan_hostname.clone();
                     new_config
                 });
+                self.lan_hostname.store(Arc::new(runtime));
             },
         )
         .await?;
@@ -597,6 +611,7 @@ impl LandscapeConfigService {
         &self,
         new_time: LandscapeTimeConfig,
         expected_hash: String,
+        publish: impl FnOnce(TimeRuntimeConfig),
     ) -> Result<(), ConfigUpdateError> {
         let runtime = new_time.to_runtime()?;
         self.update_section(
@@ -612,6 +627,7 @@ impl LandscapeConfigService {
                     new_config.file_config.time = new_time.clone();
                     new_config
                 });
+                publish(runtime);
             },
         )
         .await?;
@@ -641,8 +657,13 @@ impl LandscapeConfigService {
         .await
     }
 
-    pub async fn update_auth_password(&self, new_password: String) -> Result<(), DbError> {
+    pub async fn change_password(
+        &self,
+        request: ChangePasswordRequest,
+    ) -> Result<(), ConfigUpdateError> {
         let _guard = self.write_lock.lock().await;
+        request.validate(&self.config.load().auth.admin_pass)?;
+        let new_password = request.new_password;
         let path = self.get_config_path();
         let (content, _) = Self::read_config_file(&path)?;
         let mut document = Self::parse_document(&content)?;
@@ -655,6 +676,7 @@ impl LandscapeConfigService {
             new_config.file_config.auth.admin_pass = Some(new_password.clone());
             new_config
         });
+        self.auth.store(Arc::new(self.config.load().auth.clone()));
 
         Ok(())
     }
@@ -886,7 +908,8 @@ mod tests {
     #[tokio::test]
     async fn time_update_uses_the_same_normalized_runtime_as_restart() {
         let (dir, service) = service().await;
-        let (_, hash) = service.get_time_config_from_file().await;
+        let (_, hash) = service.get_time_config_from_file().unwrap();
+        let mut published = None;
         service
             .update_time_config(
                 LandscapeTimeConfig {
@@ -896,10 +919,19 @@ mod tests {
                     ..Default::default()
                 },
                 hash,
+                |runtime| {
+                    assert!(service.write_lock.try_lock().is_err());
+                    let (_, saved) =
+                        LandscapeConfigService::read_config_file(&service.get_config_path())
+                            .unwrap();
+                    assert_eq!(runtime, saved.time.to_runtime().unwrap());
+                    published = Some(runtime);
+                },
             )
             .await
             .unwrap();
         let runtime = service.get_time_runtime_config();
+        assert_eq!(published, Some(runtime.clone()));
         assert_eq!(runtime.sync_interval_secs, 1);
         assert_eq!(runtime.timeout_secs, 1);
         assert_eq!(runtime.samples_per_server, 1);
@@ -917,7 +949,7 @@ mod tests {
             (" .Home.ARPA. ", Some("home.arpa"), "home.arpa"),
             ("   ", None, landscape_common::DEFAULT_DNS_LAN_SUFFIX),
         ] {
-            let (_, hash) = service.get_lan_hostname_config_from_file().await;
+            let (_, hash) = service.get_lan_hostname_config_from_file().unwrap();
             service
                 .update_lan_hostname_config(
                     LandscapeLanHostnameConfig {
@@ -928,12 +960,79 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            let (file, _) = service.get_lan_hostname_config_from_file().await;
+            let (file, _) = service.get_lan_hostname_config_from_file().unwrap();
             assert_eq!(file.lan_suffix.as_deref(), saved);
             assert_eq!(service.get_lan_hostname_config_from_memory().lan_suffix.as_deref(), saved);
             let runtime = service.get_lan_hostname_runtime_config();
             assert!(runtime.enable);
             assert_eq!(runtime.lan_suffix, effective);
+            assert_eq!(service.shared_lan_hostname().load().as_ref(), &runtime);
         }
+    }
+    #[tokio::test]
+    async fn a_rejected_time_edit_never_publishes_or_changes_runtime() {
+        let (dir, service) = service().await;
+        let (_, hash) = service.get_time_config_from_file().unwrap();
+        let previous = service.get_time_runtime_config();
+        let update = LandscapeTimeConfig {
+            enabled: Some(!previous.enabled),
+            ..Default::default()
+        };
+        let rejected = service
+            .update_time_config(update.clone(), "stale".into(), |_| {
+                panic!("published conflicting edit")
+            })
+            .await;
+        assert!(matches!(rejected, Err(ConfigUpdateError::Storage(DbError::Conflict))));
+        assert_eq!(service.get_time_config_from_file().unwrap().1, hash);
+        // Even a current hash cannot commit if the temporary file cannot be created.
+        dir.close().unwrap();
+        assert!(
+            service
+                .update_time_config(update, hash, |_| panic!("published failed write"))
+                .await
+                .is_err()
+        );
+        assert_eq!(service.get_time_runtime_config(), previous);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_password_changes_only_accept_the_old_password_once() {
+        use landscape_common::sys_config::auth::api::PasswordChangeError;
+        let (_dir, service) = service().await;
+        let shared = service.shared_auth();
+        let previous = shared.load().admin_pass.clone();
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let change = |password: &'static str| {
+            let service = service.clone();
+            let barrier = barrier.clone();
+            let current_password = previous.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                let result = service
+                    .change_password(ChangePasswordRequest {
+                        current_password,
+                        new_password: password.into(),
+                        confirm_password: password.into(),
+                    })
+                    .await;
+                (password, result)
+            })
+        };
+        let (first, second) = tokio::join!(change("PasswordOne1"), change("PasswordTwo2"));
+        let mut accepted = Vec::new();
+        for (password, result) in [first.unwrap(), second.unwrap()] {
+            match result {
+                Ok(()) => accepted.push(password),
+                Err(ConfigUpdateError::Password(PasswordChangeError::CurrentPasswordIncorrect)) => {
+                }
+                Err(error) => panic!("unexpected password change error: {error}"),
+            }
+        }
+        assert_eq!(accepted.len(), 1);
+        let (_, file) =
+            LandscapeConfigService::read_config_file(&service.get_config_path()).unwrap();
+        assert_eq!(file.auth.admin_pass.as_deref(), Some(accepted[0]));
+        assert_eq!(shared.load().admin_pass, accepted[0]);
     }
 }

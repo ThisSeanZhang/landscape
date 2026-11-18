@@ -1,7 +1,8 @@
 use landscape::config_service::gateway_rule_service::GatewayRuleConfigService;
 use std::{path::PathBuf, sync::Arc};
 
-use arc_swap::ArcSwap;
+use self::system_config::SystemConfigEditor;
+use axum::extract::FromRef;
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_core::time::SyncTimeService;
 use landscape_ebpf::maps::LandscapeMapPath;
@@ -36,13 +37,9 @@ use landscape::{
     wifi::WifiServiceManagerService,
 };
 
-use landscape_common::sys_config::AuthRuntimeConfig;
-use landscape_common::sys_config::{
-    ConfigUpdateError, UpdateDnsCacheConfigRequest, UpdateDohConfigRequest,
-};
-
 mod iface_lifecycle;
 mod shutdown;
+pub(crate) mod system_config;
 
 #[derive(Clone)]
 pub struct LandscapeApp {
@@ -67,28 +64,34 @@ pub struct LandscapeApp {
 
 #[derive(Clone)]
 pub(crate) struct SystemServices {
-    pub auth: Arc<ArcSwap<AuthRuntimeConfig>>,
-    pub config_service: LandscapeConfigService,
+    settings: SystemConfigEditor,
     pub dns_service: LandscapeDnsService,
-    /// Time sync (NTP) service.
-    pub time_service: SyncTimeService,
     /// Metric
     pub metric_service: MetricService,
 }
 
 impl SystemServices {
-    pub(crate) async fn update_dns_cache_config(
-        &self,
-        request: UpdateDnsCacheConfigRequest,
-    ) -> Result<(), ConfigUpdateError> {
-        self.config_service.update_dns_cache_config(request.new_cache, request.expected_hash).await
+    pub(crate) fn new(
+        config: LandscapeConfigService,
+        dns_service: LandscapeDnsService,
+        time_service: SyncTimeService,
+        metric_service: MetricService,
+    ) -> Self {
+        Self {
+            settings: SystemConfigEditor::new(config, time_service),
+            dns_service,
+            metric_service,
+        }
     }
+    pub(crate) fn time_service(&self) -> &SyncTimeService {
+        &self.settings.time
+    }
+}
 
-    pub(crate) async fn update_doh_config(
-        &self,
-        request: UpdateDohConfigRequest,
-    ) -> Result<(), ConfigUpdateError> {
-        self.config_service.update_doh_config(request.new_doh, request.expected_hash).await
+// All online TOML editors share the same commit lock and runtime publishers.
+impl FromRef<LandscapeApp> for LandscapeConfigService {
+    fn from_ref(app: &LandscapeApp) -> Self {
+        Self::from_ref(&app.system.settings)
     }
 }
 

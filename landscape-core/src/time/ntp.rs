@@ -5,6 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use landscape_common::DEFAULT_TIME_FALLBACK_SERVER;
 
 const NTP_UNIX_OFFSET_SECS: u64 = ((70_u64 * 365) + 17) * 24 * 60 * 60;
@@ -49,12 +50,12 @@ async fn query_ntp_time_with_sampling(
     timeout: StdDuration,
     samples_per_server: u8,
 ) -> io::Result<NtpQueryResult> {
-    let mut set = tokio::task::JoinSet::new();
+    // Dropping a superseded query drops all of its pending UDP samples together.
+    let mut samples = FuturesUnordered::new();
     for server in servers {
         for _ in 0..samples_per_server {
-            let server = server.clone();
-            set.spawn(async move {
-                let result = tokio::time::timeout(timeout, query_ntp_time_from_server(&server))
+            samples.push(async move {
+                let result = tokio::time::timeout(timeout, query_ntp_time_from_server(server))
                     .await
                     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "NTP query timed out"))
                     .and_then(|result| result);
@@ -66,9 +67,9 @@ async fn query_ntp_time_with_sampling(
     let mut last_error = None;
     let mut best_result: Option<NtpQueryResult> = None;
 
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok((_, Ok(result))) => {
+    while let Some((server, result)) = samples.next().await {
+        match result {
+            Ok(result) => {
                 let replace = best_result
                     .as_ref()
                     .map(|best| {
@@ -81,12 +82,9 @@ async fn query_ntp_time_with_sampling(
                     best_result = Some(result);
                 }
             }
-            Ok((server, Err(err))) => {
+            Err(err) => {
                 tracing::warn!(server, error = %err, "failed to query NTP server sample");
                 last_error = Some(err);
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "NTP sample task failed");
             }
         }
     }

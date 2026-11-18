@@ -10,6 +10,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+subtle = { workspace = true }
 http = { workspace = true }
 landscape-macro = { path = "../landscape-macro" }
 

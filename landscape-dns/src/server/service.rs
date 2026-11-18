@@ -53,8 +53,6 @@ pub struct LandscapeDnsServer {
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowDnsEntry>>>>,
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
     pub local_resolver: Arc<LocalResolver>,
-    // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
-    lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     // Stable DNS metric ingress, independent of engine generations
     pub metric_reporter: DnsMetricReporter,
     // bound UDP DNS listen address
@@ -111,7 +109,7 @@ impl LandscapeDnsServer {
         let doh_readiness = DohReadiness::default();
         let local_resolver = Arc::new(LocalResolver::new(
             lan_device_directory,
-            lan_hostname_config.clone(),
+            lan_hostname_config,
             local_answer_provider,
             doh_advertise_provider,
             doh_readiness.advertised.clone(),
@@ -136,7 +134,6 @@ impl LandscapeDnsServer {
             lifecycle: Default::default(),
             listener_failed: Default::default(),
             _mdns_service: mdns_service,
-            lan_hostname_config,
             local_resolver,
             result_sink,
             socket_registrar,
@@ -321,10 +318,6 @@ impl LandscapeDnsServer {
                 runtime.handler.renew_runtime_config(rebuild_cache).await;
             }
         }
-    }
-
-    pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {
-        self.lan_hostname_config.store(Arc::new(config));
     }
 
     pub fn cache_config(&self) -> CacheRuntimeConfig {

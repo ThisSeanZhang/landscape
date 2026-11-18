@@ -107,12 +107,19 @@ impl SyncTimeService {
 
     pub fn update_config(&self, config: TimeRuntimeConfig) {
         let config = config.normalized();
-        let _ = self.inner.config_tx.send(config.clone());
-        store_status(&self.inner.status, |status| status.enabled = config.enabled);
+        self.inner.config_tx.send_if_modified(|current| {
+            if *current == config {
+                return false;
+            }
+            *current = config;
+            true
+        });
     }
 
     pub fn status(&self) -> TimeSyncStatus {
-        self.inner.status.load_full().as_ref().clone()
+        let mut status = self.inner.status.load_full().as_ref().clone();
+        status.enabled = self.inner.config_tx.borrow().enabled;
+        status
     }
 
     /// Requests an immediate sync; errors when the service is disabled.
@@ -253,106 +260,93 @@ async fn run_time_sync_loop(
     sync_now: Arc<Notify>,
     status: StatusRef,
 ) {
-    let mut backoff_secs: u64 = 0;
-    let mut first_run = true;
-
     loop {
         let config = config_rx.borrow_and_update().clone();
-
+        let attempt_config = config_rx.clone();
         if !config.enabled {
             record_disabled_status(&status);
-            tokio::select! {
-                biased;
-                _ = stop_token.cancelled() => return,
-                changed = config_rx.changed() => {
-                    if changed.is_err() {
-                        return;
-                    }
-                    backoff_secs = 0;
-                    first_run = true;
-                }
-            }
-            continue;
         }
-
-        let period_secs = if first_run {
-            0
-        } else if backoff_secs > 0 {
-            backoff_secs
-        } else {
-            config.sync_interval_secs
-        };
-
-        store_status(&status, |next| {
-            next.enabled = true;
-            next.running = true;
-            next.next_attempt_in_secs = Some(period_secs);
-        });
-
         tokio::select! {
             biased;
             _ = stop_token.cancelled() => return,
             changed = config_rx.changed() => {
-                if changed.is_err() {
-                    return;
-                }
-                backoff_secs = 0;
-                first_run = true;
-                continue;
+                if changed.is_err() { return; }
             }
-            _ = sync_now.notified() => {
-                backoff_secs = 0;
-                first_run = false;
-            }
-            _ = tokio::time::sleep(StdDuration::from_secs(period_secs)) => {
-                first_run = false;
-            }
+            _ = sync_with_config(&*ntp_client, &*system_clock, &config, attempt_config, &sync_now, &status), if config.enabled => {}
         }
+    }
+}
 
+async fn sync_with_config(
+    ntp_client: &dyn NtpClient,
+    system_clock: &dyn SystemClock,
+    config: &TimeRuntimeConfig,
+    attempt_config: watch::Receiver<TimeRuntimeConfig>,
+    sync_now: &Notify,
+    status: &StatusRef,
+) {
+    let mut backoff_secs = 0;
+    let mut period_secs = 0;
+    loop {
+        store_status(status, |next| {
+            next.enabled = true;
+            next.running = true;
+            next.next_attempt_in_secs = Some(period_secs);
+        });
+        tokio::select! {
+            biased;
+            _ = sync_now.notified() => backoff_secs = 0,
+            _ = tokio::time::sleep(StdDuration::from_secs(period_secs)) => {}
+        }
         let attempt_at = now_ms() as f64;
         let is_initial = status.load().last_success_at.is_none();
 
-        let query_result = tokio::select! {
-            biased;
-            _ = stop_token.cancelled() => return,
-            result = ntp_client.query(
+        let query_result = ntp_client
+            .query(
                 &config.servers,
                 StdDuration::from_secs(config.timeout_secs),
                 config.samples_per_server,
-            ) => result,
-        };
+            )
+            .await;
 
         match query_result {
-            Ok(result) => match system_clock.set_time(result.synced_time).await {
-                Ok(()) => {
-                    backoff_secs = 0;
-                    let action =
-                        action_label(is_initial, config.step_threshold_ms, result.offset_ms);
-                    tracing::info!(
-                        server = %result.server,
-                        action = %action,
-                        offset_ms = result.offset_ms,
-                        delay_ms = result.delay_ms,
-                        "System time updated from NTP sync"
-                    );
-                    record_ntp_success(&status, &result, attempt_at, is_initial, action);
+            Ok(result) => {
+                let Some(outcome) =
+                    set_time_if_current(system_clock, result.synced_time, &attempt_config).await
+                else {
+                    return;
+                };
+                match outcome {
+                    Ok(()) => {
+                        backoff_secs = 0;
+                        let action =
+                            action_label(is_initial, config.step_threshold_ms, result.offset_ms);
+                        tracing::info!(
+                            server = %result.server,
+                            action = %action,
+                            offset_ms = result.offset_ms,
+                            delay_ms = result.delay_ms,
+                            "System time updated from NTP sync"
+                        );
+                        record_ntp_success(status, &result, attempt_at, is_initial, action);
+                    }
+                    Err(err) => {
+                        backoff_secs = advance_backoff(backoff_secs);
+                        tracing::warn!(
+                            server = %result.server,
+                            error = %err,
+                            "NTP sync succeeded but failed to update system clock"
+                        );
+                        record_ntp_set_failure(
+                            status,
+                            &result,
+                            attempt_at,
+                            &err.to_string(),
+                            backoff_secs,
+                        );
+                    }
                 }
-                Err(err) => {
-                    backoff_secs = advance_backoff(backoff_secs);
-                    tracing::warn!(
-                        server = %result.server,
-                        error = %err,
-                        "NTP sync succeeded but failed to update system clock"
-                    );
-                    record_ntp_set_failure(
-                        &status,
-                        &result,
-                        attempt_at,
-                        &err.to_string(),
-                        backoff_secs,
-                    );
-                }
-            },
+            }
             Err(err) => {
                 backoff_secs = advance_backoff(backoff_secs);
                 tracing::warn!(
@@ -362,7 +356,7 @@ async fn run_time_sync_loop(
                 // Only claim the clock is synced if we stepped it at least once.
                 let system_clock_synced = status.load().last_system_clock_update_at.is_some();
                 record_ntp_error(
-                    &status,
+                    status,
                     &err.to_string(),
                     attempt_at,
                     system_clock_synced,
@@ -370,7 +364,27 @@ async fn run_time_sync_loop(
                 );
             }
         }
+        period_secs = if backoff_secs > 0 { backoff_secs } else { config.sync_interval_secs };
     }
+}
+
+// Hold the config read guard only while polling the clock. For the real clock
+// this orders the clock_settime syscall with publication even if a reply and a
+// new config arrive on different threads in the same poll.
+async fn set_time_if_current(
+    clock: &dyn SystemClock,
+    time: SystemTime,
+    config: &watch::Receiver<TimeRuntimeConfig>,
+) -> Option<io::Result<()>> {
+    let mut step = clock.set_time(time);
+    std::future::poll_fn(|cx| {
+        let current = config.borrow();
+        if current.has_changed() {
+            return std::task::Poll::Ready(None);
+        }
+        step.as_mut().poll(cx).map(Some)
+    })
+    .await
 }
 
 fn advance_backoff(current: u64) -> u64 {

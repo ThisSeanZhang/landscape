@@ -93,7 +93,7 @@ impl LandscapeApp {
 
         // Time sync keeps the clock sane for every other service, stop it last.
         run_shutdown_phase("time_service", || async {
-            self.system.time_service.stop().await;
+            self.system.time_service().stop().await;
             tracing::info!("Time sync service stopped");
         })
         .await;

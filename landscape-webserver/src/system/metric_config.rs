@@ -1,3 +1,4 @@
+use crate::app::system_config::{SystemConfigChange, SystemConfigEditor};
 use axum::extract::{FromRef, State};
 use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
@@ -8,20 +9,14 @@ use landscape_common::sys_config::{
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
-
-impl FromRef<LandscapeApp> for LandscapeConfigService {
-    fn from_ref(app: &LandscapeApp) -> Self {
-        app.system.config_service.clone()
-    }
-}
 
 pub(super) fn paths<S>() -> OpenApiRouter<S>
 where
     S: Clone + Send + Sync + 'static,
     LandscapeConfigService: FromRef<S>,
+    SystemConfigEditor: FromRef<S>,
 {
     OpenApiRouter::new()
         .routes(routes!(get_metric_config_fast))
@@ -56,10 +51,10 @@ pub async fn get_connect_metric_config(
 #[utoipa::path(post,path="/config/edit/metric/connect",tag="System Config",operation_id="update_connect_metric_config",request_body=UpdateConnectMetricConfigRequest,
         responses((status=200,description="Success")))]
 pub async fn update_connect_metric_config(
-    State(configs): State<LandscapeConfigService>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateConnectMetricConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    configs.update_connect_metric_config(payload.config, payload.expected_hash).await?;
+    editor.apply(SystemConfigChange::ConnectMetric(payload)).await?;
     LandscapeApiResp::success(())
 }
 #[utoipa::path(get,path="/config/edit/metric/dns",tag="System Config",operation_id="get_dns_metric_config",
@@ -74,10 +69,10 @@ pub async fn get_dns_metric_config(
 #[utoipa::path(post,path="/config/edit/metric/dns",tag="System Config",operation_id="update_dns_metric_config",request_body=UpdateDnsMetricConfigRequest,
         responses((status=200,description="Success")))]
 pub async fn update_dns_metric_config(
-    State(configs): State<LandscapeConfigService>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateDnsMetricConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    configs.update_dns_metric_config(payload.config, payload.expected_hash).await?;
+    editor.apply(SystemConfigChange::DnsMetric(payload)).await?;
     LandscapeApiResp::success(())
 }
 #[utoipa::path(get,path="/config/edit/self_monitor",tag="System Config",operation_id="get_self_monitor_config",
@@ -92,10 +87,10 @@ pub async fn get_self_monitor_config(
 #[utoipa::path(post,path="/config/edit/self_monitor",tag="System Config",operation_id="update_self_monitor_config",request_body=UpdateSelfMonitorConfigRequest,
         responses((status=200,description="Success")))]
 pub async fn update_self_monitor_config(
-    State(configs): State<LandscapeConfigService>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateSelfMonitorConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    configs.update_self_monitor_config(payload.config, payload.expected_hash).await?;
+    editor.apply(SystemConfigChange::SelfMonitor(payload)).await?;
     LandscapeApiResp::success(())
 }
 

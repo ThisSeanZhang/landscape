@@ -1,5 +1,6 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use landscape::boot::prepare_init_config_import;
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
@@ -112,9 +113,9 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
     responses((status = 200, description = "Success", body = CommonApiResp<ExportInitConfigResponse>))
 )]
 async fn export_init_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<ExportInitConfigResponse> {
-    let config = state.system.config_service.export_init_config().await?;
+    let config = config.export_init_config().await?;
     let version = config.version.clone();
     let content = toml::to_string(&config).map_err(InitConfigError::ExportSerialization)?;
 

@@ -109,14 +109,11 @@ async fn delete_gateway_rule(
 )]
 async fn get_gateway_status(
     State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GatewayStatus> {
     LandscapeApiResp::success(
-        build_gateway_status(
-            &state.managed.gateway_service,
-            &state.managed.gateway_rules,
-            &state.system.config_service,
-        )
-        .await,
+        build_gateway_status(&state.managed.gateway_service, &state.managed.gateway_rules, &config)
+            .await,
     )
 }
 
@@ -130,20 +127,19 @@ async fn get_gateway_status(
         (status = 504, description = "gateway.stop_timeout: Shutdown timed out; the previous gateway server is retained")
     )
 )]
-async fn restart_gateway(State(state): State<LandscapeApp>) -> LandscapeApiResult<GatewayStatus> {
-    let gateway_config = state.system.config_service.get_gateway_runtime_config();
+async fn restart_gateway(
+    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
+) -> LandscapeApiResult<GatewayStatus> {
+    let gateway_config = config.get_gateway_runtime_config();
     state
         .managed
         .gateway_service
         .restart(gateway_config, std::time::Duration::from_secs(10))
         .await?;
     LandscapeApiResp::success(
-        build_gateway_status(
-            &state.managed.gateway_service,
-            &state.managed.gateway_rules,
-            &state.system.config_service,
-        )
-        .await,
+        build_gateway_status(&state.managed.gateway_service, &state.managed.gateway_rules, &config)
+            .await,
     )
 }
 
@@ -218,7 +214,7 @@ mod tests {
         // Disabled gateways have no bound HTTPS listener.
         assert!(!before.https_ready);
 
-        let (_, hash) = config_service.get_gateway_config_from_file().await;
+        let (_, hash) = config_service.get_gateway_config_from_file().unwrap();
         config_service
             .update_gateway_config(
                 LandscapeGatewayConfig {

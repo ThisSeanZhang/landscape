@@ -1,10 +1,11 @@
+use crate::app::system_config::{SystemConfigChange, SystemConfigEditor};
 use axum::extract::State;
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::sys_config::{
     GetGatewayConfigResponse, LandscapeGatewayConfig, UpdateGatewayConfigRequest,
 };
 
-use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
 
@@ -16,9 +17,9 @@ use crate::error::LandscapeApiResult;
     responses((status = 200, description = "Success", body = CommonApiResp<GetGatewayConfigResponse>))
 )]
 pub async fn get_gateway_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GetGatewayConfigResponse> {
-    let (gateway, hash) = state.system.config_service.get_gateway_config_from_file().await;
+    let (gateway, hash) = config.get_gateway_config_from_file()?;
     LandscapeApiResp::success(GetGatewayConfigResponse { gateway, hash })
 }
 
@@ -30,9 +31,9 @@ pub async fn get_gateway_config(
     responses((status = 200, description = "Success", body = CommonApiResp<LandscapeGatewayConfig>))
 )]
 pub async fn get_gateway_config_fast(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<LandscapeGatewayConfig> {
-    let gateway_config = state.system.config_service.get_gateway_config_from_memory();
+    let gateway_config = config.get_gateway_config_from_memory();
     LandscapeApiResp::success(gateway_config)
 }
 
@@ -45,13 +46,9 @@ pub async fn get_gateway_config_fast(
     responses((status = 200, description = "Success"))
 )]
 pub async fn update_gateway_config(
-    State(state): State<LandscapeApp>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateGatewayConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state
-        .system
-        .config_service
-        .update_gateway_config(payload.new_gateway, payload.expected_hash)
-        .await?;
+    editor.apply(SystemConfigChange::Gateway(payload)).await?;
     LandscapeApiResp::success(())
 }

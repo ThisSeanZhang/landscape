@@ -23,9 +23,15 @@ async fn app() -> (tempfile::TempDir, LandscapeConfigService, Router) {
         config_dir: Some(dir.path().into()),
         ..Default::default()
     });
+    // Metric route tests need no NTP activity.
+    let time = landscape_core::time::SyncTimeService::start(
+        landscape_common::sys_config::TimeRuntimeConfig { enabled: false, ..Default::default() },
+    );
     let configs =
         LandscapeConfigService::new(runtime, LandscapeDBServiceProvider::mem_test_db().await).await;
-    let (router, _) = super::paths().with_state(configs.clone()).split_for_parts();
+    let (router, _) = super::paths()
+        .with_state(super::SystemConfigEditor::new(configs.clone(), time))
+        .split_for_parts();
     (dir, configs, router)
 }
 

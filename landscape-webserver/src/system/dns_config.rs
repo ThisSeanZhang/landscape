@@ -1,11 +1,12 @@
+use crate::app::system_config::{SystemConfigChange, SystemConfigEditor};
 use axum::extract::State;
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::sys_config::{
     GetDnsCacheConfigResponse, GetDohConfigResponse, UpdateDnsCacheConfigRequest,
     UpdateDohConfigRequest,
 };
 
-use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
 
@@ -17,9 +18,9 @@ use crate::error::LandscapeApiResult;
     responses((status = 200, description = "Success", body = CommonApiResp<GetDnsCacheConfigResponse>))
 )]
 pub async fn get_dns_cache_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GetDnsCacheConfigResponse> {
-    let (cache, hash) = state.system.config_service.get_dns_cache_from_file()?;
+    let (cache, hash) = config.get_dns_cache_from_file()?;
     LandscapeApiResp::success(GetDnsCacheConfigResponse { cache, hash })
 }
 
@@ -32,10 +33,10 @@ pub async fn get_dns_cache_config(
     responses((status = 200, description = "Success"))
 )]
 pub async fn update_dns_cache_config(
-    State(state): State<LandscapeApp>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(request): JsonBody<UpdateDnsCacheConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.system.update_dns_cache_config(request).await?;
+    editor.apply(SystemConfigChange::DnsCache(request)).await?;
     LandscapeApiResp::success(())
 }
 
@@ -47,9 +48,9 @@ pub async fn update_dns_cache_config(
     responses((status = 200, description = "Success", body = CommonApiResp<GetDohConfigResponse>))
 )]
 pub async fn get_doh_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GetDohConfigResponse> {
-    let (doh, hash) = state.system.config_service.get_doh_from_file()?;
+    let (doh, hash) = config.get_doh_from_file()?;
     LandscapeApiResp::success(GetDohConfigResponse { doh, hash })
 }
 
@@ -62,9 +63,9 @@ pub async fn get_doh_config(
     responses((status = 200, description = "Success"))
 )]
 pub async fn update_doh_config(
-    State(state): State<LandscapeApp>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(request): JsonBody<UpdateDohConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.system.update_doh_config(request).await?;
+    editor.apply(SystemConfigChange::Doh(request)).await?;
     LandscapeApiResp::success(())
 }

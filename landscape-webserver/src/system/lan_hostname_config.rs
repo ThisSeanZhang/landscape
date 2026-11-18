@@ -1,9 +1,10 @@
+use crate::app::system_config::{SystemConfigChange, SystemConfigEditor};
 use axum::extract::State;
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::sys_config::LandscapeLanHostnameConfig;
 use landscape_common::sys_config::{GetLanHostnameConfigResponse, UpdateLanHostnameConfigRequest};
 
-use crate::LandscapeApp;
 use crate::api::{JsonBody, LandscapeApiResp};
 use crate::error::LandscapeApiResult;
 
@@ -15,10 +16,9 @@ use crate::error::LandscapeApiResult;
     responses((status = 200, description = "Success", body = CommonApiResp<GetLanHostnameConfigResponse>))
 )]
 pub async fn get_lan_hostname_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GetLanHostnameConfigResponse> {
-    let (lan_hostname, hash) =
-        state.system.config_service.get_lan_hostname_config_from_file().await;
+    let (lan_hostname, hash) = config.get_lan_hostname_config_from_file()?;
     LandscapeApiResp::success(GetLanHostnameConfigResponse { lan_hostname, hash })
 }
 
@@ -30,9 +30,9 @@ pub async fn get_lan_hostname_config(
     responses((status = 200, description = "Success", body = CommonApiResp<LandscapeLanHostnameConfig>))
 )]
 pub async fn get_lan_hostname_config_fast(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<LandscapeLanHostnameConfig> {
-    let config = state.system.config_service.get_lan_hostname_config_from_memory();
+    let config = config.get_lan_hostname_config_from_memory();
     LandscapeApiResp::success(config)
 }
 
@@ -45,15 +45,9 @@ pub async fn get_lan_hostname_config_fast(
     responses((status = 200, description = "Success"))
 )]
 pub async fn update_lan_hostname_config(
-    State(state): State<LandscapeApp>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateLanHostnameConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state
-        .system
-        .config_service
-        .update_lan_hostname_config(payload.new_lan_hostname, payload.expected_hash)
-        .await?;
-    let runtime = state.system.config_service.get_lan_hostname_runtime_config();
-    state.system.dns_service.update_lan_hostname_config(runtime);
+    editor.apply(SystemConfigChange::LanHostname(payload)).await?;
     LandscapeApiResp::success(())
 }

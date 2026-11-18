@@ -201,7 +201,7 @@ pub(crate) async fn build_app(
     });
     // Shared LAN hostname config: hot-reloaded by the config service and read
     // by the DNS local resolver and the DHCPv4 server (options 15/119).
-    let lan_domain_state = Arc::new(ArcSwap::from_pointee(config.lan_hostname.clone()));
+    let lan_domain_state = config_service.shared_lan_hostname();
 
     let dns_service = startup_phase!(
         "dns_service.new",
@@ -351,7 +351,7 @@ pub(crate) async fn build_app(
         docker_service.start_to_listen_event().await
     );
 
-    let auth_share = Arc::new(ArcSwap::from_pointee(config.auth.clone()));
+    let auth_share = config_service.shared_auth();
     let app = LandscapeApp {
         home_path,
         ebpf_paths: ebpf_paths.clone(),
@@ -359,13 +359,7 @@ pub(crate) async fn build_app(
         lan_device_directory,
         docker_service,
         ebpf_service,
-        system: SystemServices {
-            auth: auth_share.clone(),
-            config_service,
-            dns_service,
-            time_service,
-            metric_service,
-        },
+        system: SystemServices::new(config_service, dns_service, time_service, metric_service),
         managed: ManagedServices {
             dns_provider_profile_service,
             dns_rule_service,

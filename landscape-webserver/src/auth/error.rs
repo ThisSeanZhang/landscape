@@ -29,20 +29,4 @@ pub enum AuthError {
     #[error("Token creation failed: {0}")]
     #[api_error(id = "auth.token_creation_failed", status = 500)]
     JwtCreationFailed(#[from] jsonwebtoken::errors::Error),
-
-    #[error("Current password is incorrect")]
-    #[api_error(id = "auth.current_password_incorrect", status = 400)]
-    CurrentPasswordIncorrect,
-
-    #[error("New password does not meet complexity requirements")]
-    #[api_error(id = "auth.password_too_weak", status = 400)]
-    PasswordTooWeak,
-
-    #[error("New password and confirm password do not match")]
-    #[api_error(id = "auth.password_mismatch", status = 400)]
-    PasswordMismatch,
-
-    #[error("New password cannot be the same as current password")]
-    #[api_error(id = "auth.password_same_as_old", status = 400)]
-    SamePassword,
 }

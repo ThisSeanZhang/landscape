@@ -212,10 +212,6 @@ impl LandscapeDnsService {
         Ok(())
     }
 
-    pub fn update_lan_hostname_config(&self, config: LanHostnameRuntimeConfig) {
-        self.coordinator.server().update_lan_hostname_config(config);
-    }
-
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
         self.coordinator.server().check_domain(req).await
     }
