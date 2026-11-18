@@ -1,6 +1,6 @@
 # ACME DNS-01 签发
 
-在仓库根目录运行。入口为本用例启用 Cargo 的 `e2e-acme` feature，并构建包含 Pebble 和 Python dnslib 的实验镜像。账户、提供商配置和私钥保存在本轮实验节点中。[单 WAN 拓扑](../../../single-wan/README.md) · [运行脚本](run.sh)
+在仓库根目录运行。入口为本用例启用 Cargo 的 `e2e-acme` feature，并构建包含 Pebble 和 Python dnslib 的实验镜像。账户、提供商配置和私钥保存在本轮实验节点中。[单 WAN 拓扑](../../../topologies/lan/single-wan/README.md) · [运行脚本](run.sh)
 
 ```bash
 ./tests/e2e/containerlab/cases/acme/dns-01/run.sh

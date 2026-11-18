@@ -4,13 +4,11 @@ This is the canonical local development guide for the repository.
 
 ## What to use
 
-- Use `cargo build --workspace` and `cargo test --workspace` for normal Rust development.
-- Use `cargo test -p landscape-ebpf --features bpf-test` for the eBPF integration tests (requires root).
-- Use `./web.sh` for the frontend dev server.
-- Use `pnpm` for direct frontend commands. If you do not have a global `pnpm`, use `corepack pnpm`.
-- Use `bash ./build.sh -t <arch>` only for full integration or release-style builds.
+Run `just --list` in the repository to see available tasks. On Debian 13, install the runner with `sudo apt install just`.
 
-Do not use `build.sh` for every edit. It rebuilds the frontend, ensures API bindings exist when needed, stages release static assets, and produces release artifacts.
+- Run `just init` for initial setup. Use `just build` and `just test` for daily backend development and `./web.sh` for the frontend dev server.
+- Use `just fmt` for formatting, with options such as `--rust`. Run the Containerlab suite with `just e2e` or a case group such as `just e2e-gateway`.
+- Use `./build.sh -t <arch>` for full integration or release builds. It rebuilds the frontend, stages static assets, and builds the backend.
 
 ## Requirements
 
@@ -47,25 +45,24 @@ Repository scripts such as `./web.sh`, `./gen_ts_bindings.sh`, and `bash ./build
 Install workspace dependencies and generate the TypeScript client:
 
 ```bash
-pnpm install --frozen-lockfile
-./gen_ts_bindings.sh
+just init
 ```
 
-If you use Corepack, replace `pnpm` with `corepack pnpm`.
+To install dependencies separately, run `just pnpm install --frozen-lockfile`.
 
-Run `./gen_ts_bindings.sh` again whenever backend OpenAPI routes or schemas change. `build.sh` and `./web.sh` call it with `--if-stale`, which skips regeneration only when `landscape-types/openapi.json`, `landscape-types/src/api/schemas/index.ts`, and `landscape-types/.bindings.lock` all exist.
+Run `just bindings` again whenever backend OpenAPI routes or schemas change. `build.sh` and `./web.sh` call it with `--if-stale`, which skips regeneration only when `landscape-types/openapi.json`, `landscape-types/src/api/schemas/index.ts`, and `landscape-types/.bindings.lock` all exist.
 
 ## Daily development
 
 ### Backend
 
 ```bash
-cargo build --workspace
-cargo test --workspace                              # unit tests
-cargo test -p landscape-ebpf --features bpf-test    # eBPF integration tests (root required)
+just build
+just test        # unit tests
+just test-bpf    # eBPF integration tests (root required)
 ```
 
-`cargo tt` and `cargo ttb` are aliases for the two test commands above. BPF skeletons are compiled in parallel and cached by content hash; set `BPF_BUILD_JOBS` to cap clang parallelism on memory-constrained machines.
+`cargo tt` and `cargo ttb` are the Cargo aliases for the two test tasks above. BPF skeletons are compiled in parallel and cached by content hash; set `BPF_BUILD_JOBS` to cap clang parallelism on memory-constrained machines.
 
 ### Frontend
 
@@ -75,33 +72,33 @@ cargo test -p landscape-ebpf --features bpf-test    # eBPF integration tests (ro
 
 `./web.sh` performs the same lock-based API bindings check before starting `landscape-webui` in dev mode.
 
-Equivalent direct command:
+To start the frontend directly with existing bindings:
 
 ```bash
-pnpm --filter landscape-webui dev
+just pnpm --filter landscape-webui dev
 ```
 
 If the UI build fails with missing `@landscape-router/types/...` modules, regenerate `openapi.json` and `landscape-types`.
 
-`pnpm --filter landscape-webui build` builds the app bundle itself. Release-style static packaging, including the Scalar assets served by the backend, is handled by `bash ./build.sh -t <arch>`.
+`just web` builds the app bundle itself. Release-style static packaging, including the Scalar assets served by the backend, is handled by `./build.sh -t <arch>`.
 
 ## Full build
 
 Use this for local verification builds:
 
 ```bash
-bash ./build.sh -t x86_64
+./build.sh -t x86_64
 ```
 
 `build.sh` installs frontend dependencies, regenerates API bindings only when the generated files or lock file are missing, builds the web UI, stages the Scalar static assets under `output/static`, and then builds the backend binary. It uses the `fast` Cargo profile by default (no size optimizations, fastest compile). For release-style artifacts, use:
 
 ```bash
-bash ./build.sh -t x86_64 --release
+./build.sh -t x86_64 --release
 ```
 
 ## `sudo`
 
-Do not use `sudo` for dependency installation, formatting, type generation, or normal frontend and Rust builds.
+Do not use `sudo` for pnpm dependency installation, formatting, type generation, or normal frontend and Rust builds.
 
 Use `sudo` only when running `landscape-webserver` on a real host, attaching eBPF programs, touching live interfaces, or validating real routing and packet-path behavior.
 

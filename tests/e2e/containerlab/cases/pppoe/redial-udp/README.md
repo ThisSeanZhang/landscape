@@ -1,6 +1,6 @@
 # PPPoE 强制重拨后已有 UDP 流恢复
 
-本场景已在临时 Containerlab 实验中验证，仓库内的 Containerlab 运行入口待补。实验复用单 WAN 的三节点接线，WAN 节点充当 PPPoE 接入端和 UDP 回显服务，Landscape 使用原生 PPPoE、IPCP 和 TC。[单 WAN 接线](../../../single-wan/README.md)
+本场景已在临时 Containerlab 实验中验证，仓库内的 Containerlab 运行入口待补。实验复用单 WAN 的三节点接线，WAN 节点充当 PPPoE 接入端和 UDP 回显服务，Landscape 使用原生 PPPoE、IPCP 和 TC。[单 WAN 接线](../../../topologies/lan/single-wan/README.md)
 
 1. WAN 接入端使用 Debian 的 `pppoe` 4.0 和 `ppp` 2.5.2，在 `eth1` 启动 `pppoe-server -F -I eth1 -L 198.51.100.1 -R 198.51.100.2 -N 4 -O /tmp/ac-options`，通过实验专用的 PAP 配置认证客户端。
 2. LAN 客户端从同一 UDP socket 向 `198.51.100.1` 持续发送带序号的报文。WAN 服务回传序号和观察到的源 IP。

@@ -13,9 +13,9 @@ client:eth1 ─── lan0 [ Landscape ] wan0 ─── eth1:wan
 | router 的 wan0 | 198.51.100.2/24，转发流量的 NAT 源地址 |
 | wan 的 eth1 | 198.51.100.1/24，在 TCP 8080 提供 HTTP 服务并记录请求来源 |
 
-节点和接线见[场景拓扑](single-wan.clab.yml)，路由、NAT、DHCP 地址池与租期见[初始化配置](landscape_init.toml)。
+节点和接线见[场景拓扑](topology.clab.yml)，路由、NAT、DHCP 地址池与租期见[初始化配置](landscape_init.toml)。
 
-入口先通过管理 API 确认 lan0 和 wan0 存在，再检查两个接口上 Landscape 的 TC ingress 程序。使用此拓扑的可运行用例包括[静态 IPv4 转发](../cases/lan/static-forward/README.md)和[DHCPv4 首次获租](../cases/lan/dhcp-acquire/README.md)。
+入口先通过管理 API 确认 lan0 和 wan0 存在，再检查两个接口上 Landscape 的 TC ingress 程序。使用此拓扑的可运行用例包括[静态 IPv4 转发](../../../cases/lan/static-forward/README.md)、[DHCPv4 首次获租](../../../cases/lan/dhcp-acquire/README.md)和[ACME DNS-01 签发](../../../cases/acme/dns-01/README.md)。
 
 ## 失败定位
 

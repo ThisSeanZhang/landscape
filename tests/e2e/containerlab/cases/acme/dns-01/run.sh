@@ -2,7 +2,7 @@
 set -euo pipefail
 
 case_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-source "$case_dir/../../../lib/lab.sh"
+source "$case_dir/../../../lib/single-wan.sh"
 case_name=acme/dns-01
 case_cargo_args=(--features e2e-acme)
 case_image_target=acme
@@ -38,5 +38,4 @@ run_case() {
     python3 -I "$case_dir/issue.py" "$router" "$wan" "$LANDSCAPE_LAB_NAME"
 }
 
-layout="$lab_root/single-wan"
-run_lab "$layout/single-wan.clab.yml" "$layout/landscape_init.toml" client
+run_single_wan_lab

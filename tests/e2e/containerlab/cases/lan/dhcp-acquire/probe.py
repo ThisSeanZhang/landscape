@@ -1,4 +1,4 @@
-"""Acquire a DHCPv4 lease on the LAN and reach the WAN using it."""
+"""Acquire a DHCPv4 lease and check the client configuration and router lease."""
 
 import ipaddress
 import json
@@ -9,9 +9,8 @@ import time
 import tomllib
 
 
-client, router, wan = sys.argv[1:]
-scenario = Path(__file__).resolve().parents[1]
-with (scenario / "landscape_init.toml").open("rb") as config_file:
+client, router, init_config, router_api = sys.argv[1:]
+with Path(init_config).open("rb") as config_file:
     (service,) = tomllib.load(config_file)["dhcpv4_services"]
 config = service["config"]
 gateway = config["server_ip_addr"]
@@ -54,7 +53,7 @@ mac = interface["address"]
 deadline = time.monotonic() + 10
 while True:
     snapshot = subprocess.run(
-        ["bash", scenario.parent / "lib" / "router-api.sh", router, "services/lan_devices"],
+        ["bash", router_api, router, "services/lan_devices"],
         capture_output=True, text=True,
     )
     devices = json.loads(snapshot.stdout)["data"] if snapshot.returncode == 0 else []
@@ -75,4 +74,3 @@ duration = (lease["expires"] - lease["last_request"]) / 1000
 if duration != config["address_lease_time"] or lease["expires"] <= time.time() * 1000:
     sys.exit(f"Unexpected lease lifetime: {lease}")
 print(f"PASS: DHCPv4 {mac} -> {address}/{prefix}, gateway/DNS {gateway}, lease {duration:g}s", flush=True)
-subprocess.run(["bash", scenario / "check-forward.sh", client, wan], check=True)

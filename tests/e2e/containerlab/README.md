@@ -8,5 +8,7 @@
 
 ## 从哪里开始
 
+在仓库根目录运行 `just e2e` 顺序执行所有可运行用例，或用 `just e2e-lan`、`just e2e-gateway`、`just e2e-acme` 选择模块。单个用例也有独立任务，例如 `just e2e-acme-dns01`。运行 `just --list` 可查看全部任务。
+
 - **运行用例**　按功能查找 case，进入对应说明查看拓扑、运行命令和验收条件。[用例索引](cases/README.md)
 - **编写用例**　按要观察的网络行为选择执行器、客户端和服务端。[工具选型](tooling.md)
