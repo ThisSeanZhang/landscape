@@ -12,7 +12,7 @@ use landscape_common::net_proto::udp::dhcp::{
     v4_helpers::get_hostname, v4_helpers::has_option,
 };
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use cidr::Ipv4Inet;
 #[cfg(test)]
 use landscape_common::config_service::enrolled_device::EnrolledDevice;
@@ -26,7 +26,7 @@ use landscape_common::lan_service::lan_dhcpv4::config::{
 };
 use landscape_common::lan_service::mac_binding::MacBindingDataplane;
 use landscape_common::net::MacAddr;
-use landscape_common::sys_config::LanHostnameRuntimeConfig;
+use landscape_common::sys_config::{DohRuntimeConfig, LanHostnameRuntimeConfig};
 
 use crate::lan_service::lan_dhcp4_server::status::DhcpV4AssignStatus;
 use landscape_common::service::{ServiceHandle, ServiceStatus};
@@ -419,10 +419,8 @@ pub struct DhcpV4DnrRuntimeContext {
     /// Certificate/SNI domains are shared with the TLS resolver and hot-reload
     /// into DHCP DNR responses without restarting the DHCP service.
     pub local_domains: Arc<ArcSwap<Vec<String>>>,
-    /// DoH endpoint is a startup snapshot; changing port/path requires a
-    /// process restart so DHCP advertisements match the active DoH listener.
-    pub doh_port: u16,
-    pub doh_path: String,
+    /// Published by DNS once its active listeners can serve the endpoint.
+    pub endpoint: Arc<ArcSwapOption<DohRuntimeConfig>>,
 }
 
 pub struct DHCPv4Server {
@@ -690,13 +688,19 @@ fn encode_custom_option_with_defaults(
         return Ok(None);
     };
 
+    let endpoint = context.endpoint.load_full();
     let (domains, ips, port, doh_path) = match config {
-        DhcpV4DnrOptionConfig::Local => (
-            context.local_domains.load().as_ref().clone(),
-            vec![server_ip],
-            context.doh_port,
-            context.doh_path.clone(),
-        ),
+        DhcpV4DnrOptionConfig::Local => {
+            let Some(endpoint) = endpoint else {
+                return Ok(None);
+            };
+            (
+                context.local_domains.load().as_ref().clone(),
+                vec![server_ip],
+                endpoint.listen_port,
+                endpoint.http_endpoint.clone(),
+            )
+        }
         DhcpV4DnrOptionConfig::Custom { domains, ips, port, doh_path } => {
             let domains = if domains.is_empty() {
                 context.local_domains.load().as_ref().clone()
@@ -704,8 +708,14 @@ fn encode_custom_option_with_defaults(
                 domains.clone()
             };
             let ips = if ips.is_empty() { vec![server_ip] } else { ips.clone() };
-            let port = port.unwrap_or(context.doh_port);
-            let doh_path = doh_path.clone().unwrap_or_else(|| context.doh_path.clone());
+            let Some(port) = port.or_else(|| endpoint.as_ref().map(|e| e.listen_port)) else {
+                return Ok(None);
+            };
+            let Some(doh_path) =
+                doh_path.clone().or_else(|| endpoint.as_ref().map(|e| e.http_endpoint.clone()))
+            else {
+                return Ok(None);
+            };
             (domains, ips, port, doh_path)
         }
     };
@@ -882,12 +892,13 @@ mod tests {
         sync::Arc,
     };
 
-    use arc_swap::ArcSwap;
+    use arc_swap::{ArcSwap, ArcSwapOption};
     use landscape_common::lan_service::mac_binding::NoopMacBindingDataplane;
     use landscape_common::net_proto::udp::dhcp::v4::{Flags, Opcode, OptionCode};
     use landscape_common::net_proto::udp::dhcp::{
         Decodable, Decoder, DhcpV4Message, DhcpV4MessageType, DhcpV4Option, Encodable, Encoder,
     };
+    use landscape_common::sys_config::DohRuntimeConfig;
     use landscape_common::{
         config_service::enrolled_device::EnrolledDevice,
         dns::dnr::{DHCPV4_DNR_OPTION_CODE, encode_dns_name},
@@ -940,30 +951,70 @@ mod tests {
     }
 
     #[test]
-    fn resolve_options_hot_encodes_global_dnr_domains() {
+    fn resolve_options_hot_encodes_live_doh_endpoint_and_domains() {
         let config = DHCPv4ServerConfig {
             custom_options: vec![CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Local)],
             ..DHCPv4ServerConfig::default()
         };
         let local_domains = Arc::new(ArcSwap::from_pointee(vec!["old.example.com".to_string()]));
+        let endpoint = Arc::new(ArcSwapOption::from(Some(Arc::new(DohRuntimeConfig {
+            listen_port: 443,
+            http_endpoint: "/old".into(),
+        }))));
         let dnr_context = DhcpV4DnrRuntimeContext {
             local_domains: local_domains.clone(),
-            doh_port: 443,
-            doh_path: "/dns-query".to_string(),
+            endpoint: endpoint.clone(),
         };
         let server = DHCPv4Server::init_with_enrolled(config, Some(dnr_context), vec![]);
         let mac = MacAddr::from_str("00:00:00:00:00:01").unwrap();
 
         let old_payload = option_payload(&server, &mac, DHCPV4_DNR_OPTION_CODE);
         local_domains.store(Arc::new(vec!["new.example.com".to_string()]));
+        endpoint.store(None);
+        assert!(
+            server
+                .resolve_options_for_mac(&mac)
+                .0
+                .iter()
+                .all(|(code, _)| *code != DHCPV4_DNR_OPTION_CODE)
+        );
+        endpoint.store(Some(Arc::new(DohRuntimeConfig {
+            listen_port: 8443,
+            http_endpoint: "/new".into(),
+        })));
         let new_payload = option_payload(&server, &mac, DHCPV4_DNR_OPTION_CODE);
 
         let old_name = encode_dns_name("old.example.com").unwrap();
         let new_name = encode_dns_name("new.example.com").unwrap();
+        assert!(contains_bytes(&old_payload, b"/old{?dns}"));
+        assert!(contains_bytes(&new_payload, b"/new{?dns}"));
+        assert!(contains_bytes(&new_payload, &8443u16.to_be_bytes()));
         assert!(contains_bytes(&old_payload, &old_name));
         assert!(!contains_bytes(&old_payload, &new_name));
         assert!(contains_bytes(&new_payload, &new_name));
         assert!(!contains_bytes(&new_payload, &old_name));
+    }
+
+    #[test]
+    fn explicit_custom_dnr_endpoint_survives_local_doh_stopping() {
+        let custom = CustomDhcpOption::Dnr(DhcpV4DnrOptionConfig::Custom {
+            domains: vec!["remote.example".into()],
+            ips: vec![Ipv4Addr::new(10, 0, 0, 1)],
+            port: Some(9443),
+            doh_path: Some("/remote".into()),
+        });
+        let server = DHCPv4Server::init_with_enrolled(
+            DHCPv4ServerConfig { custom_options: vec![custom], ..Default::default() },
+            Some(DhcpV4DnrRuntimeContext::default()),
+            vec![],
+        );
+        let payload = option_payload(
+            &server,
+            &MacAddr::from_str("00:00:00:00:00:01").unwrap(),
+            DHCPV4_DNR_OPTION_CODE,
+        );
+        assert!(contains_bytes(&payload, b"/remote{?dns}"));
+        assert!(contains_bytes(&payload, &9443u16.to_be_bytes()));
     }
 
     #[test]

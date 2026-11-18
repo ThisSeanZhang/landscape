@@ -84,8 +84,9 @@ impl LandscapeApp {
         .await;
 
         run_shutdown_phase("dns_service", || async {
-            self.system.dns_service.stop().await;
-            tracing::info!("DNS resolver conf restored");
+            if let Err(error) = self.system.dns_service.stop().await {
+                tracing::warn!(%error, "DNS shutdown incomplete");
+            }
         })
         .await;
 

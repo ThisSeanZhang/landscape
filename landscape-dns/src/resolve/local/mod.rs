@@ -59,7 +59,7 @@ pub struct LocalResolver {
     hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-    doh_runtime: Option<DohRuntimeConfig>,
+    doh_runtime: Arc<arc_swap::ArcSwapOption<DohRuntimeConfig>>,
 }
 
 impl LocalResolver {
@@ -68,7 +68,7 @@ impl LocalResolver {
         hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
         doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
-        doh_runtime: Option<DohRuntimeConfig>,
+        doh_runtime: Arc<arc_swap::ArcSwapOption<DohRuntimeConfig>>,
     ) -> Self {
         Self {
             directory,

@@ -17,6 +17,8 @@ use crate::server::handler::DnsRequestHandler;
 #[derive(Clone)]
 pub(crate) struct FlowDnsRuntime {
     pub(crate) handler: DnsRequestHandler,
+    pub(crate) tasks: tokio_util::task::TaskTracker,
+    pub(crate) listeners: crate::listener::FlowListeners,
     /// Child of the service run token. Cancelled on bind failure or service stop.
     pub(crate) token: CancellationToken,
 }
@@ -79,6 +81,18 @@ impl FlowDnsSnapshot {
     pub(crate) fn status(&self) -> FlowDnsStatus {
         FlowDnsStatus {
             flow_id: self.flow_id,
+            tcp_error: self
+                .runtime
+                .as_ref()
+                .and_then(|r| r.listeners.tcp_error.load_full())
+                .as_deref()
+                .cloned(),
+            doh_error: self
+                .runtime
+                .as_ref()
+                .and_then(|r| r.listeners.doh_error.load_full())
+                .as_deref()
+                .cloned(),
             phase: self.effective_phase(),
             last_error: self.last_error.clone(),
             revision: self.revision,

@@ -3,10 +3,11 @@ use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
-    AuthRuntimeConfig, ConfigUpdateError, DnsRuntimeConfig, GatewayRuntimeConfig,
-    LanHostnameRuntimeConfig, LandscapeConfig, LandscapeDnsConfig, LandscapeGatewayConfig,
-    LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeTimeConfig, LandscapeUiConfig,
-    MetricRuntimeConfig, RuntimeConfig, RuntimeConfigSource, TimeRuntimeConfig,
+    AuthRuntimeConfig, CacheRuntimeConfig, ConfigUpdateError, DohRuntimeConfig,
+    GatewayRuntimeConfig, LanHostnameRuntimeConfig, LandscapeConfig, LandscapeDnsCacheConfig,
+    LandscapeDohConfig, LandscapeGatewayConfig, LandscapeLanHostnameConfig, LandscapeMetricConfig,
+    LandscapeTimeConfig, LandscapeUiConfig, MetricRuntimeConfig, RuntimeConfig,
+    RuntimeConfigSource, TimeRuntimeConfig,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -15,7 +16,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use toml_edit::DocumentMut;
 use uuid::Uuid;
 
@@ -23,12 +24,16 @@ use uuid::Uuid;
 pub struct LandscapeConfigService {
     config: Arc<ArcSwap<RuntimeConfig>>,
     store: LandscapeDBServiceProvider,
+    dns_cache_tx: watch::Sender<CacheRuntimeConfig>,
+    doh_tx: watch::Sender<DohRuntimeConfig>,
     write_lock: Arc<Mutex<()>>,
 }
 
 impl LandscapeConfigService {
     pub async fn new(config: RuntimeConfig, store: LandscapeDBServiceProvider) -> Self {
         LandscapeConfigService {
+            dns_cache_tx: watch::Sender::new(config.dns_cache.clone()),
+            doh_tx: watch::Sender::new(config.doh.clone()),
             config: Arc::new(ArcSwap::from_pointee(config)),
             store,
             write_lock: Arc::new(Mutex::new(())),
@@ -58,14 +63,14 @@ impl LandscapeConfigService {
     }
 
     fn set_section<T: Serialize>(
-        document: &mut DocumentMut,
+        table: &mut toml_edit::Table,
         name: &str,
         config: &T,
     ) -> Result<(), DbError> {
         let content =
             toml::to_string(config).map_err(|error| DbError::Internal(error.to_string()))?;
         let section = Self::parse_document(&content)?;
-        document[name] = section.as_item().clone();
+        table[name] = section.as_item().clone();
         Ok(())
     }
 
@@ -119,7 +124,7 @@ impl LandscapeConfigService {
 
     async fn update_section<T, Select, Commit>(
         &self,
-        section_name: &str,
+        section_path: &[&str],
         aliases: &[&str],
         new_config: T,
         expected_hash: String,
@@ -137,10 +142,25 @@ impl LandscapeConfigService {
         Self::ensure_expected_hash(select(&current_config), &expected_hash)?;
 
         let mut document = Self::parse_document(&content)?;
-        for alias in aliases {
-            document.remove(alias);
+        let (section_name, parents) = section_path.split_last().expect("nonempty section path");
+        let mut table = document.as_table_mut();
+        for parent in parents {
+            let item = table.entry(*parent).or_insert(toml_edit::Item::None);
+            if !item.is_table() {
+                *item =
+                    match std::mem::take(item) {
+                        toml_edit::Item::None => toml_edit::Item::Table(toml_edit::Table::new()),
+                        item => toml_edit::Item::Table(item.into_table().map_err(|_| {
+                            DbError::Internal(format!("expected table at {parent}"))
+                        })?),
+                    };
+            }
+            table = item.as_table_mut().expect("table initialized above");
         }
-        Self::set_section(&mut document, section_name, &new_config)?;
+        for alias in aliases {
+            table.remove(alias);
+        }
+        Self::set_section(table, section_name, &new_config)?;
         Self::write_config_file(&path, &document.to_string())?;
         commit(&new_config);
 
@@ -196,15 +216,12 @@ impl LandscapeConfigService {
         self.config.load().metric.clone()
     }
 
-    pub fn get_dns_config(&self) -> (LandscapeDnsConfig, String) {
-        let config = self.config.load();
-        let dns = config.file_config.dns.clone();
-        let hash = Self::section_hash(&dns).unwrap_or_default();
-        (dns, hash)
+    pub fn subscribe_dns_cache(&self) -> watch::Receiver<CacheRuntimeConfig> {
+        self.dns_cache_tx.subscribe()
     }
 
-    pub fn get_dns_runtime_config(&self) -> DnsRuntimeConfig {
-        self.config.load().dns.clone()
+    pub fn subscribe_doh(&self) -> watch::Receiver<DohRuntimeConfig> {
+        self.doh_tx.subscribe()
     }
 
     pub fn get_lan_hostname_config_from_memory(&self) -> LandscapeLanHostnameConfig {
@@ -235,8 +252,12 @@ impl LandscapeConfigService {
         self.read_section_from_file(|config| config.time).unwrap_or_default()
     }
 
-    pub async fn get_dns_config_from_file(&self) -> (LandscapeDnsConfig, String) {
-        self.read_section_from_file(|config| config.dns).unwrap_or_default()
+    pub fn get_dns_cache_from_file(&self) -> Result<(LandscapeDnsCacheConfig, String), DbError> {
+        self.read_section_from_file(|config| config.dns.cache)
+    }
+
+    pub fn get_doh_from_file(&self) -> Result<(LandscapeDohConfig, String), DbError> {
+        self.read_section_from_file(|config| config.dns.doh)
     }
 
     pub async fn get_lan_hostname_config_from_file(&self) -> (LandscapeLanHostnameConfig, String) {
@@ -267,7 +288,7 @@ impl LandscapeConfigService {
         expected_hash: String,
     ) -> Result<(), DbError> {
         self.update_section(
-            "ui",
+            &["ui"],
             &[],
             new_ui,
             expected_hash,
@@ -290,7 +311,7 @@ impl LandscapeConfigService {
     ) -> Result<(), ConfigUpdateError> {
         let runtime = new_metric.to_runtime()?;
         self.update_section(
-            "metric",
+            &["metric"],
             &[],
             new_metric,
             expected_hash,
@@ -317,7 +338,7 @@ impl LandscapeConfigService {
         expected_hash: String,
     ) -> Result<(), DbError> {
         self.update_section(
-            "metric",
+            &["metric"],
             &[],
             previous_config,
             expected_hash,
@@ -334,25 +355,56 @@ impl LandscapeConfigService {
         .await
     }
 
-    pub async fn update_dns_config(
+    pub async fn update_dns_cache_config(
         &self,
-        new_dns: LandscapeDnsConfig,
+        section: LandscapeDnsCacheConfig,
         expected_hash: String,
     ) -> Result<(), ConfigUpdateError> {
-        let runtime = new_dns.to_runtime()?;
+        let runtime = section.to_runtime()?;
         self.update_section(
-            "dns",
-            &[],
-            new_dns,
+            &["dns", "cache"],
+            &["cache_capacity", "cache_ttl", "negative_cache_ttl", "tcp_enabled"],
+            section,
             expected_hash,
-            |config| &config.dns,
-            |new_dns| {
+            |config| &config.dns.cache,
+            |section| {
                 self.config.rcu(|old| {
-                    let mut new_config = (**old).clone();
-                    new_config.dns = runtime.clone();
-                    new_config.file_config.dns = new_dns.clone();
-                    new_config
+                    let mut next = (**old).clone();
+                    next.dns_cache = runtime.clone();
+                    next.file_config.dns.cache = section.clone();
+                    next
                 });
+                if *self.dns_cache_tx.borrow() != runtime {
+                    self.dns_cache_tx.send_replace(runtime);
+                }
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_doh_config(
+        &self,
+        section: LandscapeDohConfig,
+        expected_hash: String,
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = section.to_runtime()?;
+        self.update_section(
+            &["dns", "doh"],
+            &["doh_listen_port", "doh_http_endpoint", "tcp_enabled"],
+            section,
+            expected_hash,
+            |config| &config.dns.doh,
+            |section| {
+                self.config.rcu(|old| {
+                    let mut next = (**old).clone();
+                    next.doh = runtime.clone();
+                    next.file_config.dns.doh = section.clone();
+                    next
+                });
+                if *self.doh_tx.borrow() != runtime {
+                    self.doh_tx.send_replace(runtime);
+                }
             },
         )
         .await?;
@@ -375,7 +427,7 @@ impl LandscapeConfigService {
         }
         let file_lan_hostname = new_lan_hostname.clone();
         self.update_section(
-            "lan_hostname",
+            &["lan_hostname"],
             &["hostname_registry"],
             new_lan_hostname,
             expected_hash,
@@ -401,7 +453,7 @@ impl LandscapeConfigService {
     ) -> Result<(), ConfigUpdateError> {
         let runtime = new_time.to_runtime()?;
         self.update_section(
-            "time",
+            &["time"],
             &[],
             new_time,
             expected_hash,
@@ -425,7 +477,7 @@ impl LandscapeConfigService {
         expected_hash: String,
     ) -> Result<(), DbError> {
         self.update_section(
-            "gateway",
+            &["gateway"],
             &[],
             new_gateway,
             expected_hash,
@@ -510,9 +562,9 @@ mod tests {
         std::fs::write(service.get_config_path(), content).unwrap();
         let before = Arc::clone(&service.config.load_full());
         let result = service
-            .update_dns_config(
-                LandscapeDnsConfig { doh_listen_port: Some(53), ..Default::default() },
-                LandscapeConfigService::section_hash(&LandscapeDnsConfig::default()).unwrap(),
+            .update_doh_config(
+                LandscapeDohConfig { listen_port: Some(53), ..Default::default() },
+                LandscapeConfigService::section_hash(&LandscapeDohConfig::default()).unwrap(),
             )
             .await;
         assert!(matches!(result, Err(ConfigUpdateError::Dns(_))));
@@ -539,6 +591,75 @@ mod tests {
         assert!(matches!(result, Err(ConfigUpdateError::LanHostname(_))));
         assert!(Arc::ptr_eq(&before, &service.config.load_full()));
         assert_eq!(std::fs::read_to_string(service.get_config_path()).unwrap(), content);
+    }
+
+    #[tokio::test]
+    async fn dns_saves_migrate_only_the_edited_block_and_preserve_external_edits() {
+        let (_dir, service) = service().await;
+        let path = service.get_config_path();
+        let old = "# user comment\n[dns]\ntcp_enabled = false\ncache_ttl = 300\ndoh_listen_port = 8443\nextra = 42\n";
+        std::fs::write(&path, old).unwrap();
+        let (cache, cache_hash) = service.get_dns_cache_from_file().unwrap();
+        let (doh, doh_hash) = service.get_doh_from_file().unwrap();
+        let mut cache_rx = service.subscribe_dns_cache();
+        let mut doh_rx = service.subscribe_doh();
+        assert_eq!(cache.ttl, Some(300));
+        assert_eq!(doh.listen_port, Some(8443));
+
+        std::fs::write(&path, old.replace("extra = 42", "extra = 43")).unwrap();
+        let new_cache = LandscapeDnsCacheConfig { ttl: Some(12), ..Default::default() };
+        service.update_dns_cache_config(new_cache.clone(), cache_hash.clone()).await.unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        for retained in ["# user comment", "extra = 43", "doh_listen_port = 8443", "[dns.cache]"] {
+            assert!(saved.contains(retained), "{saved}");
+        }
+        assert!(!saved.contains("cache_ttl") && !saved.contains("tcp_enabled"));
+        assert_eq!(*cache_rx.borrow_and_update(), new_cache.build_runtime());
+        assert!(!doh_rx.has_changed().unwrap());
+        assert!(matches!(
+            service.update_dns_cache_config(Default::default(), cache_hash).await,
+            Err(ConfigUpdateError::Storage(DbError::Conflict))
+        ));
+        assert!(!cache_rx.has_changed().unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+
+        let (_, cache_hash) = service.get_dns_cache_from_file().unwrap();
+        let (a, b) = tokio::join!(
+            service.update_dns_cache_config(Default::default(), cache_hash),
+            service.update_doh_config(doh.clone(), doh_hash),
+        );
+        a.unwrap();
+        b.unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let restarted: LandscapeConfig = toml::from_str(&saved).unwrap();
+        assert!(saved.contains("[dns.doh]") && !saved.contains("doh_listen_port"));
+        assert_eq!(*cache_rx.borrow_and_update(), CacheRuntimeConfig::default());
+        assert_eq!(restarted.dns.cache.build_runtime(), *cache_rx.borrow());
+        assert_eq!(restarted.dns.doh.build_runtime(), *doh_rx.borrow_and_update());
+
+        // Saving the same desired endpoint must not interrupt the live listener.
+        let (_, hash) = service.get_doh_from_file().unwrap();
+        service.update_doh_config(doh, hash).await.unwrap();
+        assert!(!doh_rx.has_changed().unwrap());
+    }
+
+    #[tokio::test]
+    async fn failed_dns_write_keeps_the_committed_config_and_watch_value() {
+        let (dir, service) = service().await;
+        let (_, hash) = service.get_doh_from_file().unwrap();
+        let rx = service.subscribe_doh();
+        let previous = service.config.load_full();
+        // Remove the temporary config directory so creation of the transaction file fails.
+        dir.close().unwrap();
+        let result = service
+            .update_doh_config(
+                LandscapeDohConfig { listen_port: Some(8443), ..Default::default() },
+                hash,
+            )
+            .await;
+        assert!(matches!(result, Err(ConfigUpdateError::Storage(_))));
+        assert!(Arc::ptr_eq(&previous, &service.config.load_full()));
+        assert!(!rx.has_changed().unwrap());
     }
 
     #[tokio::test]

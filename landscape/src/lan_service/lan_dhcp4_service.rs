@@ -26,8 +26,8 @@ use landscape_database::provider::LandscapeDBServiceProvider;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use arc_swap::ArcSwap;
-use landscape_common::sys_config::LanHostnameRuntimeConfig;
+use arc_swap::{ArcSwap, ArcSwapOption};
+use landscape_common::sys_config::{DohRuntimeConfig, LanHostnameRuntimeConfig};
 
 use crate::LandscapeSingleIpInfo;
 use crate::get_iface_by_name;
@@ -77,7 +77,7 @@ pub struct DHCPv4ServerStarter {
     route_service: IpRouteService,
     db_provider: LandscapeDBServiceProvider,
     api_tls_resolver: SharedSniResolver,
-    dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
+    advertised_doh: Arc<ArcSwapOption<DohRuntimeConfig>>,
     /// Live LAN suffix, advertised as DHCP option 15/119.
     lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     ipv4_assign_sender: IPv4AssignEventSender,
@@ -92,7 +92,7 @@ impl DHCPv4ServerStarter {
         route_service: IpRouteService,
         db_provider: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
-        dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
+        advertised_doh: Arc<ArcSwapOption<DohRuntimeConfig>>,
         lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         ipv4_assign_sender: IPv4AssignEventSender,
         lan_discovery_sender: LanDiscoveryEventSender,
@@ -102,7 +102,7 @@ impl DHCPv4ServerStarter {
             route_service,
             db_provider,
             api_tls_resolver,
-            dns_runtime_config,
+            advertised_doh,
             lan_domain_state,
             iface_status_map: Arc::new(RwLock::new(HashMap::new())),
             ipv4_assign_sender,
@@ -166,8 +166,7 @@ impl ServiceStarterTrait for DHCPv4ServerStarter {
             let iface_mac = iface.mac;
             let dnr_context = Some(DhcpV4DnrRuntimeContext {
                 local_domains: self.api_tls_resolver.advertised_domains_state(),
-                doh_port: self.dns_runtime_config.doh_listen_port,
-                doh_path: self.dns_runtime_config.doh_http_endpoint.clone(),
+                endpoint: self.advertised_doh.clone(),
             });
             let dhcp_server = DHCPv4Server::new(
                 config.config.clone(),
@@ -308,7 +307,7 @@ impl DHCPv4ServerManagerService {
         route_service: IpRouteService,
         store_service: LandscapeDBServiceProvider,
         api_tls_resolver: SharedSniResolver,
-        dns_runtime_config: landscape_common::sys_config::DnsRuntimeConfig,
+        advertised_doh: Arc<ArcSwapOption<DohRuntimeConfig>>,
         lan_domain_state: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         mut dev_observer: IfaceEventReader,
         ipv4_assign_sender: IPv4AssignEventSender,
@@ -321,7 +320,7 @@ impl DHCPv4ServerManagerService {
             route_service,
             store_service.clone(),
             api_tls_resolver,
-            dns_runtime_config,
+            advertised_doh,
             lan_domain_state,
             ipv4_assign_sender,
             lan_discovery_sender,

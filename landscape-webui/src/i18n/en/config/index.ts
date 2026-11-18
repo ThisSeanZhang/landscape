@@ -7,7 +7,6 @@ export default {
   option_disabled: "Disabled",
   doh_listen_port: "DoH Listen Port",
   doh_http_endpoint: "DoH Request Path",
-  dns_tcp_enabled: "DNS over TCP",
   doh_port_reserved: "Port 53 is reserved for DNS and cannot be used for DoH",
   doh_port_desc: "Leave empty for port 6053. Port 53 is reserved.",
   empty_uses_default: "Leave empty to use the default value. Applied on save.",
@@ -22,13 +21,18 @@ export default {
 
   directory: "Config Directory",
   ui_title: "System Preference",
-  dns_title: "Global DNS Config",
+  save_cache: "Save Cache Settings",
+  dns_transports: "DNS listens on both UDP/53 and TCP/53.",
+  doh_title: "DNS over HTTPS (DoH)",
+  save_doh: "Save DoH Settings",
+  doh_dhcp_renewal:
+    "After an endpoint change, existing DHCPv4 clients may use the previous endpoint until they renew their lease.",
+  dns_title: "DNS Cache",
   lan_hostname_title: "LAN Hostname Config",
   metric_title: "Metric Monitoring Config",
   backup_title: "Backup & Export",
 
   save_ui: "Save Settings",
-  save_dns: "Save DNS Config",
   save_lan_hostname: "Save LAN Hostname Config",
   save_metric: "Save Metric Config",
 

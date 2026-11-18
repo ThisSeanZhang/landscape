@@ -36,6 +36,9 @@ use landscape::{
     wifi::WifiServiceManagerService,
 };
 
+use landscape_common::sys_config::{
+    ConfigUpdateError, UpdateDnsCacheConfigRequest, UpdateDohConfigRequest,
+};
 use landscape_common::{memtrack::MemoryHistory, sys_config::AuthRuntimeConfig};
 
 mod iface_lifecycle;
@@ -73,6 +76,22 @@ pub(crate) struct SystemServices {
     pub time_service: SyncTimeService,
     /// Metric
     pub metric_service: MetricService,
+}
+
+impl SystemServices {
+    pub(crate) async fn update_dns_cache_config(
+        &self,
+        request: UpdateDnsCacheConfigRequest,
+    ) -> Result<(), ConfigUpdateError> {
+        self.config_service.update_dns_cache_config(request.new_cache, request.expected_hash).await
+    }
+
+    pub(crate) async fn update_doh_config(
+        &self,
+        request: UpdateDohConfigRequest,
+    ) -> Result<(), ConfigUpdateError> {
+        self.config_service.update_doh_config(request.new_doh, request.expected_hash).await
+    }
 }
 
 #[derive(Clone)]

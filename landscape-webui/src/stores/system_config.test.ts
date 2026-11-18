@@ -3,15 +3,19 @@ import { createPinia, setActivePinia } from "pinia";
 import { useDnsConfigStore } from "./dns_config";
 import { useTimeConfigStore } from "./time_config";
 import {
-  get_dns_config_edit,
-  update_dns_config,
+  getDnsCacheConfig,
+  updateDnsCacheConfig,
+  getDohConfig,
+  updateDohConfig,
   get_time_config_edit,
   update_time_config,
 } from "@/api/sys/config";
 
 vi.mock("@/api/sys/config", () => ({
-  get_dns_config_edit: vi.fn(),
-  update_dns_config: vi.fn(),
+  getDnsCacheConfig: vi.fn(),
+  updateDnsCacheConfig: vi.fn(),
+  getDohConfig: vi.fn(),
+  updateDohConfig: vi.fn(),
   get_time_config_edit: vi.fn(),
   update_time_config: vi.fn(),
 }));
@@ -21,53 +25,57 @@ beforeEach(() => {
 });
 
 describe("DNS settings", () => {
-  it("preserves all fields, including explicit false, when editing one field", async () => {
-    vi.mocked(get_dns_config_edit).mockResolvedValue({
-      dns: {
-        cache_capacity: 4096,
-        cache_ttl: 60,
-        negative_cache_ttl: 10,
-        doh_listen_port: 8443,
-        doh_http_endpoint: "/custom",
-        tcp_enabled: false,
-      },
-      hash: "original",
+  it("saves only the cache and preserves a pending DoH edit", async () => {
+    vi.mocked(getDnsCacheConfig).mockResolvedValue({
+      cache: { capacity: 4096, negative_ttl: 10 },
+      hash: "cache",
+    });
+    vi.mocked(getDohConfig).mockResolvedValue({
+      doh: { listen_port: 8443 },
+      hash: "doh",
     });
     const store = useDnsConfigStore();
-    await store.loadDnsConfig();
-    store.cacheTtl = 120;
-    await store.saveDnsConfig();
-    expect(update_dns_config).toHaveBeenCalledWith({
-      new_dns: {
-        cache_capacity: 4096,
-        cache_ttl: 120,
-        negative_cache_ttl: 10,
-        doh_listen_port: 8443,
-        doh_http_endpoint: "/custom",
-        tcp_enabled: false,
-      },
-      expected_hash: "original",
+    await Promise.all([store.loadCache(), store.loadDoh()]);
+    store.doh.httpEndpoint = "/pending";
+    store.cache.ttl = 120;
+    await store.saveCache();
+    expect(updateDnsCacheConfig).toHaveBeenCalledWith({
+      new_cache: { capacity: 4096, ttl: 120, negative_ttl: 10 },
+      expected_hash: "cache",
     });
+    expect(store.doh.httpEndpoint).toBe("/pending");
+    expect(getDohConfig).toHaveBeenCalledTimes(1);
+    expect(updateDohConfig).not.toHaveBeenCalled();
   });
-  it("omits cleared fields and reloads the hash after saving", async () => {
-    vi.mocked(get_dns_config_edit)
-      .mockResolvedValueOnce({ dns: { doh_listen_port: 8443 }, hash: "a" })
-      .mockResolvedValueOnce({ dns: {}, hash: "b" });
+
+  it("clears the DoH override and reloads only its hash", async () => {
+    vi.mocked(getDohConfig)
+      .mockResolvedValueOnce({ doh: { listen_port: 8443 }, hash: "a" })
+      .mockResolvedValueOnce({ doh: {}, hash: "b" });
     const store = useDnsConfigStore();
-    await store.loadDnsConfig();
-    store.dohListenPort = null;
-    await store.saveDnsConfig();
+    await store.loadDoh();
+    store.doh.listenPort = null;
+    await store.saveDoh();
     expect(
-      JSON.parse(JSON.stringify(vi.mocked(update_dns_config).mock.calls[0][0])),
-    ).toEqual({ new_dns: {}, expected_hash: "a" });
-    expect(store.expectedHash).toBe("b");
+      JSON.parse(JSON.stringify(vi.mocked(updateDohConfig).mock.calls[0][0])),
+    ).toEqual({
+      new_doh: {},
+      expected_hash: "a",
+    });
+    expect(store.doh.hash).toBe("b");
+    expect(getDnsCacheConfig).not.toHaveBeenCalled();
   });
-  it("blocks saving after a failed load", async () => {
-    vi.mocked(get_dns_config_edit).mockRejectedValue(new Error("offline"));
+
+  it("lets cache save when DoH failed to load", async () => {
+    vi.mocked(getDohConfig).mockRejectedValue(new Error("offline"));
+    vi.mocked(getDnsCacheConfig).mockResolvedValue({ cache: {}, hash: "a" });
     const store = useDnsConfigStore();
-    await expect(store.loadDnsConfig()).rejects.toThrow();
-    await store.saveDnsConfig();
-    expect(update_dns_config).not.toHaveBeenCalled();
+    await expect(store.loadDoh()).rejects.toThrow();
+    await store.loadCache();
+    await store.saveDoh();
+    await store.saveCache();
+    expect(updateDohConfig).not.toHaveBeenCalled();
+    expect(updateDnsCacheConfig).toHaveBeenCalledTimes(1);
   });
 });
 

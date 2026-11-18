@@ -198,6 +198,9 @@ pub(crate) async fn build_app(
     // Shared LAN hostname config: hot-reloaded by the config service and read
     // by the DNS local resolver and the DHCPv4 server (options 15/119).
     let lan_domain_state = Arc::new(ArcSwap::from_pointee(config.lan_hostname.clone()));
+    let config_service =
+        LandscapeConfigService::new(config.clone(), db_store_provider.clone()).await;
+
     let dns_service = startup_phase!(
         "dns_service.new",
         LandscapeDnsService::new(
@@ -207,7 +210,8 @@ pub(crate) async fn build_app(
             geo_site_service.clone(),
             dns_upstream_service.clone(),
             route_service.clone(),
-            config.dns.clone(),
+            config_service.subscribe_dns_cache(),
+            config_service.subscribe_doh(),
             cert_service.clone(),
             metric_service.dns_metric_reporter(),
             lan_device_directory.clone(),
@@ -271,9 +275,6 @@ pub(crate) async fn build_app(
     )
     .await;
 
-    let config_service =
-        LandscapeConfigService::new(config.clone(), db_store_provider.clone()).await;
-
     let ebpf_service = LandscapeEbpfService::new(ebpf_rt.start_neigh_update());
 
     let static_nat4_mapping_service = StaticNat4MappingService::new(
@@ -331,7 +332,7 @@ pub(crate) async fn build_app(
         route_service.clone(),
         db_store_provider.clone(),
         cert_service.api_tls_resolver(),
-        config.dns.clone(),
+        dns_service.advertised_doh(),
         lan_domain_state,
         event_handle.subscribe_iface(),
         ipv4_assign_sender,

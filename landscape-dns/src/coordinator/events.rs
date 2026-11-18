@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use landscape_common::{
     concurrency::{spawn_task, task_label},
@@ -15,9 +15,40 @@ impl DnsCoordinator {
     pub fn spawn_event_loop(self: &Arc<Self>, mut receiver: mpsc::Receiver<DnsEvent>) {
         let coordinator = self.clone();
         spawn_task(task_label::task::DNS_SERVICE_OBSERVER, async move {
-            while let Some(event) = receiver.recv().await {
-                if let Err(error) = coordinator.handle_event(event).await {
-                    tracing::error!(%error, "failed to apply DNS event");
+            let mut delay = Duration::from_secs(1);
+            let mut retry_at = None;
+            loop {
+                tokio::select! {
+                    event = receiver.recv() => {
+                        let Some(event) = event else { break };
+                        if let Err(error) = coordinator.handle_event(event).await {
+                            tracing::error!(%error, "failed to apply DNS event");
+                        }
+                    }
+                    _ = coordinator.server.wait_for_listener_failure(), if retry_at.is_none() => {
+                        retry_at = Some(tokio::time::Instant::now() + delay);
+                    }
+                    _ = async {
+                        match retry_at {
+                            Some(deadline) => tokio::time::sleep_until(deadline).await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        // UDP owns the flow lifetime. Recover using current rules, serialized
+                        // with ordinary refreshes; a manual stop clears the list of failures.
+                        for flow_id in coordinator.server.failed_flow_ids().await {
+                            if let Err(error) = coordinator.refresh_flow(flow_id, FlowRuntimeRefreshKind::Full).await {
+                                tracing::warn!(flow_id, %error, "failed to recover DNS flow");
+                            }
+                        }
+                        if coordinator.server.failed_flow_ids().await.is_empty() {
+                            retry_at = None;
+                            delay = Duration::from_secs(1);
+                        } else {
+                            delay = (delay * 2).min(Duration::from_secs(30));
+                            retry_at = Some(tokio::time::Instant::now() + delay);
+                        }
+                    }
                 }
             }
         });

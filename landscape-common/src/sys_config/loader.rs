@@ -127,7 +127,8 @@ impl RuntimeConfig {
         };
 
         let metric = config.metric.build_runtime();
-        let dns = config.dns.build_runtime();
+        let dns_cache = config.dns.cache.build_runtime();
+        let doh = config.dns.doh.build_runtime();
         let lan_hostname = config.lan_hostname.build_runtime();
         let time = config.time.build_runtime();
 
@@ -140,7 +141,8 @@ impl RuntimeConfig {
             web,
             store,
             metric,
-            dns,
+            dns_cache,
+            doh,
             lan_hostname,
             ui: config.ui.clone(),
             time,
@@ -233,13 +235,18 @@ mod tests {
     }
     #[test]
     fn invalid_fields_fall_back_independently_and_keep_source_config() {
-        use crate::sys_config::{LandscapeDnsConfig, LandscapeMetricConfig, LandscapeTimeConfig};
+        use crate::sys_config::{
+            LandscapeDnsCacheConfig, LandscapeDnsConfig, LandscapeDohConfig, LandscapeMetricConfig,
+            LandscapeTimeConfig,
+        };
         let temp_dir = tempfile::tempdir().unwrap();
         let source = LandscapeConfig {
             dns: LandscapeDnsConfig {
-                doh_listen_port: Some(crate::DNS_LISTEN_PORT),
-                cache_capacity: Some(123),
-                ..Default::default()
+                doh: LandscapeDohConfig {
+                    listen_port: Some(crate::DNS_LISTEN_PORT),
+                    ..Default::default()
+                },
+                cache: LandscapeDnsCacheConfig { capacity: Some(123), ..Default::default() },
             },
             metric: LandscapeMetricConfig {
                 cleanup_time_budget_secs: Some(61),
@@ -256,12 +263,12 @@ mod tests {
             config_dir: Some(temp_dir.path().to_path_buf()),
             ..Default::default()
         });
-        assert_eq!(runtime.dns.doh_listen_port, crate::DEFAULT_DNS_DOH_LISTEN_PORT);
-        assert_eq!(runtime.dns.cache_capacity, 123);
+        assert_eq!(runtime.doh.listen_port, crate::DEFAULT_DNS_DOH_LISTEN_PORT);
+        assert_eq!(runtime.dns_cache.cache_capacity, 123);
         assert_eq!(runtime.metric.cleanup_time_budget_ms, 60_000);
         assert_eq!(runtime.metric.write_batch_size, 123);
         assert_eq!(runtime.time.timeout_secs, 7);
-        assert_eq!(runtime.file_config.dns.cache_capacity, Some(123));
+        assert_eq!(runtime.file_config.dns.cache.capacity, Some(123));
         assert_eq!(runtime.file_config.metric.cleanup_time_budget_secs, Some(61));
         assert_eq!(std::fs::read_to_string(path).unwrap(), content);
     }

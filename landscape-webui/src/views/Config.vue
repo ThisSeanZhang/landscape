@@ -33,7 +33,8 @@ onMounted(async () => {
     await Promise.all([
       prefStore.loadPreferenceForEdit(),
       metricStore.loadMetricConfig(),
-      dnsStore.loadDnsConfig(),
+      dnsStore.loadCache(),
+      dnsStore.loadDoh(),
       timeStore.loadTimeConfig(),
       lanHostnameStore.loadLanHostnameConfig(),
     ]);
@@ -80,6 +81,7 @@ onMounted(async () => {
         >
           <n-anchor-link :title="t('config.ui_title')" href="#ui-config" />
           <n-anchor-link :title="t('config.dns_title')" href="#dns-config" />
+          <n-anchor-link :title="t('config.doh_title')" href="#doh-config" />
           <n-anchor-link :title="t('config.time_title')" href="#time-config" />
           <n-anchor-link
             :title="t('config.lan_hostname_title')"

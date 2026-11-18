@@ -163,7 +163,7 @@ pub(crate) fn redirect_test_handler_with_addrs(
             Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
             None,
             None,
-            None,
+            Default::default(),
         )),
     )
 }
@@ -256,7 +256,7 @@ mod tests {
                 hostname_config,
                 provider,
                 None,
-                None,
+                Default::default(),
             )),
         )
     }
@@ -282,7 +282,7 @@ mod tests {
             test_lan_hostname_config(),
             None,
             None,
-            None,
+            Default::default(),
         ))
     }
 

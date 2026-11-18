@@ -1,15 +1,12 @@
 import type {
   GetTimeConfigResponse,
   UpdateTimeConfigRequest,
-  GetDnsConfigResponse,
-  GetDnsConfigResponse as GetDnsConfigFastResponse,
   GetGatewayConfigResponse,
   GetLanHostnameConfigResponse,
   GetMetricConfigResponse,
   LandscapeGatewayConfig,
   LandscapeLanHostnameConfig,
   GetUiConfigResponse,
-  LandscapeDnsConfig,
   LandscapeMetricConfig,
   LandscapeUiConfig,
   UpdateGatewayConfigRequest,
@@ -28,9 +25,6 @@ import {
   getMetricConfigFast,
   getMetricConfig,
   updateMetricConfig,
-  getDnsConfigFast,
-  getDnsConfig,
-  updateDnsConfig,
   getLanHostnameConfigFast,
   getLanHostnameConfig,
   updateLanHostnameConfig,
@@ -40,11 +34,12 @@ import {
 } from "@landscape-router/types/api/system-config/system-config";
 import i18n from "@/i18n";
 
-/** Local type -- backend accepts serde_json::Value, so no ORVAL-generated request type exists. */
-interface UpdateDnsConfigRequest {
-  new_dns: LandscapeDnsConfig;
-  expected_hash: string;
-}
+export {
+  getDnsCacheConfig,
+  updateDnsCacheConfig,
+  getDohConfig,
+  updateDohConfig,
+} from "@landscape-router/types/api/system-config/system-config";
 
 export async function get_init_config(): Promise<void> {
   try {
@@ -97,20 +92,6 @@ export async function update_metric_config(
   payload: UpdateMetricConfigRequest,
 ): Promise<void> {
   await updateMetricConfig(payload);
-}
-
-export async function get_dns_config(): Promise<GetDnsConfigFastResponse> {
-  return await getDnsConfigFast();
-}
-
-export async function get_dns_config_edit(): Promise<GetDnsConfigResponse> {
-  return await getDnsConfig();
-}
-
-export async function update_dns_config(
-  payload: UpdateDnsConfigRequest,
-): Promise<void> {
-  await updateDnsConfig(payload);
 }
 
 export async function get_lan_hostname_config(): Promise<LandscapeLanHostnameConfig> {

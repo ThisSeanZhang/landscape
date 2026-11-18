@@ -7,7 +7,6 @@ export default {
   option_disabled: "禁用",
   doh_listen_port: "DoH 监听端口",
   doh_http_endpoint: "DoH 请求路径",
-  dns_tcp_enabled: "DNS TCP 服务",
   doh_port_reserved: "端口 53 已保留给 DNS，不能用于 DoH",
   doh_port_desc: "留空使用默认端口 6053；不能使用端口 53。",
   empty_uses_default: "留空使用默认值，保存后立即生效。",
@@ -22,13 +21,18 @@ export default {
 
   directory: "配置目录",
   ui_title: "系统偏好设置",
-  dns_title: "DNS 全局配置",
+  save_cache: "保存缓存配置",
+  dns_transports: "DNS 同时监听 UDP/53 和 TCP/53。",
+  doh_title: "DNS over HTTPS（DoH）",
+  save_doh: "保存 DoH 配置",
+  doh_dhcp_renewal:
+    "端点切换后，已有 DHCPv4 客户端可能会继续使用旧端点，直到下次续租。",
+  dns_title: "DNS 缓存",
   lan_hostname_title: "局域网主机名配置",
   metric_title: "指标监控配置",
   backup_title: "备份与导出",
 
   save_ui: "保存设置",
-  save_dns: "保存 DNS 配置",
   save_lan_hostname: "保存局域网主机名配置",
   save_metric: "保存指标配置",
 

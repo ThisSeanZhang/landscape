@@ -83,7 +83,7 @@ async fn get_dns_flow_status(
     responses((status = 200, description = "Success"))
 )]
 async fn start_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.system.dns_service.start_dns_service().await;
+    state.system.dns_service.start_dns_service().await?;
     LandscapeApiResp::success(())
 }
 
@@ -95,7 +95,7 @@ async fn start_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiRes
     responses((status = 200, description = "Success"))
 )]
 async fn stop_dns_service(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.system.dns_service.stop().await;
+    state.system.dns_service.stop().await?;
     LandscapeApiResp::success(())
 }
 

@@ -17,8 +17,9 @@ pub mod lan_hostname;
 
 pub use auth::{AuthRuntimeConfig, ChangePasswordRequest, LandscapeAuthConfig};
 pub use dns::{
-    CacheRuntimeConfig, DnsRuntimeConfig, DohRuntimeConfig, GetDnsConfigResponse,
-    LandscapeDnsConfig, UpdateDnsConfigRequest,
+    CacheRuntimeConfig, DohRuntimeConfig, GetDnsCacheConfigResponse, GetDohConfigResponse,
+    LandscapeDnsCacheConfig, LandscapeDnsConfig, LandscapeDohConfig, UpdateDnsCacheConfigRequest,
+    UpdateDohConfigRequest,
 };
 pub use gateway::{
     GatewayRuntimeConfig, GetGatewayConfigResponse, LandscapeGatewayConfig,
@@ -90,7 +91,8 @@ pub struct RuntimeConfig {
     pub web: WebRuntimeConfig,
     pub store: StoreRuntimeConfig,
     pub metric: MetricRuntimeConfig,
-    pub dns: DnsRuntimeConfig,
+    pub dns_cache: CacheRuntimeConfig,
+    pub doh: DohRuntimeConfig,
     pub lan_hostname: LanHostnameRuntimeConfig,
     pub ui: LandscapeUiConfig,
     pub time: TimeRuntimeConfig,

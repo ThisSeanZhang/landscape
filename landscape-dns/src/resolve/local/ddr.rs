@@ -20,7 +20,7 @@ impl LocalResolver {
     /// DoH Discovery of Resolvers (DDR) SVCB records for the
     /// `_dns.resolver.arpa.` name.
     pub(super) fn build_ddr_records(&self) -> Vec<Record> {
-        let Some(doh_runtime) = self.doh_runtime.as_ref() else {
+        let Some(doh_runtime) = self.doh_runtime.load_full() else {
             return Vec::new();
         };
         let Some(provider) = self.doh_advertise_provider.as_ref() else {

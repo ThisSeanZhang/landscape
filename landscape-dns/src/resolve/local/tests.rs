@@ -81,7 +81,7 @@ fn make_resolver(
     directory: Arc<LanDeviceDirectory>,
     config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
 ) -> LocalResolver {
-    LocalResolver::new(directory, config, None, None, None)
+    LocalResolver::new(directory, config, None, None, Default::default())
 }
 
 fn pd(name: &str) -> ParsedDomain {
@@ -641,6 +641,39 @@ async fn disabled_config_stops_resolution_without_touching_directory() {
         }
         LocalAnswer::Empty { .. } => panic!("zone host must be answered"),
     }
+}
+
+#[test]
+fn ddr_advertises_only_the_current_ready_endpoint() {
+    struct Domains;
+    impl DohAdvertiseProvider for Domains {
+        fn advertise_domains(&self) -> Vec<String> {
+            vec!["dns.example".into()]
+        }
+    }
+    let endpoint = Arc::new(arc_swap::ArcSwapOption::empty());
+    let resolver = LocalResolver::new(
+        directory(vec![]),
+        hostname_config(true, "lan"),
+        None,
+        Some(Arc::new(Domains)),
+        endpoint.clone(),
+    );
+    let query =
+        || match resolver.resolve_local(&pd("_dns.resolver.arpa."), RecordType::SVCB).unwrap() {
+            LocalAnswer::Answered { records, .. } => records,
+            LocalAnswer::Empty { .. } => panic!("expected a local DDR answer"),
+        };
+    assert!(query().is_empty());
+    for (port, path) in [(443, "/first"), (8443, "/new")] {
+        endpoint.store(Some(Arc::new(DohRuntimeConfig {
+            listen_port: port,
+            http_endpoint: path.into(),
+        })));
+        assert_eq!(query(), build_ddr_records(&["dns.example".into()], port, path, None));
+    }
+    endpoint.store(None);
+    assert!(query().is_empty());
 }
 
 #[test]
