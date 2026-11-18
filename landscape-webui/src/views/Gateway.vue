@@ -133,6 +133,9 @@ async function handleSaveAndRestartGateway() {
     } else if (!e?.error_id) {
       message.error(t("gateway.restart_failed") + ": " + e.message);
     }
+    await refresh_status().catch((refreshError) => {
+      console.error("Failed to refresh gateway status", refreshError);
+    });
   } finally {
     restartingGateway.value = false;
   }
@@ -163,11 +166,9 @@ watch(
   <n-flex vertical style="flex: 1">
     <n-flex align="center" justify="space-between">
       <n-flex>
-        <n-button
-          :disabled="status?.supported === false"
-          @click="show_edit_modal = true"
-          >{{ t("common.create") }}</n-button
-        >
+        <n-button @click="show_edit_modal = true">{{
+          t("common.create")
+        }}</n-button>
       </n-flex>
       <n-flex v-if="status" align="center" :size="16">
         <n-tag :type="gateway_status_tag_type(status)" size="small">
@@ -257,6 +258,18 @@ watch(
         </n-popover>
       </n-flex>
     </n-flex>
+    <n-alert
+      v-if="status?.last_error"
+      type="error"
+      :title="t('gateway.service_error')"
+    >
+      <n-flex vertical :size="4">
+        <n-text style="white-space: pre-wrap; overflow-wrap: anywhere">
+          {{ status.last_error }}
+        </n-text>
+        <n-text depth="3">{{ t("gateway.recovery_hint") }}</n-text>
+      </n-flex>
+    </n-alert>
     <n-flex>
       <n-grid x-gap="12" y-gap="10" cols="1 600:2 1200:3 1600:3">
         <n-grid-item v-for="rule in rules" :key="rule.id">

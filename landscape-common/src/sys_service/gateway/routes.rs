@@ -6,12 +6,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use http::{HeaderName, HeaderValue};
-use landscape_common::sys_service::gateway::{
+use crate::sys_service::gateway::{
     ClientIpHeaderPolicy, GatewayError, HttpUpstreamConfig, HttpUpstreamMatchRule,
     HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod, PathRewriteMode,
     ProxyHeaderConflictMode,
 };
+use http::{HeaderName, HeaderValue};
+
+pub type SharedGatewayRoutes = Arc<arc_swap::ArcSwap<CompiledGatewayRoutes>>;
 
 #[derive(Debug, Default)]
 pub struct CompiledGatewayRoutes {
@@ -70,7 +72,7 @@ struct CompiledLegacyRule {
 }
 
 #[derive(Debug)]
-pub(crate) struct CompiledHttpRoute {
+pub struct CompiledHttpRoute {
     pub rule_name: String,
     pub upstream: CompiledUpstream,
     pub rewrite_mode: PathRewriteMode,
@@ -78,13 +80,13 @@ pub(crate) struct CompiledHttpRoute {
 }
 
 #[derive(Debug)]
-pub(crate) struct CompiledSniRoute {
+pub struct CompiledSniRoute {
     pub rule_name: String,
     pub upstream: CompiledUpstream,
 }
 
 #[derive(Debug)]
-pub(crate) struct CompiledUpstream {
+pub struct CompiledUpstream {
     pub targets: Vec<HttpUpstreamTarget>,
     pub load_balance: LoadBalanceMethod,
     pub request_headers: Vec<CompiledRequestHeader>,
@@ -93,7 +95,7 @@ pub(crate) struct CompiledUpstream {
 }
 
 #[derive(Debug)]
-pub(crate) struct CompiledRequestHeader {
+pub struct CompiledRequestHeader {
     pub name: HeaderName,
     pub value: HeaderValue,
 }
@@ -201,7 +203,7 @@ impl CompiledGatewayRoutes {
         self.rule_count == 0
     }
 
-    pub(crate) fn match_http_route(
+    pub fn match_http_route(
         &self,
         host: Option<&str>,
         path: &str,
@@ -237,11 +239,11 @@ impl CompiledGatewayRoutes {
             .map(|rule| rule.route.clone())
     }
 
-    pub(crate) fn has_sni_routes(&self) -> bool {
+    pub fn has_sni_routes(&self) -> bool {
         !self.sni.is_empty()
     }
 
-    pub(crate) fn match_sni_route(&self, sni: &str) -> Option<Arc<CompiledSniRoute>> {
+    pub fn match_sni_route(&self, sni: &str) -> Option<Arc<CompiledSniRoute>> {
         let sni = normalize_domain(sni);
         for wildcard in [false, true] {
             if let Some((_, route)) =
@@ -268,7 +270,7 @@ fn normalize_prefix(prefix: &str) -> Result<String, GatewayError> {
 }
 
 /// `prefix` has already been normalized during compilation.
-pub(crate) fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+pub fn path_matches_prefix(path: &str, prefix: &str) -> bool {
     if prefix == "/" {
         return path.starts_with('/');
     }

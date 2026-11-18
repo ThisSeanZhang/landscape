@@ -92,8 +92,6 @@ pub enum StartupError {
     InitConfig(#[from] landscape_common::config::InitConfigError),
     #[error("{0}")]
     Cert(String),
-    #[error("gateway: {0}")]
-    Gateway(#[from] landscape::sys_service::gateway::GatewayServiceInitError),
     #[error("metric: {0}")]
     Metric(String),
     #[error("config: {0}")]
@@ -168,7 +166,7 @@ async fn run_system(
     let auth_share = bootstrap.auth;
     let ebpf_paths = bootstrap.ebpf_paths;
 
-    landscape_app_status.managed.gateway_service.sync_dynamic_dns_redirects().await;
+    landscape_app_status.managed.gateway_rules.sync_dynamic_dns_redirects().await;
 
     // 初始化结束
     let tls_config = build_tls_server_config_with_shared_resolver(

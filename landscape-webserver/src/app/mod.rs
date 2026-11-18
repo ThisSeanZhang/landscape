@@ -1,3 +1,4 @@
+use landscape::config_service::gateway_rule_service::GatewayRuleConfigService;
 use std::{path::PathBuf, sync::Arc};
 
 use arc_swap::ArcSwap;
@@ -107,5 +108,6 @@ pub(crate) struct ManagedServices {
     pub cert_service: CertService,
 
     // Gateway
+    pub gateway_rules: GatewayRuleConfigService,
     pub gateway_service: GatewayService,
 }

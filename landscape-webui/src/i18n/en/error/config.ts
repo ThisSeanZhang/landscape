@@ -4,6 +4,8 @@ export default {
   "metric.invalid_cleanup_time_budget":
     "cleanup_time_budget_secs must be between 1 and 60 seconds, got {value}",
   "init_config.file_not_found": "Init file not found in upload",
+  "init_config.export_serialization_failed":
+    "Failed to serialize the exported configuration",
   "init_config.file_read_error": "Failed to read init file",
   "init_config.invalid": "Invalid init file: {reason}",
   "init_config.version_mismatch":

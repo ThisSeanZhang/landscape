@@ -1,5 +1,5 @@
 use arc_swap::ArcSwap;
-use landscape_common::config::InitConfig;
+use landscape_common::config::{InitConfig, InitConfigError};
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::sys_config::{
@@ -147,37 +147,37 @@ impl LandscapeConfigService {
         Ok(())
     }
 
-    pub async fn export_init_config(&self) -> InitConfig {
+    pub async fn export_init_config(&self) -> Result<InitConfig, InitConfigError> {
         let config = self.config.load();
-        InitConfig {
+        Ok(InitConfig {
             version: landscape_common::VERSION.to_string(),
             config: config.file_config.clone(),
-            ifaces: self.store.iface_store().list().await.unwrap(),
-            marks: self.store.flow_wan_service_store().list().await.unwrap(),
-            wan_links: self.store.wan_link_store().list().await.unwrap(),
-            flow_rules: self.store.flow_rule_store().list().await.unwrap(),
-            dns_rules: self.store.dns_rule_store().list().await.unwrap(),
-            dst_ip_mark: self.store.dst_ip_rule_store().list().await.unwrap(),
-            firewall_rules: self.store.firewall_rule_store().list().await.unwrap(),
-            firewall_blacklists: self.store.firewall_blacklist_store().list().await.unwrap(),
-            wifi_configs: self.store.wifi_service_store().list().await.unwrap(),
-            dhcpv4_services: self.store.dhcp_v4_server_store().list().await.unwrap(),
-            geo_ips: self.store.geo_ip_rule_store().list().await.unwrap(),
-            geo_sites: self.store.geo_site_rule_store().list().await.unwrap(),
-            route_lans: self.store.route_lan_service_store().list().await.unwrap(),
-            route_wans: self.store.route_wan_service_store().list().await.unwrap(),
-            static_nat_mappings_v4: self.store.static_nat_mapping_v4_store().list().await.unwrap(),
-            static_nat_mappings_v6: self.store.static_nat_mapping_v6_store().list().await.unwrap(),
-            dns_redirects: self.store.dns_redirect_rule_store().list().await.unwrap(),
-            dns_upstream_configs: self.store.dns_upstream_config_store().list().await.unwrap(),
-            enrolled_devices: self.store.enrolled_device_store().list().await.unwrap(),
-            lan_ipv6s: self.store.lan_ipv6_v2_service_store().list().await.unwrap(),
-            cert_accounts: self.store.cert_account_store().list().await.unwrap(),
-            certs: self.store.cert_store().list().await.unwrap(),
-            gateway_rules: self.store.gateway_http_upstream_store().list().await.unwrap(),
-            ddns_jobs: self.store.ddns_job_store().list().await.unwrap(),
-            dns_provider_profiles: self.store.dns_provider_profile_store().list().await.unwrap(),
-        }
+            ifaces: self.store.iface_store().list().await?,
+            marks: self.store.flow_wan_service_store().list().await?,
+            wan_links: self.store.wan_link_store().list().await?,
+            flow_rules: self.store.flow_rule_store().list().await?,
+            dns_rules: self.store.dns_rule_store().list().await?,
+            dst_ip_mark: self.store.dst_ip_rule_store().list().await?,
+            firewall_rules: self.store.firewall_rule_store().list().await?,
+            firewall_blacklists: self.store.firewall_blacklist_store().list().await?,
+            wifi_configs: self.store.wifi_service_store().list().await?,
+            dhcpv4_services: self.store.dhcp_v4_server_store().list().await?,
+            geo_ips: self.store.geo_ip_rule_store().list().await?,
+            geo_sites: self.store.geo_site_rule_store().list().await?,
+            route_lans: self.store.route_lan_service_store().list().await?,
+            route_wans: self.store.route_wan_service_store().list().await?,
+            static_nat_mappings_v4: self.store.static_nat_mapping_v4_store().list().await?,
+            static_nat_mappings_v6: self.store.static_nat_mapping_v6_store().list().await?,
+            dns_redirects: self.store.dns_redirect_rule_store().list().await?,
+            dns_upstream_configs: self.store.dns_upstream_config_store().list().await?,
+            enrolled_devices: self.store.enrolled_device_store().list().await?,
+            lan_ipv6s: self.store.lan_ipv6_v2_service_store().list().await?,
+            cert_accounts: self.store.cert_account_store().list().await?,
+            certs: self.store.cert_store().list().await?,
+            gateway_rules: self.store.gateway_http_upstream_store().list_checked().await?,
+            ddns_jobs: self.store.ddns_job_store().list().await?,
+            dns_provider_profiles: self.store.dns_provider_profile_store().list().await?,
+        })
     }
 
     pub fn get_ui_config_from_memory(&self) -> LandscapeUiConfig {
@@ -478,6 +478,29 @@ mod tests {
         );
         let store = LandscapeDBServiceProvider::mem_test_db().await;
         (dir, LandscapeConfigService::new(runtime, store).await)
+    }
+
+    #[tokio::test]
+    async fn export_reports_malformed_gateway_rule_by_id() {
+        use landscape_common::sys_service::gateway::GatewayError;
+        use landscape_database::repository::Repository;
+        use sea_orm::ConnectionTrait;
+
+        let (_dir, service) = service().await;
+        let store = service.store.gateway_http_upstream_store();
+        let rule = serde_json::from_value(serde_json::json!({
+            "name": "export", "enable": true, "domains": ["export.example.com"], "match_rule": { "t": "host" },
+            "upstream": { "targets": [{ "address": "127.0.0.1", "port": 8080 }] }
+        }))
+        .unwrap();
+        let id = store.upsert(rule).await.unwrap().new.id;
+        assert_eq!(service.export_init_config().await.unwrap().gateway_rules[0].id, id);
+        Repository::db(&store)
+            .execute_unprepared("UPDATE gateway_http_upstream_rules SET upstream = 'false'")
+            .await
+            .unwrap();
+        assert!(matches!(service.export_init_config().await,
+            Err(InitConfigError::Gateway(GatewayError::InvalidStoredRule { id: bad_id, .. })) if bad_id == id));
     }
 
     #[tokio::test]

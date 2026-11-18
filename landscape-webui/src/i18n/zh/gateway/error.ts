@@ -1,4 +1,7 @@
 export default {
+  "gateway.stop_timeout": "网关未能在 {timeout_ms} 毫秒内停止，已保留原实例",
+  "gateway.stop_failed": "网关停止失败：{reason}",
+  "gateway.invalid_stored_rule": "已存储的网关规则 '{id}' 无效：{reason}",
   "gateway.rule_not_found": "找不到网关规则 (ID: {0})",
   "gateway.legacy_path_prefix_unsupported":
     "旧版路径前缀规则仅支持只读兼容，不能新建或更新",

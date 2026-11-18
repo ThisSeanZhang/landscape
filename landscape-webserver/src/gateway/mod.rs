@@ -1,4 +1,5 @@
 use axum::extract::{Path, State};
+use landscape::config_service::gateway_rule_service::GatewayRuleConfigService;
 use landscape::sys_service::{config_service::LandscapeConfigService, gateway::GatewayService};
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::config::ConfigId;
@@ -25,7 +26,11 @@ pub struct GatewayStatus {
     pub status: ServiceStatus,
     pub http_port: u16,
     pub https_port: u16,
+    /// Whether the HTTPS listener has bound successfully and is accepting connections.
     pub https_ready: bool,
+    /// Gateway service diagnostic, including startup errors or a pending restart.
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub rule_count: usize,
 }
 
@@ -38,7 +43,7 @@ pub struct GatewayStatus {
 async fn list_gateway_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<HttpUpstreamRuleConfig>> {
-    let result = state.managed.gateway_service.list_rules().await?;
+    let result = state.managed.gateway_rules.list_rules().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -53,7 +58,7 @@ async fn create_gateway_rule(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<HttpUpstreamRuleConfig>,
 ) -> LandscapeApiResult<HttpUpstreamRuleConfig> {
-    let saved = state.managed.gateway_service.save_rule(config).await?;
+    let saved = state.managed.gateway_rules.save_rule(config).await?;
 
     LandscapeApiResp::success(saved)
 }
@@ -72,7 +77,7 @@ async fn get_gateway_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<HttpUpstreamRuleConfig> {
-    let result = state.managed.gateway_service.find_rule(id).await?;
+    let result = state.managed.gateway_rules.find_rule(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -85,16 +90,13 @@ async fn get_gateway_rule(
     path = "/rules/{id}",
     tag = "Gateway",
     params(("id" = Uuid, Path, description = "Gateway rule ID")),
-    responses(
-        (status = 200, description = "Success"),
-        (status = 404, description = "Not found")
-    )
+    responses((status = 200, description = "Deleted or already absent"))
 )]
 async fn delete_gateway_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.managed.gateway_service.delete_rule(id).await?;
+    state.managed.gateway_rules.delete_rule(id).await?;
 
     LandscapeApiResp::success(())
 }
@@ -109,7 +111,12 @@ async fn get_gateway_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<GatewayStatus> {
     LandscapeApiResp::success(
-        build_gateway_status(&state.managed.gateway_service, &state.system.config_service).await,
+        build_gateway_status(
+            &state.managed.gateway_service,
+            &state.managed.gateway_rules,
+            &state.system.config_service,
+        )
+        .await,
     )
 }
 
@@ -117,7 +124,11 @@ async fn get_gateway_status(
     post,
     path = "/restart",
     tag = "Gateway",
-    responses((status = 200, description = "Success", body = CommonApiResp<GatewayStatus>))
+    responses(
+        (status = 200, description = "Success", body = CommonApiResp<GatewayStatus>),
+        (status = 500, description = "gateway.stop_failed: Failed to stop the previous gateway server"),
+        (status = 504, description = "gateway.stop_timeout: Shutdown timed out; the previous gateway server is retained")
+    )
 )]
 async fn restart_gateway(State(state): State<LandscapeApp>) -> LandscapeApiResult<GatewayStatus> {
     let gateway_config = state.system.config_service.get_gateway_runtime_config();
@@ -127,23 +138,30 @@ async fn restart_gateway(State(state): State<LandscapeApp>) -> LandscapeApiResul
         .restart(gateway_config, std::time::Duration::from_secs(10))
         .await?;
     LandscapeApiResp::success(
-        build_gateway_status(&state.managed.gateway_service, &state.system.config_service).await,
+        build_gateway_status(
+            &state.managed.gateway_service,
+            &state.managed.gateway_rules,
+            &state.system.config_service,
+        )
+        .await,
     )
 }
 
 async fn build_gateway_status(
     service: &GatewayService,
+    rules: &GatewayRuleConfigService,
     config_service: &LandscapeConfigService,
 ) -> GatewayStatus {
-    let config =
-        service.runtime_config().unwrap_or_else(|| config_service.get_gateway_runtime_config());
+    let runtime = service.runtime_status();
+    let config = runtime.config.unwrap_or_else(|| config_service.get_gateway_runtime_config());
     GatewayStatus {
         supported: service.is_supported(),
-        status: service.status(),
+        status: runtime.status,
         http_port: config.http_port,
         https_port: config.https_port,
-        https_ready: service.has_https_listener(),
-        rule_count: service.stored_rule_count().await,
+        https_ready: runtime.https_ready,
+        last_error: runtime.last_error,
+        rule_count: rules.stored_rule_count().await,
     }
 }
 
@@ -185,22 +203,20 @@ mod tests {
         }))
         .unwrap();
         db.gateway_http_upstream_store().upsert(rule).await.unwrap();
-        let service = GatewayService::init_service(
-            db.gateway_http_upstream_store(),
-            runtime.gateway.clone(),
-            &certs,
-            dns,
-        )
-        .await
-        .unwrap();
+        let rules = GatewayRuleConfigService::new(db.gateway_http_upstream_store(), dns).await;
+        let service =
+            GatewayService::init_service(rules.clone(), runtime.gateway.clone(), &certs).await;
         let config_service = LandscapeConfigService::new(runtime, db).await;
         std::fs::write(config_service.get_config_path(), "").unwrap();
-        let before = build_gateway_status(&service, &config_service).await;
+        let before = build_gateway_status(&service, &rules, &config_service).await;
         assert_eq!(before.http_port, initial_http_port);
         assert_eq!(before.https_port, initial_https_port);
         assert_eq!(before.rule_count, 1);
         assert_eq!(before.supported, cfg!(feature = "gateway"));
         assert_eq!(before.status, ServiceStatus::Stop);
+        assert!(before.last_error.is_none());
+        // Disabled gateways have no bound HTTPS listener.
+        assert!(!before.https_ready);
 
         let (_, hash) = config_service.get_gateway_config_from_file().await;
         config_service
@@ -214,7 +230,8 @@ mod tests {
             )
             .await
             .unwrap();
-        let after_save = build_gateway_status(&service, &config_service).await;
+        let after_save = build_gateway_status(&service, &rules, &config_service).await;
+        assert!(!after_save.https_ready);
         let clone = service.clone();
         #[cfg(feature = "gateway")]
         {
@@ -241,12 +258,89 @@ mod tests {
                 Err(GatewayError::Unsupported)
             ));
         }
-        let after = build_gateway_status(&clone, &config_service).await;
+        let after = build_gateway_status(&clone, &rules, &config_service).await;
         assert_eq!(after.http_port, 18080);
         assert_eq!(after.https_port, 18443);
         assert_eq!(after.status, ServiceStatus::Stop);
         assert_eq!(after.rule_count, 1);
-        service.shutdown_and_wait(Duration::from_secs(1)).await;
+        assert!(!after.https_ready);
+        assert!(after.last_error.is_none());
+        service.shutdown_and_wait(Duration::from_secs(1)).await.unwrap();
+        certs.shutdown_and_wait(Duration::from_secs(1)).await;
+    }
+
+    #[cfg(feature = "gateway")]
+    #[tokio::test]
+    async fn gateway_status_exposes_startup_error_until_repaired_rules_are_restarted() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = RuntimeConfig::new_with_file_config(
+            WebCommArgs {
+                config_dir: Some(dir.path().to_path_buf()),
+                database_path: Some("sqlite::memory:".into()),
+                ..Default::default()
+            },
+            Some(LandscapeConfig::default()),
+        );
+        let db = LandscapeDBServiceProvider::mem_test_db().await;
+        let (events_tx, _events_rx) = tokio::sync::mpsc::channel(32);
+        let dns = DNSRedirectService::new(db.clone(), events_tx).await;
+        let accounts = CertAccountService::new(db.clone()).await;
+        let certs = CertService::new(db.clone(), accounts, Some(dns.clone())).await;
+        let mut stored_rules = Vec::new();
+        for domain in ["first.example.com", "second.example.com"] {
+            let rule: HttpUpstreamRuleConfig = serde_json::from_value(serde_json::json!({
+                "name": domain, "enable": true, "domains": [domain],
+                "match_rule": { "t": "host" },
+                "upstream": {
+                    "targets": [{ "address": "127.0.0.1", "port": 8080 }],
+                    "request_headers": [{ "name": "invalid header", "value": "value" }]
+                }
+            }))
+            .unwrap();
+            stored_rules.push(db.gateway_http_upstream_store().upsert(rule).await.unwrap().new);
+        }
+        let rules = GatewayRuleConfigService::new(db.gateway_http_upstream_store(), dns).await;
+        let service =
+            GatewayService::init_service(rules.clone(), runtime.gateway.clone(), &certs).await;
+        let config_service = LandscapeConfigService::new(runtime, db).await;
+        let failed = build_gateway_status(&service, &rules, &config_service).await;
+        assert!(failed.supported);
+        assert_eq!(failed.status, ServiceStatus::Failed);
+        assert_eq!(failed.rule_count, 2);
+        assert!(!failed.https_ready);
+        assert!(failed.last_error.as_ref().is_some_and(|error| error.contains("invalid header")));
+        assert!(serde_json::to_value(&failed).unwrap()["last_error"].is_string());
+
+        // Startup failure must leave stored rules accessible for incremental repair.
+        assert_eq!(rules.list_rules().await.unwrap().len(), 2);
+        let mut repaired = rules.find_rule(stored_rules[0].id).await.unwrap().unwrap();
+        repaired.upstream.request_headers.clear();
+        rules.save_rule(repaired).await.unwrap();
+        let partially_repaired = build_gateway_status(&service, &rules, &config_service).await;
+        assert_eq!(partially_repaired.status, ServiceStatus::Failed);
+        assert_eq!(partially_repaired.rule_count, 2);
+        assert!(partially_repaired.last_error.is_some());
+
+        rules.delete_rule(stored_rules[1].id).await.unwrap();
+        let pending = build_gateway_status(&service, &rules, &config_service).await;
+        assert_eq!(pending.status, ServiceStatus::Failed);
+        assert_eq!(pending.rule_count, 1);
+        assert!(!pending.https_ready);
+        assert!(pending.last_error.is_some());
+        assert_ne!(pending.last_error, failed.last_error);
+
+        service
+            .restart(config_service.get_gateway_runtime_config(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        let recovered = build_gateway_status(&service, &rules, &config_service).await;
+        assert_eq!(recovered.status, ServiceStatus::Stop);
+        assert_eq!(recovered.rule_count, 1);
+        assert!(!recovered.https_ready);
+        assert!(recovered.last_error.is_none());
+        assert!(serde_json::to_value(&recovered).unwrap()["last_error"].is_null());
+        service.shutdown_and_wait(Duration::from_secs(1)).await.unwrap();
         certs.shutdown_and_wait(Duration::from_secs(1)).await;
     }
 }

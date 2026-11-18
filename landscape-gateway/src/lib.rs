@@ -1,9 +1,11 @@
+mod http_listener;
 pub mod proxy_service;
-pub mod routes;
+pub use landscape_common::sys_service::gateway::routes;
 pub mod sni_proxy;
 
 use std::io::ErrorKind;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -12,10 +14,13 @@ use std::os::unix::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
 
+#[cfg(test)]
 use crate::routes::CompiledGatewayRoutes;
+#[cfg(test)]
 use arc_swap::ArcSwap;
 use landscape_common::concurrency::{runtime_thread_name_fn, spawn_named_thread, thread_name};
 use landscape_common::sys_config::GatewayRuntimeConfig;
+use landscape_common::sys_service::gateway::GatewayError;
 
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use pingora::apps::ServerApp;
@@ -34,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::sni_proxy::{SniProxyRouter, parse_sni_from_client_hello, proxy_tls_passthrough};
 
-pub type SharedGatewayRoutes = Arc<ArcSwap<CompiledGatewayRoutes>>;
+pub use routes::SharedGatewayRoutes;
 
 #[derive(Debug, Clone)]
 pub struct GatewayTlsConfig {
@@ -42,240 +47,193 @@ pub struct GatewayTlsConfig {
 }
 
 pub struct GatewayServer {
-    routes: SharedGatewayRoutes,
-    state: Mutex<Option<GatewayRun>>,
-    /// 上一次运行的终态:无运行时对外展示(线程崩溃后可见 Failed)
-    last_terminal: ArcSwap<ServiceStatus>,
-    config: GatewayRuntimeConfig,
-    tls_config: Option<GatewayTlsConfig>,
-    /// 异步运行时句柄:用于 spawn Pingora ExecutionPhase 转发任务。
-    /// 非异步上下文构造时为 None,状态回退为"线程 spawn 成功即 Running"。
-    rt: Option<tokio::runtime::Handle>,
+    thread: Mutex<Option<JoinHandle<()>>>,
+    done_rx: watch::Receiver<ServiceStatus>,
+    run: RunState,
 }
 
-/// 一次网关运行:专用线程 + 自有取消信号 + 每轮新造的状态句柄(跨周期
-/// 不复用)+ 完成通知。停止 = cancel → 线程收尾 → done 发送终态;
-/// 等待侧 await done watch 即可,无需轮询状态。
-struct GatewayRun {
-    /// `Some` 直到被 `join()` 取出并阻塞等待;`Drop` 时若仍为 `Some`,
-    /// 丢弃即 detach 线程。
-    thread: Option<JoinHandle<()>>,
+#[derive(Clone)]
+struct RunState {
     cancel: CancellationToken,
     status: ServiceHandle,
-    done_rx: watch::Receiver<ServiceStatus>,
+    https_ready: Arc<AtomicBool>,
+    cleanup_uncertain: Arc<AtomicBool>,
+    error: Arc<OnceLock<String>>,
 }
 
 /// 网关一次运行的失败原因(线程未 panic 但组件异常退出)。
 #[derive(Debug)]
 enum GatewayRunFailure {
+    HttpListenerFailed,
     /// HTTPS 驱动线程 panic,HTTPS 监听已不可用
     HttpsDriverPanicked,
+    HttpsDriverFailed(GatewayHttpsRunError),
+}
+
+impl std::fmt::Display for GatewayRunFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HttpListenerFailed => write!(formatter, "HTTP listener exited unexpectedly"),
+            Self::HttpsDriverPanicked => write!(formatter, "HTTPS driver thread panicked"),
+            Self::HttpsDriverFailed(error) => {
+                write!(formatter, "HTTPS listener {} failed: {}", error.bind_addr, error.source)
+            }
+        }
+    }
 }
 
 impl GatewayServer {
-    pub fn new(
-        initial_routes: CompiledGatewayRoutes,
-        config: GatewayRuntimeConfig,
+    /// Start one gateway run. The caller owns route publication and replacement.
+    pub fn spawn(
+        routes: SharedGatewayRoutes,
+        config: &GatewayRuntimeConfig,
         tls_config: Option<GatewayTlsConfig>,
     ) -> Self {
-        Self {
-            routes: Arc::new(ArcSwap::new(Arc::new(initial_routes))),
-            state: Mutex::new(None),
-            last_terminal: ArcSwap::from_pointee(ServiceStatus::Stop),
-            config,
-            tls_config,
-            rt: tokio::runtime::Handle::try_current().ok(),
-        }
-    }
-
-    pub fn shared_routes(&self) -> SharedGatewayRoutes {
-        self.routes.clone()
-    }
-
-    pub fn publish_routes(&self, routes: CompiledGatewayRoutes) {
-        let rule_count = routes.len();
-        self.routes.store(Arc::new(routes));
-        tracing::info!("Gateway routes published ({rule_count} source rules)");
-    }
-
-    pub fn start(&self) {
-        let mut state = self.state.lock().unwrap();
-        // 只要旧 run 尚未落终态(Staring/Running/Stopping)就拒绝覆盖:Stopping
-        // 意味着线程仍在收尾、监听端口可能未释放,直接覆盖会 detached 旧线程
-        // 并在同一端口上竞争 bind。仅在 Stop/Failed(线程已结束)时才允许替换。
-        if let Some(run) = state.as_ref()
-            && !run.status.is_stop()
-        {
-            tracing::warn!("Gateway is not stopped yet, refusing to start another run");
-            return;
-        }
-        // 已终止的旧 run(线程已退出,JoinHandle drop 即 detach)直接覆盖
-
-        // 每次启动创建全新运行实例:状态句柄跨周期不复用
         let status = ServiceHandle::new();
         status.just_change_status(ServiceStatus::Staring);
 
-        let routes = self.routes.clone();
-        let http_port = self.config.http_port;
-        let https_port = self.config.https_port;
-        let tls_config = self.tls_config.clone();
-        let cancel = CancellationToken::new();
-        let thread_cancel = cancel.clone();
+        let http_port = config.http_port;
+        let https_port = config.https_port;
         let (done_tx, done_rx) = watch::channel(ServiceStatus::Staring);
-        let run_status = status.clone();
-        // 异步句柄传入线程:ExecutionPhase 转发任务由网关线程在订阅后自行
-        // spawn,主侧 start() 不阻塞等待交接
-        let rt = self.rt.clone();
+        let rt = tokio::runtime::Handle::try_current().ok();
+        if rt.is_none() {
+            status.just_change_status(ServiceStatus::Running);
+        }
+        let run = RunState {
+            cancel: CancellationToken::new(),
+            status,
+            https_ready: Default::default(),
+            cleanup_uncertain: Default::default(),
+            error: Default::default(),
+        };
+        let worker = run.clone();
 
         let thread = spawn_named_thread(thread_name::fixed::GATEWAY_MAIN, move || {
             // catch_unwind:线程 panic 收敛为 Failed 终态,而非静默消失
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_pingora_server(
-                    routes,
-                    http_port,
-                    https_port,
-                    tls_config,
-                    thread_cancel,
-                    rt,
-                    run_status.clone(),
-                )
+                run_pingora_server(routes, http_port, https_port, tls_config, rt, worker.clone())
             }));
-            // run() 返回 == pingora 完全停止(Terminated);子组件异常退出
-            //(HTTPS 驱动线程 panic)同样收敛为 Failed,不谎报 Stop。
+            // Publish completion after the owning driver and its HTTPS child
+            // have returned; a component failure remains visible as Failed.
             let terminal = match result {
                 Ok(Ok(())) => ServiceStatus::Stop,
                 Ok(Err(failure)) => {
-                    tracing::error!("Gateway run finished with failure: {failure:?}");
+                    let _ = worker.error.set(failure.to_string());
+                    tracing::error!("Gateway run finished with failure: {failure}");
                     ServiceStatus::Failed
                 }
                 Err(panic) => {
+                    let _ = worker.error.set("Gateway main thread panicked".into());
                     tracing::error!("Gateway main thread panicked: {panic:?}");
+                    // Pingora may detach its runtime workers when run() unwinds.
+                    // Keep this run owned: thread exit cannot prove port release.
+                    worker.cleanup_uncertain.store(true, Ordering::Release);
                     ServiceStatus::Failed
                 }
             };
-            run_status.just_change_status(terminal.clone());
+            worker.cancel.cancel();
+            worker.https_ready.store(false, Ordering::Release);
+            worker.status.just_change_status(terminal.clone());
             let _ = done_tx.send(terminal);
-        })
-        .expect("failed to spawn gateway main thread");
-
-        // 无异步运行时可用(非异步上下文构造):回退为线程 spawn 成功即
-        // Running;否则状态由网关线程内 spawn 的 ExecutionPhase 转发任务驱动
-        if self.rt.is_none() {
-            status.just_change_status(ServiceStatus::Running);
-        }
-
-        *state = Some(GatewayRun { thread: Some(thread), cancel, status, done_rx });
-        if self.tls_config.is_some() {
-            tracing::info!(
-                "Gateway started on HTTP port {} and HTTPS port {}",
-                self.config.http_port,
-                self.config.https_port
-            );
-        } else {
-            tracing::info!(
-                "Gateway started on HTTP port {} (HTTPS listener disabled: no gateway certificate loaded)",
-                self.config.http_port
-            );
-        }
-    }
-
-    /// Signal gateway to stop without blocking. Call join() after completion
-    /// to reap the thread; Drop detaches it if shutdown is still in progress.
-    pub fn shutdown(&self) {
-        let state = self.state.lock().unwrap();
-        if let Some(run) = state.as_ref() {
-            if run.status.is_exit() {
-                return;
+        });
+        let thread = match thread {
+            Ok(thread) => Some(thread),
+            Err(cause) => {
+                let _ = run.error.set(cause.to_string());
+                run.status.just_change_status(ServiceStatus::Failed);
+                None
             }
-            tracing::info!("Signalling gateway to stop...");
-            run.status.just_change_status(ServiceStatus::Stopping);
-            run.cancel.cancel();
-        }
-    }
-
-    /// Block until the gateway thread has exited. Call after shutdown().
-    /// 线程终态会写入 last_terminal,供后续状态查询展示。
-    pub fn join(&self) {
-        let mut state = self.state.lock().unwrap();
-        let Some(run) = state.as_mut() else {
-            return;
         };
-        tracing::info!("Waiting for gateway thread to finish...");
-        // 持锁 join:期间并发 status() 会等待而不是读到「已 take 但尚未写入
-        // last_terminal」的旧值;终态写入后再清空 state。
-        if let Some(thread) = run.thread.take()
-            && let Err(e) = thread.join()
-        {
-            tracing::error!("Gateway thread panicked: {:?}", e);
+        Self { thread: Mutex::new(thread), run, done_rx }
+    }
+
+    pub async fn shutdown_and_wait(&self, timeout: Duration) -> Result<(), GatewayError> {
+        self.run.cancel.cancel();
+        if self.run.cleanup_uncertain.load(Ordering::Acquire) {
+            return Err(GatewayError::StopFailed {
+                reason: "gateway runtime cleanup could not be confirmed after a failure".into(),
+            });
         }
-        let terminal = run.status.current();
-        self.last_terminal.store(Arc::new(terminal));
-        *state = None;
-        tracing::info!("Gateway stopped");
-    }
-
-    /// 当前运行的完成通知接收端:await 终态(Stop/Failed)替代轮询。
-    pub fn done_receiver(&self) -> Option<watch::Receiver<ServiceStatus>> {
-        self.state.lock().unwrap().as_ref().map(|run| run.done_rx.clone())
-    }
-
-    pub fn is_running(&self) -> bool {
-        matches!(self.status(), ServiceStatus::Running)
+        if self.thread.lock().unwrap().is_none() {
+            return Ok(());
+        }
+        if !self.run.status.is_exit() {
+            self.run.status.just_change_status(ServiceStatus::Stopping);
+        }
+        let wait = async {
+            let mut done = self.done_rx.clone();
+            done.wait_for(|status| matches!(status, ServiceStatus::Stop | ServiceStatus::Failed))
+                .await
+                .map_err(|_| GatewayError::StopFailed {
+                    reason: "gateway completion channel closed without a terminal result".into(),
+                })?;
+            loop {
+                {
+                    let mut thread = self.thread.lock().unwrap();
+                    let finished = thread.as_ref().is_none_or(JoinHandle::is_finished);
+                    if self.run.cleanup_uncertain.load(Ordering::Acquire) {
+                        return Err(GatewayError::StopFailed {
+                            reason:
+                                "gateway runtime cleanup could not be confirmed after a failure"
+                                    .into(),
+                        });
+                    }
+                    if finished {
+                        if thread.take().is_some_and(|handle| handle.join().is_err()) {
+                            self.run.cleanup_uncertain.store(true, Ordering::Release);
+                            return Err(GatewayError::StopFailed {
+                                reason: "gateway thread panicked".into(),
+                            });
+                        }
+                        return Ok(());
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        };
+        tokio::time::timeout(timeout, wait).await.map_err(|_| GatewayError::StopTimeout {
+            timeout_ms: timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+        })?
     }
 
     pub fn status(&self) -> ServiceStatus {
-        let state = self.state.lock().unwrap();
-        match state.as_ref() {
-            Some(run) => run.status.current(),
-            None => (*self.last_terminal.load_full()).clone(),
-        }
+        self.run.status.current()
     }
 
-    pub fn config(&self) -> &GatewayRuntimeConfig {
-        &self.config
+    pub fn last_error(&self) -> Option<String> {
+        self.run.error.get().cloned()
     }
 
     pub fn has_https_listener(&self) -> bool {
-        self.tls_config.is_some()
+        !self.run.cancel.is_cancelled() && self.run.https_ready.load(Ordering::Acquire)
     }
 }
 
 impl Drop for GatewayServer {
     fn drop(&mut self) {
-        self.shutdown();
-        let stopped = {
-            let state = self.state.lock().unwrap();
-            state.as_ref().is_some_and(|run| run.status.is_stop())
-        };
-        if stopped {
-            self.join();
-            return;
-        }
-
-        if let Some(runtime_state) = self.state.lock().unwrap().take() {
-            runtime_state.cancel.cancel();
-            tracing::warn!(
-                "Dropping gateway server before gateway thread fully stopped; detaching thread"
-            );
-        }
+        self.run.cancel.cancel();
     }
 }
 
-/// 运行 pingora 直到完全停止。正常返回 `Ok(())`;若 HTTPS 驱动线程 panic
-/// 则返回 [`GatewayRunFailure::HttpsDriverPanicked`],由上层收敛为 Failed。
+/// Run Pingora and join the HTTPS driver, reporting its failures to the owner.
 fn run_pingora_server(
     routes: SharedGatewayRoutes,
     http_port: u16,
     https_port: u16,
     tls_config: Option<GatewayTlsConfig>,
-    cancel: CancellationToken,
     rt: Option<tokio::runtime::Handle>,
-    status: ServiceHandle,
+    run: RunState,
 ) -> Result<(), GatewayRunFailure> {
-    use pingora::server::Server;
     use proxy_service::LandscapeReverseProxy;
+    let RunState {
+        cancel,
+        status,
+        https_ready,
+        cleanup_uncertain,
+        error,
+    } = run;
 
-    let mut server = Server::new(None).expect("Failed to create Pingora server");
+    let mut server = create_pingora_server();
     server.bootstrap();
     let server_conf = server.configuration.clone();
 
@@ -283,35 +241,114 @@ fn run_pingora_server(
     // 丢弃,必须先订阅后 run)并在网关线程内就地 spawn 转发任务
     if let Some(rt) = rt {
         let phases = server.watch_execution_phase();
-        rt.spawn(forward_execution_phase(status, phases));
+        rt.spawn(forward_execution_phase(status.clone(), phases));
     }
 
     let proxy = LandscapeReverseProxy::new(routes.clone());
     let mut http_service = pingora::proxy::http_proxy_service(&server.configuration, proxy);
     http_service.add_tcp(&format!("[::]:{http_port}"));
+    let (http_service, http_shutdown) =
+        http_listener::supervise(http_service, cancel.clone(), status.clone(), cleanup_uncertain);
+    let http_shutdown = Arc::new(http_shutdown);
     server.add_service(http_service);
 
-    let https_handle = tls_config.map(|tls_config| {
+    // This guard cancels and joins HTTPS even when Pingora unwinds. Keeping
+    // the child handle owned until join prevents an orphaned listening socket.
+    let mut https_driver = HttpsDriver { thread: None, cancel: cancel.clone() };
+    if let Some(tls_config) = tls_config {
         let routes = routes.clone();
-        let cancel = cancel.child_token();
-        spawn_named_thread(thread_name::fixed::GATEWAY_HTTPS_DRIVER, move || {
-            run_https_server(routes, https_port, tls_config, server_conf, cancel);
-        })
-        .expect("failed to spawn gateway https driver thread")
-    });
+        let driver_cancel = cancel.clone();
+        https_driver.thread = Some(
+            spawn_named_thread(thread_name::fixed::GATEWAY_HTTPS_DRIVER, move || {
+                supervise_https_driver(
+                    status,
+                    driver_cancel.clone(),
+                    https_ready.clone(),
+                    &error,
+                    || {
+                        run_https_server(
+                            routes,
+                            https_port,
+                            tls_config,
+                            server_conf,
+                            driver_cancel,
+                            https_ready,
+                        )
+                    },
+                )
+            })
+            .expect("failed to spawn gateway https driver thread"),
+        );
+    }
 
     let run_args = pingora::server::RunArgs {
-        shutdown_signal: Box::new(TokenShutdownWatch { token: cancel }),
+        shutdown_signal: Box::new(TokenShutdownWatch {
+            token: cancel,
+            http: http_shutdown.clone(),
+        }),
     };
     server.run(run_args);
+    let https_result = https_driver.shutdown_and_join();
+    if http_shutdown.failed() { Err(GatewayRunFailure::HttpListenerFailed) } else { https_result }
+}
 
-    if let Some(handle) = https_handle
-        && let Err(e) = handle.join()
-    {
-        tracing::error!("Gateway HTTPS thread panicked: {:?}", e);
-        return Err(GatewayRunFailure::HttpsDriverPanicked);
+fn create_pingora_server() -> pingora::server::Server {
+    pingora::server::Server::new(None).expect("Failed to create Pingora server")
+}
+
+struct HttpsDriver {
+    thread: Option<JoinHandle<Result<(), GatewayRunFailure>>>,
+    cancel: CancellationToken,
+}
+
+impl HttpsDriver {
+    fn shutdown_and_join(&mut self) -> Result<(), GatewayRunFailure> {
+        self.cancel.cancel();
+        match self.thread.take().map(JoinHandle::join) {
+            None | Some(Ok(Ok(()))) => Ok(()),
+            Some(Ok(Err(error))) => Err(error),
+            Some(Err(_)) => Err(GatewayRunFailure::HttpsDriverPanicked),
+        }
     }
-    Ok(())
+}
+
+impl Drop for HttpsDriver {
+    fn drop(&mut self) {
+        if let Err(error) = self.shutdown_and_join() {
+            tracing::error!("Gateway HTTPS driver failed during cleanup: {error}");
+        }
+    }
+}
+
+fn supervise_https_driver(
+    status: ServiceHandle,
+    cancel: CancellationToken,
+    https_ready: Arc<AtomicBool>,
+    diagnostic: &OnceLock<String>,
+    run: impl FnOnce() -> Result<(), GatewayHttpsRunError>,
+) -> Result<(), GatewayRunFailure> {
+    let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(GatewayRunFailure::HttpsDriverFailed(error)),
+        Err(_) => Err(GatewayRunFailure::HttpsDriverPanicked),
+    };
+    https_ready.store(false, Ordering::Release);
+    if let Err(error) = &result {
+        let _ = diagnostic.set(error.to_string());
+        tracing::error!("Gateway HTTPS driver failed: {error}");
+        status.just_change_status(ServiceStatus::Failed);
+        cancel.cancel();
+    }
+    result
+}
+
+/// Readiness belongs to the listener's lifetime, including unwind cleanup.
+struct HttpsReadinessGuard(Arc<AtomicBool>);
+
+impl Drop for HttpsReadinessGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// 将 pingora 的 ExecutionPhase 广播转发为服务状态:真正进入服务态才置
@@ -354,29 +391,41 @@ fn run_https_server(
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
     cancel: CancellationToken,
-) {
+    https_ready: Arc<AtomicBool>,
+) -> Result<(), GatewayHttpsRunError> {
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .thread_name_fn(runtime_thread_name_fn(thread_name::prefix::GATEWAY_HTTPS_RUNTIME))
         .build()
-        .expect("Failed to create gateway HTTPS runtime");
+        .map_err(|source| GatewayHttpsRunError {
+            port: https_port,
+            bind_addr: gateway_https_bind_addr(https_port),
+            source,
+            already_logged: false,
+        })?;
 
-    runtime.block_on(async move {
-        if let Err(error) =
-            run_https_server_inner(routes, https_port, tls_config, server_conf, cancel).await
-            && !error.already_logged
-        {
-            tracing::error!(
-                component = "gateway_https",
-                event = "startup_failed",
-                port = error.port,
-                bind_addr = %error.bind_addr,
-                error_kind = ?error.source.kind(),
-                error = %error.source,
-                "Gateway HTTPS listener exited with startup error"
-            );
-        }
-    });
+    let result = runtime.block_on(run_https_server_inner(
+        routes,
+        https_port,
+        tls_config,
+        server_conf,
+        cancel,
+        https_ready,
+    ));
+    if let Err(error) = &result
+        && !error.already_logged
+    {
+        tracing::error!(
+            component = "gateway_https",
+            event = "startup_failed",
+            port = error.port,
+            bind_addr = %error.bind_addr,
+            error_kind = ?error.source.kind(),
+            error = %error.source,
+            "Gateway HTTPS listener exited with startup error"
+        );
+    }
+    result
 }
 
 #[derive(Debug)]
@@ -393,9 +442,14 @@ async fn run_https_server_inner(
     tls_config: GatewayTlsConfig,
     server_conf: Arc<pingora::server::configuration::ServerConf>,
     cancel: CancellationToken,
+    https_ready: Arc<AtomicBool>,
 ) -> Result<(), GatewayHttpsRunError> {
     use proxy_service::LandscapeReverseProxy;
 
+    let _readiness_guard = HttpsReadinessGuard(https_ready.clone());
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
     let bind_addr = gateway_https_bind_addr(https_port);
     tracing::info!(
         component = "gateway_https",
@@ -437,6 +491,10 @@ async fn run_https_server_inner(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    https_ready.store(true, Ordering::Release);
     tracing::info!(
         component = "gateway_https",
         event = "bind_ok",
@@ -454,9 +512,20 @@ async fn run_https_server_inner(
             accept_result = listener.accept() => {
                 let (stream, peer_addr) = match accept_result {
                     Ok(pair) => pair,
-                    Err(e) => {
-                        tracing::error!("Gateway HTTPS accept failed: {e}");
-                        continue;
+                    Err(source) => {
+                        if matches!(source.kind(), std::io::ErrorKind::Interrupted
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::ConnectionAborted)
+                        {
+                            continue;
+                        }
+                        tracing::error!("Gateway HTTPS accept failed: {source}");
+                        return Err(GatewayHttpsRunError {
+                            port: https_port,
+                            bind_addr,
+                            source,
+                            already_logged: true,
+                        });
                     }
                 };
 
@@ -532,6 +601,8 @@ async fn run_https_server_inner(
         }
     }
 
+    https_ready.store(false, Ordering::Release);
+    drop(listener);
     while tasks.join_next().await.is_some() {}
     tracing::info!(
         component = "gateway_https",
@@ -680,47 +751,19 @@ impl Peek for GatewayTlsStream {
 
 struct TokenShutdownWatch {
     token: CancellationToken,
+    http: Arc<http_listener::HttpListenerShutdown>,
 }
 
 #[async_trait::async_trait]
 impl pingora::server::ShutdownSignalWatch for TokenShutdownWatch {
     async fn recv(&self) -> pingora::server::ShutdownSignal {
         self.token.cancelled().await;
+        // FastShutdown detaches Pingora runtime workers. First close and join
+        // the HTTP accept loops so a subsequent run cannot overlap a listener.
+        self.http.shutdown_and_wait().await;
         pingora::server::ShutdownSignal::FastShutdown
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn stopping_run() -> GatewayRun {
-        let status = ServiceHandle::new();
-        status.just_change_status(ServiceStatus::Staring);
-        status.just_change_status(ServiceStatus::Running);
-        status.just_change_status(ServiceStatus::Stopping);
-        let (_done_tx, done_rx) = watch::channel(ServiceStatus::Stopping);
-        GatewayRun {
-            thread: Some(std::thread::spawn(|| {})),
-            cancel: CancellationToken::new(),
-            status,
-            done_rx,
-        }
-    }
-
-    #[test]
-    fn start_refuses_while_previous_run_is_stopping() {
-        let server = GatewayServer::new(
-            CompiledGatewayRoutes::default(),
-            GatewayRuntimeConfig::default(),
-            None,
-        );
-        *server.state.lock().unwrap() = Some(stopping_run());
-
-        server.start();
-
-        let state = server.state.lock().unwrap();
-        let run = state.as_ref().expect("previous run must be preserved, not overwritten");
-        assert_eq!(run.status.current(), ServiceStatus::Stopping);
-    }
-}
+mod lifecycle_tests;

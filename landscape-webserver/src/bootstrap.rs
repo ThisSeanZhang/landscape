@@ -1,3 +1,4 @@
+use landscape::config_service::gateway_rule_service::GatewayRuleConfigService;
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use arc_swap::ArcSwap;
@@ -173,15 +174,12 @@ pub(crate) async fn build_app(
     log_startup_phase("cert_service.reload_api_tls_mapping", phase_start, startup_start);
     // Gateway
     let gateway_store = db_store_provider.gateway_http_upstream_store();
+    let gateway_rules =
+        GatewayRuleConfigService::new(gateway_store, dns_redirect_service.clone()).await;
     let gateway_service = startup_phase!(
         "gateway_service.init_service",
-        GatewayService::init_service(
-            gateway_store,
-            config.gateway.clone(),
-            &cert_service,
-            dns_redirect_service.clone(),
-        )
-        .await?
+        GatewayService::init_service(gateway_rules.clone(), config.gateway.clone(), &cert_service,)
+            .await
     );
 
     let enrolled_devices = db_store_provider.enrolled_device_store().list().await.map_err(|e| {
@@ -392,6 +390,7 @@ pub(crate) async fn build_app(
             enrolled_device_service,
             cert_account_service,
             cert_service,
+            gateway_rules,
             gateway_service,
         },
     };

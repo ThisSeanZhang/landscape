@@ -275,6 +275,83 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn gateway_stop_timeout_preserves_http_error_contract() {
+        let error = LandscapeApiError::from(GatewayError::StopTimeout { timeout_ms: 10_000 });
+        assert_eq!(error.error_id(), "gateway.stop_timeout");
+        assert_eq!(error.http_status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(error.error_args(), serde_json::json!({ "timeout_ms": 10_000 }));
+
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "data": null,
+                "error_id": "gateway.stop_timeout",
+                "message": "Gateway did not stop within 10000ms; the previous server is still retained",
+                "args": { "timeout_ms": 10_000 },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_stop_failure_preserves_http_error_contract() {
+        let error = LandscapeApiError::from(GatewayError::StopFailed {
+            reason: "completion channel closed".to_string(),
+        });
+        assert_eq!(error.error_id(), "gateway.stop_failed");
+        assert_eq!(error.http_status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            error.error_args(),
+            serde_json::json!({ "reason": "completion channel closed" })
+        );
+
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "data": null,
+                "error_id": "gateway.stop_failed",
+                "message": "Failed to stop gateway: completion channel closed",
+                "args": { "reason": "completion channel closed" },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_stored_gateway_rule_preserves_safe_http_error_contract() {
+        let id = landscape_common::config::ConfigId::from_u128(1);
+        let reason = "invalid 'upstream' configuration";
+        let error = LandscapeApiError::from(GatewayError::InvalidStoredRule {
+            id,
+            reason: reason.to_string(),
+        });
+        assert_eq!(error.error_id(), "gateway.invalid_stored_rule");
+        assert_eq!(error.http_status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.error_args(), serde_json::json!({ "id": id, "reason": reason }));
+
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        // Expose the row ID and column diagnostic without any stored JSON payload.
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "data": null,
+                "error_id": "gateway.invalid_stored_rule",
+                "message": format!("Stored gateway rule '{id}' is invalid: {reason}"),
+                "args": { "id": id, "reason": reason },
+            })
+        );
+    }
+
     #[test]
     fn direct_db_error_conflict_maps_to_409_conflict() {
         let e = LandscapeApiError::Database(DbError::Conflict);

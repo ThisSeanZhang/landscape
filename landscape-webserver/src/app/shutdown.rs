@@ -18,8 +18,10 @@ impl LandscapeApp {
         .await;
 
         run_shutdown_phase("gateway_service", || async {
-            self.managed.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await;
-            tracing::info!("Gateway service stopped");
+            match self.managed.gateway_service.shutdown_and_wait(Duration::from_secs(10)).await {
+                Ok(()) => tracing::info!("Gateway service stopped"),
+                Err(error) => tracing::warn!("Gateway shutdown did not complete: {error}"),
+            }
         })
         .await;
 

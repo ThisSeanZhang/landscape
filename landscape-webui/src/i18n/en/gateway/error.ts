@@ -1,4 +1,9 @@
 export default {
+  "gateway.stop_timeout":
+    "Gateway did not stop within {timeout_ms} ms; the previous instance is retained",
+  "gateway.stop_failed": "Failed to stop gateway: {reason}",
+  "gateway.invalid_stored_rule":
+    "Stored gateway rule '{id}' is invalid: {reason}",
   "gateway.rule_not_found": "Gateway rule not found (ID: {0})",
   "gateway.legacy_path_prefix_unsupported":
     "Legacy path-prefix rules are read-only and cannot be created or updated",

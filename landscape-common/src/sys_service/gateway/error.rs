@@ -8,9 +8,21 @@ pub enum GatewayError {
     #[error("gateway is not supported on this target architecture")]
     #[api_error(id = "gateway.unsupported_target", status = 501)]
     Unsupported,
+    #[error("Gateway did not stop within {timeout_ms}ms; the previous server is still retained")]
+    #[api_error(id = "gateway.stop_timeout", status = 504)]
+    StopTimeout { timeout_ms: u64 },
+    #[error("Failed to stop gateway: {reason}")]
+    #[api_error(id = "gateway.stop_failed", status = 500)]
+    StopFailed { reason: String },
     #[error(transparent)]
     #[api_error(transparent)]
     Database(#[from] crate::database::error::DbError),
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Certificate(#[from] crate::cert::CertError),
+    #[error("Stored gateway rule '{id}' is invalid: {reason}")]
+    #[api_error(id = "gateway.invalid_stored_rule", status = 500)]
+    InvalidStoredRule { id: ConfigId, reason: String },
     #[error("Gateway rule '{0}' not found")]
     #[api_error(id = "gateway.rule_not_found", status = 404)]
     NotFound(ConfigId),

@@ -4,6 +4,7 @@ export default {
   "metric.invalid_cleanup_time_budget":
     "cleanup_time_budget_secs 必须介于 1～60 秒之间，当前为 {value}",
   "init_config.file_not_found": "上传中未找到 Init 文件",
+  "init_config.export_serialization_failed": "导出配置序列化失败",
   "init_config.file_read_error": "Init 文件读取失败",
   "init_config.invalid": "Init 文件格式无效: {reason}",
   "init_config.version_mismatch":

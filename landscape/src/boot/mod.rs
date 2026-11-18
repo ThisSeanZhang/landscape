@@ -14,8 +14,10 @@ pub mod log;
 pub async fn prepare_init_config_import(
     mut config: InitConfig,
 ) -> Result<InitConfig, InitConfigError> {
-    crate::sys_service::gateway::prepare_gateway_rules_for_import(&mut config.gateway_rules)
-        .map_err(|error| InitConfigError::Invalid { reason: format!("gateway: {error}") })?;
+    crate::config_service::gateway_rule_service::prepare_gateway_rules_for_import(
+        &mut config.gateway_rules,
+    )
+    .map_err(|error| InitConfigError::Invalid { reason: format!("gateway: {error}") })?;
     landscape_database::provider::LandscapeDBServiceProvider::validate_init_config_can_import(
         config.clone(),
     )
@@ -174,8 +176,10 @@ mod tests {
             gateway_rules: vec![rule.clone(), rule],
             ..Default::default()
         };
-        crate::sys_service::gateway::prepare_gateway_rules_for_import(&mut config.gateway_rules)
-            .unwrap();
+        crate::config_service::gateway_rule_service::prepare_gateway_rules_for_import(
+            &mut config.gateway_rules,
+        )
+        .unwrap();
         assert!(matches!(
             prepare_init_config_import(config).await,
             Err(landscape_common::config::InitConfigError::Invalid { .. })

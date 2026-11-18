@@ -86,6 +86,9 @@ export default {
     "Port and enable changes take effect after restart. Save & Restart applies the current form values immediately.",
   restart_success: "Gateway restarted successfully",
   restart_failed: "Failed to restart gateway",
+  service_error: "Gateway needs attention",
+  recovery_hint:
+    "Resolve the issue above, then choose Save & Restart in gateway settings. You can still edit or delete rules.",
 
   // Card
   no_rules: "No gateway rules",

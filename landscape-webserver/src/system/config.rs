@@ -115,9 +115,9 @@ pub fn get_sys_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn export_init_config(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<ExportInitConfigResponse> {
-    let config = state.system.config_service.export_init_config().await;
+    let config = state.system.config_service.export_init_config().await?;
     let version = config.version.clone();
-    let content = toml::to_string(&config).unwrap();
+    let content = toml::to_string(&config).map_err(InitConfigError::ExportSerialization)?;
 
     LandscapeApiResp::success(ExportInitConfigResponse {
         filename: init_config_filename(&version),

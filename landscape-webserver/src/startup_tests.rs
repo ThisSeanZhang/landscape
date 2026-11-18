@@ -80,7 +80,7 @@ async fn assert_invalid_gateway_import_preserves_existing_state(lock_exists: boo
         Some(Default::default()),
     );
     // A disabled gateway must not allow an invalid imported rule to replace
-    // other services' persisted configuration and fail on a later startup.
+    // other services' persisted configuration and leave gateway rules unusable.
     assert!(!runtime.gateway.enable);
     let result = prepare_startup_init(home.path(), &runtime, Some(import)).await;
     let Err(StartupError::InitConfig(InitConfigError::Invalid { reason })) = result else {
