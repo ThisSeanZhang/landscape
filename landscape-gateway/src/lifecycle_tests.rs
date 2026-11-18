@@ -242,6 +242,52 @@ fn https_bind_failure_fails_and_cancels_the_run() {
     assert!(!ready.load(Ordering::Acquire));
 }
 
+#[tokio::test]
+async fn https_accept_failure_drains_active_connections_before_returning() {
+    use std::net::{Ipv4Addr, Shutdown};
+    use std::os::fd::OwnedFd;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    // On Linux, shutting down the listening socket makes accept fail while
+    // previously accepted connections remain usable.
+    let control = std::net::TcpStream::from(OwnedFd::from(listener.try_clone().unwrap()));
+    listener.set_nonblocking(true).unwrap();
+    let listener = TcpListener::from_std(listener).unwrap();
+    let ready = Arc::new(AtomicBool::new(true));
+    let readiness = HttpsReadinessGuard(ready.clone());
+    let serving = tokio::spawn(async move {
+        accept_https_connections(
+            listener,
+            &CancellationToken::new(),
+            readiness,
+            |mut stream, _, cancel, mut shutdown| async move {
+                stream.write_u8(1).await.unwrap();
+                cancel.cancelled().await;
+                shutdown.wait_for(|stop| *stop).await.unwrap();
+                stream.write_u8(2).await.unwrap();
+                // The client controls when this connection may finish draining.
+                assert_eq!(stream.read_u8().await.unwrap(), 3);
+            },
+        )
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut client = TcpStream::connect(address).await.unwrap();
+        assert_eq!(client.read_u8().await.unwrap(), 1);
+        control.shutdown(Shutdown::Both).unwrap();
+        assert_eq!(client.read_u8().await.unwrap(), 2);
+        assert!(!ready.load(Ordering::Acquire));
+        assert!(!serving.is_finished(), "listener returned while a connection was draining");
+        client.write_u8(3).await.unwrap();
+        assert_eq!(serving.await.unwrap().unwrap_err().kind(), ErrorKind::InvalidInput);
+    })
+    .await
+    .expect("listener must cancel and drain its connections after an accept failure");
+}
+
 #[test]
 fn https_panic_clears_readiness_and_cancels_the_run() {
     let ready = Arc::new(AtomicBool::new(true));

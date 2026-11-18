@@ -4,6 +4,7 @@ pub use landscape_common::sys_service::gateway::routes;
 pub mod sni_proxy;
 
 use std::io::ErrorKind;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -33,9 +34,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::watch;
-use tokio::task::JoinSet;
 use tokio_rustls::{TlsAcceptor, server::TlsStream as TokioTlsStream};
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::sni_proxy::{SniProxyRouter, parse_sni_from_client_hello, proxy_tls_passthrough};
 
@@ -446,7 +446,7 @@ async fn run_https_server_inner(
 ) -> Result<(), GatewayHttpsRunError> {
     use proxy_service::LandscapeReverseProxy;
 
-    let _readiness_guard = HttpsReadinessGuard(https_ready.clone());
+    let readiness = HttpsReadinessGuard(https_ready.clone());
     if cancel.is_cancelled() {
         return Ok(());
     }
@@ -485,12 +485,6 @@ async fn run_https_server_inner(
     let app =
         Arc::new(pingora::proxy::http_proxy(&server_conf, LandscapeReverseProxy::new(routes)));
 
-    // Pingora's `ServerApp::process_new` requires a `watch::Receiver<bool>` as the
-    // per-connection shutdown signal, so this channel is the token->watch bridge at
-    // the pingora boundary; it is flipped when the server's stop token fires.
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let mut tasks = JoinSet::new();
-
     if cancel.is_cancelled() {
         return Ok(());
     }
@@ -503,107 +497,23 @@ async fn run_https_server_inner(
         "Gateway HTTPS listener bound successfully"
     );
 
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                let _ = shutdown_tx.send(true);
-                break;
-            }
-            accept_result = listener.accept() => {
-                let (stream, peer_addr) = match accept_result {
-                    Ok(pair) => pair,
-                    Err(source) => {
-                        if matches!(source.kind(), std::io::ErrorKind::Interrupted
-                            | std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::ConnectionAborted)
-                        {
-                            continue;
-                        }
-                        tracing::error!("Gateway HTTPS accept failed: {source}");
-                        return Err(GatewayHttpsRunError {
-                            port: https_port,
-                            bind_addr,
-                            source,
-                            already_logged: true,
-                        });
-                    }
-                };
-
-                let acceptor = acceptor.clone();
-                let app = app.clone();
-                let sni_proxy_router = sni_proxy_router.clone();
-                let connection_shutdown = shutdown_rx.clone();
-                let connection_cancel = cancel.child_token();
-
-                tasks.spawn(async move {
-                    if sni_proxy_router.has_sni_proxy_rules() {
-                        let mut peek_buf = vec![0u8; 4096];
-                        match tokio::select! {
-                            _ = connection_cancel.cancelled() => return,
-                            result = stream.peek(&mut peek_buf) => result,
-                        } {
-                            Ok(size) if size > 0 => {
-                                if let Some(sni) = parse_sni_from_client_hello(&peek_buf[..size])
-                                    && let Some(target) = sni_proxy_router.match_target(&sni) {
-                                        tracing::info!(
-                                            "Gateway HTTPS passthrough '{}' via rule '{}' -> {}:{}",
-                                            target.sni,
-                                            target.rule_name,
-                                            target.target.address,
-                                            target.target.port
-                                        );
-                                        if let Err(e) = proxy_tls_passthrough(stream, &target, connection_cancel.clone()).await {
-                                            tracing::warn!(
-                                                "Gateway TLS passthrough failed for '{}' via rule '{}': {}",
-                                                target.sni,
-                                                target.rule_name,
-                                                e
-                                            );
-                                        }
-                                        return;
-                                    }
-                            }
-                            Ok(_) => return,
-                            Err(e) => {
-                                tracing::warn!("Gateway HTTPS peek failed from {peer_addr}: {e}");
-                                return;
-                            }
-                        }
-                    }
-
-                    let handshake_start = Instant::now();
-                    let tls_result = tokio::select! {
-                        _ = connection_cancel.cancelled() => return,
-                        result = tokio::time::timeout(Duration::from_secs(60), acceptor.accept(stream)) => result,
-                    };
-                    let tls_stream = match tls_result {
-                        Ok(Ok(stream)) => stream,
-                        Ok(Err(e)) => {
-                            tracing::warn!("Gateway HTTPS handshake failed from {peer_addr}: {e}");
-                            return;
-                        }
-                        Err(_) => {
-                            tracing::warn!("Gateway HTTPS handshake timed out from {peer_addr}");
-                            return;
-                        }
-                    };
-
-                    let stream: Stream = Box::new(GatewayTlsStream::new(
-                        tls_stream,
-                        Some(handshake_start.elapsed()),
-                    ));
-                    tokio::select! {
-                        _ = connection_cancel.cancelled() => {}
-                        _ = app.process_new(stream, &connection_shutdown) => {}
-                    }
-                });
-            }
-        }
-    }
-
-    https_ready.store(false, Ordering::Release);
-    drop(listener);
-    while tasks.join_next().await.is_some() {}
+    let result = accept_https_connections(
+        listener,
+        &cancel,
+        readiness,
+        |stream, peer_addr, cancel, shutdown| {
+            serve_https_connection(
+                stream,
+                peer_addr,
+                cancel,
+                shutdown,
+                acceptor.clone(),
+                sni_proxy_router.clone(),
+                app.clone(),
+            )
+        },
+    )
+    .await;
     tracing::info!(
         component = "gateway_https",
         event = "listener_stopped",
@@ -611,7 +521,131 @@ async fn run_https_server_inner(
         bind_addr = %bind_addr,
         "Gateway HTTPS listener stopped"
     );
-    Ok(())
+    result.map_err(|source| GatewayHttpsRunError {
+        port: https_port,
+        bind_addr,
+        source,
+        already_logged: true,
+    })
+}
+
+async fn accept_https_connections<Fut>(
+    listener: TcpListener,
+    cancel: &CancellationToken,
+    readiness: HttpsReadinessGuard,
+    serve: impl Fn(TcpStream, SocketAddr, CancellationToken, watch::Receiver<bool>) -> Fut,
+) -> std::io::Result<()>
+where
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let tasks = TaskTracker::new();
+    let connections = cancel.child_token().drop_guard();
+    // Pingora uses a watch receiver for its per-connection shutdown signal.
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let result = loop {
+        let accepted = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break Ok(()),
+            accepted = listener.accept() => accepted,
+        };
+        match accepted {
+            Ok((stream, peer_addr)) => {
+                let token = connections.token().child_token();
+                tasks.spawn(serve(stream, peer_addr, token, shutdown_rx.clone()));
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::ConnectionAborted
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => {
+                tracing::error!("Gateway HTTPS accept failed: {error}");
+                break Err(error);
+            }
+        }
+    };
+
+    drop(readiness);
+    drop(listener);
+    shutdown_tx.send_replace(true);
+    drop(connections);
+    tasks.close();
+    tasks.wait().await;
+    result
+}
+
+async fn serve_https_connection(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    connection_cancel: CancellationToken,
+    connection_shutdown: watch::Receiver<bool>,
+    acceptor: TlsAcceptor,
+    sni_proxy_router: Arc<SniProxyRouter>,
+    app: Arc<pingora::proxy::HttpProxy<proxy_service::LandscapeReverseProxy>>,
+) {
+    if sni_proxy_router.has_sni_proxy_rules() {
+        let mut peek_buf = vec![0u8; 4096];
+        match tokio::select! {
+            _ = connection_cancel.cancelled() => return,
+            result = stream.peek(&mut peek_buf) => result,
+        } {
+            Ok(size) if size > 0 => {
+                if let Some(sni) = parse_sni_from_client_hello(&peek_buf[..size])
+                    && let Some(target) = sni_proxy_router.match_target(&sni)
+                {
+                    tracing::info!(
+                        "Gateway HTTPS passthrough '{}' via rule '{}' -> {}:{}",
+                        target.sni,
+                        target.rule_name,
+                        target.target.address,
+                        target.target.port
+                    );
+                    if let Err(e) = proxy_tls_passthrough(stream, &target, connection_cancel).await
+                    {
+                        tracing::warn!(
+                            "Gateway TLS passthrough failed for '{}' via rule '{}': {}",
+                            target.sni,
+                            target.rule_name,
+                            e
+                        );
+                    }
+                    return;
+                }
+            }
+            Ok(_) => return,
+            Err(e) => {
+                tracing::warn!("Gateway HTTPS peek failed from {peer_addr}: {e}");
+                return;
+            }
+        }
+    }
+
+    let handshake_start = Instant::now();
+    let tls_result = tokio::select! {
+        _ = connection_cancel.cancelled() => return,
+        result = tokio::time::timeout(Duration::from_secs(60), acceptor.accept(stream)) => result,
+    };
+    let tls_stream = match tls_result {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            tracing::warn!("Gateway HTTPS handshake failed from {peer_addr}: {e}");
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("Gateway HTTPS handshake timed out from {peer_addr}");
+            return;
+        }
+    };
+
+    let stream: Stream =
+        Box::new(GatewayTlsStream::new(tls_stream, Some(handshake_start.elapsed())));
+    tokio::select! {
+        _ = connection_cancel.cancelled() => {}
+        _ = app.process_new(stream, &connection_shutdown) => {}
+    }
 }
 
 fn gateway_https_bind_addr(https_port: u16) -> String {

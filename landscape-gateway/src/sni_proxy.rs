@@ -65,33 +65,39 @@ pub async fn proxy_tls_passthrough(
     let (mut downstream_read, mut downstream_write) = downstream.into_split();
     let (mut upstream_read, mut upstream_write) = upstream.into_split();
 
-    let client_to_upstream =
+    let mut client_to_upstream =
         spawn_task(task_label::task::GATEWAY_SNI_CLIENT_TO_UPSTREAM, async move {
             let result = io::copy(&mut downstream_read, &mut upstream_write).await;
             let _ = upstream_write.shutdown().await;
             result
         });
 
-    let upstream_to_client =
+    let mut upstream_to_client =
         spawn_task(task_label::task::GATEWAY_SNI_UPSTREAM_TO_CLIENT, async move {
             let result = io::copy(&mut upstream_read, &mut downstream_write).await;
             let _ = downstream_write.shutdown().await;
             result
         });
 
-    tokio::pin!(client_to_upstream);
-    tokio::pin!(upstream_to_client);
-
-    let result = tokio::select! {
-        _ = cancel.cancelled() => Ok(()),
-        result = &mut client_to_upstream => join_copy_task(result),
-        result = &mut upstream_to_client => join_copy_task(result),
-    };
-
-    client_to_upstream.abort();
-    upstream_to_client.abort();
-
-    result
+    // Both socket halves must be released before the tracked connection exits.
+    tokio::select! {
+        _ = cancel.cancelled() => {
+            client_to_upstream.abort();
+            upstream_to_client.abort();
+            let _ = tokio::join!(client_to_upstream, upstream_to_client);
+            Ok(())
+        }
+        result = &mut client_to_upstream => {
+            upstream_to_client.abort();
+            let _ = upstream_to_client.await;
+            join_copy_task(result)
+        }
+        result = &mut upstream_to_client => {
+            client_to_upstream.abort();
+            let _ = client_to_upstream.await;
+            join_copy_task(result)
+        }
+    }
 }
 
 fn join_copy_task(result: Result<io::Result<u64>, tokio::task::JoinError>) -> io::Result<()> {
