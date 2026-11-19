@@ -11,11 +11,36 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hickory_proto::op::{Message, OpCode, Query, ResponseCode};
-use hickory_server::proto::rr::rdata::{A, SOA, TXT};
+use hickory_server::proto::rr::rdata::{A, CNAME, SOA, TXT};
 use hickory_server::proto::rr::{Name, RData, Record, RecordSet, RecordType, RrKey};
 use hickory_server::server::Server;
 use hickory_server::store::in_memory::InMemoryZoneHandler;
 use hickory_server::zone_handler::{AxfrPolicy, Catalog, ZoneType};
+
+/// These pools dial with a real SO_MARK (`0x8000`). An environment without
+/// CAP_NET_ADMIN cannot set it, so every marked test skips loudly there —
+/// except in privileged CI (`LANDSCAPE_PRIVILEGED_CI=1`), where a missing
+/// capability is a real failure, not a skip (same contract as the
+/// provider's SO_MARK assertions).
+pub(crate) fn mark_supported_or_fail() -> bool {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .expect("create probe udp socket");
+    match socket.set_mark(0x8000) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            if std::env::var("LANDSCAPE_PRIVILEGED_CI").as_deref() == Ok("1") {
+                panic!("SO_MARK failed in privileged CI (LANDSCAPE_PRIVILEGED_CI=1): {e}");
+            }
+            eprintln!("skipping (no CAP_NET_ADMIN): {e}");
+            false
+        }
+        Err(e) => panic!("unexpected SO_MARK error: {e}"),
+    }
+}
 
 /// Builds the example.com. authority handler: an SOA (TTL 3600, MINIMUM
 /// 300) plus, with `with_content`, the `www` A record, a TXT record far
@@ -133,6 +158,12 @@ pub(crate) enum ScriptedAction {
     Truncate,
     /// An explicit error-code answer (SERVFAIL, REFUSED, ...).
     Code(ResponseCode),
+    Negative {
+        code: ResponseCode,
+        /// SOA record TTL and MINIMUM, when the response includes an authority record.
+        soa: Option<(u32, u32)>,
+        alias_ttl: Option<u32>,
+    },
     /// For one received query, first send two spoof attempts — a frame with
     /// an unmatched message id and a frame with the right id but a foreign
     /// question, each carrying an alluring answer (6.6.6.6) — and then the
@@ -150,6 +181,7 @@ pub(crate) enum ScriptedAction {
     HoldOpen,
     /// Hold the answer for the delay, then answer normally.
     Delay(Duration),
+    AnswerOn(Arc<tokio::sync::Notify>),
     /// Drop the query silently (UDP: no datagram; TCP: close the stream
     /// with a FIN after reading).
     Drop,
@@ -186,9 +218,13 @@ pub(crate) struct ScriptedDnsServer {
 impl ScriptedDnsServer {
     /// Spawns on an ephemeral port of `bind_ip`.
     pub(crate) async fn spawn(bind_ip: std::net::IpAddr) -> Self {
+        Self::spawn_on_port(bind_ip, 0).await
+    }
+
+    pub(crate) async fn spawn_on_port(bind_ip: std::net::IpAddr, port: u16) -> Self {
         Self::bind(
             bind_ip,
-            0,
+            port,
             Arc::new(Mutex::new(VecDeque::new())),
             Arc::new(Mutex::new(VecDeque::new())),
             Arc::new(AtomicU32::new(0)),
@@ -302,7 +338,9 @@ impl ScriptedDnsServer {
                                 return;
                             };
                             for frame in frames {
-                                let mut framed = frame.len().to_be_bytes().to_vec();
+                                let len = u16::try_from(frame.len())
+                                    .expect("scripted DNS reply too large");
+                                let mut framed = len.to_be_bytes().to_vec();
                                 framed.extend_from_slice(&frame);
                                 if stream.write_all(&framed).await.is_err() {
                                     return;
@@ -394,14 +432,19 @@ impl ScriptedDnsServer {
 async fn respond_scripted(query: &[u8], action: ScriptedAction) -> Option<Vec<Vec<u8>>> {
     let message = Message::from_vec(query).ok()?;
     match action {
-        ScriptedAction::Answer => Some(vec![answer_for(
-            &message,
-            ResponseCode::NoError,
-            false,
-            message.metadata.id,
-            None,
-            [1, 2, 3, 4],
-        )]),
+        ScriptedAction::Answer | ScriptedAction::AnswerOn(_) => {
+            if let ScriptedAction::AnswerOn(signal) = action {
+                signal.notified().await;
+            }
+            Some(vec![answer_for(
+                &message,
+                ResponseCode::NoError,
+                false,
+                message.metadata.id,
+                None,
+                [1, 2, 3, 4],
+            )])
+        }
         ScriptedAction::Truncate => Some(vec![answer_for(
             &message,
             ResponseCode::NoError,
@@ -412,6 +455,35 @@ async fn respond_scripted(query: &[u8], action: ScriptedAction) -> Option<Vec<Ve
         )]),
         ScriptedAction::Code(code) => {
             Some(vec![answer_for(&message, code, false, message.metadata.id, None, [1, 2, 3, 4])])
+        }
+        ScriptedAction::Negative { code, soa, alias_ttl } => {
+            let mut response = Message::response(message.metadata.id, OpCode::Query);
+            response.queries = message.queries;
+            response.metadata.response_code = code;
+            response.metadata.authoritative = true;
+            if let Some(alias_ttl) = alias_ttl {
+                response.answers.push(Record::from_rdata(
+                    response.queries[0].name().clone(),
+                    alias_ttl,
+                    RData::CNAME(CNAME(Name::from_ascii("missing.example.com.").unwrap())),
+                ));
+            }
+            if let Some((ttl, minimum)) = soa {
+                response.authorities.push(Record::from_rdata(
+                    Name::from_ascii("example.com.").unwrap(),
+                    ttl,
+                    RData::SOA(SOA::new(
+                        Name::from_ascii("ns.example.com.").unwrap(),
+                        Name::from_ascii("admin.example.com.").unwrap(),
+                        1,
+                        3600,
+                        600,
+                        86400,
+                        minimum,
+                    )),
+                ));
+            }
+            Some(vec![response.to_vec().unwrap()])
         }
         ScriptedAction::SpoofThenAnswer => {
             let spoof_ip = [6, 6, 6, 6];
@@ -494,4 +566,29 @@ fn answer_for(
         RData::A(A(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]))),
     ));
     response.to_vec().unwrap()
+}
+
+#[tokio::test]
+async fn first_scripted_tcp_frame_contains_the_dns_reply() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+    let mut socket =
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).await.unwrap();
+    let mut query = Message::query();
+    query.add_query(Query::query(Name::from_ascii("www.example.com.").unwrap(), RecordType::A));
+    let bytes = query.to_vec().unwrap();
+    socket.write_u16(u16::try_from(bytes.len()).unwrap()).await.unwrap();
+    socket.write_all(&bytes).await.unwrap();
+
+    let reply = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut frame = vec![0; usize::from(socket.read_u16().await.unwrap())];
+        socket.read_exact(&mut frame).await.unwrap();
+        Message::from_vec(&frame).expect("first TCP frame must contain a DNS reply")
+    })
+    .await
+    .unwrap();
+    assert_eq!(reply.id, query.id);
+    assert_eq!(reply.queries, query.queries);
+    assert_eq!(reply.answers.len(), 1);
 }

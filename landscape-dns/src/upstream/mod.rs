@@ -3,8 +3,12 @@ use std::fmt;
 #[cfg(feature = "pool-native")]
 use std::sync::Arc;
 
-use hickory_proto::rr::RecordType;
-use hickory_resolver::{Resolver, lookup::Lookup, net::NetError};
+use crate::resolve::answer::DnsAnswer;
+use hickory_proto::{op::Message, rr::RecordType};
+use hickory_resolver::{
+    Resolver,
+    net::{DnsError, NetError},
+};
 
 use landscape_common::dns::config::DnsUpstreamConfig;
 
@@ -22,13 +26,6 @@ pub(crate) mod native;
 mod integration_tests;
 #[cfg(all(test, feature = "pool-native"))]
 pub(crate) mod test_util;
-
-#[cfg(feature = "pool-native")]
-use hickory_proto::op::Query;
-#[cfg(feature = "pool-native")]
-use hickory_resolver::net::{DnsError, NoRecords};
-#[cfg(feature = "pool-native")]
-use std::time::{Duration, Instant};
 
 /// Upstreams opt into the native pool with `use_experimental_pool` when
 /// the binary includes `pool-native`. Otherwise they use Hickory.
@@ -49,55 +46,32 @@ impl LandscapeResolver {
         &self,
         domain: &ParsedDomain,
         query_type: RecordType,
-    ) -> Result<Lookup, NetError> {
-        // Use the wire-parsed name directly: re-parsing the canonical string
-        // through `Name::from_utf8`/`Name::parse` would reject labels that
-        // contain an underscore after the first character (IDNA STD3), even
-        // though the wire name is valid.
-        let name = domain.as_dns_name();
+    ) -> Result<DnsAnswer, NetError> {
+        // Reuse the wire name so valid DNS labels containing underscores survive IDNA parsing.
+        let name = domain.as_dns_name().clone();
         match self {
-            Self::Legacy(resolver) => resolver.lookup(name.clone(), query_type).await,
-            #[cfg(feature = "pool-native")]
-            Self::Native(pool) => {
-                let query = Query::query(name.clone(), query_type);
-                match pool.lookup_name(name.clone(), query_type).await {
-                    Ok(answer) => {
-                        // A truncated answer is served as-is (matching the
-                        // legacy behaviour); the TC-bit passthrough to
-                        // the client rides on the RFC 2308 semantics port.
-                        if answer.truncated {
-                            tracing::debug!(
-                                "upstream answer for {} was truncated; serving \
-                                 partial records",
-                                domain.raw()
-                            );
-                        }
-                        let min_ttl =
-                            answer.records.iter().map(|record| record.ttl).min().unwrap_or(300);
-                        let valid_until = Instant::now() + Duration::from_secs(u64::from(min_ttl));
-                        Ok(Lookup::new_with_deadline(query, answer.records, valid_until))
-                    }
-                    Err(err) => Err(map_native_error(query, err)),
+            Self::Legacy(resolver) => match resolver.lookup(name, query_type).await {
+                Ok(lookup) => Ok(DnsAnswer::from_message(Message::from(lookup))),
+                Err(NetError::Dns(DnsError::NoRecordsFound(negative))) => {
+                    let soa = negative.soa.map(|r| Box::new(r.into_record_of_rdata()));
+                    Ok(DnsAnswer::negative(negative.response_code, soa))
                 }
-            }
-        }
-    }
-}
-
-/// Maps the native pool's error surface onto the hickory `NetError` shape
-/// `rule.rs` already understands. The RFC 2308 SOA riding on `Protocol` is
-/// dropped here for now; surfacing it end-to-end is follow-up work.
-#[cfg(feature = "pool-native")]
-fn map_native_error(query: Query, err: native::UpstreamError) -> NetError {
-    match err {
-        native::UpstreamError::Timeout | native::UpstreamError::Offline => NetError::Timeout,
-        native::UpstreamError::Protocol(code, _soa) => {
-            NetError::Dns(DnsError::NoRecordsFound(NoRecords::new(Box::new(query), code)))
-        }
-        native::UpstreamError::NoConnections => NetError::from("no usable upstream connections"),
-        native::UpstreamError::Tls(e) => NetError::from(format!("upstream TLS failure: {e}")),
-        native::UpstreamError::Internal(e) => {
-            NetError::from(format!("upstream internal error: {e}"))
+                Err(NetError::Dns(DnsError::ResponseCode(code))) => {
+                    Ok(DnsAnswer::new(vec![], code))
+                }
+                Err(err) => Err(err),
+            },
+            #[cfg(feature = "pool-native")]
+            Self::Native(pool) => match pool.lookup_name(name, query_type).await {
+                Ok(answer) => Ok(answer),
+                Err(native::UpstreamError::Protocol(code, soa)) => {
+                    Ok(DnsAnswer::negative(code, soa))
+                }
+                Err(native::UpstreamError::Timeout | native::UpstreamError::Offline) => {
+                    Err(NetError::Timeout)
+                }
+                Err(err) => Err(NetError::from(err.to_string())),
+            },
         }
     }
 }

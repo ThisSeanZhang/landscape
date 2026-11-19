@@ -31,7 +31,8 @@ pub(crate) struct PoolSettings {
     pub attempts: Option<u8>,
     /// Maximum number of upstream endpoints queried concurrently per attempt
     /// (each IP is queried once; plaintext uses UDP, encrypted modes use the
-    /// stream connection). Excess endpoints rotate in on later attempts.
+    /// stream connection). When capped, prefer responsive endpoints and
+    /// periodically sample the others. Retries prefer untried endpoints.
     pub max_fanout: Option<u8>,
     /// Send QUIC keep-alives so the connection survives idle periods instead
     /// of silently dying on the negotiated idle timeout (quinn defaults to

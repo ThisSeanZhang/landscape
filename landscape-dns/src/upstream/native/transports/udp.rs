@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hickory_proto::op::{DnsRequestOptions, Message, MessageType, Query};
+use hickory_proto::op::{DnsRequestOptions, Message, Query};
 use tokio::net::UdpSocket;
 
 use crate::upstream::native::mark::MarkRuntimeProvider;
@@ -229,20 +229,13 @@ impl DnsConn for UdpConn {
     fn shutdown(&self) {}
 }
 
-/// Mirrors hickory's UDP response validation: the message must be a response
-/// with the query's id, and every question in the response must appear in the
-/// request. Returns `None` for anything else (garbage, forged, late).
+/// Ignore datagrams that cannot be correlated with this lookup.
 fn validate_response(bytes: &[u8], query: &Message) -> Result<Message, ()> {
     let response = Message::from_vec(bytes).map_err(|_| ())?;
-    if response.metadata.message_type != MessageType::Response {
-        return Err(());
-    }
     if response.metadata.id != query.metadata.id {
         return Err(());
     }
-    if !response.queries.iter().all(|q| query.queries.contains(q)) {
-        return Err(());
-    }
+    super::validate_reply(&response, &query.queries).map_err(|_| ())?;
     Ok(response)
 }
 

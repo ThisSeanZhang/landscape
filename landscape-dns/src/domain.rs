@@ -32,7 +32,9 @@ impl ParsedDomain {
     // Hickory parses Unicode labels as IDNA and stores their ASCII/Punycode
     // form. Keep that canonical representation everywhere downstream so
     // byte-oriented matchers and suffix checks never see UTF-8 labels.
-    fn canonicalize(dns_name: Name) -> Self {
+    fn canonicalize(mut dns_name: Name) -> Self {
+        // Wire names include the root label. Hickory also compares it when matching questions.
+        dns_name.set_fqdn(true);
         let name = dns_name.to_ascii().trim_end_matches('.').to_ascii_lowercase();
         let labels: Vec<String> = name.split('.').map(String::from).collect();
         let raw = Arc::from(format!("{}.", name).as_str());
@@ -150,13 +152,11 @@ mod tests {
     #[test]
     fn from_wire_name_matches_string_construction() {
         let wire = ParsedDomain::from_wire_name(Name::from_ascii("WWW.Example.COM.").unwrap());
-        let text = ParsedDomain::new("www.example.com").unwrap();
-
-        assert_eq!(wire.raw(), text.raw());
-        assert_eq!(wire.name(), text.name());
-        assert_eq!(
-            wire.as_dns_name().to_ascii().trim_end_matches('.'),
-            text.as_dns_name().to_ascii().trim_end_matches('.')
-        );
+        for input in ["www.example.com", "WWW.Example.COM."] {
+            let text = ParsedDomain::new(input).unwrap();
+            assert_eq!(wire.as_dns_name(), text.as_dns_name());
+            assert_eq!(wire.raw(), text.raw());
+            assert_eq!(wire.name(), text.name());
+        }
     }
 }

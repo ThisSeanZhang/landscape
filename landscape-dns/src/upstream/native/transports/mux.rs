@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hickory_proto::op::{DnsRequestOptions, Message, MessageType, Query};
+use hickory_proto::op::{DnsRequestOptions, Message, Query};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
@@ -220,21 +220,12 @@ where
                 match frame {
                     Some(Ok(bytes)) => {
                         match Message::from_vec(&bytes) {
-                            Ok(message) if message.metadata.message_type == MessageType::Response => {
+                            Ok(message) => {
                                 if let Some((reply, deadline, expected)) = active.remove(&message.metadata.id) {
-                                    // Same contract as the UDP validator
-                                    // (hickory's `validate_response`): every
-                                    // question in the response must echo the
-                                    // request. A mismatched frame (forged or
-                                    // cross-wired) must not satisfy the
-                                    // pending query: re-queue it and keep
-                                    // waiting — the caller's timeout bounds
-                                    // the wait, and the connection survives.
-                                    if !message.queries.iter().all(|q| expected.contains(q)) {
-                                        tracing::debug!(
-                                            id = message.metadata.id,
-                                            "dropping response with mismatched question"
-                                        );
+                                    // Keep the request pending when a frame belongs
+                                    // to another question. Its deadline still applies.
+                                    if let Err(reason) = super::validate_reply(&message, &expected) {
+                                        tracing::debug!(id = message.metadata.id, reason, "dropping invalid reply");
                                         active.insert(message.metadata.id, (reply, deadline, expected));
                                         continue;
                                     }
@@ -251,7 +242,6 @@ where
                                     );
                                 }
                             }
-                            Ok(_) => tracing::debug!("dropping non-response frame"),
                             Err(e) => tracing::debug!("dropping undecodable frame: {e}"),
                         }
                     }

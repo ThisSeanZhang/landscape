@@ -102,12 +102,7 @@ impl DnsRequestHandler {
     }
 
     fn chain<'a>(&'a self, runtime: &'a RuntimeSnapshot) -> ResolveChain<'a> {
-        ResolveChain::new(
-            runtime,
-            self.snapshot.local_resolver(),
-            self.snapshot.sink().as_ref(),
-            self.snapshot.flow_id(),
-        )
+        ResolveChain::new(runtime, self.snapshot.local_resolver())
     }
 
     /// The full resolution chain for live queries.
@@ -121,9 +116,9 @@ impl DnsRequestHandler {
         let query_type = req.query_type;
         let src_ip = req.src.ip();
 
-        let answer = self.resolve_query(&req.domain, query_type).await;
-        let (records, outcome, response_code) =
-            (answer.records, answer.outcome, answer.response_code);
+        let DnsQueryAnswer { dns, outcome, authoritative } =
+            self.resolve_query(&req.domain, query_type).await;
+        let response_code = dns.response_code;
 
         self.metric_reporter.record_with(|| DnsMetricEvent {
             flow_id: self.flow_id,
@@ -134,10 +129,16 @@ impl DnsRequestHandler {
             report_time: now_ms(),
             duration_ms: start_time.elapsed().as_millis() as u32,
             src_ip,
-            answers: records.clone(),
+            answers: dns.records.clone(),
         });
 
-        wire::build_response(req, response_code, records)
+        let mut message = wire::build_response(req, response_code, dns.records);
+        message.metadata.authoritative = authoritative;
+        message.metadata.truncation = dns.truncated;
+        if let Some(soa) = dns.soa {
+            message.authorities.push(*soa);
+        }
+        message
     }
 
     pub async fn check_domain(
@@ -153,7 +154,7 @@ impl DnsRequestHandler {
     pub async fn invalidate_cache_entry(&self, domain: &ParsedDomain, query_type: RecordType) {
         let runtime = self.snapshot.load_full();
         runtime.cache.invalidate(domain, query_type).await;
-        self.snapshot.refresh_maps_from_cache(&runtime.cache);
+        runtime.cache.refresh_marks();
     }
 
     pub async fn refresh_cache_entry(

@@ -247,7 +247,7 @@ pub(super) async fn spawn_doh_echo_server(
     tls: &TestTls,
     delay: Duration,
 ) -> (u16, tokio::sync::watch::Receiver<u64>) {
-    spawn_doh_echo_server_inner(tls, delay, None).await
+    spawn_doh_echo_server_inner(tls, delay, None, &[], None).await
 }
 
 /// Like [`spawn_doh_echo_server`], but advertising a
@@ -259,13 +259,40 @@ pub(super) async fn spawn_doh_limited_echo_server(
     max_streams: u32,
     delay: Duration,
 ) -> (u16, tokio::sync::watch::Receiver<u64>) {
-    spawn_doh_echo_server_inner(tls, delay, Some(max_streams)).await
+    spawn_doh_echo_server_inner(tls, delay, Some(max_streams), &[], None).await
+}
+
+#[derive(Clone, Copy)]
+enum DohErrorResponse {
+    Unavailable,
+    Oversized,
+}
+
+/// Each new h2 connection starts with the same sequence. A later successful
+/// lookup therefore proves the pool reused the connection across the errors.
+pub(super) async fn spawn_recovering_doh_server(tls: &TestTls) -> u16 {
+    use DohErrorResponse::{Oversized, Unavailable};
+    spawn_doh_echo_server_inner(
+        tls,
+        Duration::ZERO,
+        None,
+        &[Unavailable, Oversized, Unavailable],
+        None,
+    )
+    .await
+    .0
+}
+
+pub(super) async fn spawn_aged_doh_server(tls: &TestTls, age: u32) -> u16 {
+    spawn_doh_echo_server_inner(tls, Duration::ZERO, None, &[], Some(age)).await.0
 }
 
 async fn spawn_doh_echo_server_inner(
     tls: &TestTls,
     delay: Duration,
     max_concurrent_streams: Option<u32>,
+    initial_errors: &'static [DohErrorResponse],
+    age: Option<u32>,
 ) -> (u16, tokio::sync::watch::Receiver<u64>) {
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
         tls.key_der.clone(),
@@ -293,7 +320,9 @@ async fn spawn_doh_echo_server_inner(
                     builder.max_concurrent_streams(max);
                 }
                 let Ok(mut h2) = builder.handshake::<_, bytes::Bytes>(stream).await else { return };
+                let mut errors = initial_errors.iter().copied();
                 while let Some(Ok((request, mut respond))) = h2.accept().await {
+                    let error = errors.next();
                     let seen_tx = seen_tx.clone();
                     tokio::spawn(async move {
                         let (_parts, mut body) = request.into_parts();
@@ -306,6 +335,20 @@ async fn spawn_doh_echo_server_inner(
                         if !delay.is_zero() {
                             tokio::time::sleep(delay).await;
                         }
+                        if let Some(error) = error {
+                            let (status, body) = match error {
+                                DohErrorResponse::Unavailable => (503, bytes::Bytes::new()),
+                                DohErrorResponse::Oversized => {
+                                    (200, vec![0; u16::MAX as usize + 1].into())
+                                }
+                            };
+                            let response =
+                                http::Response::builder().status(status).body(()).unwrap();
+                            if let Ok(mut send) = respond.send_response(response, false) {
+                                let _ = send.send_data(body, true);
+                            }
+                            return;
+                        }
                         let Ok(message) = Message::from_vec(&buf) else { return };
                         let mut response = message.into_response();
                         response.answers.push(Record::from_rdata(
@@ -314,11 +357,13 @@ async fn spawn_doh_echo_server_inner(
                             RData::A(A(Ipv4Addr::new(1, 2, 3, 4))),
                         ));
                         let Ok(bytes) = response.to_vec() else { return };
-                        let http_response = http::Response::builder()
+                        let mut headers = http::Response::builder()
                             .status(200)
-                            .header("content-type", "application/dns-message")
-                            .body(())
-                            .unwrap();
+                            .header("content-type", "application/dns-message");
+                        if let Some(age) = age {
+                            headers = headers.header("age", age);
+                        }
+                        let http_response = headers.body(()).unwrap();
                         let Ok(mut send) = respond.send_response(http_response, false) else {
                             return;
                         };

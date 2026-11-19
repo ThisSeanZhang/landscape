@@ -1,5 +1,6 @@
 use super::*;
 use crate::resolve::LocalDnsAnswerProvider;
+use crate::upstream::pool::ResolvePool;
 use arc_swap::ArcSwap;
 use hickory_proto::op::ResponseCode;
 use hickory_proto::rr::Record;
@@ -42,14 +43,19 @@ impl DnsRequestHandler {
     }
 
     fn test_engines_from_legacy(init: ChainDnsServerInitInfo) -> (RedirectEngine, ResolveEngine) {
+        Self::test_engines_with_pool(init, &Arc::new(ResolvePool::default()))
+    }
+
+    fn test_engines_with_pool(
+        init: ChainDnsServerInitInfo,
+        pool: &Arc<ResolvePool>,
+    ) -> (RedirectEngine, ResolveEngine) {
         use std::collections::BTreeMap;
 
         use crate::resolve::{
             matcher::RuntimeRuleMatcher,
             rule::{DNSRedirectRuntime, DNSResolveRuntime, RedirectRuleParams, ResolveRuleParams},
         };
-        use crate::upstream::pool::ResolvePool;
-        let pool = Arc::new(ResolvePool::default());
 
         let redirects = init
             .redirect_rules
@@ -107,8 +113,7 @@ impl DnsRequestHandler {
             .insert(crate::resolve::cache::CacheEntry {
                 domain_key: Arc::<str>::from(domain),
                 query_type,
-                rdatas: rdata_ttl_vec,
-                response_code,
+                answer: crate::resolve::answer::DnsAnswer::new(rdata_ttl_vec, response_code),
                 mark: mark.clone(),
                 filter,
                 matched_rule_id,
@@ -190,6 +195,19 @@ mod tests {
     };
     use uuid::Uuid;
 
+    #[derive(Default)]
+    struct RecordingSink(std::sync::Mutex<Vec<landscape_common::flow::FlowMarkInfo>>);
+
+    impl DnsResultSink for RecordingSink {
+        fn record_dns_answer(&self, _: u32, marks: Vec<landscape_common::flow::FlowMarkInfo>) {
+            self.0.lock().unwrap().extend(marks);
+        }
+        fn refresh_dns_marks(&self, _: u32, marks: Vec<landscape_common::flow::FlowMarkInfo>) {
+            *self.0.lock().unwrap() = marks;
+        }
+        fn rebuild_route_cache(&self) {}
+    }
+
     struct MockLocalAnswerProvider {
         addrs: Vec<IpAddr>,
     }
@@ -237,6 +255,25 @@ mod tests {
             1,
             DnsMetricReporter::default(),
             test_local_resolver(),
+        )
+    }
+
+    fn handler_with_pool(
+        init: ChainDnsServerInitInfo,
+        pool: &Arc<ResolvePool>,
+        sink: Arc<dyn landscape_common::flow::DnsResultSink>,
+    ) -> DnsRequestHandler {
+        let (redirect, resolve) = DnsRequestHandler::test_engines_with_pool(init, pool);
+        DnsRequestHandler::from_engines(
+            redirect,
+            resolve,
+            HandlerDeps {
+                runtime_config: shared_cache_runtime_config(5),
+                flow_id: 1,
+                metric_reporter: Default::default(),
+                local_resolver: test_local_resolver(),
+                sink,
+            },
         )
     }
 
@@ -350,14 +387,14 @@ mod tests {
             let answer = handler
                 .resolve_query(&ParsedDomain::new("resolver.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
             assert_eq!(answer.outcome, DnsOutcome::Local);
 
             // home.arpa. is not the default `lan` zone.
             let answer = handler
                 .resolve_query(&ParsedDomain::new("home.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
             assert_eq!(answer.outcome, DnsOutcome::NxDomain);
 
             // in-addr.arpa. → reverse branch
@@ -367,7 +404,7 @@ mod tests {
                     RecordType::PTR,
                 )
                 .await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
 
             // ip6.arpa. → reverse branch
             let answer = handler
@@ -379,13 +416,13 @@ mod tests {
                     RecordType::PTR,
                 )
                 .await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
 
             // evilresolver.arpa. is not resolver → NXDOMAIN
             let answer = handler
                 .resolve_query(&ParsedDomain::new("evilresolver.arpa.").unwrap(), RecordType::A)
                 .await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
             assert_eq!(answer.outcome, DnsOutcome::NxDomain);
         });
     }
@@ -403,13 +440,13 @@ mod tests {
             // A disabled config does not own private PTR queries: they fall
             // through to the cache/upstream stage (no rules → NOERROR/empty).
             let answer = handler.resolve_query(&domain, RecordType::PTR).await;
-            assert!(answer.records.is_empty());
+            assert!(answer.dns.records.is_empty());
             assert_eq!(answer.outcome, DnsOutcome::Normal);
 
             let loopback_domain = ParsedDomain::new("1.0.0.127.in-addr.arpa.").unwrap();
             let answer = handler.resolve_query(&loopback_domain, RecordType::PTR).await;
             assert_eq!(answer.outcome, DnsOutcome::Local);
-            assert_eq!(answer.records.len(), 1);
+            assert_eq!(answer.dns.records.len(), 1);
         });
     }
 
@@ -646,6 +683,359 @@ mod tests {
         });
     }
 
+    #[cfg(feature = "pool-native")]
+    mod upstream_answers {
+        use super::*;
+        use crate::listener::wire::{self, DecodeOutcome, Protocol};
+        use crate::upstream::test_util::{
+            ScriptedAction, ScriptedDnsServer, mark_supported_or_fail,
+        };
+        use hickory_proto::op::{MessageType, OpCode, Query};
+        use hickory_proto::rr::Name;
+        use std::time::Duration;
+
+        fn server_rule(server: &ScriptedDnsServer, native: bool) -> DNSRuntimeRule {
+            DNSRuntimeRule {
+                resolve_mode: DnsUpstreamConfig {
+                    use_experimental_pool: Some(native),
+                    ips: vec![Ipv4Addr::LOCALHOST.into()],
+                    port: Some(server.port()),
+                    ..Default::default()
+                },
+                ..test_runtime_rule()
+            }
+        }
+
+        fn handler_for(server: &ScriptedDnsServer, native: bool) -> DnsRequestHandler {
+            make_test_handler(vec![server_rule(server, native)], vec![])
+        }
+
+        fn request() -> DnsRequest {
+            let mut query = Message::new(42, MessageType::Query, OpCode::Query);
+            query.add_query(Query::query(
+                Name::from_ascii("www.example.com.").unwrap(),
+                RecordType::A,
+            ));
+            let DecodeOutcome::Request(req) = wire::decode(
+                &query.to_vec().unwrap(),
+                "127.0.0.1:53000".parse().unwrap(),
+                Protocol::Udp,
+            ) else {
+                panic!("expected valid test query");
+            };
+            req
+        }
+
+        async fn wire_answer(handler: &DnsRequestHandler, req: &DnsRequest) -> Message {
+            let message = handler.handle(req).await;
+            Message::from_vec(&wire::encode_response(&message, req.edns_max_size)).unwrap()
+        }
+
+        #[tokio::test]
+        async fn admin_check_and_refresh_resolve_the_same_name_as_wire_queries() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+            let handler = handler_for(&server, true);
+            let domain = ParsedDomain::new("WWW.Example.COM").unwrap();
+            let checked = handler.check_domain(&domain, RecordType::A, false).await;
+            assert_eq!(checked.records.unwrap()[0].data, "1.2.3.4");
+            assert!(checked.cache_records.is_none());
+
+            let refreshed =
+                handler.refresh_cache_entry(&domain, RecordType::A, false).await.unwrap();
+            assert_eq!(refreshed.cache_records.unwrap()[0].data, "1.2.3.4");
+            let answer = wire_answer(&handler, &request()).await;
+            assert_eq!(answer.answers[0].data.to_string(), "1.2.3.4");
+            assert_eq!(server.queries(), 2);
+        }
+
+        #[tokio::test]
+        async fn partial_udp_answer_after_failed_tcp_retry_keeps_tc_and_bypasses_cache() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+            server.push_udp(ScriptedAction::Truncate);
+            for _ in 0..3 {
+                server.push_tcp(ScriptedAction::Reset);
+            }
+            let handler = handler_for(&server, true);
+            let req = request();
+            let partial = wire_answer(&handler, &req).await;
+            assert!(partial.metadata.truncation);
+            assert_eq!(partial.answers.len(), 1);
+            let queries = server.queries();
+            assert!(queries >= 2);
+            let full = wire_answer(&handler, &req).await;
+            assert!(!full.metadata.truncation);
+            assert_eq!(full.answers.len(), 1);
+            assert_eq!(server.queries(), queries + 1);
+            assert_eq!(wire_answer(&handler, &req).await.answers, full.answers);
+            assert_eq!(server.queries(), queries + 1);
+        }
+
+        #[tokio::test]
+        async fn negative_soa_survives_cache_hit_and_expires_on_time() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            for native in [true, false] {
+                for (code, ttl, minimum) in [
+                    (ResponseCode::NXDomain, 90, 3),
+                    (ResponseCode::NoError, 4, 60),
+                    (ResponseCode::NXDomain, 90, 60),
+                ] {
+                    let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+                    server.push_udp(ScriptedAction::Negative {
+                        code,
+                        soa: Some((ttl, minimum)),
+                        alias_ttl: None,
+                    });
+                    let handler = handler_for(&server, native);
+                    let req = request();
+                    let first = wire_answer(&handler, &req).await;
+                    assert_eq!(first.metadata.response_code, code);
+                    assert!(!first.metadata.authoritative);
+                    assert!(first.answers.is_empty());
+                    assert_eq!(first.authorities.len(), 1);
+                    let mut soa = first.authorities[0].clone();
+                    assert_eq!(soa.record_type(), RecordType::SOA);
+                    assert_eq!(soa.ttl, ttl.min(minimum));
+                    let queries = server.queries();
+                    let runtime = handler.snapshot.load_full();
+                    let key = (req.domain.raw_arc().clone(), req.query_type);
+                    let original = runtime.cache.get(&key).await.unwrap();
+                    let mut item = (*original).clone();
+                    item.insert_time -= Duration::from_secs(2);
+                    runtime.cache.insert_raw(key.clone(), Arc::new(item)).await;
+                    let hit = wire_answer(&handler, &req).await;
+                    soa.ttl = soa.ttl.min(5) - 2;
+                    assert_eq!(hit.metadata.response_code, code);
+                    assert!(!hit.metadata.authoritative);
+                    assert_eq!(hit.authorities, [soa]);
+                    assert_eq!(server.queries(), queries);
+
+                    let mut item = (*original).clone();
+                    item.insert_time -= Duration::from_secs(u64::from(item.min_ttl));
+                    runtime.cache.insert_raw(key, Arc::new(item)).await;
+                    assert_eq!(wire_answer(&handler, &req).await.answers.len(), 1);
+                    assert!(server.queries() > queries);
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn negative_alias_is_served_and_cached_without_a_follow_up() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            for code in [ResponseCode::NXDomain, ResponseCode::NoError] {
+                let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+                server.push_udp(ScriptedAction::Negative {
+                    code,
+                    soa: Some((60, 4)),
+                    alias_ttl: Some(2),
+                });
+                let handler = handler_for(&server, true);
+                let req = request();
+                for cached in [false, true] {
+                    let answer = wire_answer(&handler, &req).await;
+                    assert_eq!(answer.metadata.response_code, code);
+                    assert!(!answer.metadata.authoritative);
+                    assert_eq!(answer.answers.len(), 1);
+                    assert_eq!(answer.answers[0].record_type(), RecordType::CNAME);
+                    assert_eq!(answer.answers[0].ttl, 2);
+                    assert_eq!(answer.authorities.len(), 1);
+                    assert_eq!(answer.authorities[0].ttl, if cached { 2 } else { 4 });
+                    assert_eq!(server.queries(), 1);
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn admin_check_and_refresh_preserve_nxdomain_answer_records() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            for alias_ttl in [Some(40), None] {
+                let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+                let negative = ScriptedAction::Negative {
+                    code: ResponseCode::NXDomain,
+                    soa: Some((60, 30)),
+                    alias_ttl,
+                };
+                server.push_udp(negative.clone());
+                server.push_udp(negative);
+                let handler = handler_for(&server, true);
+                let req = request();
+
+                let checked = handler.check_domain(&req.domain, req.query_type, false).await;
+                assert!(checked.cache_records.is_none());
+                assert_eq!(checked.records.is_some(), alias_ttl.is_some());
+                let refreshed =
+                    handler.refresh_cache_entry(&req.domain, req.query_type, true).await.unwrap();
+                let wire = wire_answer(&handler, &req).await;
+                assert_eq!(wire.response_code, ResponseCode::NXDomain);
+                assert_eq!(server.queries(), 2);
+                assert_eq!(wire.answers.len(), usize::from(alias_ttl.is_some()));
+                for records in [
+                    checked.records.unwrap_or_default(),
+                    refreshed.records.unwrap(),
+                    refreshed.cache_records.unwrap(),
+                ] {
+                    assert_eq!(records.len(), wire.answers.len());
+                    for (record, answer) in records.iter().zip(&wire.answers) {
+                        assert_eq!(record.name, answer.name.to_string());
+                        assert_eq!(record.rr_type, answer.record_type().to_string());
+                        assert_eq!(record.data, answer.data.to_string());
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn admin_refresh_only_shows_a_filtered_nxdomain_alias_in_the_raw_report() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+            let rule = DNSRuntimeRule {
+                filter: FilterResult::OnlyIPv6,
+                ..server_rule(&server, true)
+            };
+            let handler = make_test_handler(vec![rule], vec![]);
+            let req = request();
+            for apply_filter in [false, true] {
+                server.push_udp(ScriptedAction::Negative {
+                    code: ResponseCode::NXDomain,
+                    soa: None,
+                    alias_ttl: Some(40),
+                });
+                let report = handler
+                    .refresh_cache_entry(&req.domain, req.query_type, apply_filter)
+                    .await
+                    .unwrap();
+                assert!(report.query_filtered);
+                assert!(report.cache_records.is_none());
+                let records = report.records.unwrap();
+                if apply_filter {
+                    assert!(records.is_empty());
+                } else {
+                    assert_eq!(records.len(), 1);
+                    assert_eq!(records[0].rr_type, "CNAME");
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn alias_ending_in_nodata_without_soa_respects_negative_cache_ttl() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            for cap in [5, 0] {
+                let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+                for alias_ttl in [Some(40), None] {
+                    server.push_udp(ScriptedAction::Negative {
+                        code: ResponseCode::NoError,
+                        soa: None,
+                        alias_ttl,
+                    });
+                }
+                let handler = test_handler_with_config(
+                    shared_cache_runtime_config(cap),
+                    1,
+                    vec![server_rule(&server, true)],
+                    vec![],
+                );
+                let req = request();
+                let first = wire_answer(&handler, &req).await;
+                assert_eq!(first.response_code, ResponseCode::NoError);
+                assert!(first.authorities.is_empty());
+                assert_eq!(first.answers.len(), 1);
+                assert_eq!(first.answers[0].record_type(), RecordType::CNAME);
+                assert_eq!(server.queries(), 2);
+
+                let key = (req.domain.raw_arc().clone(), req.query_type);
+                let runtime = handler.snapshot.load_full();
+                if cap > 0 {
+                    let hit = wire_answer(&handler, &req).await;
+                    assert_eq!(hit.answers[0].record_type(), RecordType::CNAME);
+                    assert!(hit.answers[0].ttl <= cap);
+                    assert_eq!(server.queries(), 2);
+                    let mut item = (*runtime.cache.get(&key).await.unwrap()).clone();
+                    item.insert_time -= Duration::from_secs(u64::from(cap));
+                    runtime.cache.insert_raw(key, Arc::new(item)).await;
+                }
+                let fresh = wire_answer(&handler, &req).await;
+                assert_eq!(fresh.answers[0].record_type(), RecordType::A);
+                assert_eq!(server.queries(), 3);
+            }
+        }
+
+        #[tokio::test]
+        async fn lookup_completing_after_rule_removal_cannot_restore_old_marks() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+            let release = Arc::new(tokio::sync::Notify::new());
+            server.push_udp(ScriptedAction::AnswerOn(release.clone()));
+            let rule = DNSRuntimeRule {
+                mark: FlowMark::from(0x0100),
+                ..server_rule(&server, true)
+            };
+            let sink = Arc::new(RecordingSink::default());
+            let handler = handler_with_pool(
+                ChainDnsServerInitInfo { dns_rules: vec![rule], ..Default::default() },
+                &Arc::new(ResolvePool::default()),
+                sink.clone(),
+            );
+            let old = handler.snapshot.load_full();
+            let req = request();
+            let refresh = async {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while server.queries() == 0 {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                handler.renew_dns_rules(ResolveEngine::default()).await;
+                release.notify_one();
+            };
+            let (answer, ()) = tokio::join!(wire_answer(&handler, &req), refresh);
+            assert_eq!(answer.answers.len(), 1);
+            old.cache.run_pending_tasks().await;
+            assert_eq!(old.cache.dns_mark_list().len(), 1);
+            old.cache.refresh_marks();
+            assert!(sink.0.lock().unwrap().is_empty());
+            assert!(handler.snapshot.load_full().cache.dns_mark_list().is_empty());
+        }
+
+        #[tokio::test]
+        async fn zero_soa_minimum_allows_next_query_to_recover() {
+            if !mark_supported_or_fail() {
+                return;
+            }
+            let server = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+            server.push_udp(ScriptedAction::Negative {
+                code: ResponseCode::NXDomain,
+                soa: Some((60, 0)),
+                alias_ttl: None,
+            });
+            let handler = handler_for(&server, true);
+            let req = request();
+            let negative = wire_answer(&handler, &req).await;
+            assert_eq!(negative.metadata.response_code, ResponseCode::NXDomain);
+            assert_eq!(negative.authorities[0].ttl, 0);
+            let queries = server.queries();
+            assert_eq!(wire_answer(&handler, &req).await.answers.len(), 1);
+            assert_eq!(server.queries(), queries + 1);
+        }
+    }
+
     #[test]
     fn test_negative_cache_ttl_updates_are_shared_across_clones() {
         run_async_test(async {
@@ -677,8 +1067,8 @@ mod tests {
                 .expect("cache item must exist");
 
             assert_eq!(cache_item.min_ttl, 33);
-            assert_eq!(cache_item.response_code, ResponseCode::NXDomain);
-            assert!(cache_item.rdatas.is_empty());
+            assert_eq!(cache_item.answer.response_code, ResponseCode::NXDomain);
+            assert!(cache_item.answer.records.is_empty());
             assert_eq!(cache_item.mark.priority, 0);
         });
     }
@@ -773,15 +1163,20 @@ mod tests {
     #[test]
     fn renew_dns_rules_preserves_redirects_and_caps_migrated_cache_ttl() {
         run_async_test(async {
-            let handler = make_test_handler(
-                vec![test_runtime_rule()],
-                vec![test_static_redirect_rule(
-                    "redirect.example",
-                    vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
-                    30,
-                )],
-            );
+            let pool = Arc::new(ResolvePool::default());
             let rule = test_runtime_rule();
+            let handler = handler_with_pool(
+                ChainDnsServerInitInfo {
+                    dns_rules: vec![rule.clone()],
+                    redirect_rules: vec![test_static_redirect_rule(
+                        "redirect.example",
+                        vec![Ipv4Addr::LOCALHOST.into()],
+                        30,
+                    )],
+                },
+                &pool,
+                Arc::new(NoopDnsResultSink),
+            );
             handler
                 .insert(
                     "cached.example.",
@@ -808,11 +1203,10 @@ mod tests {
                 .await;
 
             let old_runtime = handler.snapshot.load_full();
-            let (_, resolve_engine) =
-                DnsRequestHandler::test_engines_from_legacy(ChainDnsServerInitInfo {
-                    dns_rules: vec![rule],
-                    redirect_rules: vec![],
-                });
+            let (_, resolve_engine) = DnsRequestHandler::test_engines_with_pool(
+                ChainDnsServerInitInfo { dns_rules: vec![rule], redirect_rules: vec![] },
+                &pool,
+            );
             handler.renew_dns_rules(resolve_engine).await;
 
             let new_runtime = handler.snapshot.load_full();
@@ -837,6 +1231,150 @@ mod tests {
                 3
             );
         });
+    }
+
+    #[tokio::test]
+    async fn higher_priority_rule_takes_effect_on_a_previously_cached_name() {
+        let pool = Arc::new(ResolvePool::default());
+        let rule = DNSRuntimeRule { index: 100, ..test_runtime_rule() };
+        let name = "cached.example.";
+        let init = |rules| ChainDnsServerInitInfo { dns_rules: rules, ..Default::default() };
+        let handler =
+            handler_with_pool(init(vec![rule.clone()]), &pool, Arc::new(NoopDnsResultSink));
+        handler
+            .insert(
+                name,
+                RecordType::A,
+                vec![sample_a_record(name, 60, Ipv4Addr::LOCALHOST)],
+                ResponseCode::NoError,
+                &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 100 },
+                FilterResult::Unfilter,
+                Some(rule.id),
+                Some(rule.index),
+            )
+            .await;
+        let domain = ParsedDomain::new(name).unwrap();
+        assert_eq!(handler.resolve_query(&domain, RecordType::A).await.outcome, DnsOutcome::Hit);
+        let higher = DNSRuntimeRule {
+            id: Uuid::new_v4(),
+            index: 1,
+            filter: FilterResult::OnlyIPv6,
+            ..rule.clone()
+        };
+        let (_, next) = DnsRequestHandler::test_engines_with_pool(init(vec![higher, rule]), &pool);
+        handler.renew_dns_rules(next).await;
+        let answer = handler.resolve_query(&domain, RecordType::A).await;
+        assert_eq!(answer.outcome, DnsOutcome::Filter);
+        assert!(answer.dns.records.is_empty());
+        assert!(
+            handler
+                .snapshot
+                .load_full()
+                .cache
+                .get(&(Arc::from(name), RecordType::A))
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_replaced_under_same_id_drops_answers_on_rule_reload() {
+        let pool = Arc::new(ResolvePool::default());
+        let rule = test_runtime_rule();
+        let init = || ChainDnsServerInitInfo {
+            dns_rules: vec![rule.clone()],
+            ..Default::default()
+        };
+        let handler = handler_with_pool(init(), &pool, Arc::new(NoopDnsResultSink));
+        let name = "changed-upstream.example.";
+        handler
+            .insert(
+                name,
+                RecordType::A,
+                vec![sample_a_record(name, 60, Ipv4Addr::LOCALHOST)],
+                ResponseCode::NoError,
+                &DnsRuntimeMarkInfo { mark: rule.mark, priority: 1 },
+                FilterResult::Unfilter,
+                Some(rule.id),
+                Some(rule.index),
+            )
+            .await;
+        let key = (Arc::from(name), RecordType::A);
+        assert!(handler.snapshot.load_full().cache.get(&key).await.is_some());
+        pool.invalidate(&std::collections::HashSet::from([rule.resolve_mode.id]));
+        let (_, rules) = DnsRequestHandler::test_engines_with_pool(init(), &pool);
+        handler.renew_dns_rules(rules).await;
+        assert!(handler.snapshot.load_full().cache.get(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn lowering_cache_lifetime_uses_original_insertion_time() {
+        let config = shared_cache_runtime_config(5);
+        let handler =
+            test_handler_with_config(config.clone(), 1, vec![test_runtime_rule()], vec![]);
+        let name = "cache-age.example.";
+        let key = (Arc::from(name), RecordType::A);
+        handler
+            .insert(
+                name,
+                RecordType::A,
+                vec![sample_a_record(name, 600, Ipv4Addr::LOCALHOST)],
+                ResponseCode::NoError,
+                &DnsRuntimeMarkInfo { mark: FlowMark::default(), priority: 1 },
+                FilterResult::Unfilter,
+                None,
+                None,
+            )
+            .await;
+        let old = handler.snapshot.load_full();
+        let mut item = (*old.cache.get(&key).await.unwrap()).clone();
+        item.insert_time -= std::time::Duration::from_secs(30);
+        old.cache.insert_raw(key.clone(), Arc::new(item)).await;
+        assert!(old.cache.get(&key).await.is_some());
+        config
+            .store(Arc::new(CacheRuntimeConfig { cache_ttl: 10, ..test_cache_runtime_config(5) }));
+        handler.renew_runtime_config(true).await;
+        assert!(handler.snapshot.load_full().cache.get(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn rebuilding_marks_skips_expired_entries_before_and_after_migration() {
+        let pool = Arc::new(ResolvePool::default());
+        let rule = DNSRuntimeRule {
+            mark: FlowMark::from(0x0100),
+            ..test_runtime_rule()
+        };
+        let sink = Arc::new(RecordingSink::default());
+        let init = ChainDnsServerInitInfo {
+            dns_rules: vec![rule.clone()],
+            ..Default::default()
+        };
+        let handler = handler_with_pool(init, &pool, sink.clone());
+        let name = "expired.example.";
+        let key = (Arc::from(name), RecordType::A);
+        handler
+            .insert(
+                name,
+                RecordType::A,
+                vec![sample_a_record(name, 1, Ipv4Addr::LOCALHOST)],
+                ResponseCode::NoError,
+                &DnsRuntimeMarkInfo { mark: rule.mark, priority: 1 },
+                FilterResult::Unfilter,
+                Some(rule.id),
+                Some(rule.index),
+            )
+            .await;
+        assert_eq!(sink.0.lock().unwrap().len(), 1);
+        let old = handler.snapshot.load_full();
+        let mut item = (*old.cache.get(&key).await.unwrap()).clone();
+        item.insert_time -= std::time::Duration::from_secs(2);
+        old.cache.insert_raw(key.clone(), Arc::new(item)).await;
+        old.cache.run_pending_tasks().await;
+        old.cache.refresh_marks();
+        assert!(sink.0.lock().unwrap().is_empty());
+        handler.renew_runtime_config(true).await;
+        assert!(handler.snapshot.load_full().cache.get(&key).await.is_none());
+        assert!(sink.0.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1035,6 +1573,7 @@ async fn metric_reporter_switches_targets_without_rebuilding_handler_or_affectin
     let (first_tx, mut first_rx) = mpsc::channel(1);
     owner.replace_sender(Some(first_tx));
     let response = handler.handle(&req).await;
+    assert!(response.metadata.authoritative);
     assert_eq!(response.answers.len(), 1);
     assert_eq!(first_rx.recv().await.unwrap().flow_id, handler.flow_id);
 

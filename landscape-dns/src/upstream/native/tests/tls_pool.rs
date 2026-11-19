@@ -41,6 +41,43 @@ async fn doh_lookup_answers_from_local_server() {
 }
 
 #[tokio::test]
+async fn doh_pool_deducts_http_cache_age_from_dns_ttl() {
+    let tls = test_tls();
+    let port = spawn_aged_doh_server(&tls, 45).await;
+    let pool = tls_pool(
+        port,
+        DnsUpstreamMode::Https {
+            domain: "ns.example.com".into(),
+            http_endpoint: None,
+        },
+        &tls,
+    )
+    .await;
+    let answer = pool.lookup("www.example.com.", RecordType::A).await.unwrap();
+    assert_eq!(answer.records[0].ttl, 15);
+}
+
+#[tokio::test]
+async fn doh_response_errors_preserve_connection_for_next_lookup() {
+    let tls = test_tls();
+    let port = spawn_recovering_doh_server(&tls).await;
+    let pool = tls_pool(
+        port,
+        DnsUpstreamMode::Https {
+            domain: "ns.example.com".into(),
+            http_endpoint: None,
+        },
+        &tls,
+    )
+    .await;
+    for detail in ["503", "65535", "503"] {
+        let err = pool.lookup("www.example.com.", RecordType::A).await.unwrap_err();
+        assert!(matches!(&err, UpstreamError::Response(msg) if msg.contains(detail)), "{err:?}");
+    }
+    assert_www_answer(&pool).await;
+}
+
+#[tokio::test]
 async fn doq_lookup_answers_from_local_server() {
     let tls = test_tls();
     let (port, _server) = spawn_tls_server(TlsProtocol::Quic, &tls).await;

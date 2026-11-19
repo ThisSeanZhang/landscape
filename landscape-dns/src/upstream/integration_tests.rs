@@ -1,5 +1,4 @@
-//! End-to-end upstream pool tests against a real local hickory-server
-//! (UDP + TCP), exercising the actual native transport path.
+//! End-to-end tests of the native upstream pool against loopback UDP and TCP servers.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
@@ -7,7 +6,10 @@ use std::sync::Arc;
 use crate::upstream::native::UpstreamPool;
 use crate::upstream::native::mark::MarkRuntimeProvider;
 use crate::upstream::native::pool_config::PoolSettings;
-use crate::upstream::test_util::spawn_plaintext_server;
+use crate::upstream::test_util::{
+    ScriptedAction, ScriptedDnsServer, mark_supported_or_fail, spawn_plaintext_server,
+};
+use hickory_server::proto::op::ResponseCode;
 use hickory_server::proto::rr::rdata::A;
 use hickory_server::proto::rr::{RData, RecordType};
 use landscape_common::dns::config::DnsUpstreamConfig;
@@ -27,15 +29,8 @@ fn make_pool(flow_id: u32, mark: u32, upstream: &DnsUpstreamConfig) -> Arc<Upstr
     .expect("build upstream pool")
 }
 
-async fn spawn_test_server_on(
-    bind_ip: Ipv4Addr,
-    with_content: bool,
-) -> (u16, tokio::task::JoinHandle<()>) {
-    spawn_plaintext_server(bind_ip, with_content).await
-}
-
 async fn spawn_test_server() -> (u16, tokio::task::JoinHandle<()>) {
-    spawn_test_server_on(Ipv4Addr::LOCALHOST, true).await
+    spawn_plaintext_server(Ipv4Addr::LOCALHOST, true).await
 }
 
 fn plaintext_upstream(port: u16) -> DnsUpstreamConfig {
@@ -45,31 +40,6 @@ fn plaintext_upstream(port: u16) -> DnsUpstreamConfig {
         ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
         port: Some(port),
         ..Default::default()
-    }
-}
-
-/// These pools dial with a real SO_MARK (`0x8000`). An environment without
-/// CAP_NET_ADMIN cannot set it, so every marked test skips loudly there —
-/// except in privileged CI (`LANDSCAPE_PRIVILEGED_CI=1`), where a missing
-/// capability is a real failure, not a skip (same contract as the
-/// provider's SO_MARK assertions).
-fn mark_supported_or_fail() -> bool {
-    let socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )
-    .expect("create probe udp socket");
-    match socket.set_mark(0x8000) {
-        Ok(()) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            if std::env::var("LANDSCAPE_PRIVILEGED_CI").as_deref() == Ok("1") {
-                panic!("SO_MARK failed in privileged CI (LANDSCAPE_PRIVILEGED_CI=1): {e}");
-            }
-            eprintln!("skipping (no CAP_NET_ADMIN): {e}");
-            false
-        }
-        Err(e) => panic!("unexpected SO_MARK error: {e}"),
     }
 }
 
@@ -185,10 +155,6 @@ async fn multi_ip_fanout_prefers_positive_over_nxdomain_endpoint() {
     if !mark_supported_or_fail() {
         return;
     }
-    // Two endpoints, same port, different loopback IPs: the content server
-    // answers `www.example.com`, the SOA-only server answers NXDomain. The
-    // fan-out queries both concurrently and the positive answer must win
-    // over the negative (within the negative-answer grace).
     let empty_ip = Ipv4Addr::new(127, 0, 0, 2);
     // Not every container binds the whole 127.0.0.0/8 range; skip instead
     // of failing when the second loopback IP is unavailable.
@@ -196,32 +162,51 @@ async fn multi_ip_fanout_prefers_positive_over_nxdomain_endpoint() {
         eprintln!("skipping: cannot bind {empty_ip} (127.0.0.0/8 restricted)");
         return;
     }
-    let (port, _content) = spawn_test_server_on(Ipv4Addr::LOCALHOST, true).await;
-    let (_, _empty) = spawn_test_server_on(empty_ip, false).await;
+    let content = ScriptedDnsServer::spawn(Ipv4Addr::LOCALHOST.into()).await;
+    let empty = ScriptedDnsServer::spawn_on_port(empty_ip.into(), content.port()).await;
+    let release_answer = Arc::new(tokio::sync::Notify::new());
+    let nxdomain = ScriptedAction::Negative {
+        code: ResponseCode::NXDomain,
+        soa: Some((3600, 300)),
+        alias_ttl: None,
+    };
+    content.push_udp(ScriptedAction::AnswerOn(release_answer.clone()));
+    empty.push_udp(nxdomain.clone());
 
     let upstream = DnsUpstreamConfig {
         remark: "multi-ip".into(),
         mode: DnsUpstreamMode::Plaintext,
         ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V4(empty_ip)],
-        port: Some(port),
+        port: Some(content.port()),
         ..Default::default()
     };
     let pool = make_pool(7, 0x8000, &upstream);
 
-    // The positive endpoint wins despite the NXDomain endpoint.
-    let records = pool.lookup("www.example.com.", RecordType::A).await.unwrap();
+    // Let the positive endpoint reply only once the other endpoint has received the query.
+    let (result, ()) = tokio::join!(pool.lookup("www.example.com.", RecordType::A), async {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while empty.queries() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("NXDOMAIN endpoint did not receive the fan-out query");
+        release_answer.notify_one();
+    });
+    let records = result.unwrap();
+    assert_eq!([content.queries(), empty.queries()], [1, 1]);
     assert_eq!(records.len(), 1);
     assert!(matches!(&records[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::new(1, 2, 3, 4)));
 
     // A name neither endpoint has answers NXDomain after the fan-out.
+    content.push_udp(nxdomain.clone());
+    empty.push_udp(nxdomain);
     let err = pool.lookup("missing.example.com.", RecordType::A).await.unwrap_err();
     assert!(matches!(
         err,
-        crate::upstream::native::UpstreamError::Protocol(
-            hickory_server::proto::op::ResponseCode::NXDomain,
-            _
-        )
+        crate::upstream::native::UpstreamError::Protocol(ResponseCode::NXDomain, Some(_))
     ));
+    assert_eq!([content.queries(), empty.queries()], [2, 2]);
 }
 
 #[tokio::test]

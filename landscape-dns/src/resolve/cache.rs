@@ -1,15 +1,12 @@
 use std::{
     collections::HashSet,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
 use arc_swap::ArcSwap;
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{RData, Record, RecordType, rdata::svcb::SvcParamValue},
-};
-use moka::future::Cache;
+use hickory_proto::rr::{RData, RecordType, rdata::svcb::SvcParamValue};
+use moka::{Expiry, future::Cache};
 use uuid::Uuid;
 
 use landscape_common::{
@@ -20,12 +17,11 @@ use landscape_common::{
 
 use crate::domain::ParsedDomain;
 
-use super::rule::DNSResolveRuntime;
+use super::{answer::DnsAnswer, rule::DNSResolveRuntime};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CacheDNSItem {
-    pub rdatas: Vec<Record>,
-    pub response_code: ResponseCode,
+    pub answer: DnsAnswer,
     pub insert_time: Instant,
 
     pub min_ttl: u32,
@@ -36,6 +32,15 @@ pub(crate) struct CacheDNSItem {
 }
 
 impl CacheDNSItem {
+    fn remaining_ttl(&self) -> u32 {
+        self.min_ttl
+            .saturating_sub(u32::try_from(self.insert_time.elapsed().as_secs()).unwrap_or(u32::MAX))
+    }
+
+    pub(crate) fn is_live(&self) -> bool {
+        self.remaining_ttl() > 0
+    }
+
     pub(crate) fn get_update_rules(&self) -> HashSet<FlowMarkInfo> {
         self.get_update_rules_with_mark(&self.mark)
     }
@@ -45,7 +50,7 @@ impl CacheDNSItem {
         if !info.mark.should_insert_dns_mark() {
             return result;
         }
-        for rdata in self.rdatas.iter() {
+        for rdata in self.answer.records.iter() {
             match &rdata.data {
                 RData::A(a) => {
                     result.insert(FlowMarkInfo {
@@ -96,14 +101,41 @@ impl CacheDNSItem {
     }
 }
 
-pub(crate) type DNSCache = Cache<(Arc<str>, RecordType), Arc<CacheDNSItem>>;
+type CacheKey = (Arc<str>, RecordType);
+pub(crate) type DNSCache = Cache<CacheKey, Arc<CacheDNSItem>>;
+
+/// A cache rebuild reinserts the entry with its original timestamp.
+struct CacheExpiry {
+    max_age: Duration,
+}
+
+impl Expiry<CacheKey, Arc<CacheDNSItem>> for CacheExpiry {
+    fn expire_after_create(
+        &self,
+        _: &CacheKey,
+        item: &Arc<CacheDNSItem>,
+        now: Instant,
+    ) -> Option<Duration> {
+        let lifetime = self.max_age.min(Duration::from_secs(item.min_ttl.into()));
+        Some(lifetime.saturating_sub(now.saturating_duration_since(item.insert_time)))
+    }
+
+    fn expire_after_update(
+        &self,
+        key: &CacheKey,
+        item: &Arc<CacheDNSItem>,
+        now: Instant,
+        _: Option<Duration>,
+    ) -> Option<Duration> {
+        self.expire_after_create(key, item, now)
+    }
+}
 
 /// Data required to write (or update) one cache entry.
 pub(crate) struct CacheEntry {
     pub(crate) domain_key: Arc<str>,
     pub(crate) query_type: RecordType,
-    pub(crate) rdatas: Vec<Record>,
-    pub(crate) response_code: ResponseCode,
+    pub(crate) answer: DnsAnswer,
     pub(crate) mark: DnsRuntimeMarkInfo,
     pub(crate) filter: FilterResult,
     pub(crate) matched_rule_id: Option<Uuid>,
@@ -118,6 +150,8 @@ pub(crate) struct CacheHandle {
     runtime_config: Arc<ArcSwap<CacheRuntimeConfig>>,
     flow_id: u32,
     sink: Arc<dyn DnsResultSink>,
+    // Retiring this snapshot waits for any synchronous datapath updates in progress.
+    active: RwLock<bool>,
 }
 
 impl std::fmt::Debug for CacheHandle {
@@ -141,13 +175,16 @@ impl CacheHandle {
             runtime_config,
             flow_id,
             sink,
+            active: RwLock::new(true),
         }
     }
 
     fn build_cache(runtime_config: &CacheRuntimeConfig) -> DNSCache {
         Cache::builder()
             .max_capacity(runtime_config.cache_capacity as u64)
-            .time_to_live(Duration::from_secs(runtime_config.cache_ttl as u64))
+            .expire_after(CacheExpiry {
+                max_age: Duration::from_secs(runtime_config.cache_ttl.into()),
+            })
             .build()
     }
 
@@ -177,51 +214,47 @@ impl CacheHandle {
     pub fn dns_mark_list(&self) -> HashSet<FlowMarkInfo> {
         let mut update_dns_mark_list = HashSet::new();
         for (_key, value) in self.cache.iter() {
-            update_dns_mark_list.extend(value.get_update_rules());
+            if value.is_live() {
+                update_dns_mark_list.extend(value.get_update_rules());
+            }
         }
         update_dns_mark_list
     }
 
+    pub fn retire(&self) {
+        *self.active.write().unwrap_or_else(|err| err.into_inner()) = false;
+    }
+
+    pub fn refresh_marks(&self) {
+        let active = self.active.write().unwrap_or_else(|err| err.into_inner());
+        if *active {
+            self.sink.refresh_dns_marks(self.flow_id, self.dns_mark_list().into_iter().collect());
+            self.sink.rebuild_route_cache();
+        }
+    }
+
     /// Returns valid (TTL-decremented) records for a live entry, or `None`
-    /// when the entry is missing or expired (lazy eviction).
+    /// when the entry is missing or expired.
     pub async fn lookup(
         &self,
         domain: &ParsedDomain,
         query_type: RecordType,
-    ) -> Option<(Vec<Record>, FilterResult, ResponseCode)> {
+    ) -> Option<(DnsAnswer, FilterResult)> {
         let key = (domain.raw_arc().clone(), query_type);
-        if let Some(cache_item) = self.cache.get(&key).await {
-            let CacheDNSItem {
-                rdatas,
-                response_code,
-                insert_time,
-                min_ttl,
-                filter,
-                ..
-            } = &*cache_item;
-
-            // 1. check expiry
-            let insert_time_elapsed = insert_time.elapsed().as_secs() as u32;
-            if insert_time_elapsed > *min_ttl {
-                // expired: proactively evict the entry (lazy expiration)
-                self.cache.invalidate(&key).await;
-                return None;
-            }
-
-            // 2. build valid records (TTL decremented)
-            // if rdatas is empty (negative cache), valid_records stays empty too
-            let valid_records = rdatas
-                .iter()
-                .cloned()
-                .map(|mut d| {
-                    d.ttl = *min_ttl - insert_time_elapsed;
-                    d
-                })
-                .collect();
-
-            return Some((valid_records, filter.clone(), *response_code));
+        let item = self.cache.get(&key).await?;
+        let ttl = item.remaining_ttl();
+        if ttl == 0 {
+            // Moka will evict it. An unconditional removal here could erase a concurrent refresh.
+            return None;
         }
-        None
+        let mut answer = item.answer.clone();
+        for record in &mut answer.records {
+            record.ttl = ttl;
+        }
+        if let Some(soa) = &mut answer.soa {
+            soa.ttl = ttl;
+        }
+        Some((answer, item.filter.clone()))
     }
 
     pub async fn invalidate(&self, domain: &ParsedDomain, query_type: RecordType) {
@@ -247,25 +280,28 @@ impl CacheHandle {
         let CacheEntry {
             domain_key,
             query_type,
-            rdatas,
-            response_code,
+            answer,
             mark,
             filter,
             matched_rule_id,
             matched_rule_order,
         } = entry;
-        let min_ttl = rdatas
-            .iter()
-            .map(|r| r.ttl)
-            .min()
-            .unwrap_or_else(|| self.runtime_config.load().negative_cache_ttl);
+        let record_ttl = answer.records.iter().map(|r| r.ttl).min();
+        let min_ttl = match record_ttl {
+            Some(ttl) if !answer.is_negative => ttl,
+            _ => {
+                let cap = self.runtime_config.load().negative_cache_ttl;
+                cap.min(record_ttl.unwrap_or(cap))
+                    .min(answer.soa.as_ref().map_or(cap, |soa| soa.ttl))
+            }
+        };
 
         if min_ttl == 0 {
+            self.cache.invalidate(&(domain_key, query_type)).await;
             return;
         }
         let cache_item = CacheDNSItem {
-            rdatas,
-            response_code,
+            answer,
             mark,
             insert_time: Instant::now(),
             min_ttl,
@@ -279,7 +315,11 @@ impl CacheHandle {
 
         // hand the resulting marks to the datapath sink
         if !update_dns_mark_list.is_empty() {
-            self.sink.record_dns_answer(self.flow_id, update_dns_mark_list.into_iter().collect());
+            let active = self.active.read().unwrap_or_else(|err| err.into_inner());
+            if *active {
+                self.sink
+                    .record_dns_answer(self.flow_id, update_dns_mark_list.into_iter().collect());
+            }
         }
     }
 
@@ -287,14 +327,12 @@ impl CacheHandle {
         resolver: &DNSResolveRuntime,
         domain_key: &Arc<str>,
         query_type: RecordType,
-        rdatas: Vec<Record>,
-        response_code: ResponseCode,
+        answer: DnsAnswer,
     ) -> CacheEntry {
         CacheEntry {
             domain_key: domain_key.clone(),
             query_type,
-            rdatas,
-            response_code,
+            answer,
             mark: resolver.mark().clone(),
             filter: resolver.filter_mode(),
             matched_rule_id: Some(resolver.get_config_id()),

@@ -643,8 +643,7 @@ mod tests {
     async fn flow_change_without_invalidate_routes_by_new_flow() {
         // RulesChanged does a ResolveOnly refresh and never invalidates: a rule
         // moved to another flow must still be served by a resolver carrying the
-        // new flow's mark (correctness), while the old entry stays pooled
-        // (documented leak that is safe to keep).
+        // new flow's mark while the old runtime is still serving queries.
         let (builder, _) = builder().await;
         let upstream = DnsUpstreamConfig::default();
         let upstream_id = upstream.id;
