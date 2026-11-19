@@ -27,7 +27,7 @@
 
 #define PROBE_BAD_KEY 0xFFFFFFFFu
 
-WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
+WAN_TRIE_DECLARE(wan_trie_arena);
 
 SEC("xdp")
 int test_wan_trie_probe(struct xdp_md *ctx) {
@@ -62,7 +62,7 @@ int test_wan_trie_probe(struct xdp_md *ctx) {
         return PROBE_BAD_KEY;
     }
 
-    return wan_trie_resolve(&wan_trie_tbl, key);
+    return wan_trie_resolve(wan_trie_table(&wan_trie_arena), key);
 }
 
 /* Sink A for chain-root slot assertions: flips packet byte 0. */

@@ -13,8 +13,8 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
+use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{v4_entry, v6_entry, wan_trie_publish};
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
 use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
@@ -253,9 +253,8 @@ fn xdp_firewall_pipeline() {
     // ── WAN dispatch trie: route 10.0.0.1 and fd00::/64 → the WAN link's
     // chain (dispatch values are chain ids) ──
     {
-        let data = intro.maps.wan_trie_arena_data.as_mut().unwrap();
         wan_trie_publish(
-            cast_arena_tbl(&mut data.wan_trie_tbl),
+            mapped_table(&mut intro.maps.wan_trie_arena).expect("owned trie arena mapping"),
             &[
                 v4_entry(std::net::Ipv4Addr::new(10, 0, 0, 1), 32, TEST_CHAIN).unwrap(),
                 v6_entry(Ipv6Addr::from_str("fd00::").unwrap(), 64, TEST_CHAIN).unwrap(),

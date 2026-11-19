@@ -36,8 +36,8 @@ use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
 use crate::landscape::OwnedOpenObject;
 use crate::landscape::pin_and_reuse_map;
+use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 
 /// Shared with `crate::maps` (wan binding writes go through this
 /// skeleton's pinned map types).
@@ -164,10 +164,7 @@ impl RouteBackbone {
         // dispatcher: publishes the current (empty) entry set, so the
         // program is never attached over a stale or zeroed table. A
         // failure aborts manager creation for the same reason.
-        let wan_trie_guard = {
-            let data = skel.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-            wan_trie.register(cast_arena_tbl(&mut data.wan_trie_tbl))?
-        };
+        let wan_trie_guard = wan_trie.register(mapped_table(&mut skel.maps.wan_trie_arena)?)?;
 
         // No chains exist in this process yet, so any entry left in these
         // maps belongs to a previous run (crash or kill). Dropping them lets

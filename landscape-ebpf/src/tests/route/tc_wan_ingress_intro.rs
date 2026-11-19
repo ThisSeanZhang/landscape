@@ -29,10 +29,10 @@ use libbpf_rs::{
 };
 
 use crate::landscape::OwnedOpenObject;
+use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, v4_entry, v6_entry, wan_trie_publish,
 };
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::skel::pppoe_skb_fallback::PppoeSkbFallbackSkelBuilder;
 use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4};
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
@@ -86,8 +86,11 @@ fn plant_sink_a(intro: &mut TcWanIngressIntroSkel<'_>) -> ProbeSinks {
 }
 
 fn publish(intro: &mut TcWanIngressIntroSkel<'_>, entries: &[PrefixEntry]) {
-    let data = intro.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-    wan_trie_publish(cast_arena_tbl(&mut data.wan_trie_tbl), entries).expect("publish trie");
+    wan_trie_publish(
+        mapped_table(&mut intro.maps.wan_trie_arena).expect("owned trie arena mapping"),
+        entries,
+    )
+    .expect("publish trie");
 }
 
 fn run(intro: &TcWanIngressIntroSkel<'_>, pkt: &[u8]) -> (i32, Vec<u8>) {

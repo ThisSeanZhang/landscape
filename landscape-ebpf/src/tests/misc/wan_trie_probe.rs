@@ -21,11 +21,11 @@ use libbpf_rs::{
     skel::{OpenSkel as _, SkelBuilder as _},
 };
 
+use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::tests::{d, p};
 use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, reference_lpm, v4_entry, v6_entry, wan_trie_publish,
 };
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
 
 const MODE_RAW: u8 = 0;
@@ -44,8 +44,11 @@ fn packet(mode: u8, payload: &[u8]) -> Vec<u8> {
 
 /// Publish `entries` into the probe program's arena via the mmap.
 fn publish(skel: &mut TestWanTrieProbeSkel<'_>, entries: &[PrefixEntry]) {
-    let data = skel.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-    wan_trie_publish(cast_arena_tbl(&mut data.wan_trie_tbl), entries).expect("publish");
+    wan_trie_publish(
+        mapped_table(&mut skel.maps.wan_trie_arena).expect("owned trie arena mapping"),
+        entries,
+    )
+    .expect("publish");
 }
 
 /// Resolve one request through the real C reader in the kernel.
@@ -166,4 +169,118 @@ fn bpf_reader_matches_reference() {
     // ── 5. malformed requests report the sentinel ──
     assert_eq!(resolve(&mut skel, &[0u8; 14]), BAD_KEY);
     assert_eq!(resolve(&mut skel, &packet(9, &[0; 8])), BAD_KEY);
+}
+
+/// Exercise the production XDP seed's mmap, a reused TC intro and a reused
+/// reader against both full halves. This catches base-address/layout mistakes
+/// that loading alone cannot detect.
+#[test]
+fn shared_arena_full_capacity() {
+    use crate::maps::wan_trie::types::{WAN_TRIE_POOL_NODES, WanTrieTbl};
+    use crate::skel::tc_wan_ingress_intro::TcWanIngressIntroSkelBuilder;
+    use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
+    use crate::tests::pkt::simple_ipv6_tcp_syn;
+    use libbpf_rs::{MapCore, MapFlags};
+    use std::os::fd::{AsFd, AsRawFd};
+
+    const LEAVES: usize = 2039; // one root + eight branches + 2039 leaves
+    fn key(i: usize) -> [u8; 8] {
+        [0x20 + (i / 256) as u8, (i % 256) as u8, 255, 255, 255, 255, 255, 255]
+    }
+    let mut seed_obj = MaybeUninit::uninit();
+    let mut seed = XdpWanIntroSkelBuilder::default().open(&mut seed_obj).unwrap().load().unwrap();
+    let mut probe_obj = MaybeUninit::uninit();
+    let mut open = TestWanTrieProbeSkelBuilder::default().open(&mut probe_obj).unwrap();
+    open.maps.wan_trie_arena.reuse_fd(seed.maps.wan_trie_arena.as_fd()).unwrap();
+    let mut probe = open.load().unwrap();
+    assert!(
+        mapped_table(&mut probe.maps.wan_trie_arena).is_err(),
+        "reused map does not own an mmap"
+    );
+    let mut tc_obj = MaybeUninit::uninit();
+    let mut open = TcWanIngressIntroSkelBuilder::default().open(&mut tc_obj).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = false;
+    open.maps.wan_trie_arena.reuse_fd(seed.maps.wan_trie_arena.as_fd()).unwrap();
+    let tc = open.load().unwrap();
+    for (slot, xdp_fd, tc_fd) in [
+        (
+            5u32,
+            probe.progs.test_xdp_sink_a.as_fd().as_raw_fd(),
+            probe.progs.test_tc_sink_a.as_fd().as_raw_fd(),
+        ),
+        (
+            6u32,
+            probe.progs.test_xdp_sink_b.as_fd().as_raw_fd(),
+            probe.progs.test_tc_sink_b.as_fd().as_raw_fd(),
+        ),
+    ] {
+        seed.maps
+            .xdp_pipe_root_progs
+            .update(&slot.to_ne_bytes(), &xdp_fd.to_ne_bytes(), MapFlags::ANY)
+            .unwrap();
+        tc.maps
+            .tc_pipe_root_progs
+            .update(&slot.to_ne_bytes(), &tc_fd.to_ne_bytes(), MapFlags::ANY)
+            .unwrap();
+    }
+    let mut dst = [0u8; 16];
+    dst[..8].copy_from_slice(&key(LEAVES - 1));
+    dst[15] = 1;
+    let frame = simple_ipv6_tcp_syn("fd00::1".parse().unwrap(), Ipv6Addr::from(dst));
+    for generation in 1..=3u32 {
+        let mut entries: Vec<_> = (0..LEAVES)
+            .map(|i| PrefixEntry {
+                prefix: key(i),
+                plen: 16,
+                root: generation * 10000 + i as u32 + 1,
+            })
+            .collect();
+        {
+            let tbl = mapped_table(&mut seed.maps.wan_trie_arena).unwrap();
+            wan_trie_publish(tbl, &entries).unwrap();
+            assert_eq!(tbl.cur, generation & 1);
+            let h = &tbl.halves[tbl.cur as usize];
+            assert_eq!(h.node_cnt as usize, WAN_TRIE_POOL_NODES);
+            if tbl.cur == 1 {
+                let end = &h.vals[1][31][31] as *const u32 as usize + 4;
+                assert_eq!(end - tbl as *const WanTrieTbl as usize, size_of::<WanTrieTbl>());
+            }
+        }
+        for j in 0..LEAVES {
+            let i = (j * 997) % LEAVES;
+            assert_eq!(resolve(&mut probe, &packet(MODE_RAW, &key(i))), entries[i].root);
+        }
+        // The final leaf is node 2047. Change the final table word to a real
+        // chain slot and observe both production intros reaching its sink.
+        let changed_byte = ((generation - 1) & 1) as usize;
+        let slot = 5 + changed_byte as u32;
+        {
+            let tbl = mapped_table(&mut seed.maps.wan_trie_arena).unwrap();
+            tbl.halves[tbl.cur as usize].vals[1][31][31] = slot;
+        }
+        assert_eq!(resolve(&mut probe, &packet(MODE_RAW, &key(LEAVES - 1))), slot);
+        for (prog, retval) in [(&seed.progs.xdp_wan_intro, 2), (&tc.progs.tc_wan_ingress_intro, 0)]
+        {
+            let mut output = vec![0u8; frame.len() + 32];
+            let result = prog
+                .test_run(ProgramInput {
+                    data_in: Some(&frame),
+                    data_out: Some(&mut output),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(result.return_value, retval);
+            let mut expected = frame.clone();
+            expected[changed_byte] ^= 0xff;
+            assert_eq!(result.data.unwrap(), expected);
+        }
+        entries.push(PrefixEntry { prefix: key(LEAVES), plen: 16, root: 7 });
+        {
+            let tbl = mapped_table(&mut seed.maps.wan_trie_arena).unwrap();
+            let active = tbl.cur;
+            assert!(wan_trie_publish(tbl, &entries).is_err());
+            assert_eq!(tbl.cur, active);
+        }
+        assert_eq!(resolve(&mut probe, &packet(MODE_RAW, &key(LEAVES - 1))), slot);
+    }
 }

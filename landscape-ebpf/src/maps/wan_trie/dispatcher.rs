@@ -10,7 +10,7 @@
 //! the program: [`WanTrieDispatcher::register`] immediately publishes the
 //! current entry set, so a fresh program never runs on a zeroed table. The
 //! returned [`TargetGuard`] detaches on drop; store it next to the skeleton
-//! (declared after it, so it drops first).
+//! (declared before it, so it drops first).
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -53,7 +53,7 @@ struct Target {
 }
 
 // SAFETY: the raw table pointer stays valid until the matching TargetGuard
-// (declared after the owning skeleton) drops and detaches it; all dispatcher
+// (declared before the owning skeleton) drops and detaches it; all dispatcher
 // access is serialized by the inner mutex.
 unsafe impl Send for Target {}
 
@@ -217,19 +217,6 @@ fn publish_all(inner: &mut Inner) {
         }
         t.last_flip = Some(Instant::now());
     }
-}
-
-/// Cast a generated skel's `wan_trie_tbl` arena global to the mirror type.
-/// The generated and mirror layouts are pinned equal by the wan_trie layout
-/// tests (the same C header generates both).
-pub(crate) fn cast_arena_tbl<T>(generated: &mut T) -> &mut WanTrieTbl {
-    assert_eq!(
-        std::mem::size_of::<T>(),
-        std::mem::size_of::<WanTrieTbl>(),
-        "generated wan_trie_tbl layout drifted from the mirror"
-    );
-    // SAFETY: identical #[repr(C)] layouts, pinned by tests.
-    unsafe { &mut *(generated as *mut T as *mut WanTrieTbl) }
 }
 
 /// Owns a registered skeleton together with its [`TargetGuard`].

@@ -11,14 +11,14 @@
  * default 2048, i.e. a ~4.2MB arena per loaded program. To shrink it,
  * define WAN_TRIE_POOL_NODES before including this header AND keep
  * WAN_TRIE_POOL_NODES in src/maps/wan_trie/types.rs in sync — the
- * cast_arena_tbl size assert and the layout tests catch drift.
+ * mapping capacity checks and the layout tests catch drift.
  */
 #ifndef WAN_TRIE_POOL_NODES
 #define WAN_TRIE_POOL_NODES 2048
 #endif
 
 /* Stride-8 (256-way) multibit trie over the first 64 bits of the IPv6
- * destination address, carried by an arena (`__arena` global).
+ * destination address, carried by an arena.
  *
  * Layout invariants that keep the data-plane walk short and simple:
  * - Node position encodes the prefix: a node reached after k bytes covers
@@ -128,19 +128,34 @@ static __always_inline u64 wan_trie_key_ppp(u32 ifindex, __be16 session) {
 /* Pages needed for the trie table (all sizes in bytes, rounded up). */
 #define WAN_TRIE_ARENA_PAGES ((sizeof(struct wan_trie_tbl) + 4095) / 4096)
 
-/* Convenience declaration for programs whose arena carries ONLY the trie:
- * declares the ARENA map and the __arena global. A program that shares one
- * arena map between several tables (e.g. the benchmark) declares its own
- * map once and just defines `struct wan_trie_tbl __arena <name>;` instead.
+/* Dedicated trie arena. No __arena_global object: embedding the table would
+ * put ~4.2 MB of zero data into every ELF and generated Rust skeleton.
+ * libbpf owns the seed mapping; other intros reuse its FD.
  */
-#define WAN_TRIE_DECLARE(map_name, var_name)                                                       \
+#define WAN_TRIE_DECLARE(map_name)                                                                 \
     struct {                                                                                       \
         __uint(type, BPF_MAP_TYPE_ARENA_V);                                                        \
         __uint(key_size, 0);                                                                       \
         __uint(value_size, 0);                                                                     \
         __uint(max_entries, WAN_TRIE_ARENA_PAGES);                                                 \
         __uint(map_flags, BPF_F_MMAPABLE);                                                         \
-    } map_name SEC(".maps");                                                                       \
-    struct wan_trie_tbl __arena_global var_name;
+    } map_name SEC(".maps")
+
+/* The pinned vmlinux headers can contain only a forward declaration of
+ * bpf_arena. A CO-RE flavor needs just the field we read, not its host layout.
+ */
+struct bpf_arena___wan_trie {
+    u64 user_vm_start;
+} __attribute__((preserve_access_index));
+
+/* Upstream arena_base() pattern. CO-RE relocates user_vm_start, so this
+ * refers to the actual reused map's start, independent of global placement.
+ */
+static __always_inline struct wan_trie_tbl __arena *wan_trie_table(void *map) {
+    struct wan_trie_tbl __arena *tbl =
+        (struct wan_trie_tbl __arena *)((struct bpf_arena___wan_trie *)map)->user_vm_start;
+    ARENA_CAST_KERN(tbl);
+    return tbl;
+}
 
 #endif /* __LD_MAP_WAN_TRIE_H__ */

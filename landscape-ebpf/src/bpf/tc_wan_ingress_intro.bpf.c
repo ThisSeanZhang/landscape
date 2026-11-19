@@ -24,10 +24,10 @@ struct {
  * Dispatch roots are tc_pipe_root_progs slots, indexed by the owning WAN
  * link's chain id.
  */
-WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
+WAN_TRIE_DECLARE(wan_trie_arena);
 
 static __always_inline void tc_intro_dispatch(struct __sk_buff *skb, u64 key) {
-    u32 root = wan_trie_resolve(&wan_trie_tbl, key);
+    u32 root = wan_trie_resolve(wan_trie_table(&wan_trie_arena), key);
     if (root) {
         bpf_tail_call(skb, &tc_pipe_root_progs, root);
     }
