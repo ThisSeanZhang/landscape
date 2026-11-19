@@ -43,7 +43,11 @@ pub async fn get_gateway_config_fast(
     tag = "System Config",
     operation_id = "update_gateway_config",
     request_body = UpdateGatewayConfigRequest,
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Runtime configuration committed"),
+        (status = 400, description = "Invalid gateway listener ports"),
+        (status = 409, description = "Configuration changed since it was read")
+    )
 )]
 pub async fn update_gateway_config(
     State(editor): State<SystemConfigEditor>,

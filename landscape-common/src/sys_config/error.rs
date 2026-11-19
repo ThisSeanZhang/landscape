@@ -25,4 +25,7 @@ pub enum ConfigUpdateError {
     #[error(transparent)]
     #[api_error(transparent)]
     Storage(#[from] crate::database::error::DbError),
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Gateway(#[from] super::gateway::error::GatewayConfigError),
 }

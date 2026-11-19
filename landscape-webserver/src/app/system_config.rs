@@ -75,7 +75,7 @@ impl SystemConfigEditor {
                 self.config.update_self_monitor_config(req.config, req.expected_hash).await
             }
             Gateway(req) => {
-                Ok(self.config.update_gateway_config(req.new_gateway, req.expected_hash).await?)
+                self.config.update_gateway_config(req.new_gateway, req.expected_hash).await
             }
             Ui(req) => Ok(self.config.update_ui_config(req.new_ui, req.expected_hash).await?),
             Password(req) => self.config.change_password(req).await,

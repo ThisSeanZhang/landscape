@@ -1,4 +1,7 @@
 export default {
+  "gateway.config.zero_port": "Gateway {field} must be greater than zero.",
+  "gateway.config.port_conflict":
+    "Gateway HTTP and HTTPS cannot both use port {port}.",
   "gateway.stop_timeout":
     "Gateway did not stop within {timeout_ms} ms; the previous instance is retained",
   "gateway.stop_failed": "Failed to stop gateway: {reason}",

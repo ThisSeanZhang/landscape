@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::{
-    AuthRuntimeConfig, GatewayRuntimeConfig, LandscapeConfig, LogRuntimeConfig, RuntimeConfig,
-    RuntimeConfigSource, StoreRuntimeConfig, WebRuntimeConfig,
+    AuthRuntimeConfig, LandscapeConfig, LogRuntimeConfig, RuntimeConfig, RuntimeConfigSource,
+    StoreRuntimeConfig, WebRuntimeConfig,
 };
 use crate::args::WebCommArgs;
 use crate::{
@@ -134,7 +134,7 @@ impl RuntimeConfig {
         let lan_hostname = config.lan_hostname.build_runtime();
         let time = config.time.build_runtime();
 
-        let gateway = GatewayRuntimeConfig::from_file_config(&config.gateway);
+        let gateway = config.gateway.build_runtime();
 
         RuntimeConfig {
             home_path,

@@ -1,4 +1,6 @@
 export default {
+  "gateway.config.zero_port": "网关 {field} 必须大于零",
+  "gateway.config.port_conflict": "网关 HTTP 和 HTTPS 不能同时使用端口 {port}",
   "gateway.stop_timeout": "网关未能在 {timeout_ms} 毫秒内停止，已保留原实例",
   "gateway.stop_failed": "网关停止失败：{reason}",
   "gateway.invalid_stored_rule": "已存储的网关规则 '{id}' 无效：{reason}",

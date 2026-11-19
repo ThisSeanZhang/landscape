@@ -638,7 +638,8 @@ impl LandscapeConfigService {
         &self,
         new_gateway: LandscapeGatewayConfig,
         expected_hash: String,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), ConfigUpdateError> {
+        let runtime = new_gateway.to_runtime()?;
         self.update_section(
             &["gateway"],
             &[],
@@ -648,13 +649,14 @@ impl LandscapeConfigService {
             |new_gateway| {
                 self.config.rcu(|old| {
                     let mut new_config = (**old).clone();
-                    new_config.gateway = GatewayRuntimeConfig::from_file_config(new_gateway);
+                    new_config.gateway = runtime.clone();
                     new_config.file_config.gateway = new_gateway.clone();
                     new_config
                 });
             },
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     pub async fn change_password(
