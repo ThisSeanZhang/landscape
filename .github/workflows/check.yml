@@ -56,6 +56,16 @@ jobs:
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=on" >> $GITHUB_ENV
 
+      - name: Verify SQLite-only release dependencies
+        run: |
+          for features in metric-persistent metric-persistent,gateway; do
+            dependencies=$(cargo tree --locked -p landscape-webserver --no-default-features --features "$features" --edges normal --prefix none)
+            if grep -E '^(sqlx-(mysql|postgres)|sea-orm-cli) v' <<< "$dependencies"; then
+              echo "Unexpected database driver or migration CLI in release dependencies ($features)"
+              exit 1
+            fi
+          done
+
       - name: Check Rust code
         run: cargo check --locked --workspace --features metric-persistent
 
@@ -68,6 +78,7 @@ jobs:
           cargo clippy --locked -p landscape-webserver --no-default-features -- -D warnings
           cargo clippy --locked -p landscape-common --features mem-track -- -D warnings
           cargo clippy --locked -p landscape-common --features openapi -- -D warnings
+          cargo clippy --locked -p landscape-database -p migration --all-targets --features landscape-database/postgres-driver,landscape-database/mysql-driver,migration/cli -- -D warnings
 
       - name: Show sccache stats
         if: always()

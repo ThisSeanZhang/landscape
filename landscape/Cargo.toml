@@ -94,6 +94,9 @@ etherparse = { workspace = true }
 workspace = true
 
 [features]
+# Optional additional drivers; the application storage remains SQLite-based.
+postgres-driver = ["landscape-database/postgres-driver"]
+mysql-driver = ["landscape-database/mysql-driver"]
 e2e-acme = ["landscape-common/e2e-acme"]
 default = ["metric-persistent"]
 gateway = ["dep:landscape-gateway"]

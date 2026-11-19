@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 landscape-common = { path = "../landscape-common" }
-migration = { path = "./migration" }
+migration = { path = "./migration", default-features = false }
 sea-orm = { workspace = true, features = ["with-uuid", "with-json"] }
 tokio = { workspace = true, features = ["time"] }
 
@@ -29,8 +29,11 @@ tempfile = { workspace = true }
 
 
 [features]
-default = []
-# NOT wired up: no sqlx-postgres dependency or connection code exists. The
-# feature only toggles `schema_name` attributes on entities. The storage layer
-# (StoreWriter retry classification, WAL semantics) is SQLite-only.
-postgres = []
+default = ["sqlite"]
+sqlite = ["sea-orm/sqlx-sqlite", "migration/sqlite"]
+# Additional drivers are additive. StoreWriter and migrations still rely on
+# SQLite semantics; enabling a driver does not provide full backend support.
+postgres-driver = ["sea-orm/sqlx-postgres", "migration/postgres-driver"]
+# Legacy schema selection: retain the existing explicit public schema behavior.
+postgres = ["postgres-driver"]
+mysql-driver = ["sea-orm/sqlx-mysql", "migration/mysql-driver"]

@@ -20,14 +20,16 @@ uuid = { workspace = true }
 
 [dependencies.sea-orm-migration]
 workspace = true
-features = [
-    # Enable at least one `ASYNC_RUNTIME` and `DATABASE_DRIVER` feature if you want to run migration via CLI.
-    # View the list of supported features at https://www.sea-ql.org/SeaORM/docs/install-and-config/database-and-async-runtime.
-    # e.g.
-    "runtime-tokio-rustls",
-    "sqlx-postgres",
-    "sqlx-mysql",
-    "sqlx-sqlite",
-    "with-uuid",
-    "with-json",
-]
+features = ["runtime-tokio-rustls", "with-uuid", "with-json"]
+
+[features]
+default = ["sqlite"]
+sqlite = ["sea-orm-migration/sqlx-sqlite"]
+postgres-driver = ["sea-orm-migration/sqlx-postgres"]
+mysql-driver = ["sea-orm-migration/sqlx-mysql"]
+cli = ["sea-orm-migration/cli"]
+
+[[bin]]
+name = "migration"
+path = "src/main.rs"
+required-features = ["cli"]
