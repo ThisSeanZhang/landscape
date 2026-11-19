@@ -16,6 +16,13 @@ RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
 FROM acme-tools AS acme
 COPY landscape-webserver /usr/local/bin/
 
+FROM runtime AS dns
+RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
+    apt-get update -o APT::Update::Error-Mode=any \
+    && apt-get install -y --no-install-recommends python3-dnslib \
+    && rm -rf /var/lib/apt/lists/*
+COPY landscape-webserver /usr/local/bin/
+
 FROM runtime AS capture-tools
 RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
     apt-get update -o APT::Update::Error-Mode=any \

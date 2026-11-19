@@ -9,6 +9,7 @@
 | [lan/static-forward](lan/static-forward/README.md) | 使用静态 IPv4 的 LAN 客户端经 TC 和 NAT 访问 WAN |
 | [lan/dhcp-acquire](lan/dhcp-acquire/README.md) | LAN 客户端首次获租，应用网关和 DNS 配置，随后访问 WAN |
 | [lan/dhcp-renew](lan/dhcp-renew/README.md) | 同一客户端续租后地址保持一致、租约延长、WAN 仍可达 |
+| [dns/negative-cache](dns/negative-cache/README.md) | LAN 查询 CNAME 指向的空答案，核对负缓存命中及到期后的 A 记录 |
 | [pppoe/redial-udp](pppoe/redial-udp/README.md) | 接入端强制断开会话，重拨换址后已有 UDP 流恢复 |
 | [acme/dns-01](acme/dns-01/README.md) | 通过实验 DNS 提供商向本地 Pebble 申请普通域名和通配符证书，并核对 TXT 清理 |
 | [gateway/https-path-rewrite](gateway/https-path-rewrite/README.md) | Gateway 使用生成的证书终止 TLS，向后端转发去前缀且保留查询参数的请求 |

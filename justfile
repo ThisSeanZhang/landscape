@@ -35,7 +35,7 @@ fmt *args:
     ./fmt.sh "$@"
 
 # Run all Containerlab cases in sequence
-e2e: e2e-lan e2e-gateway e2e-acme e2e-pppoe
+e2e: e2e-lan e2e-gateway e2e-acme e2e-pppoe e2e-dns-negative-cache
 
 # Run LAN forwarding, DHCP acquisition and renewal cases
 e2e-lan: e2e-lan-static e2e-lan-dhcp e2e-lan-dhcp-renew
@@ -51,6 +51,10 @@ e2e-lan-dhcp:
 # Renew a DHCPv4 lease and verify that the client can still reach the WAN
 e2e-lan-dhcp-renew:
     ./tests/e2e/containerlab/cases/lan/dhcp-renew/run.sh
+
+# Verify CNAME-to-NODATA caching and recovery through the LAN DNS listener
+e2e-dns-negative-cache:
+    ./tests/e2e/containerlab/cases/dns/negative-cache/run.sh
 
 # Run all PPPoE cases
 e2e-pppoe: e2e-pppoe-redial-udp

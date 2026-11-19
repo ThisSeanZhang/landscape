@@ -1,0 +1,17 @@
+[config.dns.cache]
+negative_ttl = 5
+
+[[dns_upstream_configs]]
+id = "607bd52f-eaef-44d0-b298-910b57ca3a50"
+remark = "WAN test DNS server"
+mode = { t = "plaintext" }
+ips = ["198.51.100.1"]
+port = 8053
+use_experimental_pool = true
+
+[[dns_rules]]
+name = "WAN test zone"
+index = 1
+enable = true
+upstream_id = "607bd52f-eaef-44d0-b298-910b57ca3a50"
+source = [{ t = "config", match_type = "domain", value = "cache.example.org" }]
