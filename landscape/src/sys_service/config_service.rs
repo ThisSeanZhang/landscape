@@ -974,6 +974,25 @@ mod tests {
         let (dir, service) = service().await;
         let (_, hash) = service.get_time_config_from_file().unwrap();
         let previous = service.get_time_runtime_config();
+        let invalid_servers = LandscapeTimeConfig {
+            enabled: Some(true),
+            servers: Some(vec!["ntp..example".into()]),
+            ..Default::default()
+        };
+        let rejected = service
+            .update_time_config(invalid_servers, hash.clone(), |_| {
+                panic!("published invalid NTP server")
+            })
+            .await;
+        assert!(matches!(
+            rejected,
+            Err(ConfigUpdateError::Time(
+                landscape_common::sys_service::time_sync::TimeSyncError::InvalidServers
+            ))
+        ));
+        assert_eq!(service.get_time_runtime_config(), previous);
+        assert_eq!(service.get_time_config_from_file().unwrap().1, hash);
+
         let update = LandscapeTimeConfig {
             enabled: Some(!previous.enabled),
             ..Default::default()

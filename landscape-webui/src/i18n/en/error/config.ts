@@ -1,4 +1,6 @@
 export default {
+  "time.invalid_servers":
+    "Enter at least one NTP server. Use a hostname or IP address, and enclose IPv6 addresses in brackets when specifying a port.",
   "self_monitor.invalid_retention":
     "Memory history retention must be at least one day.",
   "metric.sqlite_unavailable":

@@ -1,4 +1,6 @@
 export default {
+  "time.invalid_servers":
+    "请至少填写一个 NTP 服务器的主机名或 IP 地址。为 IPv6 地址指定端口时，请用方括号括住地址。",
   "self_monitor.invalid_retention": "内存历史记录至少保留一天。",
   "metric.sqlite_unavailable": "当前构建未启用 SQLite 指标存储。",
   "metric.invalid_db_max_mb":

@@ -70,7 +70,11 @@ pub async fn get_time_config_fast(
     tag = "System Config",
     operation_id = "update_time_config",
     request_body = UpdateTimeConfigRequest,
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Runtime configuration committed"),
+        (status = 400, description = "Invalid time server list"),
+        (status = 409, description = "Configuration changed since it was read")
+    )
 )]
 pub async fn update_time_config(
     State(editor): State<SystemConfigEditor>,

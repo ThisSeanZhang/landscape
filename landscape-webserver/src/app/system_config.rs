@@ -115,7 +115,7 @@ mod tests {
             SystemConfigChange::Time(UpdateTimeConfigRequest {
                 new_time: LandscapeTimeConfig {
                     enabled: Some(enabled),
-                    servers: Some(vec![]),
+                    servers: Some(vec!["127.0.0.1:1".into()]),
                     ..Default::default()
                 },
                 expected_hash: hash,

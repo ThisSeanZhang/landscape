@@ -7,6 +7,7 @@ use std::{
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use landscape_common::DEFAULT_TIME_FALLBACK_SERVER;
+use landscape_common::sys_config::time::ntp_server_endpoint;
 
 const NTP_UNIX_OFFSET_SECS: u64 = ((70_u64 * 365) + 17) * 24 * 60 * 60;
 
@@ -106,8 +107,10 @@ fn bind_addr_for(addr: &SocketAddr) -> &'static str {
 async fn query_ntp_time_from_server(server: &str) -> io::Result<NtpQueryResult> {
     use std::io::{Error, ErrorKind};
 
-    let server_addr = normalize_ntp_server_addr(server);
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host(&server_addr).await?.collect();
+    let server = if server.trim().is_empty() { DEFAULT_TIME_FALLBACK_SERVER } else { server };
+    let (host, port) = ntp_server_endpoint(server)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid NTP server address"))?;
+    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_ref(), port)).await?.collect();
     if addrs.is_empty() {
         return Err(Error::new(ErrorKind::InvalidInput, "failed to resolve NTP server"));
     }
@@ -169,7 +172,11 @@ async fn query_ntp_time_from_server(server: &str) -> io::Result<NtpQueryResult> 
 
         return Ok(NtpQueryResult {
             synced_time,
-            server: server_addr,
+            server: if host.contains(':') {
+                format!("[{host}]:{port}")
+            } else {
+                format!("{host}:{port}")
+            },
             offset_ms,
             delay_ms,
             sample_count: 1,
@@ -177,21 +184,6 @@ async fn query_ntp_time_from_server(server: &str) -> io::Result<NtpQueryResult> 
     }
 
     Err(last_err.unwrap_or_else(|| Error::other("failed to query NTP server")))
-}
-
-fn normalize_ntp_server_addr(server: &str) -> String {
-    let server = server.trim();
-    if server.is_empty() {
-        return DEFAULT_TIME_FALLBACK_SERVER.to_string();
-    }
-
-    if let Some((_, port)) = server.rsplit_once(':')
-        && port.parse::<u16>().is_ok()
-    {
-        return server.to_string();
-    }
-
-    format!("{server}:123")
 }
 
 fn parse_ntp_timestamp(bytes: &[u8]) -> io::Result<SystemTime> {
@@ -233,9 +225,20 @@ mod tests {
 
     #[test]
     fn normalizes_ntp_server_addresses() {
-        assert_eq!(normalize_ntp_server_addr("pool.ntp.org"), "pool.ntp.org:123");
-        assert_eq!(normalize_ntp_server_addr("time.example:124"), "time.example:124");
-        assert_eq!(normalize_ntp_server_addr(""), DEFAULT_TIME_FALLBACK_SERVER);
+        for (input, expected) in [
+            ("pool.ntp.org", ("pool.ntp.org", 123)),
+            ("time.example:124", ("time.example", 124)),
+            ("::1", ("::1", 123)),
+            ("2001:db8::123", ("2001:db8::123", 123)),
+            ("[::1]", ("::1", 123)),
+            ("[::1]:124", ("::1", 124)),
+            ("fe80::1%lo", ("fe80::1%lo", 123)),
+            ("[fe80::1%lo]:124", ("fe80::1%lo", 124)),
+        ] {
+            let (host, port) = ntp_server_endpoint(input).unwrap();
+            assert_eq!((host.as_ref(), port), expected);
+        }
+        assert!(ntp_server_endpoint("").is_none());
     }
 
     #[test]
