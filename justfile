@@ -60,7 +60,7 @@ e2e-pppoe-redial-udp:
     ./tests/e2e/containerlab/cases/pppoe/redial-udp/run.sh
 
 # Run all Gateway cases
-e2e-gateway: e2e-gateway-rewrite e2e-gateway-sni e2e-gateway-update
+e2e-gateway: e2e-gateway-rewrite e2e-gateway-sni e2e-gateway-update e2e-gateway-ipv6-tls
 
 # Check HTTPS termination and path rewriting
 e2e-gateway-rewrite:
@@ -73,6 +73,10 @@ e2e-gateway-sni:
 # Switch a running Gateway rule to a new upstream
 e2e-gateway-update:
     ./tests/e2e/containerlab/cases/gateway/live-upstream-update/run.sh
+
+# Verify the certificate of a link-local IPv6 upstream
+e2e-gateway-ipv6-tls:
+    ./tests/e2e/containerlab/cases/gateway/ipv6-upstream-tls/run.sh
 
 # Run all ACME cases
 e2e-acme: e2e-acme-dns01

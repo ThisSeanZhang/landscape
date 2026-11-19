@@ -1,0 +1,17 @@
+[[gateway_rules]]
+name = "matching-ip"
+enable = true
+domains = ["match.lab.test"]
+[gateway_rules.match_rule]
+t = "host"
+[gateway_rules.upstream]
+targets = [{ address = "[fe80::10%lan0]", port = 8443, tls = true }]
+
+[[gateway_rules]]
+name = "mismatched-ip"
+enable = true
+domains = ["mismatch.lab.test"]
+[gateway_rules.match_rule]
+t = "host"
+[gateway_rules.upstream]
+targets = [{ address = "[fe80::11%lan0]", port = 8443, tls = true }]

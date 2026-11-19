@@ -14,6 +14,7 @@
 | [gateway/https-path-rewrite](gateway/https-path-rewrite/README.md) | Gateway 使用生成的证书终止 TLS，向后端转发去前缀且保留查询参数的请求 |
 | [gateway/sni-passthrough](gateway/sni-passthrough/README.md) | 按 SNI 选择 TLS 透传或本地终止，在 WAN 核对证书指纹 |
 | [gateway/live-upstream-update](gateway/live-upstream-update/README.md) | 通过 API 更新上游，确认同一域名的新连接切换到新后端 |
+| [gateway/ipv6-upstream-tls](gateway/ipv6-upstream-tls/README.md) | 通过指定接口连接链路本地 IPv6 上游，核对证书 IP 匹配和不匹配时的响应 |
 
 ## 探索与待实现用例
 
