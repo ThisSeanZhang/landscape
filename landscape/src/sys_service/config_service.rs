@@ -9,7 +9,7 @@ use landscape_common::sys_config::{
     LandscapeDnsCacheConfig, LandscapeDohConfig, LandscapeGatewayConfig,
     LandscapeLanHostnameConfig, LandscapeMetricConfig, LandscapeSelfMonitorConfig,
     LandscapeTimeConfig, LandscapeUiConfig, RuntimeConfig, RuntimeConfigSource,
-    SelfMonitorRuntimeConfig, TimeRuntimeConfig,
+    SelfMonitorRuntimeConfig, TimeRuntimeConfig, config_toml_diagnostic,
 };
 use landscape_database::provider::LandscapeDBServiceProvider;
 use serde::Serialize;
@@ -60,18 +60,26 @@ impl LandscapeConfigService {
         Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
     }
 
-    fn read_config_file(path: &Path) -> Result<(String, LandscapeConfig), DbError> {
-        let content = if path.exists() { std::fs::read_to_string(path)? } else { String::new() };
-        let config = if content.is_empty() {
-            LandscapeConfig::default()
-        } else {
-            toml::from_str(&content).map_err(|error| DbError::Internal(error.to_string()))?
-        };
-        Ok((content, config))
+    fn read_content(path: &Path) -> Result<String, DbError> {
+        match std::fs::read_to_string(path) {
+            Ok(content) => Ok(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn decode_section(content: &str, path: &[&str]) -> Result<LandscapeConfig, DbError> {
+        let document = toml::from_str(content).map_err(|e: toml::de::Error| {
+            DbError::Internal(config_toml_diagnostic(content, e.span()))
+        })?;
+        LandscapeConfig::from_file_section(&document, path)
+            .map_err(|_| DbError::Internal(format!("Invalid configuration in {}", path.join("."))))
     }
 
     fn parse_document(content: &str) -> Result<DocumentMut, DbError> {
-        content.parse().map_err(|error: toml_edit::TomlError| DbError::Internal(error.to_string()))
+        content.parse().map_err(|error: toml_edit::TomlError| {
+            DbError::Internal(config_toml_diagnostic(content, error.span()))
+        })
     }
 
     fn set_section<T: Serialize>(
@@ -88,10 +96,7 @@ impl LandscapeConfigService {
 
     // The flat keys can supply defaults to more than one section. Materialize those
     // values before the first independent edit so clearing a field survives restart.
-    fn migrate_flat_metric(
-        document: &mut DocumentMut,
-        config: &LandscapeConfig,
-    ) -> Result<(), DbError> {
+    fn migrate_flat_metric(document: &mut DocumentMut) -> Result<(), DbError> {
         const LEGACY_KEYS: &[&str] = &[
             "mode",
             "connect_second_window_minutes",
@@ -110,32 +115,34 @@ impl LandscapeConfigService {
             "cleanup_time_budget_secs",
             "cleanup_slice_window_secs",
         ];
-        let Some(item) = document.get_mut("metric") else {
+        let Some(table) = document.get_mut("metric").and_then(toml_edit::Item::as_table_like_mut)
+        else {
             return Ok(());
         };
-        if !item
-            .as_table_like()
-            .is_some_and(|table| LEGACY_KEYS.iter().any(|key| table.contains_key(key)))
-        {
-            return Ok(());
-        }
-        let table = item.as_table_like_mut().expect("legacy keys found in table");
-        for key in LEGACY_KEYS {
+        let mut history_enabled = None;
+        for &key in LEGACY_KEYS {
+            let Some(value) = table.get(key) else { continue };
+            let mut legacy = DocumentMut::new();
+            legacy["metric"][key] = value.clone();
+            // Leave an invalid sibling's legacy key intact. Valid keys go through
+            // the same compatibility conversion used at startup.
+            let Ok(config) = toml::from_str::<LandscapeConfig>(&legacy.to_string()) else {
+                continue;
+            };
+            let serialized = toml::to_string(&config.metric)
+                .map_err(|err| DbError::Internal(err.to_string()))?;
+            let canonical = Self::parse_document(&serialized)?;
+            Self::fill_missing_fields(table, canonical.as_table());
             table.remove(key);
+            history_enabled = history_enabled.or(config.self_monitor.history_enabled);
         }
-        let serialized =
-            toml::to_string(&config.metric).map_err(|err| DbError::Internal(err.to_string()))?;
-        let canonical = Self::parse_document(&serialized)?;
-        Self::fill_missing_fields(table, canonical.as_table());
-
-        if let Some(enabled) = config.self_monitor.history_enabled {
+        if let Some(enabled) = history_enabled {
             let section = document
                 .entry("self_monitor")
                 .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-            let table = section
-                .as_table_like_mut()
-                .ok_or_else(|| DbError::Internal("expected self_monitor table".into()))?;
-            if !table.contains_key("history_enabled") {
+            if let Some(table) = section.as_table_like_mut()
+                && !table.contains_key("history_enabled")
+            {
                 table.insert("history_enabled", toml_edit::value(enabled));
             }
         }
@@ -170,6 +177,7 @@ impl LandscapeConfigService {
             Uuid::new_v4()
         ));
 
+        let directory = std::fs::File::open(path.parent().unwrap_or(Path::new(".")))?;
         let result = (|| -> Result<(), DbError> {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
@@ -183,6 +191,11 @@ impl LandscapeConfigService {
             tmp_file.write_all(content.as_bytes())?;
             tmp_file.sync_all()?;
             std::fs::rename(&tmp_path, path)?;
+            // The new file is already visible. Publish the same runtime even if the
+            // filesystem cannot confirm that the rename will survive a power loss.
+            if let Err(error) = directory.sync_all() {
+                tracing::error!(%error, path = %path.display(), "configuration committed but directory sync failed");
+            }
             Ok(())
         })();
 
@@ -199,12 +212,17 @@ impl LandscapeConfigService {
         Ok(())
     }
 
-    fn read_section_from_file<T, Select>(&self, select: Select) -> Result<(T, String), DbError>
+    fn read_section_from_file<T, Select>(
+        &self,
+        path: &[&str],
+        select: Select,
+    ) -> Result<(T, String), DbError>
     where
         T: Serialize,
         Select: FnOnce(LandscapeConfig) -> T,
     {
-        let (_, config) = Self::read_config_file(&self.get_config_path())?;
+        let content = Self::read_content(&self.get_config_path())?;
+        let config = Self::decode_section(&content, path)?;
         let section = select(config);
         let hash = Self::section_hash(&section)?;
         Ok((section, hash))
@@ -226,12 +244,13 @@ impl LandscapeConfigService {
     {
         let _guard = self.write_lock.lock().await;
         let path = self.get_config_path();
-        let (content, current_config) = Self::read_config_file(&path)?;
+        let content = Self::read_content(&path)?;
+        let current_config = Self::decode_section(&content, section_path)?;
         Self::ensure_expected_hash(select(&current_config), &expected_hash)?;
 
         let mut document = Self::parse_document(&content)?;
         if matches!(section_path.first(), Some(&"metric" | &"self_monitor")) {
-            Self::migrate_flat_metric(&mut document, &current_config)?;
+            Self::migrate_flat_metric(&mut document)?;
         }
         let (section_name, parents) = section_path.split_last().expect("nonempty section path");
         let mut table = document.as_table_mut();
@@ -259,10 +278,12 @@ impl LandscapeConfigService {
     }
 
     pub async fn export_init_config(&self) -> Result<InitConfig, InitConfigError> {
-        let config = self.config.load();
+        let content = Self::read_content(&self.get_config_path())?;
+        let config: LandscapeConfig = toml::from_str(&content)
+            .map_err(|error| DbError::Internal(config_toml_diagnostic(&content, error.span())))?;
         Ok(InitConfig {
             version: landscape_common::VERSION.to_string(),
-            config: config.file_config.clone(),
+            config,
             ifaces: self.store.iface_store().list().await?,
             marks: self.store.flow_wan_service_store().list().await?,
             wan_links: self.store.wan_link_store().list().await?,
@@ -352,45 +373,45 @@ impl LandscapeConfigService {
     }
 
     pub fn get_time_config_from_file(&self) -> Result<(LandscapeTimeConfig, String), DbError> {
-        self.read_section_from_file(|config| config.time)
+        self.read_section_from_file(&["time"], |config| config.time)
     }
 
     pub fn get_dns_cache_from_file(&self) -> Result<(LandscapeDnsCacheConfig, String), DbError> {
-        self.read_section_from_file(|config| config.dns.cache)
+        self.read_section_from_file(&["dns", "cache"], |config| config.dns.cache)
     }
 
     pub fn get_doh_from_file(&self) -> Result<(LandscapeDohConfig, String), DbError> {
-        self.read_section_from_file(|config| config.dns.doh)
+        self.read_section_from_file(&["dns", "doh"], |config| config.dns.doh)
     }
 
     pub fn get_lan_hostname_config_from_file(
         &self,
     ) -> Result<(LandscapeLanHostnameConfig, String), DbError> {
-        self.read_section_from_file(|config| config.lan_hostname)
+        self.read_section_from_file(&["lan_hostname"], |config| config.lan_hostname)
     }
 
     pub fn get_gateway_config_from_file(
         &self,
     ) -> Result<(LandscapeGatewayConfig, String), DbError> {
-        self.read_section_from_file(|config| config.gateway)
+        self.read_section_from_file(&["gateway"], |config| config.gateway)
     }
 
     pub async fn get_ui_config_from_file(&self) -> Result<(LandscapeUiConfig, String), DbError> {
-        self.read_section_from_file(|config| config.ui)
+        self.read_section_from_file(&["ui"], |config| config.ui)
     }
 
     pub fn get_connect_metric_from_file(&self) -> Result<(ConnectMetricConfig, String), DbError> {
-        self.read_section_from_file(|config| config.metric.connect)
+        self.read_section_from_file(&["metric", "connect"], |config| config.metric.connect)
     }
 
     pub fn get_dns_metric_from_file(&self) -> Result<(DnsMetricConfig, String), DbError> {
-        self.read_section_from_file(|config| config.metric.dns)
+        self.read_section_from_file(&["metric", "dns"], |config| config.metric.dns)
     }
 
     pub fn get_self_monitor_from_file(
         &self,
     ) -> Result<(LandscapeSelfMonitorConfig, String), DbError> {
-        self.read_section_from_file(|config| config.self_monitor)
+        self.read_section_from_file(&["self_monitor"], |config| config.self_monitor)
     }
 
     pub fn get_config_path(&self) -> std::path::PathBuf {
@@ -664,12 +685,26 @@ impl LandscapeConfigService {
         request: ChangePasswordRequest,
     ) -> Result<(), ConfigUpdateError> {
         let _guard = self.write_lock.lock().await;
-        request.validate(&self.config.load().auth.admin_pass)?;
+        let snapshot = self.config.load();
+        if snapshot.admin_password_overridden {
+            return Err(
+                landscape_common::sys_config::auth::api::PasswordChangeError::ManagedExternally
+                    .into(),
+            );
+        }
+        request.validate(&snapshot.auth.admin_pass)?;
         let new_password = request.new_password;
         let path = self.get_config_path();
-        let (content, _) = Self::read_config_file(&path)?;
+        let content = Self::read_content(&path)?;
         let mut document = Self::parse_document(&content)?;
-        document["auth"]["admin_pass"] = toml_edit::value(&new_password);
+        let auth = document
+            .entry("auth")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_like_mut()
+            .ok_or_else(|| {
+                DbError::Internal("Invalid configuration in auth: expected a table".into())
+            })?;
+        auth.insert("admin_pass", toml_edit::value(&new_password));
         Self::write_config_file(&path, &document.to_string())?;
 
         self.config.rcu(|old| {
@@ -701,6 +736,172 @@ mod tests {
         );
         let store = LandscapeDBServiceProvider::mem_test_db().await;
         (dir, LandscapeConfigService::new(runtime, store).await)
+    }
+
+    #[tokio::test]
+    async fn independent_edits_preserve_invalid_siblings_and_back_up_disk_values() {
+        let (_dir, service) = service().await;
+        let path = service.get_config_path();
+        let source = "[auth]\nadmin_pass = 'from-disk'\n[dns.cache]\ncapacity = 27\n[dns.doh]\nlisten_port = 'invalid'\n";
+        std::fs::write(&path, source).unwrap();
+        let (mut cache, hash) = service.get_dns_cache_from_file().unwrap();
+        assert_eq!(cache.capacity, Some(27));
+        cache.capacity = Some(30);
+        service.update_dns_cache_config(cache, hash).await.unwrap();
+        assert!(service.get_doh_from_file().is_err());
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("listen_port = 'invalid'"));
+        assert!(service.export_init_config().await.is_err());
+        std::fs::write(path, saved.replace("'invalid'", "8443")).unwrap();
+        let backup = service.export_init_config().await.unwrap();
+        assert_eq!(backup.config.auth.admin_pass.as_deref(), Some("from-disk"));
+        assert_eq!(backup.config.dns.cache.capacity, Some(30));
+        assert_eq!(backup.config.dns.doh.listen_port, Some(8443));
+    }
+
+    #[tokio::test]
+    async fn config_parse_errors_omit_file_values_and_report_the_location() {
+        let (_dir, service) = service().await;
+        let path = service.get_config_path();
+        for content in [
+            "[dns.doh]\nlisten_port = 'private-marker'\n",
+            "[auth]\nadmin_pass = 'private-marker' ]\n",
+        ] {
+            std::fs::write(&path, content).unwrap();
+            let edit_error = service.get_doh_from_file().unwrap_err().to_string();
+            let export_error = service.export_init_config().await.unwrap_err().to_string();
+            assert!(!edit_error.contains("private-marker"));
+            assert!(!export_error.contains("private-marker"));
+            assert!(edit_error.contains("dns.doh") || edit_error.contains("line 2"));
+            assert!(export_error.contains("line 2"));
+        }
+    }
+
+    #[tokio::test]
+    async fn editing_self_monitor_preserves_legacy_metrics_in_each_toml_table_form() {
+        let (_dir, service) = service().await;
+        let path = service.get_config_path();
+        for source in [
+            "metric.mode = 'memory'\nmetric.cleanup_interval_secs = 42\nmetric.dns.store.max_mb = 321\n",
+            "[metric]\nmode = 'memory'\ncleanup_interval_secs = 42\ndns.store.max_mb = 321\n",
+            "metric = { mode = 'memory', cleanup_interval_secs = 42, dns = { store = { max_mb = 321 } } }\n",
+        ] {
+            std::fs::write(&path, source).unwrap();
+            let before: LandscapeConfig = toml::from_str(source).unwrap();
+            let (mut monitor, hash) = service.get_self_monitor_from_file().unwrap();
+            monitor.history_enabled = Some(true);
+            service.update_self_monitor_config(monitor, hash).await.unwrap();
+            let saved = std::fs::read_to_string(&path).unwrap();
+            let after: LandscapeConfig = toml::from_str(&saved).unwrap();
+            assert_eq!(after.metric, before.metric);
+            assert_eq!(after.self_monitor.history_enabled, Some(true));
+            assert!(!saved.contains("mode ="));
+        }
+    }
+
+    #[tokio::test]
+    async fn metric_migration_keeps_invalid_legacy_keys_owned_by_other_blocks() {
+        let (_dir, service) = service().await;
+        let path = service.get_config_path();
+        std::fs::write(&path, "[metric]\nmode = 'memory'\ndns_retention_days = 'invalid'\n")
+            .unwrap();
+        let (_, hash) = service.get_connect_metric_from_file().unwrap();
+        service.update_connect_metric_config(ConnectMetricConfig::default(), hash).await.unwrap();
+        let saved: toml::Table = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved["metric"]["dns_retention_days"].as_str(), Some("invalid"));
+        assert_eq!(saved["metric"]["dns"]["enabled"].as_bool(), Some(true));
+        assert!(service.get_dns_metric_from_file().is_err());
+        assert_eq!(
+            service.get_connect_metric_from_file().unwrap().0,
+            ConnectMetricConfig::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn password_rotation_repairs_a_mistyped_file_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(landscape_common::LAND_CONFIG);
+        std::fs::write(&path, "auth = { admin_user = 'operator', admin_pass = 42 }\n").unwrap();
+        let read_runtime = || {
+            RuntimeConfig::new(WebCommArgs {
+                config_dir: Some(dir.path().to_owned()),
+                ..Default::default()
+            })
+        };
+        let runtime = read_runtime();
+        let request = ChangePasswordRequest {
+            current_password: runtime.auth.admin_pass.clone(),
+            new_password: "NewPassword123".into(),
+            confirm_password: "NewPassword123".into(),
+        };
+        let service =
+            LandscapeConfigService::new(runtime, LandscapeDBServiceProvider::mem_test_db().await)
+                .await;
+        service.change_password(request).await.unwrap();
+        let restored = read_runtime();
+        assert_eq!(restored.auth.admin_pass, service.shared_auth().load().admin_pass);
+        assert_eq!(restored.auth.admin_pass, "NewPassword123");
+        assert_eq!(restored.auth.admin_user, "operator");
+    }
+
+    #[tokio::test]
+    async fn invalid_username_preserves_password_at_startup_and_after_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(landscape_common::LAND_CONFIG);
+        std::fs::write(&path, "[auth]\nadmin_user = 42\nadmin_pass = 'configured'\n").unwrap();
+        let read_runtime = || {
+            RuntimeConfig::new(WebCommArgs {
+                config_dir: Some(dir.path().to_owned()),
+                ..Default::default()
+            })
+        };
+        let service = LandscapeConfigService::new(
+            read_runtime(),
+            LandscapeDBServiceProvider::mem_test_db().await,
+        )
+        .await;
+        let auth = service.shared_auth();
+        assert_eq!(auth.load().admin_pass, "configured");
+        service
+            .change_password(ChangePasswordRequest {
+                current_password: "configured".into(),
+                new_password: "AnotherPassword1".into(),
+                confirm_password: "AnotherPassword1".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(auth.load().admin_pass, "AnotherPassword1");
+        assert_eq!(read_runtime().auth.admin_pass, "AnotherPassword1");
+        let disk: toml::Table = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(disk["auth"]["admin_user"].as_integer(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn password_from_startup_arguments_cannot_be_overridden_by_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = RuntimeConfig::new(WebCommArgs {
+            config_dir: Some(dir.path().into()),
+            admin_pass: Some("from-startup".into()),
+            ..Default::default()
+        });
+        let service =
+            LandscapeConfigService::new(runtime, LandscapeDBServiceProvider::mem_test_db().await)
+                .await;
+        let result = service
+            .change_password(ChangePasswordRequest {
+                current_password: "from-startup".into(),
+                new_password: "UpdatedPass1".into(),
+                confirm_password: "UpdatedPass1".into(),
+            })
+            .await;
+        assert!(matches!(
+            result,
+            Err(ConfigUpdateError::Password(
+                landscape_common::sys_config::auth::api::PasswordChangeError::ManagedExternally
+            ))
+        ));
+        assert!(!service.get_config_path().exists());
+        assert_eq!(service.auth.load().admin_pass, "from-startup");
     }
 
     #[tokio::test]
@@ -923,9 +1124,10 @@ mod tests {
                 hash,
                 |runtime| {
                     assert!(service.write_lock.try_lock().is_err());
-                    let (_, saved) =
-                        LandscapeConfigService::read_config_file(&service.get_config_path())
-                            .unwrap();
+                    let saved: LandscapeConfig = toml::from_str(
+                        &std::fs::read_to_string(service.get_config_path()).unwrap(),
+                    )
+                    .unwrap();
                     assert_eq!(runtime, saved.time.to_runtime().unwrap());
                     published = Some(runtime);
                 },
@@ -1051,8 +1253,8 @@ mod tests {
             }
         }
         assert_eq!(accepted.len(), 1);
-        let (_, file) =
-            LandscapeConfigService::read_config_file(&service.get_config_path()).unwrap();
+        let file: LandscapeConfig =
+            toml::from_str(&std::fs::read_to_string(service.get_config_path()).unwrap()).unwrap();
         assert_eq!(file.auth.admin_pass.as_deref(), Some(accepted[0]));
         assert_eq!(shared.load().admin_pass, accepted[0]);
     }

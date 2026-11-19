@@ -1,5 +1,7 @@
 pub mod error;
+mod file;
 pub use error::ConfigUpdateError;
+pub use file::config_toml_diagnostic;
 pub mod auth;
 pub mod dns;
 pub mod gateway;
@@ -111,6 +113,7 @@ pub struct RuntimeConfig {
     pub home_path: PathBuf,
     pub file_config: LandscapeConfig,
     pub auth: AuthRuntimeConfig,
+    pub admin_password_overridden: bool,
     pub log: LogRuntimeConfig,
     pub web: WebRuntimeConfig,
     pub store: StoreRuntimeConfig,

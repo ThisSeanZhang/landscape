@@ -49,12 +49,12 @@ fn read_home_config_file(home_path: PathBuf) -> LandscapeConfig {
                 return LandscapeConfig::default();
             }
         };
-        match toml::from_str(&config_raw) {
+        match LandscapeConfig::parse_for_startup(&config_raw) {
             Ok(config) => config,
             Err(error) => {
                 tracing::error!(
                     path = %config_path.display(),
-                    %error,
+                    error = %super::config_toml_diagnostic(&config_raw, error.span()),
                     "failed to parse landscape config; falling back to defaults (verify key settings such as database path)"
                 );
                 LandscapeConfig::default()
@@ -138,6 +138,7 @@ impl RuntimeConfig {
 
         RuntimeConfig {
             home_path,
+            admin_password_overridden: args.admin_pass.is_some(),
             auth,
             log,
             web,

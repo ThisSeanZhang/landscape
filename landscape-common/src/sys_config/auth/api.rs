@@ -11,6 +11,10 @@ pub struct ChangePasswordRequest {
 #[derive(Debug, thiserror::Error, landscape_macro::LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum PasswordChangeError {
+    #[error("Administrator password is managed by the startup arguments or environment")]
+    #[api_error(id = "auth.password_managed_externally", status = 409)]
+    ManagedExternally,
+
     #[error("Current password is incorrect")]
     #[api_error(id = "auth.current_password_incorrect", status = 400)]
     CurrentPasswordIncorrect,

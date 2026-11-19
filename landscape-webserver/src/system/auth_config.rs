@@ -13,7 +13,8 @@ use crate::error::LandscapeApiResult;
     request_body = ChangePasswordRequest,
     responses(
         (status = 200, description = "Password changed successfully"),
-        (status = 400, description = "Validation error")
+        (status = 400, description = "Validation error"),
+        (status = 409, description = "Password is managed by startup arguments or the environment")
     )
 )]
 pub async fn update_auth_config(
