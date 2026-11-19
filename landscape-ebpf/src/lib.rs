@@ -53,7 +53,6 @@ pub struct LandscapeMapPath {
     pub dns_flow_socks: PathBuf,
 
     pub nat_metric_events: PathBuf,
-    pub firewall_conn_metric_events: PathBuf,
 
     /// route - LAN
     pub rt4_lan_map: PathBuf,
@@ -112,7 +111,6 @@ impl LandscapeMapPath {
             dns_flow_socks: root.join(dns::DNS_FLOW_SOCKS_PIN),
 
             nat_metric_events: root.join(nat::NAT_METRIC_EVENTS_PIN),
-            firewall_conn_metric_events: root.join(firewall::FIREWALL_CONN_METRIC_EVENTS_PIN),
 
             // route - LAN
             rt4_lan_map: root.join(route::RT4_LAN_MAP_PIN),

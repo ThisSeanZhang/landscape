@@ -87,8 +87,6 @@ pub(crate) fn build_connect_ringbuf(
 
     let mut builder = libbpf_rs::RingBufferBuilder::new();
     builder
-        // .add(&firewall_conn_metric_events, firewall_metric_callback)
-        // .expect("failed to add firewall_conn_metric_events ringbuf")
         .add(map, nat_metric_callback)
         .map_err(|error| format!("failed to add nat_metric_events ringbuf: {error}"))?;
     builder.build().map_err(|error| format!("failed to build ringbuf: {error}"))

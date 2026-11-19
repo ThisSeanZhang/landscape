@@ -59,10 +59,6 @@ pub fn attach_tc_firewall(
 
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &paths.firewall_ipv4_block)?;
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block)?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.firewall_conn_metric_events,
-        &paths.firewall_conn_metric_events,
-    )?;
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
     let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
@@ -160,13 +156,6 @@ pub fn init_xdp_firewall(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block,),
         "xdp_firewall pin firewall_block_ip6_map"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut open_skel.maps.firewall_conn_metric_events,
-            &paths.firewall_conn_metric_events,
-        ),
-        "xdp_firewall pin firewall_conn_metric_events"
     )?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset =
         if has_eth_header { 14 } else { 0 };

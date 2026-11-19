@@ -103,6 +103,17 @@ const compositionRows = computed(() => {
       value: formatSize(comp.other_anon_rss_bytes),
     },
   ];
+  rows.push({
+    label: t("self_monitor.mem.comp_bpf"),
+    value: formatSize(comp.bpf_rss_bytes ?? 0),
+  });
+  return rows;
+});
+
+const allocatorRows = computed(() => {
+  const comp = snapshot.value?.meta?.composition;
+  if (!comp) return [];
+  const rows: Array<{ label: string; value: string }> = [];
   if (comp.malloc_in_use_bytes != null) {
     rows.push({
       label: t("self_monitor.mem.comp_malloc_in_use"),
@@ -440,6 +451,30 @@ onUnmounted(() => {
                 <span>{{ row.label }}</span>
                 <span style="font-weight: 600">{{ row.value }}</span>
               </n-flex>
+              <n-divider style="margin: 4px 0" />
+              <div v-if="meta?.composition?.pss_bytes != null">
+                {{ t("self_monitor.mem.comp_pss") }}:
+                {{ formatSize(meta.composition.pss_bytes) }}
+              </div>
+              <div v-if="meta?.composition?.bpf_pss_bytes != null">
+                {{ t("self_monitor.mem.comp_bpf_pss") }}:
+                {{ formatSize(meta.composition.bpf_pss_bytes) }}
+              </div>
+              <span>{{ t("self_monitor.mem.comp_pss_tip") }}</span>
+              <template v-if="allocatorRows.length > 0">
+                <n-divider style="margin: 4px 0" />
+                <strong>{{ t("self_monitor.mem.allocator") }}</strong>
+                <span>{{ t("self_monitor.mem.allocator_tip") }}</span>
+                <n-flex
+                  v-for="row in allocatorRows"
+                  :key="row.label"
+                  justify="space-between"
+                  size="large"
+                >
+                  <span>{{ row.label }}</span>
+                  <strong>{{ row.value }}</strong>
+                </n-flex>
+              </template>
             </template>
           </n-flex>
         </n-tooltip>

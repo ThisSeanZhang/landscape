@@ -15,9 +15,10 @@ struct ip6_dao_event {
     u8 __pad[6];
 } __ip6_dao_event;
 
+// 256 KiB holds about 6,500 records (32-byte payload + 8-byte ring header).
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1 << 24);
+    __uint(max_entries, 1 << 18);
 } ip6_dao_events SEC(".maps");
 
 #endif /* __LD_IP_NEIGH6_EVENT_H__ */

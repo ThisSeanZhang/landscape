@@ -537,6 +537,8 @@ pub fn reuse_pinned_map_or_recreate(map: &mut OpenMapMut, path: &(impl AsRef<Pat
 /// while layout drifts trigger a recreate; per-boot maps
 /// (`recreate_pinned_map`) are dropped and rebuilt on every start.
 pub(crate) fn init_path(paths: &LandscapeMapPath) {
+    // Retire the unused ringbuf pin left by older releases.
+    remove_pin_file(&paths.root.join("firewall_conn_metric_events"));
     // WAN
     wan::init_wan_ip_binding_map(&paths.wan_ip).expect("init wan_ip_binding failed");
     // NAT
@@ -552,8 +554,6 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
         .expect("init firewall_block_ip4_map failed");
     firewall::init_firewall_block_ip6_map(&paths.firewall_ipv6_block)
         .expect("init firewall_block_ip6_map failed");
-    firewall::init_firewall_conn_metric_events(&paths.firewall_conn_metric_events)
-        .expect("init firewall_conn_metric_events failed");
 
     // flow match / dns socket map
     flow::init_flow_match_map(&paths.flow_match_map).expect("init flow_match_map failed");
@@ -608,8 +608,6 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
         .expect("test init firewall_block_ip4_map");
     firewall::init_firewall_block_ip6_map(&paths.firewall_ipv6_block)
         .expect("test init firewall_block_ip6_map");
-    firewall::init_firewall_conn_metric_events(&paths.firewall_conn_metric_events)
-        .expect("test init firewall_conn_metric_events");
     flow::init_flow_match_map(&paths.flow_match_map).expect("test init flow_match_map");
     dns::init_dns_flow_socks(&paths.dns_flow_socks).expect("test init dns_flow_socks");
 
@@ -1079,8 +1077,24 @@ mod tests {
 
         let Some(_) = run_or_skip("init-path", |root| {
             let paths = LandscapeMapPath::from_root(root);
+            let legacy_pin = root.join("firewall_conn_metric_events");
+            let legacy_spec = MapCreateSpec {
+                map_type: MapType::RingBuf,
+                name: "legacy_firewall",
+                key_size: 0,
+                value_size: 0,
+                max_entries: 4096,
+                map_flags: 0,
+                inner: None,
+            };
+            drop(ensure_pinned_map(&legacy_spec, &legacy_pin).expect("legacy ringbuf"));
+            let old_dao_spec = MapCreateSpec { max_entries: 1 << 24, ..mac::IP6_DAO_EVENTS_SPEC };
+            drop(ensure_pinned_map(&old_dao_spec, &paths.ip6_dao_events).expect("old DAO ringbuf"));
 
             init_path(&paths);
+            assert!(!legacy_pin.exists(), "obsolete firewall pin must be removed");
+            let dao = MapHandle::from_pinned_path(&paths.ip6_dao_events).expect("new DAO ringbuf");
+            assert_eq!(dao.max_entries(), 1 << 18);
             for name in [
                 wan::WAN_IP_BINDING_PIN,
                 nat::NAT6_STATIC_MAP_PIN,
@@ -1093,7 +1107,6 @@ mod tests {
                 frag::FRAG4_CACHE_WAN_PIN,
                 frag::FRAG6_CACHE_LAN_PIN,
                 frag::FRAG6_CACHE_WAN_PIN,
-                firewall::FIREWALL_CONN_METRIC_EVENTS_PIN,
                 route::RT4_LAN_MAP_PIN,
                 route::RT6_LAN_MAP_PIN,
                 route::RT4_SLOT_MAP_PIN,
