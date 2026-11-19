@@ -23,3 +23,9 @@ arc-swap = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
+futures-util = { workspace = true, features = ["std"] }
+libc = { workspace = true }
+
+[dev-dependencies]
+h2 = { workspace = true }
+rcgen = { workspace = true }

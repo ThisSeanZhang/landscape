@@ -7,13 +7,51 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::sys_service::gateway::{
-    ClientIpHeaderPolicy, GatewayError, HttpUpstreamConfig, HttpUpstreamMatchRule,
-    HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod, PathRewriteMode,
-    ProxyHeaderConflictMode,
+    ClientIpHeaderPolicy, GatewayError, HealthCheckConfig, HttpUpstreamConfig,
+    HttpUpstreamMatchRule, HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod,
+    PathRewriteMode, ProxyHeaderConflictMode,
 };
 use http::{HeaderName, HeaderValue};
 
-pub type SharedGatewayRoutes = Arc<arc_swap::ArcSwap<CompiledGatewayRoutes>>;
+pub type SharedGatewayRoutes = Arc<GatewayRoutes>;
+
+pub struct GatewayRoutes {
+    current: arc_swap::ArcSwap<CompiledGatewayRoutes>,
+    changed: tokio::sync::watch::Sender<()>,
+}
+
+impl GatewayRoutes {
+    pub fn new(initial: CompiledGatewayRoutes) -> Self {
+        Self {
+            current: arc_swap::ArcSwap::from_pointee(initial),
+            changed: tokio::sync::watch::Sender::new(()),
+        }
+    }
+
+    pub fn load(&self) -> arc_swap::Guard<Arc<CompiledGatewayRoutes>> {
+        self.current.load()
+    }
+
+    pub fn load_full(&self) -> Arc<CompiledGatewayRoutes> {
+        self.current.load_full()
+    }
+
+    pub fn store(&self, next: Arc<CompiledGatewayRoutes>) {
+        self.current.store(next);
+        self.changed.send_replace(());
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<()> {
+        self.changed.subscribe()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HealthEndpoint {
+    pub address: String,
+    pub port: u16,
+    pub policy: HealthCheckConfig,
+}
 
 #[derive(Debug, Default)]
 pub struct CompiledGatewayRoutes {
@@ -87,6 +125,7 @@ pub struct CompiledSniRoute {
 
 #[derive(Debug)]
 pub struct CompiledUpstream {
+    pub health_endpoints: Vec<HealthEndpoint>,
     pub targets: Vec<HttpUpstreamTarget>,
     pub load_balance: LoadBalanceMethod,
     pub request_headers: Vec<CompiledRequestHeader>,
@@ -102,6 +141,37 @@ pub struct CompiledRequestHeader {
 
 impl CompiledUpstream {
     fn compile(upstream: &HttpUpstreamConfig) -> Result<Self, GatewayError> {
+        for target in &upstream.targets {
+            let host = target.connection_host();
+            // Scoped IPv6 literals retain their interface for the socket lookup.
+            let (ip, scope) = host.split_once('%').unwrap_or((host, ""));
+            if target.port == 0
+                || host.is_empty()
+                || host.chars().any(|c| c.is_whitespace() || matches!(c, '/' | '\0' | '[' | ']'))
+                || (host.contains(':')
+                    && (ip.parse::<std::net::Ipv6Addr>().is_err()
+                        || (host.contains('%') && scope.is_empty())))
+            {
+                return Err(GatewayError::InvalidUpstreamEndpoint);
+            }
+        }
+        let mut health_endpoints = Vec::new();
+        if let Some(policy) = &upstream.health_check {
+            let now = std::time::Instant::now();
+            if policy.healthy_threshold == 0
+                || policy.unhealthy_threshold == 0
+                || [policy.interval_secs, policy.timeout_secs]
+                    .into_iter()
+                    .any(|s| s == 0 || now.checked_add(std::time::Duration::from_secs(s)).is_none())
+            {
+                return Err(GatewayError::InvalidHealthCheck);
+            }
+            health_endpoints.extend(upstream.targets.iter().map(|target| HealthEndpoint {
+                address: target.connection_host().to_owned(),
+                port: target.port,
+                policy: policy.clone(),
+            }));
+        }
         let request_headers = upstream
             .request_headers
             .iter()
@@ -114,6 +184,7 @@ impl CompiledUpstream {
             })
             .collect::<Result<Vec<_>, GatewayError>>()?;
         Ok(Self {
+            health_endpoints,
             targets: upstream.targets.clone(),
             load_balance: upstream.load_balance.clone(),
             request_headers,
@@ -197,6 +268,19 @@ impl CompiledGatewayRoutes {
     /// Number of source rules, including disabled rules.
     pub fn len(&self) -> usize {
         self.rule_count
+    }
+
+    pub fn health_endpoints(&self) -> HashSet<HealthEndpoint> {
+        let hosts = self
+            .hosts
+            .iter()
+            .flat_map(|host| std::iter::once(&host.default).chain(&host.paths))
+            .map(|route| &route.upstream);
+        hosts
+            .chain(self.legacy.iter().map(|rule| &rule.route.upstream))
+            .chain(self.sni.iter().map(|(_, route)| &route.upstream))
+            .flat_map(|upstream| upstream.health_endpoints.iter().cloned())
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {

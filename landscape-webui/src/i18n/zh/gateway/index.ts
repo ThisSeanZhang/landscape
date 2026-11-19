@@ -85,7 +85,7 @@ export default {
   restart_failed: "网关重启失败",
   service_error: "网关异常",
   recovery_hint:
-    "修复上述问题后，请在网关运行设置中点击“保存并重启”。你仍可编辑或删除规则。",
+    "监听失败时网关会自动重试。规则或证书有误时，请修正后在网关运行设置中点击“保存并重启”。",
 
   // Card
   no_rules: "暂无网关规则",

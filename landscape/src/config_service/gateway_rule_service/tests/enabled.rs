@@ -20,6 +20,46 @@ fn assert_dns_batches_eq(actual: &[DynamicDnsRedirectBatch], expected: &[Dynamic
 }
 
 #[tokio::test]
+async fn restart_replaces_a_gateway_that_is_waiting_to_retry() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let (service, certs, _events) = service().await;
+    let occupied = TcpListener::bind("[::]:0").await.unwrap();
+    let replacement = TcpListener::bind("[::]:0").await.unwrap();
+    let https = TcpListener::bind("[::]:0").await.unwrap();
+    let initial = GatewayRuntimeConfig {
+        enable: true,
+        http_port: occupied.local_addr().unwrap().port(),
+        https_port: https.local_addr().unwrap().port(),
+    };
+    let next = GatewayRuntimeConfig {
+        http_port: replacement.local_addr().unwrap().port(),
+        ..initial.clone()
+    };
+    let timeout = Duration::from_secs(5);
+    drop(https);
+    service.runtime.restart(initial, timeout).await.unwrap();
+    tokio::time::timeout(timeout, async {
+        while service.runtime.status() != ServiceStatus::Failed {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(service.runtime.last_error().is_some());
+        drop(replacement);
+        service.runtime.restart(next.clone(), timeout).await.unwrap();
+        while !service.runtime.has_https_listener() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(service.runtime.runtime_config().unwrap().http_port, next.http_port);
+        assert!(service.runtime.last_error().is_none());
+        TcpStream::connect((std::net::Ipv6Addr::LOCALHOST, next.http_port)).await.unwrap();
+    })
+    .await
+    .expect("replacing the failed gateway must not require releasing its occupied port");
+    service.runtime.shutdown_and_wait(timeout).await.unwrap();
+    certs.shutdown_and_wait(timeout).await;
+}
+
+#[tokio::test]
 async fn rule_mutations_update_storage_server_and_dns() {
     let (service, certs, _events_rx) = service().await;
     assert!(service.runtime.runtime_config().is_some());

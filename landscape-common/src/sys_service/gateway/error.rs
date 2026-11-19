@@ -5,6 +5,12 @@ use crate::config::ConfigId;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum GatewayError {
+    #[error("Gateway health check durations and thresholds must be positive and representable")]
+    #[api_error(id = "gateway.invalid_health_check", status = 400)]
+    InvalidHealthCheck,
+    #[error("Invalid gateway upstream address or port")]
+    #[api_error(id = "gateway.invalid_upstream_endpoint", status = 400)]
+    InvalidUpstreamEndpoint,
     #[error("gateway is not supported on this target architecture")]
     #[api_error(id = "gateway.unsupported_target", status = 501)]
     Unsupported,

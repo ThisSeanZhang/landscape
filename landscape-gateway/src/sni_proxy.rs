@@ -7,16 +7,27 @@ use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::SharedGatewayRoutes;
-use crate::routes::CompiledSniRoute;
+use crate::health::GatewayHealth;
+use crate::routes::{CompiledGatewayRoutes, CompiledSniRoute};
+use std::sync::Arc;
 
 pub struct SniProxyRouter {
     routes: SharedGatewayRoutes,
     round_robin_counter: AtomicUsize,
+    health: GatewayHealth,
 }
 
 impl SniProxyRouter {
     pub fn new(routes: SharedGatewayRoutes) -> Self {
-        Self { routes, round_robin_counter: AtomicUsize::new(0) }
+        Self::with_health(routes, GatewayHealth::default())
+    }
+
+    pub(crate) fn with_health(routes: SharedGatewayRoutes, health: GatewayHealth) -> Self {
+        Self {
+            routes,
+            round_robin_counter: AtomicUsize::new(0),
+            health,
+        }
     }
 
     pub fn has_sni_proxy_rules(&self) -> bool {
@@ -24,9 +35,22 @@ impl SniProxyRouter {
     }
 
     pub fn match_target(&self, sni: &str) -> Option<MatchedSniTarget> {
-        let routes = self.routes.load();
-        let route = routes.match_sni_route(sni)?;
-        MatchedSniTarget::new(&route, &self.round_robin_counter, sni)
+        self.route(&self.routes.load(), sni).ok().flatten()
+    }
+
+    pub(crate) fn snapshot(&self) -> Arc<CompiledGatewayRoutes> {
+        self.routes.load_full()
+    }
+
+    pub(crate) fn route(
+        &self,
+        routes: &CompiledGatewayRoutes,
+        sni: &str,
+    ) -> io::Result<Option<MatchedSniTarget>> {
+        let Some(route) = routes.match_sni_route(sni) else { return Ok(None) };
+        MatchedSniTarget::new(&route, &self.health, &self.round_robin_counter, sni)
+            .map(Some)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no eligible SNI upstream"))
     }
 }
 
@@ -38,10 +62,19 @@ pub struct MatchedSniTarget {
 }
 
 impl MatchedSniTarget {
-    fn new(rule: &CompiledSniRoute, counter: &AtomicUsize, sni: &str) -> Option<Self> {
-        let target =
-            select_target(&rule.upstream.targets, &rule.upstream.load_balance, counter, sni)
-                .cloned()?;
+    fn new(
+        rule: &CompiledSniRoute,
+        health: &GatewayHealth,
+        counter: &AtomicUsize,
+        sni: &str,
+    ) -> Option<Self> {
+        let seed = match rule.upstream.load_balance {
+            LoadBalanceMethod::RoundRobin if rule.upstream.targets.len() > 1 => {
+                counter.fetch_add(1, Ordering::Relaxed) as u64
+            }
+            _ => fnv1a_hash(sni),
+        };
+        let target = health.select(&rule.upstream, seed)?.clone();
 
         Some(Self {
             rule_name: rule.rule_name.clone(),
@@ -56,10 +89,23 @@ pub async fn proxy_tls_passthrough(
     target: &MatchedSniTarget,
     cancel: CancellationToken,
 ) -> io::Result<()> {
-    let upstream_addr = format!("{}:{}", target.target.address, target.target.port);
+    proxy_prefixed_tls_passthrough(
+        crate::client_hello::ReplayTcpStream::new(downstream, Vec::new()),
+        target,
+        cancel,
+    )
+    .await
+}
+
+pub(crate) async fn proxy_prefixed_tls_passthrough(
+    downstream: crate::client_hello::ReplayTcpStream,
+    target: &MatchedSniTarget,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    let target = &target.target;
     let upstream = tokio::select! {
         _ = cancel.cancelled() => return Ok(()),
-        result = TcpStream::connect(&upstream_addr) => result?,
+        result = crate::upstream::connect_tcp(target.connection_host(), target.port, std::time::Duration::from_secs(10)) => result?,
     };
 
     let (mut downstream_read, mut downstream_write) = downstream.into_split();
@@ -79,25 +125,35 @@ pub async fn proxy_tls_passthrough(
             result
         });
 
-    // Both socket halves must be released before the tracked connection exits.
-    tokio::select! {
-        _ = cancel.cancelled() => {
-            client_to_upstream.abort();
-            upstream_to_client.abort();
-            let _ = tokio::join!(client_to_upstream, upstream_to_client);
-            Ok(())
+    // EOF half-closes only that direction. Keep forwarding the other direction
+    // until it also finishes; cancellation/errors still finish both tasks.
+    let mut client_done = false;
+    let mut upstream_done = false;
+    let result = loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => break Ok(()),
+            result = &mut client_to_upstream, if !client_done => {
+                client_done = true;
+                if let Err(error) = join_copy_task(result) { break Err(error); }
+                if upstream_done { break Ok(()); }
+            },
+            result = &mut upstream_to_client, if !upstream_done => {
+                upstream_done = true;
+                if let Err(error) = join_copy_task(result) { break Err(error); }
+                if client_done { break Ok(()); }
+            },
         }
-        result = &mut client_to_upstream => {
-            upstream_to_client.abort();
-            let _ = upstream_to_client.await;
-            join_copy_task(result)
-        }
-        result = &mut upstream_to_client => {
-            client_to_upstream.abort();
-            let _ = client_to_upstream.await;
-            join_copy_task(result)
-        }
+    };
+    if !client_done {
+        client_to_upstream.abort();
+        let _ = client_to_upstream.await;
     }
+    if !upstream_done {
+        upstream_to_client.abort();
+        let _ = upstream_to_client.await;
+    }
+    result
 }
 
 fn join_copy_task(result: Result<io::Result<u64>, tokio::task::JoinError>) -> io::Result<()> {
@@ -124,6 +180,10 @@ pub fn parse_sni_from_client_hello(buf: &[u8]) -> Option<String> {
     }
 
     let handshake = &buf[5..5 + record_len];
+    parse_sni_from_handshake(handshake)
+}
+
+pub(crate) fn parse_sni_from_handshake(handshake: &[u8]) -> Option<String> {
     if handshake.len() < 4 || handshake[0] != 0x01 {
         return None;
     }
@@ -215,51 +275,7 @@ fn parse_sni_extension(data: &[u8]) -> Option<String> {
     None
 }
 
-fn select_target<'a>(
-    targets: &'a [HttpUpstreamTarget],
-    method: &LoadBalanceMethod,
-    counter: &AtomicUsize,
-    sni: &str,
-) -> Option<&'a HttpUpstreamTarget> {
-    if targets.is_empty() {
-        return None;
-    }
-
-    if targets.len() == 1 {
-        return Some(&targets[0]);
-    }
-
-    match method {
-        LoadBalanceMethod::RoundRobin => {
-            let idx = counter.fetch_add(1, Ordering::Relaxed) % targets.len();
-            Some(&targets[idx])
-        }
-        LoadBalanceMethod::Random => {
-            let idx = fnv1a_hash(sni) % targets.len();
-            Some(&targets[idx])
-        }
-        LoadBalanceMethod::Consistent => Some(weighted_select(targets, fnv1a_hash(sni))),
-    }
-}
-
-fn weighted_select(targets: &[HttpUpstreamTarget], seed: usize) -> &HttpUpstreamTarget {
-    let total_weight: u32 = targets.iter().map(|t| t.weight).sum();
-    if total_weight == 0 {
-        return &targets[0];
-    }
-
-    let pick = (seed as u32) % total_weight;
-    let mut acc = 0u32;
-    for target in targets {
-        acc += target.weight;
-        if pick < acc {
-            return target;
-        }
-    }
-    targets.last().unwrap()
-}
-
-fn fnv1a_hash(input: &str) -> usize {
+fn fnv1a_hash(input: &str) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -268,13 +284,12 @@ fn fnv1a_hash(input: &str) -> usize {
         hash ^= b as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-    hash as usize
+    hash
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arc_swap::ArcSwap;
     use std::sync::Arc;
 
     use landscape_common::sys_service::gateway::{
@@ -316,7 +331,7 @@ mod tests {
     }
 
     fn shared_routes(rules: Vec<HttpUpstreamRuleConfig>) -> SharedGatewayRoutes {
-        Arc::new(ArcSwap::from_pointee(
+        Arc::new(crate::routes::GatewayRoutes::new(
             crate::routes::CompiledGatewayRoutes::compile(&rules).unwrap(),
         ))
     }
@@ -359,6 +374,157 @@ mod tests {
         record.extend_from_slice(&record_len.to_be_bytes());
         record.extend_from_slice(&handshake);
         record
+    }
+
+    #[tokio::test]
+    async fn health_checks_remove_and_restore_an_upstream_without_reloading_the_listener() {
+        use landscape_common::sys_service::gateway::HealthCheckConfig;
+        use std::time::Duration;
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut rule =
+            sni_rule("health", &["test.example"], vec![target("[::1]", address.port(), 1)]);
+        rule.upstream.health_check = Some(HealthCheckConfig {
+            interval_secs: 1,
+            timeout_secs: 1,
+            healthy_threshold: 1,
+            unhealthy_threshold: 1,
+        });
+        let routes = shared_routes(vec![]);
+        let health = GatewayHealth::default();
+        let router = SniProxyRouter::with_health(routes.clone(), health.clone());
+        let stop = CancellationToken::new();
+        let worker = tokio::spawn({
+            let routes = routes.clone();
+            let stop = stop.clone();
+            async move { health.monitor(&routes, &stop).await }
+        });
+        routes.store(Arc::new(CompiledGatewayRoutes::compile(&[rule]).unwrap()));
+        drop(listener);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while router.match_target("test.example").is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert!(router.route(&router.snapshot(), "test.example").is_err());
+            let _upstream = TcpListener::bind(address).await.unwrap();
+            while router.match_target("test.example").is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        stop.cancel();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_https_replays_inspected_hello_and_serves_http() {
+        use rustls::{
+            ClientConfig, RootCertStore, ServerConfig, crypto::ring, pki_types::PrivateKeyDer,
+        };
+        use std::time::Duration;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let cert = rcgen::generate_simple_self_signed(vec!["local.example".into()]).unwrap();
+        let provider = Arc::new(ring::default_provider());
+        let mut tls = ServerConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.cert.der().clone()],
+                PrivateKeyDer::try_from(cert.signing_key.serialize_der()).unwrap(),
+            )
+            .unwrap();
+        tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let mut roots = RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        let mut client = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let routes = shared_routes(vec![sni_rule(
+            "other",
+            &["other.example"],
+            vec![target("127.0.0.1", 443, 1)],
+        )]);
+        let reservation = std::net::TcpListener::bind("[::]:0").unwrap();
+        let address = (std::net::Ipv6Addr::LOCALHOST, reservation.local_addr().unwrap().port());
+        drop(reservation);
+        let server = crate::GatewayServer::spawn(
+            routes,
+            &crate::GatewayRuntimeConfig { enable: true, http_port: 0, https_port: address.1 },
+            Some(crate::GatewayTlsConfig { server_config: Arc::new(tls) }),
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !server.has_https_listener() {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            let connection = TcpStream::connect(address).await.unwrap();
+            let mut tls = tokio_rustls::TlsConnector::from(Arc::new(client.clone()))
+                .connect("local.example".try_into().unwrap(), connection)
+                .await
+                .unwrap();
+            tls.write_all(b"GET / HTTP/1.1\r\nHost: local.example\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = String::new();
+            BufReader::new(tls).read_line(&mut response).await.unwrap();
+            assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+
+            client.alpn_protocols = vec![b"h2".to_vec()];
+            let socket = TcpStream::connect(address).await.unwrap();
+            let tls = tokio_rustls::TlsConnector::from(Arc::new(client))
+                .connect("local.example".try_into().unwrap(), socket)
+                .await
+                .unwrap();
+            assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+            let (mut h2, connection) = h2::client::handshake(tls).await.unwrap();
+            let driver = tokio::spawn(connection);
+            let request = http::Request::builder().uri("https://local.example/").body(()).unwrap();
+            let (response, _) = h2.send_request(request, true).unwrap();
+            assert_eq!(response.await.unwrap().status(), http::StatusCode::NOT_FOUND);
+            drop(h2);
+            driver.await.unwrap().unwrap();
+        })
+        .await
+        .unwrap();
+        server.shutdown_and_wait(Duration::from_secs(2)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn passthrough_keeps_the_response_after_client_half_close() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let incoming = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let upstream = TcpListener::bind("[::1]:0").await.unwrap();
+            let mut client = TcpStream::connect(incoming.local_addr().unwrap()).await.unwrap();
+            let (connection, _) = incoming.accept().await.unwrap();
+            let target = MatchedSniTarget {
+                rule_name: "test".into(),
+                sni: "test.example".into(),
+                target: target("[::1]", upstream.local_addr().unwrap().port(), 1),
+            };
+            let relay = tokio::spawn(async move {
+                proxy_tls_passthrough(connection, &target, CancellationToken::new()).await
+            });
+            let (mut server, _) = upstream.accept().await.unwrap();
+            client.write_all(b"query").await.unwrap();
+            client.shutdown().await.unwrap();
+            let mut bytes = Vec::new();
+            server.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(bytes, b"query");
+            server.write_all(b"response").await.unwrap();
+            server.shutdown().await.unwrap();
+            bytes.clear();
+            client.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(bytes, b"response");
+            relay.await.unwrap().unwrap();
+        })
+        .await
+        .unwrap();
     }
 
     #[test]

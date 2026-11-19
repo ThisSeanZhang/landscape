@@ -1,4 +1,8 @@
 export default {
+  "gateway.invalid_health_check":
+    "Health check durations and thresholds must be positive and representable.",
+  "gateway.invalid_upstream_endpoint":
+    "Enter an upstream address and a nonzero port.",
   "gateway.config.zero_port": "Gateway {field} must be greater than zero.",
   "gateway.config.port_conflict":
     "Gateway HTTP and HTTPS cannot both use port {port}.",

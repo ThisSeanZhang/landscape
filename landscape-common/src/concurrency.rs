@@ -16,10 +16,8 @@ pub mod thread_name {
     pub mod fixed {
         /// Dedicated NTP/system clock synchronization thread.
         pub const TIME_SYNC: &str = "ld-time";
-        /// Pingora gateway supervisor thread for the main HTTP proxy loop.
+        /// Thread that owns the gateway listener runtime.
         pub const GATEWAY_MAIN: &str = "ld-gw-main";
-        /// Driver thread that owns the secondary HTTPS gateway runtime.
-        pub const GATEWAY_HTTPS_DRIVER: &str = "ld-gwh-drv";
         /// Single SQLite metric writer thread.
         pub const METRIC_DB_WRITER: &str = "ld-mdb";
         /// eBPF neighbor update listener thread.
@@ -29,8 +27,8 @@ pub mod thread_name {
     pub mod prefix {
         /// Primary webserver/control-plane Tokio runtime threads.
         pub const CORE_RUNTIME: &str = "ld-core";
-        /// Secondary Tokio runtime for gateway HTTPS accept/IO work.
-        pub const GATEWAY_HTTPS_RUNTIME: &str = "ld-gwh";
+        /// Gateway HTTP and HTTPS connection workers.
+        pub const GATEWAY_RUNTIME: &str = "ld-gwh";
         /// Firewall eBPF worker threads keyed by interface.
         pub const FIREWALL: &str = "ld-fw";
         /// NAT eBPF worker threads keyed by interface.
@@ -72,6 +70,8 @@ pub mod task_label {
         pub const WS_DOCKER_TASKS: &str = "ws.docker.tasks";
         /// Long-lived packet dump websocket loop.
         pub const WS_DUMP_SESSION: &str = "ws.dump.session";
+        /// TCP health probe for a configured gateway upstream.
+        pub const GATEWAY_HEALTH_PROBE: &str = "gateway.health.probe";
         /// Gateway copy task for downstream client to upstream target traffic.
         pub const GATEWAY_SNI_CLIENT_TO_UPSTREAM: &str = "gateway.sni.client_to_upstream";
         /// Gateway copy task for upstream target to downstream client traffic.

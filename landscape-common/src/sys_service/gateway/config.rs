@@ -120,6 +120,17 @@ pub struct HttpUpstreamTarget {
     pub skip_cert_verify: bool,
 }
 
+impl HttpUpstreamTarget {
+    /// A (host, port) socket lookup expects the IPv6 host without URI brackets.
+    pub fn connection_host(&self) -> &str {
+        self.address
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .filter(|host| host.contains(':'))
+            .unwrap_or(&self.address)
+    }
+}
+
 fn default_weight() -> u32 {
     1
 }
@@ -159,7 +170,7 @@ pub enum ClientIpHeaderPolicy {
     None,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct HealthCheckConfig {
     pub interval_secs: u64,

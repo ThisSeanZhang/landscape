@@ -181,65 +181,7 @@ fn tls_config() -> GatewayTlsConfig {
 }
 
 fn empty_routes() -> SharedGatewayRoutes {
-    Arc::new(ArcSwap::from_pointee(CompiledGatewayRoutes::default()))
-}
-
-#[tokio::test]
-async fn https_readiness_tracks_bound_listener_and_cancellation() {
-    let ready = Arc::new(AtomicBool::new(false));
-    let cancel = CancellationToken::new();
-    let listener = tokio::spawn(run_https_server_inner(
-        empty_routes(),
-        0,
-        tls_config(),
-        Arc::new(pingora::server::configuration::ServerConf::default()),
-        cancel.clone(),
-        ready.clone(),
-    ));
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while !ready.load(Ordering::Acquire) {
-            assert!(!listener.is_finished(), "HTTPS listener exited before becoming ready");
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    })
-    .await
-    .unwrap();
-    cancel.cancel();
-    tokio::time::timeout(Duration::from_secs(1), listener).await.unwrap().unwrap().unwrap();
-    assert!(!ready.load(Ordering::Acquire));
-}
-
-#[test]
-fn https_bind_failure_fails_and_cancels_the_run() {
-    let occupied = std::net::TcpListener::bind("[::]:0").unwrap();
-    let port = occupied.local_addr().unwrap().port();
-    let ready = Arc::new(AtomicBool::new(false));
-    let cancel = CancellationToken::new();
-    let status = ServiceHandle::new();
-    status.just_change_status(ServiceStatus::Staring);
-    let result = supervise_https_driver(
-        status.clone(),
-        cancel.clone(),
-        ready.clone(),
-        &OnceLock::new(),
-        || {
-            run_https_server(
-                empty_routes(),
-                port,
-                tls_config(),
-                Arc::new(pingora::server::configuration::ServerConf::default()),
-                cancel.clone(),
-                ready.clone(),
-            )
-        },
-    );
-    let Err(GatewayRunFailure::HttpsDriverFailed(error)) = result else {
-        panic!("occupied HTTPS port must fail the run");
-    };
-    assert_eq!(error.source.kind(), std::io::ErrorKind::AddrInUse);
-    assert_eq!(status.current(), ServiceStatus::Failed);
-    assert!(cancel.is_cancelled());
-    assert!(!ready.load(Ordering::Acquire));
+    Arc::new(crate::routes::GatewayRoutes::new(CompiledGatewayRoutes::default()))
 }
 
 #[tokio::test]
@@ -258,11 +200,12 @@ async fn https_accept_failure_drains_active_connections_before_returning() {
     let ready = Arc::new(AtomicBool::new(true));
     let readiness = HttpsReadinessGuard(ready.clone());
     let serving = tokio::spawn(async move {
-        accept_https_connections(
+        accept_connections(
             listener,
+            None,
             &CancellationToken::new(),
             readiness,
-            |mut stream, _, cancel, mut shutdown| async move {
+            |_, mut stream, _, cancel, mut shutdown| async move {
                 stream.write_u8(1).await.unwrap();
                 cancel.cancelled().await;
                 shutdown.wait_for(|stop| *stop).await.unwrap();
@@ -282,142 +225,10 @@ async fn https_accept_failure_drains_active_connections_before_returning() {
         assert!(!ready.load(Ordering::Acquire));
         assert!(!serving.is_finished(), "listener returned while a connection was draining");
         client.write_u8(3).await.unwrap();
-        assert_eq!(serving.await.unwrap().unwrap_err().kind(), ErrorKind::InvalidInput);
+        assert_eq!(serving.await.unwrap().unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
     })
     .await
     .expect("listener must cancel and drain its connections after an accept failure");
-}
-
-#[test]
-fn https_panic_clears_readiness_and_cancels_the_run() {
-    let ready = Arc::new(AtomicBool::new(true));
-    let cancel = CancellationToken::new();
-    let status = ServiceHandle::new();
-    status.just_change_status(ServiceStatus::Staring);
-    let result = supervise_https_driver(
-        status.clone(),
-        cancel.clone(),
-        ready.clone(),
-        &OnceLock::new(),
-        || panic!("injected HTTPS driver panic"),
-    );
-    assert!(matches!(result, Err(GatewayRunFailure::HttpsDriverPanicked)));
-    assert_eq!(status.current(), ServiceStatus::Failed);
-    assert!(cancel.is_cancelled());
-    assert!(!ready.load(Ordering::Acquire));
-}
-
-#[test]
-fn parent_unwind_cancels_and_joins_https_driver() {
-    let cancel = CancellationToken::new();
-    let child_cancel = cancel.clone();
-    let child_exited = Arc::new(AtomicBool::new(false));
-    let child_exited_flag = child_exited.clone();
-    let result = std::panic::catch_unwind(move || {
-        let _driver = HttpsDriver {
-            cancel,
-            thread: Some(std::thread::spawn(move || {
-                while !child_cancel.is_cancelled() {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                child_exited_flag.store(true, Ordering::Release);
-                Ok(())
-            })),
-        };
-        panic!("injected main driver panic");
-    });
-    assert!(result.is_err());
-    assert!(child_exited.load(Ordering::Acquire));
-}
-
-#[tokio::test]
-async fn cancelled_start_does_not_bind_or_publish_https_readiness() {
-    let occupied = std::net::TcpListener::bind("[::]:0").unwrap();
-    let ready = Arc::new(AtomicBool::new(false));
-    let cancel = CancellationToken::new();
-    cancel.cancel();
-    run_https_server_inner(
-        empty_routes(),
-        occupied.local_addr().unwrap().port(),
-        tls_config(),
-        Arc::new(pingora::server::configuration::ServerConf::default()),
-        cancel,
-        ready.clone(),
-    )
-    .await
-    .unwrap();
-    assert!(!ready.load(Ordering::Acquire));
-}
-
-struct BlockedListenerService {
-    bound: Option<std::sync::mpsc::Sender<std::net::SocketAddr>>,
-    release: Mutex<std::sync::mpsc::Receiver<()>>,
-}
-
-#[async_trait::async_trait]
-impl pingora::services::Service for BlockedListenerService {
-    async fn start_service(
-        &mut self,
-        #[cfg(unix)] _fds: Option<pingora::server::ListenFds>,
-        mut shutdown: pingora::server::ShutdownWatch,
-        _listeners_per_fd: usize,
-    ) {
-        let listener = TcpListener::bind("[::1]:0").await.unwrap();
-        self.bound.take().unwrap().send(listener.local_addr().unwrap()).unwrap();
-        // Intentionally block the async worker to expose shutdown_timeout(0)
-        // detaching a work-stealing runtime before its listener is dropped.
-        self.release.lock().unwrap().recv().unwrap();
-        while !*shutdown.borrow() {
-            shutdown.changed().await.unwrap();
-        }
-        drop(listener);
-    }
-
-    fn name(&self) -> &str {
-        "gateway-stop-test"
-    }
-}
-
-#[test]
-fn fast_shutdown_waits_for_http_worker_to_release_its_listener() {
-    let (bound_tx, bound_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let cancel = CancellationToken::new();
-    let driver_cancel = cancel.clone();
-    let driver = std::thread::spawn(move || {
-        let mut server = create_pingora_server();
-        server.bootstrap();
-        let status = ServiceHandle::new();
-        status.just_change_status(ServiceStatus::Staring);
-        let (service, http_shutdown) = http_listener::supervise(
-            BlockedListenerService {
-                bound: Some(bound_tx),
-                release: Mutex::new(release_rx),
-            },
-            driver_cancel.clone(),
-            status,
-            Arc::new(AtomicBool::new(false)),
-        );
-        server.add_service(service);
-        server.run(pingora::server::RunArgs {
-            shutdown_signal: Box::new(TokenShutdownWatch {
-                token: driver_cancel,
-                http: Arc::new(http_shutdown),
-            }),
-        });
-        done_tx.send(()).unwrap();
-    });
-    let address = bound_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    cancel.cancel();
-    let early_completion = done_rx.recv_timeout(Duration::from_millis(50));
-    release_tx.send(()).unwrap();
-    if early_completion.is_err() {
-        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    }
-    driver.join().unwrap();
-    assert!(matches!(early_completion, Err(std::sync::mpsc::RecvTimeoutError::Timeout)));
-    std::net::TcpListener::bind(address).expect("HTTP listener must be released before completion");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -456,110 +267,44 @@ async fn http_gateway_serves_requests_after_repeated_stop_and_start() {
     }
 }
 
-enum TestHttpService {
-    WaitForStop,
-    Return,
-    Panic,
-}
-
-#[async_trait::async_trait]
-impl pingora::services::Service for TestHttpService {
-    async fn start_service(
-        &mut self,
-        #[cfg(unix)] _fds: Option<pingora::server::ListenFds>,
-        mut shutdown: pingora::server::ShutdownWatch,
-        _listeners_per_fd: usize,
-    ) {
-        match self {
-            Self::WaitForStop => shutdown.changed().await.unwrap(),
-            Self::Return => (),
-            Self::Panic => panic!("injected HTTP service panic"),
-        }
-    }
-
-    fn name(&self) -> &str {
-        "gateway-http-test"
-    }
-}
-
 #[tokio::test]
-async fn http_stop_before_start_is_observed_by_the_listener() {
-    use pingora::services::Service;
-    use std::future::Future;
-    use std::task::Poll;
-
-    let cancel = CancellationToken::new();
-    let status = ServiceHandle::new();
-    status.just_change_status(ServiceStatus::Staring);
-    let uncertain = Arc::new(AtomicBool::new(false));
-    let (mut service, shutdown) = http_listener::supervise(
-        TestHttpService::WaitForStop,
-        cancel.clone(),
-        status,
-        uncertain.clone(),
-    );
-    cancel.cancel();
-    let waiting = shutdown.shutdown_and_wait();
-    tokio::pin!(waiting);
-    std::future::poll_fn(|cx| {
-        assert!(waiting.as_mut().poll(cx).is_pending());
-        Poll::Ready(())
-    })
-    .await;
-    let (_unused_tx, unused_rx) = watch::channel(false);
-    tokio::time::timeout(Duration::from_secs(1), service.start_service(None, unused_rx, 1))
+async fn gateway_retries_occupied_listeners_and_releases_partial_binds() {
+    for occupy_https in [false, true] {
+        let first = std::net::TcpListener::bind("[::]:0").unwrap();
+        let second = std::net::TcpListener::bind("[::]:0").unwrap();
+        let http_port = first.local_addr().unwrap().port();
+        let https_port = second.local_addr().unwrap().port();
+        let occupied = if occupy_https {
+            drop(first);
+            second
+        } else {
+            drop(second);
+            first
+        };
+        let server = GatewayServer::spawn(
+            empty_routes(),
+            &GatewayRuntimeConfig { enable: true, http_port, https_port },
+            Some(tls_config()),
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while server.last_error().is_none() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            assert!(!server.has_https_listener());
+            if occupy_https {
+                std::net::TcpListener::bind(("::", http_port))
+                    .expect("partial HTTP listener was released");
+            }
+            drop(occupied);
+            while !server.has_https_listener() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            assert!(server.last_error().is_none());
+        })
         .await
-        .unwrap();
-    waiting.await;
-    assert!(!shutdown.failed());
-    assert!(!uncertain.load(Ordering::Acquire));
-}
-
-#[tokio::test]
-async fn http_service_panic_reports_uncertain_cleanup_and_cancels_run() {
-    use pingora::services::Service;
-
-    let cancel = CancellationToken::new();
-    let status = ServiceHandle::new();
-    status.just_change_status(ServiceStatus::Staring);
-    let uncertain = Arc::new(AtomicBool::new(false));
-    let (mut service, shutdown) = http_listener::supervise(
-        TestHttpService::Panic,
-        cancel.clone(),
-        status.clone(),
-        uncertain.clone(),
-    );
-    let task = tokio::spawn(async move {
-        let (_unused_tx, unused_rx) = watch::channel(false);
-        service.start_service(None, unused_rx, 1).await;
-    });
-    assert!(task.await.unwrap_err().is_panic());
-    shutdown.shutdown_and_wait().await;
-    assert!(shutdown.failed());
-    assert!(uncertain.load(Ordering::Acquire));
-    assert!(cancel.is_cancelled());
-    assert_eq!(status.current(), ServiceStatus::Failed);
-}
-
-#[tokio::test]
-async fn unexpected_http_service_exit_fails_but_confirms_cleanup() {
-    use pingora::services::Service;
-
-    let cancel = CancellationToken::new();
-    let status = ServiceHandle::new();
-    status.just_change_status(ServiceStatus::Staring);
-    let uncertain = Arc::new(AtomicBool::new(false));
-    let (mut service, shutdown) = http_listener::supervise(
-        TestHttpService::Return,
-        cancel.clone(),
-        status.clone(),
-        uncertain.clone(),
-    );
-    let (_unused_tx, unused_rx) = watch::channel(false);
-    service.start_service(None, unused_rx, 1).await;
-    shutdown.shutdown_and_wait().await;
-    assert!(shutdown.failed());
-    assert!(!uncertain.load(Ordering::Acquire));
-    assert!(cancel.is_cancelled());
-    assert_eq!(status.current(), ServiceStatus::Failed);
+        .expect("both listeners must recover without another restart");
+        server.shutdown_and_wait(Duration::from_secs(2)).await.unwrap();
+        assert!(!server.has_https_listener());
+        std::net::TcpListener::bind(("::", https_port)).unwrap();
+    }
 }

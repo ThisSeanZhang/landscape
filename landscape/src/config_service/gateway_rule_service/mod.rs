@@ -3,7 +3,7 @@
 mod rules;
 
 use crate::dns::redirect_service::DNSRedirectService;
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use landscape_common::config::ConfigId;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::dns::redirect::DynamicDnsRedirectBatch;
@@ -71,7 +71,9 @@ impl GatewayRuleConfigService {
             store,
             dns_redirect_service,
             published_dns: Arc::new(Mutex::new(build_gateway_dynamic_dns_redirect_batch(&[]))),
-            routes: Arc::new(ArcSwap::from_pointee(PreparedRoutes::default())),
+            routes: Arc::new(landscape_common::sys_service::gateway::routes::GatewayRoutes::new(
+                PreparedRoutes::default(),
+            )),
             initial_error: Arc::new(ArcSwapOption::empty()),
         };
         match service.load_prepared_rules().await {

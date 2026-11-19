@@ -14,12 +14,14 @@ import {
 } from "@/lib/services";
 import type { HttpUpstreamRuleConfig } from "@landscape-router/types/api/schemas";
 import { Settings } from "@vicons/carbon";
+import { useTimeoutPoll } from "@vueuse/core";
 import { useMessage } from "naive-ui";
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 const rules = ref<HttpUpstreamRuleConfig[]>([]);
 const status = ref<GatewayStatus>();
+let statusRequestId = 0;
 const gatewayEnabled = ref(false);
 const httpPort = ref<number | null>(80);
 const httpsPort = ref<number | null>(443);
@@ -28,7 +30,6 @@ const savingConfig = ref(false);
 const restartingGateway = ref(false);
 const show_edit_modal = ref(false);
 const show_settings = ref(false);
-let status_poll_timer: ReturnType<typeof setInterval> | null = null;
 const { t } = useI18n();
 const message = useMessage();
 
@@ -45,41 +46,23 @@ async function refresh_config() {
 }
 
 async function refresh_status() {
-  status.value = await get_gateway_status();
+  const requestId = ++statusRequestId;
+  const result = await get_gateway_status();
+  if (requestId === statusRequestId) status.value = result;
 }
 
 async function refreshAll() {
   await Promise.all([refresh_rules(), refresh_status(), refresh_config()]);
 }
 
-function isTransitionStatus(statusValue: GatewayStatus | undefined) {
-  return (
-    statusValue?.status.t === ServiceStatusType.Staring ||
-    statusValue?.status.t === ServiceStatusType.Stopping
-  );
-}
-
-function start_status_polling() {
-  if (status_poll_timer) return;
-  status_poll_timer = setInterval(() => {
-    void refresh_status();
-  }, 2000);
-}
-
-function stop_status_polling() {
-  if (status_poll_timer) {
-    clearInterval(status_poll_timer);
-    status_poll_timer = null;
-  }
-}
-
-function sync_status_polling(statusValue: GatewayStatus | undefined) {
-  if (isTransitionStatus(statusValue)) {
-    start_status_polling();
-  } else {
-    stop_status_polling();
-  }
-}
+const statusPoll = useTimeoutPoll(
+  () =>
+    refresh_status().catch((error) =>
+      console.error("Failed to refresh gateway status", error),
+    ),
+  () => (status.value?.status.t === ServiceStatusType.Running ? 10_000 : 2000),
+  { immediate: false },
+);
 
 function gateway_status_label(statusValue: GatewayStatus | undefined) {
   return get_service_status_label(statusValue?.status, t);
@@ -124,7 +107,10 @@ async function handleSaveAndRestartGateway() {
   restartingGateway.value = true;
   try {
     await saveGatewayConfig(false);
-    status.value = await restart_gateway();
+    const restarted = await restart_gateway();
+    // A status read started before the restart can finish after it.
+    ++statusRequestId;
+    status.value = restarted;
     show_settings.value = false;
     message.success(t("gateway.restart_success"));
   } catch (e: any) {
@@ -150,16 +136,20 @@ onMounted(async () => {
   }
 });
 
-onUnmounted(() => {
-  stop_status_polling();
-});
-
 watch(
-  () => status.value,
-  (value) => {
-    sync_status_polling(value);
+  () => status.value?.status.t,
+  (phase) => {
+    if (
+      phase === ServiceStatusType.Staring ||
+      phase === ServiceStatusType.Running ||
+      phase === ServiceStatusType.Stopping ||
+      phase === ServiceStatusType.Failed
+    ) {
+      statusPoll.resume();
+    } else {
+      statusPoll.pause();
+    }
   },
-  { immediate: true },
 );
 </script>
 <template>

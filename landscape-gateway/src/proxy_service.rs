@@ -1,4 +1,6 @@
+use crate::health::GatewayHealth;
 use bytes::Bytes;
+use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,6 +23,8 @@ const GATEWAY_ROUTE_NOT_MATCHED: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayRouteNotMatched", 404);
 const GATEWAY_NO_UPSTREAM_TARGETS: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayNoUpstreamTargets", 503);
+const GATEWAY_NO_HEALTHY_UPSTREAMS: pingora::ErrorType =
+    pingora::ErrorType::new_code("GatewayNoHealthyUpstreams", 503);
 const GATEWAY_PATH_REWRITE_FAILED: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayPathRewriteFailed", 500);
 const GATEWAY_TRAILING_SLASH_REDIRECT: pingora::ErrorType =
@@ -28,12 +32,21 @@ const GATEWAY_TRAILING_SLASH_REDIRECT: pingora::ErrorType =
 
 pub struct LandscapeReverseProxy {
     routes: SharedGatewayRoutes,
+    health: GatewayHealth,
     round_robin_counter: AtomicUsize,
 }
 
 impl LandscapeReverseProxy {
     pub fn new(routes: SharedGatewayRoutes) -> Self {
-        Self { routes, round_robin_counter: AtomicUsize::new(0) }
+        Self::with_health(routes, GatewayHealth::default())
+    }
+
+    pub(crate) fn with_health(routes: SharedGatewayRoutes, health: GatewayHealth) -> Self {
+        Self {
+            routes,
+            health,
+            round_robin_counter: AtomicUsize::new(0),
+        }
     }
 
     fn route_for_request(
@@ -89,6 +102,7 @@ struct GatewayErrorResponse {
 }
 
 pub struct ProxyCtx {
+    remaining_peers: VecDeque<HttpPeer>,
     pub matched_rule_name: Option<String>,
     request_host: Option<String>,
     request_path: Option<String>,
@@ -104,6 +118,7 @@ impl ProxyHttp for LandscapeReverseProxy {
 
     fn new_ctx(&self) -> Self::CTX {
         ProxyCtx {
+            remaining_peers: VecDeque::new(),
             matched_rule_name: None,
             request_host: None,
             request_path: None,
@@ -119,6 +134,9 @@ impl ProxyHttp for LandscapeReverseProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
+        if let Some(peer) = ctx.remaining_peers.pop_front() {
+            return Ok(Box::new(peer));
+        }
         let req = session.req_header();
         let host = extract_host(req);
         let path = req.uri.path();
@@ -141,15 +159,32 @@ impl ProxyHttp for LandscapeReverseProxy {
             return Err(trailing_slash_redirect_error());
         }
 
-        let (peer, selected_target) = make_peer(
+        let (mut peers, selected_target) = resolve_peers(
             &matched_route.upstream,
+            &self.health,
             &self.round_robin_counter,
             host.as_deref().unwrap_or(""),
             path,
-        )?;
+        )
+        .await?;
         ctx.selected_target = Some(selected_target);
+        let peer = peers.pop_front().ok_or_else(no_upstream_targets_error)?;
+        ctx.remaining_peers = peers;
+        Ok(Box::new(peer))
+    }
 
-        Ok(peer)
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        _peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        mut error: Box<pingora::Error>,
+    ) -> Box<pingora::Error> {
+        if !ctx.remaining_peers.is_empty() {
+            // Try the next address of this same upstream before a request has been sent.
+            error.set_retry(true);
+        }
+        error
     }
 
     async fn upstream_request_filter(
@@ -158,6 +193,7 @@ impl ProxyHttp for LandscapeReverseProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
+        ctx.remaining_peers.clear();
         let Some(matched_route) = ctx.matched_route.as_ref() else {
             return Ok(());
         };
@@ -394,69 +430,69 @@ fn apply_configured_headers(
     Ok(())
 }
 
-fn make_peer(
+async fn resolve_peers(
     upstream: &CompiledUpstream,
+    health: &GatewayHealth,
     counter: &AtomicUsize,
     host: &str,
     path: &str,
-) -> pingora::Result<(Box<HttpPeer>, SelectedTarget)> {
-    let targets = &upstream.targets;
-    if targets.is_empty() {
-        return Err(no_upstream_targets_error());
+) -> pingora::Result<(VecDeque<HttpPeer>, SelectedTarget)> {
+    let seed = match upstream.load_balance {
+        LoadBalanceMethod::RoundRobin if upstream.targets.len() > 1 => {
+            counter.fetch_add(1, Ordering::Relaxed) as u64
+        }
+        LoadBalanceMethod::Random => fnv1a_hash(host, path),
+        _ => fnv1a_hash(host, ""),
+    };
+    let target = health.select(upstream, seed).ok_or_else(|| {
+        if upstream.targets.is_empty() {
+            no_upstream_targets_error()
+        } else {
+            pingora::Error::new(GATEWAY_NO_HEALTHY_UPSTREAMS)
+        }
+    })?;
+    let timeout = std::time::Duration::from_secs(10);
+    let connection_host = target.connection_host();
+    // An IPv6 zone selects the socket interface. Certificates identify the IP itself.
+    let tls_name = match connection_host.split_once('%') {
+        Some((ip, _)) if ip.contains(':') => ip,
+        _ => connection_host,
+    };
+    let addresses =
+        tokio::time::timeout(timeout, tokio::net::lookup_host((connection_host, target.port)))
+            .await
+            .map_err(|_| pingora::Error::new_up(pingora::ErrorType::ConnectTimedout))?
+            .map_err(|error| {
+                pingora::Error::because(
+                    pingora::ErrorType::ConnectError,
+                    "resolving gateway upstream",
+                    error,
+                )
+                .into_up()
+            })?;
+    let peers: VecDeque<_> = addresses
+        .map(|address| {
+            // Construct the peer from a resolved socket address; DNS errors stay recoverable.
+            let mut peer = HttpPeer::new(address, target.tls, tls_name.to_owned());
+            if target.tls && target.skip_cert_verify {
+                peer.options.verify_cert = false;
+                peer.options.verify_hostname = false;
+            }
+            peer.options.connection_timeout = Some(timeout);
+            peer
+        })
+        .collect();
+    if peers.is_empty() {
+        return Err(pingora::Error::explain(
+            pingora::ErrorType::ConnectError,
+            "upstream has no addresses",
+        )
+        .into_up());
     }
-
-    let target = select_target(targets, &upstream.load_balance, counter, host, path);
-    let mut peer =
-        HttpPeer::new((target.address.as_str(), target.port), target.tls, target.address.clone());
-    if target.tls && target.skip_cert_verify {
-        peer.options.verify_cert = false;
-        peer.options.verify_hostname = false;
-    }
-    peer.options.connection_timeout = Some(std::time::Duration::from_secs(10));
-    Ok((Box::new(peer), SelectedTarget::from_target(target)))
+    Ok((peers, SelectedTarget::from_target(target)))
 }
 
-fn select_target<'a>(
-    targets: &'a [HttpUpstreamTarget],
-    method: &LoadBalanceMethod,
-    counter: &AtomicUsize,
-    host: &str,
-    path: &str,
-) -> &'a HttpUpstreamTarget {
-    if targets.len() == 1 {
-        return &targets[0];
-    }
-
-    match method {
-        LoadBalanceMethod::RoundRobin => {
-            let idx = counter.fetch_add(1, Ordering::Relaxed) % targets.len();
-            &targets[idx]
-        }
-        LoadBalanceMethod::Random => {
-            let idx = fnv1a_hash(host, path) % targets.len();
-            &targets[idx]
-        }
-        LoadBalanceMethod::Consistent => weighted_select(targets, fnv1a_hash(host, "")),
-    }
-}
-
-fn weighted_select(targets: &[HttpUpstreamTarget], seed: usize) -> &HttpUpstreamTarget {
-    let total_weight: u32 = targets.iter().map(|t| t.weight).sum();
-    if total_weight == 0 {
-        return &targets[0];
-    }
-    let pick = (seed as u32) % total_weight;
-    let mut acc = 0u32;
-    for target in targets {
-        acc += target.weight;
-        if pick < acc {
-            return target;
-        }
-    }
-    targets.last().unwrap()
-}
-
-fn fnv1a_hash(host: &str, path: &str) -> usize {
+fn fnv1a_hash(host: &str, path: &str) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
@@ -464,10 +500,17 @@ fn fnv1a_hash(host: &str, path: &str) -> usize {
         hash ^= b as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-    hash as usize
+    hash
 }
 
 fn classify_proxy_error(error: &pingora::Error) -> GatewayErrorResponse {
+    if error.etype() == &GATEWAY_NO_HEALTHY_UPSTREAMS {
+        return GatewayErrorResponse {
+            status_code: 503,
+            reason_code: "no_healthy_upstreams",
+            user_message: "The matched route has no healthy upstream targets.",
+        };
+    }
     if error.etype() == &GATEWAY_ROUTE_NOT_MATCHED {
         return GatewayErrorResponse {
             status_code: 404,
@@ -763,6 +806,40 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn ipv6_upstreams_keep_the_scope_on_the_socket_and_use_the_ip_for_tls() {
+        use pingora::upstreams::peer::Peer;
+
+        for (host, tls_name, socket) in [
+            ("[::1]", "::1", "[::1]:8443"),
+            ("::1", "::1", "[::1]:8443"),
+            ("[fe80::1%1]", "fe80::1", "[fe80::1%1]:8443"),
+            ("fe80::1%1", "fe80::1", "[fe80::1%1]:8443"),
+        ] {
+            let mut rule = rule(
+                "ipv6",
+                &["test.example"],
+                HttpUpstreamMatchRule::Host { path_groups: vec![] },
+            );
+            rule.upstream.targets = vec![target(host, 8443, 1)];
+            rule.upstream.targets[0].tls = true;
+            let route = match_http_route(&[rule], Some("test.example"), "/").unwrap();
+            let (peers, _) = resolve_peers(
+                &route.upstream,
+                &GatewayHealth::default(),
+                &AtomicUsize::new(0),
+                "test.example",
+                "/",
+            )
+            .await
+            .unwrap();
+            assert_eq!(peers.len(), 1);
+            assert_eq!(peers[0].sni, tls_name);
+            assert!(rustls::pki_types::ServerName::try_from(peers[0].sni.as_str()).is_ok());
+            assert_eq!(peers[0].address().to_string(), socket);
+        }
+    }
+
     #[test]
     fn match_http_route_prefers_exact_host_before_wildcard() {
         let rules = vec![
@@ -894,7 +971,7 @@ mod tests {
             rule("http", &["api.example.com"], HttpUpstreamMatchRule::Host { path_groups: vec![] });
         let sni = rule("sni", &["tls.example.com"], HttpUpstreamMatchRule::SniProxy);
         let initial = CompiledGatewayRoutes::compile(&[http.clone(), sni.clone()]).unwrap();
-        let shared = Arc::new(arc_swap::ArcSwap::from_pointee(initial));
+        let shared = Arc::new(crate::routes::GatewayRoutes::new(initial));
         let before = shared.load_full();
         let mut invalid = http;
         invalid.upstream.request_headers.push(ProxyRequestHeader {
@@ -946,8 +1023,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn request_pins_route_across_reload_and_retry() {
+    #[tokio::test]
+    async fn request_pins_route_across_reload_and_retry() {
         let mut upstream = upstream_config();
         upstream.targets.push(target("127.0.0.2", 8080, 1));
         upstream.request_headers.push(ProxyRequestHeader {
@@ -965,19 +1042,21 @@ mod tests {
                 }],
             },
         );
-        let shared = Arc::new(arc_swap::ArcSwap::from_pointee(
+        let shared = Arc::new(crate::routes::GatewayRoutes::new(
             CompiledGatewayRoutes::compile(&[old.clone()]).unwrap(),
         ));
         let proxy = LandscapeReverseProxy::new(shared.clone());
         let mut ctx = proxy.new_ctx();
         let selected =
             proxy.route_for_request(&mut ctx, Some("api.example.com"), "/api/items").unwrap();
-        let (_, first_target) = make_peer(
+        let (_, first_target) = resolve_peers(
             &selected.upstream,
+            &proxy.health,
             &proxy.round_robin_counter,
             "api.example.com",
             "/api/items",
         )
+        .await
         .unwrap();
         assert_eq!(first_target.address, "127.0.0.1");
 
@@ -1008,9 +1087,15 @@ mod tests {
             .route_for_request(&mut proxy.new_ctx(), Some("api.example.com"), "/api/items")
             .unwrap();
         assert_eq!(next.rule_name, "new");
-        let (_, next_target) =
-            make_peer(&next.upstream, &proxy.round_robin_counter, "api.example.com", "/api/items")
-                .unwrap();
+        let (_, next_target) = resolve_peers(
+            &next.upstream,
+            &proxy.health,
+            &proxy.round_robin_counter,
+            "api.example.com",
+            "/api/items",
+        )
+        .await
+        .unwrap();
         // Updating configuration must not reset the long-lived proxy's counter.
         assert_eq!(next_target.address, "127.0.0.4");
     }
