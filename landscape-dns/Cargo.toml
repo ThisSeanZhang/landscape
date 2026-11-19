@@ -11,7 +11,6 @@ workspace = true
 
 [features]
 default = ["pool-native"]
-pool-exp = []
 pool-native = ["dep:rand", "dep:webpki-roots", "dep:rustls-platform-verifier"]
 # Manual native-upstream benchmark harness; not part of production builds.
 bench = ["pool-native"]

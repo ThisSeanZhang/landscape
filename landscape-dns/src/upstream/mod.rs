@@ -18,9 +18,6 @@ pub(crate) mod socket;
 #[cfg(feature = "pool-native")]
 pub(crate) mod native;
 
-#[cfg(feature = "pool-exp")]
-pub(crate) mod exp_pool;
-
 #[cfg(all(test, feature = "pool-native"))]
 mod integration_tests;
 #[cfg(all(test, feature = "pool-native"))]
@@ -33,20 +30,15 @@ use hickory_resolver::net::{DnsError, NoRecords};
 #[cfg(feature = "pool-native")]
 use std::time::{Duration, Instant};
 
-/// Upstream engine handle. `use_experimental_pool` picks the variant at
-/// runtime; which experimental implementation backs the toggle is chosen at
-/// compile time by the `pool-exp` / `pool-native` features. All variants
-/// expose the same lookup surface.
-// The hickory `Resolver` is far larger than the Arc-based variants, but the
+/// Upstreams opt into the native pool with `use_experimental_pool` when
+/// the binary includes `pool-native`. Otherwise they use Hickory.
+// The hickory `Resolver` is far larger than the native pool handle, but the
 // enum only ever lives behind an `Arc` (see `ResolvePool`), so the size
 // difference never turns into copies.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum LandscapeResolver {
     /// hickory's built-in name server pool.
     Legacy(Resolver<MarkConnectionProvider>),
-    /// Experimental self-managed engine, see `exp_pool`.
-    #[cfg(feature = "pool-exp")]
-    Pooled(exp_pool::PooledDnsResolver),
     /// Native upstream pool, see `native`.
     #[cfg(feature = "pool-native")]
     Native(Arc<native::UpstreamPool>),
@@ -65,15 +57,13 @@ impl LandscapeResolver {
         let name = domain.as_dns_name();
         match self {
             Self::Legacy(resolver) => resolver.lookup(name.clone(), query_type).await,
-            #[cfg(feature = "pool-exp")]
-            Self::Pooled(resolver) => resolver.lookup_name(name.clone(), query_type).await,
             #[cfg(feature = "pool-native")]
             Self::Native(pool) => {
                 let query = Query::query(name.clone(), query_type);
                 match pool.lookup_name(name.clone(), query_type).await {
                     Ok(answer) => {
                         // A truncated answer is served as-is (matching the
-                        // legacy/exp behaviour); the TC-bit passthrough to
+                        // legacy behaviour); the TC-bit passthrough to
                         // the client rides on the RFC 2308 semantics port.
                         if answer.truncated {
                             tracing::debug!(
@@ -116,8 +106,6 @@ impl fmt::Debug for LandscapeResolver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Legacy(resolver) => fmt::Debug::fmt(resolver, f),
-            #[cfg(feature = "pool-exp")]
-            Self::Pooled(resolver) => fmt::Debug::fmt(resolver, f),
             #[cfg(feature = "pool-native")]
             Self::Native(resolver) => fmt::Debug::fmt(resolver, f),
         }
@@ -145,26 +133,31 @@ pub(crate) fn create_resolver(
             )
             .map(LandscapeResolver::Native);
         }
-        #[cfg(feature = "pool-exp")]
-        {
-            return match exp_pool::PooledDnsResolver::new(flow_id, mark_value, &config) {
-                Ok(resolver) => Some(LandscapeResolver::Pooled(resolver)),
-                Err(e) => {
-                    tracing::error!(
-                        "[flow: {flow_id}]: failed to build experimental DNS resolver: {e}"
-                    );
-                    None
-                }
-            };
-        }
-        #[cfg(not(any(feature = "pool-exp", feature = "pool-native")))]
+        #[cfg(not(feature = "pool-native"))]
         {
             tracing::warn!(
-                "[flow: {flow_id}]: use_experimental_pool is set but neither pool-exp nor \
-                 pool-native is compiled in; falling back to the legacy resolver"
+                "[flow: {flow_id}]: use_experimental_pool is set but pool-native is not compiled in; falling back to the legacy resolver"
             );
         }
     }
 
     legacy::create_legacy_resolver(flow_id, mark_value, config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upstream_pool_opt_in_selects_the_compiled_backend() {
+        for opt_in in [None, Some(false), Some(true)] {
+            let config = DnsUpstreamConfig {
+                use_experimental_pool: opt_in,
+                ..Default::default()
+            };
+            let resolver = create_resolver(7, 0x8007, config).unwrap();
+            let expect_native = opt_in == Some(true) && cfg!(feature = "pool-native");
+            assert_eq!(matches!(resolver, LandscapeResolver::Legacy(_)), !expect_native);
+        }
+    }
 }

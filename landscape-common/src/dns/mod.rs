@@ -10,7 +10,6 @@ pub mod config;
 pub mod dnr;
 pub mod domain;
 pub mod error;
-pub mod pool_config;
 pub mod provider_profile;
 pub mod redirect;
 pub mod rule;
