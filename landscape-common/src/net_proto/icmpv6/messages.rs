@@ -226,17 +226,27 @@ pub struct RouterAdvertisement {
 
 impl RouterAdvertisement {
     pub fn new(flags: u8, opts: IcmpV6Options) -> Self {
+        Self::with_router_lifetime(flags, 1800, opts)
+    }
+
+    pub fn with_router_lifetime(flags: u8, router_lifetime: u16, opts: IcmpV6Options) -> Self {
         Self {
             msg_type: 134, // RouterAdvertisement
             msg_code: 0,
             checksum: 0,
             cur_hop_limit: 64,
             flags,
-            router_lifetime: 1800,
+            router_lifetime,
             reachable_time: 0,
             retrans_timer: 0,
             opts,
         }
+    }
+
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, NetProtoError> {
+        let (_, ra) =
+            Self::from_bytes((bytes, 0)).map_err(|e| NetProtoError::Deku(e.to_string()))?;
+        Ok(ra)
     }
 }
 

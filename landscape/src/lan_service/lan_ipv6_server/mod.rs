@@ -328,6 +328,7 @@ pub struct Ipv6LanReplyParams {
     pub valid_lifetime: u32,
     pub ra_flags: u8,
     pub ra_autonomous: bool,
+    pub rdnss_link_local_only: bool,
 }
 
 // ── DNS servers ────────────────────────────────────────────────────────────

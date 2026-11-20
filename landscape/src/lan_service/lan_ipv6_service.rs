@@ -242,6 +242,7 @@ impl ServiceStarterTrait for LanIPv6Service {
                 valid_lifetime,
                 ra_flags: ra_flags_raw,
                 ra_autonomous,
+                rdnss_link_local_only: config.config.rdnss_link_local_only,
             };
 
             // ── Prefix change notification channel ──

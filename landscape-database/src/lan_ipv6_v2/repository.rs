@@ -156,6 +156,7 @@ mod tests {
                     pd: None,
                 }],
                 dhcpv6: None,
+                rdnss_link_local_only: false,
             },
             update_at: 0.0,
         }

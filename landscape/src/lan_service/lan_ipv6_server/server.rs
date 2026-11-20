@@ -337,7 +337,11 @@ async fn handle_dhcp_msg(
 
     let pd_route_changes = {
         let mut status = share_status.lock().await;
-        let dns_servers = status.dns_servers().to_vec(mac_addr.to_ipv6_link_local());
+        let dns_servers = if params.rdnss_link_local_only {
+            vec![mac_addr.to_ipv6_link_local()]
+        } else {
+            status.dns_servers().to_vec(mac_addr.to_ipv6_link_local())
+        };
         let result = dhcpv6::process_dhcpv6_msg(
             &mut status,
             &msg_bytes,
@@ -757,9 +761,13 @@ pub async fn start_ipv6_lan_server(
                     tracing::warn!("prefix_change sender dropped, exiting loop");
                     break;
                 }
-                let diff = {
+                let (diff, removed_dns) = {
                     let mut status = share_status.lock().await;
+                    let old_dns: Vec<Ipv6Addr> = status.dns_servers().iter().collect();
                     let diff = status.recompute_and_diff(&prefix_groups, &prefix_map);
+                    let new_dns: HashSet<Ipv6Addr> = status.dns_servers().iter().collect();
+                    let removed_dns: Vec<Ipv6Addr> =
+                        old_dns.into_iter().filter(|ip| !new_dns.contains(ip)).collect();
 
                     // Flush all MACs after prefix change — new prefix means new IPs
                     let macs: HashSet<MacAddr> = status
@@ -780,15 +788,17 @@ pub async fn start_ipv6_lan_server(
                             }));
                     }
 
-                    diff
+                    (diff, removed_dns)
                 };
-                // Send deprecation RA for removed prefixes before tearing down routes
-                if !diff.removed.is_empty() {
+                // Send deprecation RA for removed prefixes / withdrawn RDNSS before tearing down routes
+                if !diff.removed.is_empty()
+                    || (!params.rdnss_link_local_only && !removed_dns.is_empty())
+                {
                     let deprecation_ra = ra::build_deprecation_ra_from_subnets(
                         &diff.removed,
+                        &removed_dns,
                         &mac_addr,
-                        params.ra_flags,
-                        params.ra_autonomous,
+                        &params,
                     );
                     let dst = SocketAddr::new(IpAddr::V6(icmpv6::ICMPV6_MULTICAST), 0);
                     let _ = icmpv6::send_msg(&icmp_sender, &deprecation_ra, dst).await;
@@ -882,7 +892,7 @@ pub async fn start_ipv6_lan_server(
     // ── Deprecation RA ──
     {
         let status = share_status.lock().await;
-        let deprecation_ra = icmpv6::build_deprecation_ra(&status, &mac_addr, params.ra_flags);
+        let deprecation_ra = icmpv6::build_deprecation_ra(&status, &params, &mac_addr);
         let dst = SocketAddr::new(IpAddr::V6(icmpv6::ICMPV6_MULTICAST), 0);
         let _ = icmpv6::send_msg(&icmp_sender, &deprecation_ra, dst).await;
     }
