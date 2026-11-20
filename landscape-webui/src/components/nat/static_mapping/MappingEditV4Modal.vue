@@ -3,17 +3,18 @@ import { useMessage } from "naive-ui";
 import type {
   StaticNatMappingV4ConfigView,
   StaticNatV4Target,
+  PortConflictCheckResponse,
 } from "@landscape-router/types/api/schemas";
 
 import { computed, ref, watch } from "vue";
 import { useDebounceFn } from "@vueuse/core";
 import ConfigModal from "@/components/common/ConfigModal.vue";
+
 import {
   get_static_nat_mapping_v4,
   create_static_nat_mapping_v4,
   update_static_nat_mapping_v4,
   check_static_nat_v4_conflict,
-  type PortConflictCheckResponse,
 } from "@/api/static_nat_mapping";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useI18n } from "vue-i18n";

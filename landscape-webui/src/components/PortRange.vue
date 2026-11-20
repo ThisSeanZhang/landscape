@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Range } from "@/lib/common";
-const range = defineModel<Range>("range", { required: true });
+import type { PortRange } from "@landscape-router/types/api/schemas";
+const range = defineModel<PortRange>("range", { required: true });
 
 const edit_range = computed({
   get() {

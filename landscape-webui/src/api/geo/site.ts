@@ -23,8 +23,6 @@ import type {
   GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoSiteLookupResult, GeoTaskProgress };
-
 export async function lookup_geo_site_domain(
   domain: string,
 ): Promise<GeoSiteLookupResult[]> {

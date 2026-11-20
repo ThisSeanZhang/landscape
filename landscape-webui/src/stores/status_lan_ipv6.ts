@@ -1,4 +1,4 @@
-import { get_all_lan_ipv6_status } from "@/api/service_lan_ipv6";
+import { get_all_lan_ipv6_status } from "@/api/services/lan_ipv6";
 import { defineInterfaceStatusStore } from "./interfaceStatus";
 
 export const useLanIPv6Store = defineInterfaceStatusStore(

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { run_cmd } from "@/api/docker";
-import { KeyValuePair } from "@/lib/common";
 import { LAND_REDIRECT_ID_KEY } from "@/lib/docker";
 import { DockerCmd } from "@landscape-router/types/api/schemas";
 import { useDockerStore } from "@/stores/status_docker";

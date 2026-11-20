@@ -6,7 +6,8 @@ import { get_connects_info } from "@/api/metric";
 import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
 import { useAsyncState } from "@vueuse/core";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { ConnectFilter } from "@/lib/metric.rs";
+import { createConnectionFilter } from "@/lib/metric/connectionFilter";
+import type { ConnectRealtimeStatus } from "@landscape-router/types/api/schemas";
 import { formatRate, formatPackets } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
 import ConnectVirtualList from "@/components/metric/connect/live/ConnectVirtualList.vue";
@@ -26,7 +27,7 @@ const route = useRoute();
 const { t } = useI18n();
 
 // Live filter state
-const liveFilter = reactive(new ConnectFilter());
+const liveFilter = reactive(createConnectionFilter());
 
 // Protocol options
 const protocolOptions = computed(() => [
@@ -56,7 +57,7 @@ const sortKey = computed(() => frontEndStore.conn_sort_key);
 const sortOrder = computed(() => frontEndStore.conn_sort_order);
 
 const resetLiveFilter = () => {
-  Object.assign(liveFilter, new ConnectFilter());
+  Object.assign(liveFilter, createConnectionFilter());
 };
 
 const toggleSort = (key: "time" | "port" | "ingress" | "egress") => {
@@ -68,7 +69,7 @@ const toggleSort = (key: "time" | "port" | "ingress" | "egress") => {
     frontEndStore.conn_sort_order = "desc";
   }
 };
-const handleSearchTuple = (conn: any) => {
+const handleSearchTuple = (conn: ConnectRealtimeStatus) => {
   liveFilter.src_ip = conn.src_ip;
   liveFilter.dst_ip = conn.dst_ip;
   liveFilter.port_start = conn.src_port;

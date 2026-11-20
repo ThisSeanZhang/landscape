@@ -1,4 +1,4 @@
-import { ServiceStatus } from "@/lib/services";
+import type { ServiceStatus } from "@landscape-router/types/api/schemas";
 import { DockerContainerSummary, DockerImageSummary } from "@/lib/docker";
 import { DockerCmd, PullImgTask } from "@landscape-router/types/api/schemas";
 import {
@@ -17,8 +17,6 @@ import {
   getDockerPullTasks,
   deleteDockerImage as _deleteDockerImage,
 } from "@landscape-router/types/api/docker-images/docker-images";
-
-export type { PullImgTask };
 
 export async function get_docker_status(): Promise<ServiceStatus> {
   return _getDockerStatus();

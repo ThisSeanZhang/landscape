@@ -1,5 +1,5 @@
-import { NetDev, DevStateType } from "@/lib/dev";
-import { default_pppd_link, WanLink } from "@/lib/wan_link";
+import { NetDev } from "@/lib/network/dev";
+import { default_pppd_link, WanLink } from "@/lib/wan/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { describe, expect, it, vi } from "vitest";
 
@@ -7,7 +7,7 @@ vi.mock("@/api/network", () => ({
   ifaces: async () => [],
 }));
 
-vi.mock("@/api/service_wan_link", () => ({
+vi.mock("@/api/services/wan_link", () => ({
   get_all_wan_links: async () => [],
 }));
 
@@ -25,22 +25,15 @@ const {
 } = await import("@/stores/iface_node");
 
 function net_dev(
-  obj: Partial<{
+  obj: Partial<ConstructorParameters<typeof NetDev>[0]> & {
     name: string;
     index: number;
-    dev_type: string;
-    dev_kind: string;
-    dev_status: { t: DevStateType };
-    carrier: boolean;
-    zone_type: IfaceZoneType;
-    enable_in_boot: boolean;
-    controller_id: number;
-  }> & { name: string; index: number },
+  },
 ): NetDev {
   return new NetDev({
     dev_type: "ethernet",
-    dev_kind: "ethernet",
-    dev_status: { t: DevStateType.Up },
+    dev_kind: "unknow",
+    dev_status: { t: "up" },
     carrier: true,
     zone_type: IfaceZoneType.wan,
     enable_in_boot: true,
@@ -127,17 +120,22 @@ describe("stable_negative_hash", () => {
 });
 
 describe("get_visible_devices", () => {
+  it("hides the loopback device reported by the API", () => {
+    const loopback = net_dev({ name: "lo", index: 1, dev_type: "loopback" });
+    expect(get_visible_devices([loopback], false)).toEqual([]);
+  });
+
   it("hide_down 隐藏真实 Down 网卡但保留虚拟占位卡", () => {
     const real_down = net_dev({
       name: "eth1",
       index: 3,
-      dev_status: { t: DevStateType.Down },
+      dev_status: { t: "down" },
     });
     const virtual_down = merge_pppd_placeholders(
       [],
       [pppd_link("ppp-x", "eth1")],
     )[0];
-    expect(virtual_down.dev_status.t).toBe(DevStateType.Down);
+    expect(virtual_down.dev_status.t).toBe("down");
 
     const visible = get_visible_devices([real_down, virtual_down], true);
     expect(visible.map((each) => each.name)).toEqual(["ppp-x"]);
@@ -147,7 +145,7 @@ describe("get_visible_devices", () => {
     const real_down = net_dev({
       name: "eth1",
       index: 3,
-      dev_status: { t: DevStateType.Down },
+      dev_status: { t: "down" },
     });
     const virtual_down = merge_pppd_placeholders(
       [],

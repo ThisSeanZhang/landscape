@@ -3,8 +3,8 @@ import { getFlowRuleByFlowId } from "@landscape-router/types/api/flow-rules/flow
 import type { ApiFlowConfig as FlowConfig } from "@landscape-router/types/api/schemas";
 import { onMounted, ref, watch, watchEffect } from "vue";
 import { Docker, NetworkWired } from "@vicons/fa";
-import { get_all_wan_links } from "@/api/service_wan_link";
-import { link_label } from "@/lib/wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
+import { link_label } from "@/lib/wan/wan_link";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
 

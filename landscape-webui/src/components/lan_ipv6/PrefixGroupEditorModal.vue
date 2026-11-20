@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import {
-  get_current_ip_prefix_info,
-  type LDIAPrefix,
-} from "@/api/service_ipv6pd";
-import { get_all_lan_ipv6_configs } from "@/api/service_lan_ipv6";
+import type { SourceType, ServiceKind } from "@/lib/ipv6/lan_ipv6_v2_helpers";
+import type {
+  LDIAPrefix,
+  ServiceStatus,
+  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
+  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
+  IPv6ServiceMode,
+} from "@landscape-router/types/api/schemas";
+import { get_current_ip_prefix_info } from "@/api/services/ipv6pd";
+import { get_all_lan_ipv6_configs } from "@/api/services/lan_ipv6";
 import PdPrefixPlanner from "@/components/lan_ipv6/PdPrefixPlanner.vue";
 import {
   alignPlannerUnitRangeToPrefix,
@@ -12,23 +17,16 @@ import {
   plannerUnitSpanForPrefix,
   poolIndexFromPlannerUnitStart,
   shouldResetStalePlannerSelection,
-} from "@/lib/ipv6_planner";
-import { ServiceStatus } from "@/lib/services";
-import { link_label } from "@/lib/wan_link";
-import type { WanLink } from "@/lib/wan_link";
+} from "@/lib/ipv6/ipv6_planner";
+
+import { link_label } from "@/lib/wan/wan_link";
+import type { WanLink } from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
-import type {
-  ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
-  ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
-  IPv6ServiceMode,
-} from "@landscape-router/types/api/schemas";
+
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n({ useScope: "global" });
-
-type ServiceKind = "ra" | "na" | "pd";
-type SourceType = "static" | "pd";
 
 interface PlannerInteractionPayload {
   poolIndex: number;

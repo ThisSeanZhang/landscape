@@ -12,10 +12,8 @@ import {
 } from "naive-ui";
 import { Refresh, HelpCircleOutline } from "@vicons/ionicons5";
 
-import {
-  get_dns_lightweight_summary,
-  DnsLightweightSummaryResponse,
-} from "@/api/metric/dns";
+import type { DnsLightweightSummaryResponse } from "@landscape-router/types/api/schemas";
+import { get_dns_lightweight_summary } from "@/api/metric/dns";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import WanIpRuleDrawer from "@/components/flow/wan/WanIpRuleDrawer.vue";
 const themeVars = useThemeVars();

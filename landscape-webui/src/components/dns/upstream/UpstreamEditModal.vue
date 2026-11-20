@@ -5,11 +5,7 @@ import { computed } from "vue";
 import { ref } from "vue";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { get_dns_upstream, push_dns_upstream } from "@/api/dns_rule/upstream";
-import {
-  changeUpstreamProtocol,
-  DnsUpstreamModeTsEnum,
-  UPSTREAM_OPTIONS,
-} from "@/lib/dns";
+import { changeUpstreamProtocol, UPSTREAM_OPTIONS } from "@/lib/dns";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
@@ -68,7 +64,7 @@ async function enter() {
     rule.value = {
       name: null,
       remark: "",
-      mode: { t: DnsUpstreamModeTsEnum.Plaintext },
+      mode: { t: "plaintext" },
       ips: [],
       port: null,
       enable_ip_validation: false,
@@ -103,7 +99,7 @@ const rules = {
   domain: {
     trigger: ["input", "blur"],
     validator(_: unknown, value: string) {
-      if (rule.value?.mode.t === DnsUpstreamModeTsEnum.Plaintext) {
+      if (rule.value?.mode.t === "plaintext") {
         return true; // Plaintext 不校验 domain
       }
       if (!value || value.trim() === "") {
@@ -151,7 +147,7 @@ async function submitRule() {
     try {
       // 如果是 HTTPS 模式且 endpoint 为空
       if (
-        rule.value.mode.t === DnsUpstreamModeTsEnum.Https &&
+        rule.value.mode.t === "https" &&
         (!rule.value.mode.http_endpoint ||
           rule.value.mode.http_endpoint.trim() === "")
       ) {
@@ -311,7 +307,7 @@ async function import_rules() {
 
         <n-form-item-gi
           :span="4"
-          v-if="rule.mode.t !== DnsUpstreamModeTsEnum.Plaintext"
+          v-if="rule.mode.t !== 'plaintext'"
           :label="t('dns.upstream_edit.domain')"
         >
           <n-input
@@ -325,7 +321,7 @@ async function import_rules() {
         <n-form-item-gi
           :span="4"
           path="mode.http_endpoint"
-          v-if="rule.mode.t === DnsUpstreamModeTsEnum.Https"
+          v-if="rule.mode.t === 'https'"
           :label="t('dns.upstream_edit.url')"
         >
           <n-input

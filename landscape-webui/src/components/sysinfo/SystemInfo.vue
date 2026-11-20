@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import type { LandscapeSystemInfo } from "@landscape-router/types/api/schemas";
 import { get_sysinfo } from "@/api/sys";
-import { LandscapeSystemInfo } from "@/lib/sys";
+
 import { onMounted, ref, computed } from "vue";
 import { useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";

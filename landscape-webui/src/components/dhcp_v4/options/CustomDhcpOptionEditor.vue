@@ -9,7 +9,7 @@ import type {
   CustomDhcpOption,
   DhcpV4DnrOptionConfig,
   RelayAgentInfo,
-} from "./types";
+} from "@landscape-router/types/api/schemas";
 
 const model = defineModel<CustomDhcpOption[]>({ required: true });
 

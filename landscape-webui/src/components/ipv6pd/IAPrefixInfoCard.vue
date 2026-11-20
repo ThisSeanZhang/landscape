@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { HelpFilled } from "@vicons/carbon";
-import type { IPV6PDPrefixStatus } from "@/api/service_ipv6pd";
+import type { IPV6PDPrefixStatus } from "@landscape-router/types/api/schemas";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { usePreferenceStore } from "@/stores/preference";
 const prefStore = usePreferenceStore();

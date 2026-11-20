@@ -4,13 +4,13 @@ import { useI18n } from "vue-i18n";
 import { useMessage, type FormInst, type FormRules } from "naive-ui";
 import { HelpCircleOutline } from "@vicons/ionicons5";
 import ConfigModal from "@/components/common/ConfigModal.vue";
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
 import { is_ipv4 } from "@/lib/common";
 import {
   default_ethernet_link,
   MAX_HEALTH_TARGETS,
   WanLink,
-} from "@/lib/wan_link";
+} from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 
 const wanLinkStore = useWanLinkStore();

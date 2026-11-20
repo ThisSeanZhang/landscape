@@ -1,10 +1,10 @@
 import { get_docker_container_summarys, get_docker_status } from "@/api/docker";
-import { ServiceStatus, ServiceStatusType } from "@/lib/services";
+import type { ServiceStatus } from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
 export const useDockerStore = defineStore("docker_status", () => {
-  const docker_status = ref<ServiceStatus>({ t: ServiceStatusType.Stop });
+  const docker_status = ref<ServiceStatus>({ t: "stop" });
 
   const container_summarys = ref<any[]>([]);
 

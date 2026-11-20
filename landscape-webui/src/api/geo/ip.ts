@@ -23,8 +23,6 @@ import type {
   GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoIpLookupResult, GeoTaskProgress };
-
 export async function lookup_geo_ip_address(
   ip: string,
 ): Promise<GeoIpLookupResult[]> {

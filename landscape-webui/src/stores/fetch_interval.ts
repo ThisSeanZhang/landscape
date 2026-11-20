@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { usePolling } from "./usePolling";
+import { usePolling } from "@/composables/usePolling";
 
 import { useSysInfo } from "./systeminfo";
 import { useIfaceNodeStore } from "./iface_node";

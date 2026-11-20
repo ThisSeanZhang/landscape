@@ -17,15 +17,12 @@ import type {
   CreateStaticNatMappingV4Config,
   CreateStaticNatMappingV6Config,
   CheckStaticNatV4ConflictParams,
+  PortConflictCheckResponse,
   StaticNatMappingV4ConfigView as StaticNatMappingV4Config,
   StaticNatMappingV6ConfigView as StaticNatMappingV6Config,
   UpdateStaticNatMappingV4Config,
   UpdateStaticNatMappingV6Config,
 } from "@landscape-router/types/api/schemas";
-import type { LandscapeApiRespPortConflictCheckResponseData } from "@landscape-router/types/api/schemas";
-
-export type PortConflictCheckResponse =
-  LandscapeApiRespPortConflictCheckResponseData;
 
 // --- IPv4 ---
 
@@ -67,7 +64,7 @@ export async function delete_static_nat_mapping_v4(id: string): Promise<void> {
 export async function check_static_nat_v4_conflict(
   wan_port: number,
   protocols: number[],
-): Promise<LandscapeApiRespPortConflictCheckResponseData> {
+): Promise<PortConflictCheckResponse> {
   const params: CheckStaticNatV4ConflictParams = {
     wan_port,
     protocols: protocols.join(","),

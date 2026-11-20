@@ -1,4 +1,4 @@
-import { NetDev } from "@/lib/dev";
+import { NetDev } from "@/lib/network/dev";
 import axios from "axios";
 import {
   getIfacesOld,
@@ -24,8 +24,8 @@ export {
 };
 
 export async function ifaces(): Promise<NetDev[]> {
-  let data = await getIfacesOld();
-  return data.map((e: any) => new NetDev(e));
+  const data = await getIfacesOld();
+  return data.map((iface) => new NetDev(iface));
 }
 
 export async function create_bridge(name: string) {

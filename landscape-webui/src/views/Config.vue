@@ -8,15 +8,15 @@ import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 
 import { useTimeConfigStore } from "@/stores/time_config";
-import TimeConfigCard from "@/views/config_parts/TimeConfigCard.vue";
-import UIConfigCard from "@/views/config_parts/UIConfigCard.vue";
-import DNSConfigCard from "@/views/config_parts/DNSConfigCard.vue";
-import LanHostnameConfigCard from "@/views/config_parts/LanHostnameConfigCard.vue";
-import SelfMonitorConfigCard from "@/views/config_parts/SelfMonitorConfigCard.vue";
+import TimeConfigCard from "@/components/config/TimeConfigCard.vue";
+import UIConfigCard from "@/components/config/UIConfigCard.vue";
+import DNSConfigCard from "@/components/config/DNSConfigCard.vue";
+import LanHostnameConfigCard from "@/components/config/LanHostnameConfigCard.vue";
+import SelfMonitorConfigCard from "@/components/config/SelfMonitorConfigCard.vue";
 import { useCapabilityStore } from "@/stores/capability";
-import MetricConfigCard from "@/views/config_parts/MetricConfigCard.vue";
-import BackupConfigCard from "@/views/config_parts/BackupConfigCard.vue";
-import PasswordConfigCard from "@/views/config_parts/PasswordConfigCard.vue";
+import MetricConfigCard from "@/components/config/MetricConfigCard.vue";
+import BackupConfigCard from "@/components/config/BackupConfigCard.vue";
+import PasswordConfigCard from "@/components/config/PasswordConfigCard.vue";
 
 const { t } = useI18n();
 const prefStore = usePreferenceStore();

@@ -1,9 +1,10 @@
 <script lang="ts" setup>
-import type { LanDeviceView } from "@/api/lan_device";
 import type {
+  LanDeviceView,
   EnrolledDevice,
   LanDeviceIpv6View,
 } from "@landscape-router/types/api/schemas";
+
 import { AddAlt, Edit } from "@vicons/carbon";
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -34,11 +35,6 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
-}
-
-// MacAddr is typed as string[] in the ORVAL schema but serialized as string at runtime
-function mac_as_string(mac: unknown): string {
-  return mac as string;
 }
 
 // ── Filters ──
@@ -101,8 +97,8 @@ function getConfiguredIpv4(mac?: string): string | undefined {
 
 function device_name(device: LanDeviceView): string {
   return enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
-    mac_as_string(device.mac),
-    device.display_name || device.hostname || mac_as_string(device.mac),
+    device.mac,
+    device.display_name || device.hostname || device.mac,
   );
 }
 
@@ -182,7 +178,7 @@ const initialValues = ref<{
 const bindRuleId = ref<string | null>(null);
 
 function quickBind(device: LanDeviceView) {
-  const targetMac = mac_as_string(device.mac);
+  const targetMac = device.mac;
   if (!targetMac) return;
   bindRuleId.value = enrolledDeviceStore.GET_BINDING_ID(targetMac);
   initialValues.value = {
@@ -244,9 +240,7 @@ function quickBind(device: LanDeviceView) {
             <td class="assign-item">{{ device_name(device) }}</td>
             <td class="assign-item">
               <n-flex justify="center" align="center" size="small">
-                <span>{{
-                  frontEndStore.MASK_INFO(mac_as_string(device.mac))
-                }}</span>
+                <span>{{ frontEndStore.MASK_INFO(device.mac) }}</span>
                 <n-tag
                   v-if="device.device_id"
                   size="tiny"
@@ -282,7 +276,7 @@ function quickBind(device: LanDeviceView) {
                   v-if="
                     hasConfiguredIpv4Mismatch(
                       device.ipv4.ip,
-                      mac_as_string(device.mac),
+                      device.mac,
                       device.iface_name,
                     )
                   "
@@ -302,7 +296,7 @@ function quickBind(device: LanDeviceView) {
                     {{ t("device.configured_ip") }}:
                     {{
                       frontEndStore.MASK_INFO(
-                        getConfiguredIpv4(mac_as_string(device.mac)) || "",
+                        getConfiguredIpv4(device.mac) || "",
                       )
                     }}
                   </div>
@@ -404,16 +398,13 @@ function quickBind(device: LanDeviceView) {
                 size="tiny"
                 quaternary
                 circle
+                :disabled="!device.mac"
                 @click="quickBind(device)"
               >
                 <template #icon>
                   <n-icon>
                     <Edit
-                      v-if="
-                        enrolledDeviceStore.GET_BINDING_ID(
-                          mac_as_string(device.mac),
-                        )
-                      "
+                      v-if="enrolledDeviceStore.GET_BINDING_ID(device.mac)"
                     />
                     <AddAlt v-else />
                   </n-icon>

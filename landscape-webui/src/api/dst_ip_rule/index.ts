@@ -1,4 +1,4 @@
-import { WanIpRuleConfigClass } from "@/lib/mark";
+import { createWanIpRule } from "@/lib/flow/mark";
 import {
   getFlowDstIpRules,
   getDstIpRule,
@@ -13,14 +13,14 @@ export async function get_flow_dst_ip_rules(
   flow_id: number,
 ): Promise<WanIpRuleConfig[]> {
   const data = await getFlowDstIpRules(flow_id);
-  return data.map((d) => new WanIpRuleConfigClass(d));
+  return data.map((d) => createWanIpRule(d));
 }
 
 export async function get_dst_ip_rules_rule(
   id: string,
 ): Promise<WanIpRuleConfig> {
   const data = await getDstIpRule(id);
-  return new WanIpRuleConfigClass(data);
+  return createWanIpRule(data);
 }
 
 export async function push_dst_ip_rules_rule(

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DhcpV4DnrOptionConfig } from "./types";
+import type { DhcpV4DnrOptionConfig } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();

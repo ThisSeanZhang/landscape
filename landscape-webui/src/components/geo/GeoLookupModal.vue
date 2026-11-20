@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { lookup_geo_ip_address, type GeoIpLookupResult } from "@/api/geo/ip";
-import {
-  lookup_geo_site_domain,
-  type GeoSiteLookupResult,
-} from "@/api/geo/site";
 import type {
+  GeoIpLookupResult,
+  GeoSiteLookupResult,
   GeoSiteFileConfig,
   IpConfig,
 } from "@landscape-router/types/api/schemas";
+import { lookup_geo_ip_address } from "@/api/geo/ip";
+
+import { lookup_geo_site_domain } from "@/api/geo/site";
+
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useDialog } from "naive-ui";

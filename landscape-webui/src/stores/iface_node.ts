@@ -1,7 +1,7 @@
 import { ifaces } from "@/api/network";
-import { get_all_wan_links } from "@/api/service_wan_link";
-import { DevStateType, NetDev } from "@/lib/dev";
-import type { WanLink } from "@/lib/wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
+import { NetDev } from "@/lib/network/dev";
+import type { WanLink } from "@/lib/wan/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import * as dagre from "@dagrejs/dagre";
 import { defineStore } from "pinia";
@@ -63,15 +63,11 @@ function sort_devices(devs: NetDev[]) {
 export function get_visible_devices(devs: NetDev[], hide_down: boolean) {
   return sort_devices(
     devs.filter((each) => {
-      if (each.dev_type === "Loopback") {
+      if (each.dev_type?.toLowerCase() === "loopback") {
         return false;
       }
 
-      if (
-        hide_down &&
-        each.dev_status.t === DevStateType.Down &&
-        !each.virtual
-      ) {
+      if (hide_down && each.dev_status.t === "down" && !each.virtual) {
         return false;
       }
 
@@ -119,7 +115,7 @@ export function merge_pppd_placeholders(
         perm_mac: undefined,
         dev_type: "ppp",
         dev_kind: "unknow",
-        dev_status: { t: DevStateType.Down },
+        dev_status: { t: "down" },
         controller_id: undefined,
         carrier: false,
         zone_type: IfaceZoneType.wan,

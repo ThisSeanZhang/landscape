@@ -1,20 +1,18 @@
 <script lang="ts" setup>
-import {
-  get_route_status,
-  type LanRouteMode,
-  type RouteOwner,
-  type RouteStatusView,
-} from "@/api/route/status";
-import { link_label } from "@/lib/wan_link";
-import { useWanLinkStore } from "@/stores/wan_link";
-import { NTag, type DataTableColumns } from "naive-ui";
-import { computed, h, onMounted, ref } from "vue";
-import { useI18n } from "vue-i18n";
 import type {
+  LanRouteMode,
+  RouteOwner,
+  RouteStatusView,
   Ipv4LanRouteEntry,
   Ipv6LanRouteEntry,
   WanRouteEntry,
 } from "@landscape-router/types/api/schemas";
+import { get_route_status } from "@/api/route/status";
+import { link_label } from "@/lib/wan/wan_link";
+import { useWanLinkStore } from "@/stores/wan_link";
+import { NTag, type DataTableColumns } from "naive-ui";
+import { computed, h, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 const wanLinkStore = useWanLinkStore();

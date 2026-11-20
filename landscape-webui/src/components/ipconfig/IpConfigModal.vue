@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
 import {
   apply_ip_form,
   default_ethernet_link,
   IpConfigForm,
   ip_form_from_link,
   WanIpMode,
-} from "@/lib/wan_link";
+} from "@/lib/wan/wan_link";
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import IpEdit from "../IpEdit.vue";

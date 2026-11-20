@@ -17,8 +17,6 @@ import type {
   UpdateGatewayConfigRequest,
 } from "@landscape-router/types/api/schemas";
 
-export type { GetGatewayConfigResponse, GatewayStatus };
-
 export async function get_gateway_rules(): Promise<HttpUpstreamRuleConfig[]> {
   return listGatewayRules();
 }

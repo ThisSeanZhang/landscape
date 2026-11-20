@@ -1,6 +1,10 @@
-import { LandscapeStatus } from "@/lib/sys";
-import type { LandscapeSystemInfo } from "@/lib/sys";
-import type { Capability } from "@landscape-router/types/api/schemas";
+import type {
+  LandscapeStatus,
+  LandscapeSystemInfo,
+  Capability,
+} from "@landscape-router/types/api/schemas";
+import { createLandscapeStatus } from "@/lib/sys";
+
 import {
   getBasicSysInfo,
   getIntervalFetchInfo,
@@ -18,7 +22,7 @@ export async function get_capabilities(): Promise<Capability[]> {
 
 export async function interval_fetch_info(): Promise<LandscapeStatus> {
   const data = await getIntervalFetchInfo();
-  return new LandscapeStatus(data);
+  return createLandscapeStatus(data);
 }
 
 export async function get_cpu_count(): Promise<number> {

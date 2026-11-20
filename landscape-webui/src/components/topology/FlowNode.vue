@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import type {
+  ServiceStatus,
+  IfaceRealtimeStat,
+} from "@landscape-router/types/api/schemas";
 import { Handle, Position } from "@vue-flow/core";
 import DHCPv4ServiceEditModal from "@/components/dhcp_v4/DHCPv4ServiceEditModal.vue";
 import FirewallServiceEditModal from "@/components/firewall/FirewallServiceEditModal.vue";
@@ -19,16 +23,15 @@ import { changeColor } from "seemly";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { stop_and_del_wan_link } from "@/api/service_wan_link";
-import { DevStateType, NetDev } from "@/lib/dev";
+import { stop_and_del_wan_link } from "@/api/services/wan_link";
+import { NetDev } from "@/lib/network/dev";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { formatPackets, formatRate } from "@/lib/util";
 import {
   ServiceExhibitSwitch,
-  ServiceStatus,
   get_service_status_color,
   get_service_status_label,
-} from "@/lib/services";
+} from "@/lib/network/services";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
 import { useLanIPv6Store } from "@/stores/status_lan_ipv6";
 import { useRouteLanConfigStore } from "@/stores/status_route_lan";
@@ -40,7 +43,6 @@ import {
   useIfaceNodeStore,
   WAN_NODE_WIDTH,
 } from "@/stores/iface_node";
-import type { IfaceRealtimeStat } from "@landscape-router/types/api/schemas";
 
 const props = withDefaults(
   defineProps<{
@@ -164,10 +166,10 @@ const status_type = computed(() => {
   if (is_virtual_pppd.value) {
     return pppd_link.value?.v4.enable ? "warning" : "default";
   }
-  if (props.node.dev_status.t === DevStateType.Up) {
+  if (props.node.dev_status.t === "up") {
     return "success";
   }
-  if (props.node.dev_status.t === DevStateType.Down) {
+  if (props.node.dev_status.t === "down") {
     return "error";
   }
   return "warning";

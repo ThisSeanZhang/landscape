@@ -1,18 +1,18 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from "vue-router";
 
 import Landscape from "@/views/Landscape.vue";
-import MainLayout from "@/views/MainLayout.vue";
+import MainLayout from "@/layouts/MainLayout.vue";
 import Flow from "@/views/Flow.vue";
 import Docker from "@/views/Docker.vue";
-import Firewall from "@/views/Firewall.vue";
-import GeoDomain from "@/views/GeoDomain.vue";
-import GeoIp from "@/views/GeoIp.vue";
+import Firewall from "@/views/firewall/Firewall.vue";
+import GeoDomain from "@/views/geo/GeoDomain.vue";
+import GeoIp from "@/views/geo/GeoIp.vue";
 import Config from "@/views/Config.vue";
 import About from "@/views/About.vue";
 
 import Login from "@/views/Login.vue";
-import StaticNatMappingV4 from "@/views/StaticNatMappingV4.vue";
-import StaticNatMappingV6 from "@/views/StaticNatMappingV6.vue";
+import StaticNatMappingV4 from "@/views/firewall/StaticNatMappingV4.vue";
+import StaticNatMappingV6 from "@/views/firewall/StaticNatMappingV6.vue";
 import EnrolledDevice from "@/views/EnrolledDevice.vue";
 
 import DnsRedirect from "@/views/dns/DnsRedirect.vue";

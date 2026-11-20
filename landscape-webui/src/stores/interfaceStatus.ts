@@ -1,4 +1,4 @@
-import type { ServiceStatus } from "@/lib/services";
+import type { ServiceStatus } from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 

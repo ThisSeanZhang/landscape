@@ -1,5 +1,8 @@
-import { ServiceStatus } from "@/lib/services";
-import type { RouteWanServiceConfig } from "@landscape-router/types/api/schemas";
+import type {
+  ServiceStatus,
+  RouteWanServiceConfig,
+} from "@landscape-router/types/api/schemas";
+
 import {
   getAllRouteWanStatus,
   getRouteWanConfig,
@@ -11,11 +14,7 @@ export async function get_all_route_wan_status(): Promise<
   Map<string, ServiceStatus>
 > {
   const data = await getAllRouteWanStatus();
-  const map = new Map<string, ServiceStatus>();
-  for (const [key, value] of Object.entries(data)) {
-    map.set(key, value as ServiceStatus);
-  }
-  return map;
+  return new Map(Object.entries(data));
 }
 
 export async function get_route_wan_config(

@@ -1,6 +1,9 @@
-import { get_all_wan_links, get_wan_link_status } from "@/api/service_wan_link";
+import {
+  get_all_wan_links,
+  get_wan_link_status,
+} from "@/api/services/wan_link";
 import { get_route_status } from "@/api/route/status";
-import { WanLink } from "@/lib/wan_link";
+import { WanLink } from "@/lib/wan/wan_link";
 import type {
   WanLinkHealthState,
   WanLinkStatus,

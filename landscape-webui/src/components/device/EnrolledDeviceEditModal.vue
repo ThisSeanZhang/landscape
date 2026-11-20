@@ -5,12 +5,13 @@ import { computed, ref, watch } from "vue";
 import type { EnrolledDevice } from "@landscape-router/types/api/schemas";
 import {
   get_enrolled_device_by_id,
+  normalizeEnrolledDevice,
   create_enrolled_device,
   update_enrolled_device,
   validate_enrolled_device_ip,
 } from "@/api/enrolled_device";
-import { get_all_dhcp_v4_status } from "@/api/service_dhcp_v4";
-import { get_all_lan_ipv6_configs } from "@/api/service_lan_ipv6";
+import { get_all_dhcp_v4_status } from "@/api/services/dhcp_v4";
+import { get_all_lan_ipv6_configs } from "@/api/services/lan_ipv6";
 import { useI18n } from "vue-i18n";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import CustomDhcpOptionEditor from "@/components/dhcp_v4/options/CustomDhcpOptionEditor.vue";
@@ -93,42 +94,12 @@ function generateRandomIpv6Suffix() {
   rule.value.ipv6 = suffix;
 }
 
-function normalizeOptionalString(value?: string) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 function hostnameToAscii(hostname: string): string | null {
   try {
     return new URL("http://" + hostname).hostname;
   } catch {
     return null;
   }
-}
-
-function normalizePayload(value: typeof rule.value): EnrolledDevice {
-  const payload = {
-    ...value,
-    hostname: normalizeOptionalString(value.hostname),
-    iface_name: normalizeOptionalString(value.iface_name),
-    fake_name: normalizeOptionalString(value.fake_name),
-    remark: normalizeOptionalString(value.remark),
-    ipv4: normalizeOptionalString(value.ipv4),
-    ipv6: normalizeOptionalString(value.ipv6),
-  };
-
-  if (payload.dhcp_custom_options?.length === 0) {
-    delete payload.dhcp_custom_options;
-  }
-  if (payload.dhcp_filter_options?.length === 0) {
-    delete payload.dhcp_filter_options;
-  }
-
-  return payload;
-}
-
-function buildPayload(): EnrolledDevice {
-  return normalizePayload(rule.value);
 }
 
 const hasBasicValidity = computed(() => {
@@ -147,7 +118,8 @@ const hasValidIpv4Range = computed(() => {
 
 const isModified = computed(() => {
   return (
-    JSON.stringify(normalizePayload(rule.value)) !== origin_rule_json.value
+    JSON.stringify(normalizeEnrolledDevice(rule.value)) !==
+    origin_rule_json.value
   );
 });
 
@@ -287,7 +259,7 @@ async function enter() {
 
   if (token !== enterToken.value || !show.value) return;
 
-  origin_rule_json.value = JSON.stringify(normalizePayload(rule.value));
+  origin_rule_json.value = JSON.stringify(normalizeEnrolledDevice(rule.value));
   void syncIpv4RangeValidation();
 }
 
@@ -387,12 +359,11 @@ async function saveRule() {
 
   try {
     commit_spin.value = true;
-    const payload = buildPayload();
 
     if (props.rule_id) {
-      await update_enrolled_device(props.rule_id, payload);
+      await update_enrolled_device(props.rule_id, rule.value);
     } else {
-      await create_enrolled_device(payload);
+      await create_enrolled_device(rule.value);
     }
     message.success(t("device.save_success"));
     show.value = false;

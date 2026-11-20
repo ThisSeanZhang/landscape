@@ -8,8 +8,8 @@ import {
   change_iface_status,
   delete_bridge,
 } from "@/api/network";
-import { get_wan_link_runtime_status } from "@/api/service_wan_link";
-import { DevStateType, NetDev, WifiMode, WLANTypeTag } from "@/lib/dev";
+import { get_wan_link_runtime_status } from "@/api/services/wan_link";
+import { NetDev } from "@/lib/network/dev";
 import {
   formatHealthRuntime,
   formatPdRuntime,
@@ -18,7 +18,7 @@ import {
   type RuntimeDisplay,
   type RuntimeMask,
   type RuntimeT,
-} from "@/lib/wan_runtime";
+} from "@/lib/wan/wan_runtime";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import type {
   PdLease,
@@ -27,8 +27,8 @@ import type {
 import {
   canManageBridgeAttachment,
   getBridgeAttachIssue,
-} from "@/lib/topology";
-import { ServiceExhibitSwitch } from "@/lib/services";
+} from "@/lib/network/topology";
+import { ServiceExhibitSwitch } from "@/lib/network/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import { useWanLinkStore } from "@/stores/wan_link";
@@ -312,10 +312,7 @@ const controller_hint = computed(() => {
   if (has_controller.value) {
     return "";
   }
-  if (
-    props.node.wifi_info &&
-    props.node.wifi_info.wifi_type.t !== WLANTypeTag.Ap
-  ) {
+  if (props.node.wifi_info && props.node.wifi_info.wifi_type.t !== "Ap") {
     return t("topology.panel.wifi_client_hint");
   }
   if (available_bridge_options.value.length === 0) {
@@ -333,9 +330,9 @@ const action_sections = computed(() => {
   if (can_manage_device_state.value) {
     sections.push({
       key: "toggle_device",
-      short_label: props.node.dev_status.t === DevStateType.Up ? "OFF" : "ON",
+      short_label: props.node.dev_status.t === "up" ? "OFF" : "ON",
       label:
-        props.node.dev_status.t === DevStateType.Up
+        props.node.dev_status.t === "up"
           ? t("topology.panel.action_toggle_off", { name: props.node.name })
           : t("topology.panel.action_toggle_on", { name: props.node.name }),
     });
@@ -434,7 +431,7 @@ const panelStyle = computed(() => ({
 function isActiveAction(action_key: string) {
   switch (action_key) {
     case "toggle_device":
-      return props.node.dev_status.t === DevStateType.Up;
+      return props.node.dev_status.t === "up";
     case "boot":
       return props.node.enable_in_boot;
     default:
@@ -475,10 +472,10 @@ function displayValue(value?: string | number | null) {
 }
 
 function statusTagType(state: string) {
-  if (state === DevStateType.Up) {
+  if (state === "up") {
     return "success";
   }
-  if (state === DevStateType.Down) {
+  if (state === "down") {
     return "error";
   }
   return "warning";
@@ -525,7 +522,7 @@ function openQuickAction(action_key: string) {
         title: t("topology.panel.actions"),
         content: t("topology.node.confirm_toggle_iface", {
           action:
-            props.node.dev_status.t === DevStateType.Up
+            props.node.dev_status.t === "up"
               ? t("topology.node.action_disable")
               : t("topology.node.action_enable"),
         }),
@@ -570,7 +567,7 @@ function openQuickAction(action_key: string) {
 }
 
 async function changeDeviceStatus() {
-  if (props.node.dev_status.t === DevStateType.Up) {
+  if (props.node.dev_status.t === "up") {
     if (disable_guard_modal.value) {
       await disable_guard_modal.value.check_and_execute(async () => {
         await change_iface_status(props.node.name, false);
@@ -866,8 +863,7 @@ async function handleDeleteBridge() {
                       can_attach_bridge &&
                       !has_controller &&
                       available_bridge_options.length > 0 &&
-                      (!node.wifi_info ||
-                        node.wifi_info.wifi_type.t === WLANTypeTag.Ap)
+                      (!node.wifi_info || node.wifi_info.wifi_type.t === 'Ap')
                     "
                   >
                     <n-select

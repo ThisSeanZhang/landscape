@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useMetricStore } from "@/stores/status_metric";
-import { useHistoryIpStats } from "./useHistoryIpStats";
+import { useHistoryIpStats } from "@/composables/useHistoryIpStats";
 import { formatSize } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
 import HistoryIpStatsList from "@/components/metric/connect/history/HistoryIpStatsList.vue";

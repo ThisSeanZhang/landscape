@@ -3,8 +3,9 @@ import type {
   ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
   ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
+  LDIAPrefix,
 } from "@landscape-router/types/api/schemas";
-import type { LDIAPrefix } from "@/api/service_ipv6pd";
+
 import {
   buildPrefixPlannerViewFromGroups,
   inspectPlannerCandidateFromGroups,
@@ -12,8 +13,8 @@ import {
   plannerUnitLabels,
   poolIndexFromPlannerUnitStart,
   type PlannerUnit,
-} from "@/lib/ipv6_planner";
-import type { SourceKind } from "@/lib/lan_ipv6_v2_helpers";
+} from "@/lib/ipv6/ipv6_planner";
+import type { ServiceKind } from "@/lib/ipv6/lan_ipv6_v2_helpers";
 import { useThemeVars } from "naive-ui";
 import {
   computed,
@@ -35,7 +36,7 @@ const props = defineProps<{
   currentMode?: IPv6ServiceMode;
   editGroup?: LanPrefixGroupConfig;
   otherConfigsV2: LanIPv6ServiceConfigV2[];
-  selectedKind: SourceKind;
+  selectedKind: ServiceKind;
   prefixInfos: Map<string, LDIAPrefix | null>;
   expectedPdLens: Map<string, number>;
   draftPdPoolLen?: number;
@@ -53,7 +54,7 @@ const emit = defineEmits<{
       saveError?: string;
       occupants: {
         scope: "current" | "other";
-        serviceKind: "ra" | "na" | "pd";
+        serviceKind: ServiceKind;
         ifaceName: string;
         groupId: string;
         effectiveIndex: number;
@@ -193,7 +194,7 @@ function plannerPalette() {
   };
 }
 
-function serviceColorForKind(kind: SourceKind, palette = plannerPalette()) {
+function serviceColorForKind(kind: ServiceKind, palette = plannerPalette()) {
   switch (kind) {
     case "ra":
       return palette.info;

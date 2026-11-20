@@ -1,18 +1,20 @@
 <script lang="ts" setup>
+import type {
+  GatewayStatus,
+  HttpUpstreamRuleConfig,
+} from "@landscape-router/types/api/schemas";
 import {
   get_gateway_config_edit,
   get_gateway_rules,
   get_gateway_status,
   restart_gateway,
   update_gateway_config,
-  type GatewayStatus,
 } from "@/api/gateway";
 import {
-  ServiceStatusType,
   get_service_status_label,
   get_service_status_tag_type,
-} from "@/lib/services";
-import type { HttpUpstreamRuleConfig } from "@landscape-router/types/api/schemas";
+} from "@/lib/network/services";
+
 import { Settings } from "@vicons/carbon";
 import { useTimeoutPoll } from "@vueuse/core";
 import { useMessage } from "naive-ui";
@@ -60,7 +62,7 @@ const statusPoll = useTimeoutPoll(
     refresh_status().catch((error) =>
       console.error("Failed to refresh gateway status", error),
     ),
-  () => (status.value?.status.t === ServiceStatusType.Running ? 10_000 : 2000),
+  () => (status.value?.status.t === "running" ? 10_000 : 2000),
   { immediate: false },
 );
 
@@ -140,10 +142,10 @@ watch(
   () => status.value?.status.t,
   (phase) => {
     if (
-      phase === ServiceStatusType.Staring ||
-      phase === ServiceStatusType.Running ||
-      phase === ServiceStatusType.Stopping ||
-      phase === ServiceStatusType.Failed
+      phase === "staring" ||
+      phase === "running" ||
+      phase === "stopping" ||
+      phase === "failed"
     ) {
       statusPoll.resume();
     } else {

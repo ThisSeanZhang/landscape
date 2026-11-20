@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { DnsMetric, get_dns_history } from "@/api/metric";
+import type {
+  DnsMetric,
+  ApiFlowConfig as FlowConfig,
+  LandscapeDnsRecordType,
+} from "@landscape-router/types/api/schemas";
+import { get_dns_history } from "@/api/metric";
 import {
   NDataTable,
   NTag,
@@ -32,16 +37,13 @@ import {
   Search,
 } from "@vicons/ionicons5";
 import { useDebounceFn } from "@vueuse/core";
-import DNSDashboard from "./DNSDashboard.vue";
+import DNSDashboard from "@/components/metric/dns/DNSDashboard.vue";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
 import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
-import type {
-  ApiFlowConfig as FlowConfig,
-  LandscapeDnsRecordType,
-} from "@landscape-router/types/api/schemas";
+
 const prefStore = usePreferenceStore();
 
 const activeTab = ref("dashboard");

@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { useMessage } from "naive-ui";
-import { useI18n } from "vue-i18n";
-import { SearchLocate } from "@vicons/carbon";
 import type {
+  DNSRuleConfig,
   CheckChainDnsResult,
   CheckDomainParams,
   DNSRedirectRule,
   LandscapeDnsRecordType,
 } from "@landscape-router/types/api/schemas";
+import { computed, ref } from "vue";
+import { useMessage } from "naive-ui";
+import { useI18n } from "vue-i18n";
+import { SearchLocate } from "@vicons/carbon";
+
 import {
   check_domain,
   invalidate_domain_cache,
   refresh_domain_cache,
 } from "@/api/dns_service";
-import { DnsRule } from "@/lib/dns";
+import { createDnsRule } from "@/lib/dns";
 import { getDnsRule } from "@landscape-router/types/api/dns-rules/dns-rules";
 import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
@@ -98,7 +100,7 @@ function extractDomain(input: string): string {
 const loading = ref(false);
 const deleteCacheLoading = ref(false);
 const refreshCacheLoading = ref(false);
-const config_rule = ref<DnsRule>();
+const config_rule = ref<DNSRuleConfig>();
 const redirect_rule = ref<DNSRedirectRule>();
 const busy = computed(
   () => loading.value || deleteCacheLoading.value || refreshCacheLoading.value,
@@ -131,7 +133,7 @@ async function syncRuleDetails(nextResult: CheckChainDnsResult) {
   redirect_rule.value = undefined;
 
   if (nextResult.rule_id) {
-    config_rule.value = new DnsRule(await getDnsRule(nextResult.rule_id));
+    config_rule.value = createDnsRule(await getDnsRule(nextResult.rule_id));
   }
   if (nextResult.redirect_id) {
     redirect_rule.value = await get_dns_redirect(nextResult.redirect_id);

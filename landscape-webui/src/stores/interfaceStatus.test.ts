@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { expect, it, vi } from "vitest";
-import type { ServiceStatus } from "@/lib/services";
+import type { ServiceStatus } from "@landscape-router/types/api/schemas";
 import { defineInterfaceStatusStore } from "./interfaceStatus";
 
 it("updates existing interface lookups while keeping services independent", async () => {

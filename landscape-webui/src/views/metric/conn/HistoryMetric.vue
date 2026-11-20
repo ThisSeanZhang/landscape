@@ -2,7 +2,7 @@
 import { ref, computed, reactive, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { ConnectFilter } from "@/lib/metric.rs";
+import { createConnectionFilter } from "@/lib/metric/connectionFilter";
 import { get_connect_history } from "@/api/metric";
 import { formatSize, formatCount } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
@@ -13,7 +13,7 @@ import ConnectChartDrawer from "@/components/metric/connect/ConnectChartDrawer.v
 import FlowSelect from "@/components/flow/FlowSelect.vue";
 import type {
   ConnectKey,
-  ConnectGlobalStats,
+  ConnectHistoryStatus,
 } from "@landscape-router/types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
 import { Renew } from "@vicons/carbon";
@@ -28,9 +28,9 @@ const themeVars = useThemeVars();
 const frontEndStore = useFrontEndStore();
 
 // 1. Declare all base reactive states.
-const historicalData = ref<any[]>([]);
+const historicalData = ref<ConnectHistoryStatus[]>([]);
 const timeRange = ref<number | string | null>(300); // default 5 minutes (300s)
-const historyFilter = reactive(new ConnectFilter());
+const historyFilter = reactive(createConnectionFilter());
 // 与后端 sqlite 查询偏移上限保持一致,防止翻页超过 offset clamp 后重复展示同一页。
 const MAX_PAGE_OFFSET = 10_000;
 
@@ -81,7 +81,7 @@ const loading = ref(false);
 const useCustomTimeRange = ref(false);
 const customTimeRange = ref<[number, number] | null>(null);
 
-const showChartDrawer = (history: any) => {
+const showChartDrawer = (history: ConnectHistoryStatus) => {
   showChartKey.value = history.key;
   showChartTitle.value = `${frontEndStore.MASK_INFO(history.src_ip)}:${frontEndStore.MASK_PORT(history.src_port)} => ${frontEndStore.MASK_INFO(history.dst_ip)}:${frontEndStore.MASK_PORT(history.dst_port)}`;
   showChartCreateTimeMs.value = history.create_time_ms;
@@ -143,7 +143,7 @@ const fetchHistory = async () => {
       port_end: historyFilter.port_end || undefined,
       l3_proto: historyFilter.l3_proto || undefined,
       l4_proto: historyFilter.l4_proto || undefined,
-      flow_id: historyFilter.flow_id || undefined,
+      flow_id: historyFilter.flow_id ?? undefined,
       gress: historyFilter.gress ?? undefined,
       ifindex: historyFilter.ifindex ?? undefined,
       sort_key: sortKey.value,
@@ -168,7 +168,7 @@ const fetchHistory = async () => {
 };
 
 const resetHistoryFilter = () => {
-  Object.assign(historyFilter, new ConnectFilter());
+  Object.assign(historyFilter, createConnectionFilter());
   pagination.page = 1;
   fetchHistory();
 };
@@ -185,7 +185,7 @@ const toggleSort = (
   }
 };
 
-const handleSearchTuple = (history: any) => {
+const handleSearchTuple = (history: ConnectHistoryStatus) => {
   historyFilter.src_ip = history.src_ip;
   historyFilter.dst_ip = history.dst_ip;
   historyFilter.port_start = history.src_port;

@@ -12,7 +12,7 @@ import type {
   WanIpRuleConfig,
 } from "@landscape-router/types/api/schemas";
 
-import { new_wan_rules, WanIpRuleConfigClass } from "@/lib/mark";
+import { createWanIpRule } from "@/lib/flow/mark";
 import {
   get_dst_ip_rules_rule,
   push_dst_ip_rules_rule,
@@ -40,7 +40,7 @@ async function enter() {
   if (props.id !== null) {
     rule.value = await get_dst_ip_rules_rule(props.id);
   } else {
-    rule.value = new WanIpRuleConfigClass({
+    rule.value = createWanIpRule({
       flow_id: props.flow_id,
     });
   }
@@ -72,7 +72,7 @@ const rule_enabled = computed({
 });
 
 function onCreate(): WanIPRuleSource {
-  return new_wan_rules({ t: "config", ip: "0.0.0.0", prefix: 32 });
+  return { t: "config", ip: "0.0.0.0", prefix: 32 };
 }
 
 function changeCurrentRuleType(value: WanIPRuleSource, index: number) {
@@ -86,11 +86,7 @@ function changeCurrentRuleType(value: WanIPRuleSource, index: number) {
         attribute_key: null,
       };
     } else {
-      rule.value.source[index] = new_wan_rules({
-        t: "config",
-        ip: "0.0.0.0",
-        prefix: 32,
-      });
+      rule.value.source[index] = onCreate();
     }
   }
 }

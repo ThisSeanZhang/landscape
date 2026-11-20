@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ServiceKind } from "@/lib/ipv6/lan_ipv6_v2_helpers";
 import type {
   ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
   IPv6ServiceMode,
@@ -7,19 +8,16 @@ import { computed, ref } from "vue";
 import { Edit, TrashCan } from "@vicons/carbon";
 import { useI18n } from "vue-i18n";
 import PrefixGroupEditorModal from "@/components/lan_ipv6/PrefixGroupEditorModal.vue";
-import { link_label } from "@/lib/wan_link";
+import { link_label } from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 import {
   groupParentLabel,
   lanSnapshotCompatibility,
   sourceTypeFromParent,
-} from "@/lib/lan_ipv6_v2_helpers";
+} from "@/lib/ipv6/lan_ipv6_v2_helpers";
 
 const { t } = useI18n({ useScope: "global" });
 const wanLinkStore = useWanLinkStore();
-
-type ServiceKind = "ra" | "na" | "pd";
-type SourceType = "static" | "pd";
 
 const props = defineProps<{
   group: LanPrefixGroupConfig;

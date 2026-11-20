@@ -1,7 +1,5 @@
 import type {
-  DnsMetric,
   DnsHistoryResponse,
-  DnsStatEntry,
   DnsSummaryResponse,
   DnsLightweightSummaryResponse,
   GetDnsHistoryParams,
@@ -13,14 +11,6 @@ import {
   getDnsSummary as _getDnsSummary,
   getDnsLightweightSummary as _getDnsLightweightSummary,
 } from "@landscape-router/types/api/metric/metric";
-
-export type {
-  DnsMetric,
-  DnsHistoryResponse,
-  DnsStatEntry,
-  DnsSummaryResponse,
-  DnsLightweightSummaryResponse,
-};
 
 export async function get_dns_history(
   params: GetDnsHistoryParams = {},

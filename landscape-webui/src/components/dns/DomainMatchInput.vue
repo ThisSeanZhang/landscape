@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { DomainMatchTypeEnum, RuleSourceEnum } from "@/lib/dns";
+import { DomainMatchType } from "@landscape-router/types/api/schemas";
 import type { RuleSource } from "@landscape-router/types/api/schemas";
 
 import { ChangeCatalog } from "@vicons/carbon";
@@ -12,7 +12,7 @@ const { t } = useI18n();
 
 function onCreate(): RuleSource {
   return {
-    t: RuleSourceEnum.GeoKey,
+    t: "geo_key",
     key: "",
     name: "",
     inverse: false,
@@ -21,15 +21,15 @@ function onCreate(): RuleSource {
 }
 
 function changeCurrentRuleType(value: RuleSource, index: number) {
-  if (value.t == RuleSourceEnum.GeoKey) {
+  if (value.t == "geo_key") {
     source.value[index] = {
-      t: RuleSourceEnum.Config,
-      match_type: DomainMatchTypeEnum.Full,
+      t: "config",
+      match_type: DomainMatchType.full,
       value: value.key,
     };
   } else {
     source.value[index] = {
-      t: RuleSourceEnum.GeoKey,
+      t: "geo_key",
       key: value.value,
       name: "",
       inverse: false,
@@ -41,23 +41,23 @@ function changeCurrentRuleType(value: RuleSource, index: number) {
 const source_style = [
   {
     label: t("dns.rule_edit.source_style_full"),
-    value: DomainMatchTypeEnum.Full,
+    value: DomainMatchType.full,
   },
   {
     label: t("dns.rule_edit.source_style_domain"),
-    value: DomainMatchTypeEnum.Domain,
+    value: DomainMatchType.domain,
   },
   {
     label: t("dns.rule_edit.source_style_regex"),
-    value: DomainMatchTypeEnum.Regex,
+    value: DomainMatchType.regex,
   },
   {
     label: t("dns.rule_edit.source_style_plain"),
-    value: DomainMatchTypeEnum.Plain,
+    value: DomainMatchType.plain,
   },
 ];
 
-function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
+function add_by_quick_btn(match_type: DomainMatchType | undefined) {
   if (match_type) {
     source.value.unshift({
       t: "config",
@@ -66,7 +66,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
     });
   } else {
     source.value.unshift({
-      t: RuleSourceEnum.GeoKey,
+      t: "geo_key",
       key: "",
       name: "",
       inverse: false,
@@ -88,28 +88,28 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
       <n-button
         style="flex: 1"
         size="small"
-        @click="add_by_quick_btn(DomainMatchTypeEnum.Full)"
+        @click="add_by_quick_btn(DomainMatchType.full)"
       >
         {{ t("dns.rule_edit.add_full") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
-        @click="add_by_quick_btn(DomainMatchTypeEnum.Domain)"
+        @click="add_by_quick_btn(DomainMatchType.domain)"
       >
         {{ t("dns.rule_edit.add_domain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
-        @click="add_by_quick_btn(DomainMatchTypeEnum.Plain)"
+        @click="add_by_quick_btn(DomainMatchType.plain)"
       >
         {{ t("dns.rule_edit.add_plain") }}
       </n-button>
       <n-button
         style="flex: 1"
         size="small"
-        @click="add_by_quick_btn(DomainMatchTypeEnum.Regex)"
+        @click="add_by_quick_btn(DomainMatchType.regex)"
       >
         {{ t("dns.rule_edit.add_regex") }}
       </n-button>
@@ -141,7 +141,7 @@ function add_by_quick_btn(match_type: DomainMatchTypeEnum | undefined) {
               v-model:geo_name="value.name"
               v-model:geo_inverse="value.inverse"
               v-model:attr_key="value.attribute_key"
-              v-if="value.t === RuleSourceEnum.GeoKey"
+              v-if="value.t === 'geo_key'"
             >
             </DnsGeoSelect>
             <n-flex :size="[10, 0]" v-else style="flex: 1">

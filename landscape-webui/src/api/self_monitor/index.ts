@@ -11,14 +11,6 @@ import {
   getMemoryPersistedHistory as _getMemoryPersistedHistory,
 } from "@landscape-router/types/api/self-monitor/self-monitor";
 
-export type {
-  GetMemoryModulesHistoryParams,
-  GetMemoryPersistedHistoryParams,
-  MemorySnapshot,
-  MemorySeriesResponse,
-  MemHistoryResponse,
-};
-
 export async function get_memory_modules(): Promise<MemorySnapshot> {
   return _getMemoryModules({ silent: true });
 }

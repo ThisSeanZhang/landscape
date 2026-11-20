@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import type { RelayAgentInfo } from "./types";
+import type { RelayAgentInfo } from "@landscape-router/types/api/schemas";
 
 const model = defineModel<RelayAgentInfo>({ required: true });
 const invalidJson = ref(false);

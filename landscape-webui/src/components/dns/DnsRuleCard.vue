@@ -1,12 +1,13 @@
 <script setup lang="ts">
+import type { DNSRuleConfig } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import DnsRuleEditModal from "@/components/dns/DnsRuleEditModal.vue";
-import { DnsRule } from "@/lib/dns";
+
 import { delDnsRules } from "@landscape-router/types/api/dns-rules/dns-rules";
 import { CheckmarkOutline } from "@vicons/carbon";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
-const rule = defineModel<DnsRule>("rule", { required: true });
+const rule = defineModel<DNSRuleConfig>("rule", { required: true });
 const { t } = useI18n();
 
 const show_edit_modal = ref(false);
