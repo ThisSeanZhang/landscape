@@ -11,7 +11,6 @@ import { useCapabilityStore } from "@/stores/capability";
 import { usePtyStore } from "@/stores/pty";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import IntervalFetch from "@/components/layout/header/IntervalFetch.vue";
-import LanguageSetting from "@/components/layout/header/LanguageSetting.vue";
 import GlobalTerminal from "@/components/GlobalTerminal.vue";
 import LandscapeSiderBar from "@/layouts/LandscapeSiderBar.vue";
 
@@ -63,7 +62,6 @@ const dockOffset = computed(() =>
             <RouteTabs />
 
             <n-flex :size="[5, 0]">
-              <LanguageSetting />
               <PresentationMode></PresentationMode>
               <n-flex align="center">
                 <n-button

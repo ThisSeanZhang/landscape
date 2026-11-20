@@ -21,8 +21,3 @@ export function createLandscapeStatus(
     },
   };
 }
-
-export enum ExhibitType {
-  Dashboard = "dashboard",
-  Line = "line",
-}
