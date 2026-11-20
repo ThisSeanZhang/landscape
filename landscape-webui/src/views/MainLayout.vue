@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { useHistoryRouteStore } from "@/stores/history_route";
+import RouteTabs from "@/components/head/RouteTabs.vue";
 
 import { useI18n } from "vue-i18n";
-import { useThemeVars } from "naive-ui";
-import { Logout, Pin, PinFilled, Terminal } from "@vicons/carbon";
+import { Logout, Terminal } from "@vicons/carbon";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useCapabilityStore } from "@/stores/capability";
@@ -18,35 +17,7 @@ import LandscapeSiderBar from "@/views/LandscapeSiderBar.vue";
 
 const router = useRouter();
 const route = useRoute();
-const historyStore = useHistoryRouteStore();
 const { t } = useI18n();
-
-const themeVars = useThemeVars();
-
-watch(
-  () => route.path,
-  () => {
-    historyStore.addRoute(route);
-  },
-  { immediate: true },
-);
-
-function handleTagClick(path: string) {
-  router.push(path);
-}
-
-function handleTagClose(path: string) {
-  historyStore.removeRoute(path);
-  if (path === route.path) {
-    const lastRoute =
-      historyStore.visitedRoutes[historyStore.visitedRoutes.length - 1];
-    if (lastRoute) {
-      router.push(lastRoute.path);
-    } else {
-      router.push("/");
-    }
-  }
-}
 
 const frontEndStore = useFrontEndStore();
 const capabilityStore = useCapabilityStore();
@@ -69,33 +40,9 @@ function logout() {
   router.push("/login");
 }
 
-// Dynamic content style for Split Mode
-const DOCK_SAFE_MARGIN = 8; // Safe distance from dock edge
-
-const contentStyle = computed(() => {
-  const baseStyle: any = {
-    top: "40px",
-    left: "25px",
-    display: "flex",
-    paddingRight: "15px",
-    transition: "all 0.3s ease",
-  };
-
-  if (ptyStore.viewMode === "dock" && ptyStore.isOpen) {
-    if (ptyStore.dockPosition === "bottom") {
-      baseStyle.bottom = `${ptyStore.dockSize + DOCK_SAFE_MARGIN}px`;
-      baseStyle.right = "0px";
-    } else if (ptyStore.dockPosition === "right") {
-      baseStyle.bottom = "0px";
-      baseStyle.right = `${ptyStore.dockSize + DOCK_SAFE_MARGIN}px`;
-    }
-  } else {
-    baseStyle.bottom = "0px";
-    baseStyle.right = "0px";
-  }
-
-  return baseStyle;
-});
+const dockOffset = computed(() =>
+  ptyStore.viewMode === "dock" && ptyStore.isOpen ? ptyStore.dockSize + 8 : 0,
+);
 </script>
 
 <template>
@@ -113,45 +60,7 @@ const contentStyle = computed(() => {
             align="center"
             :wrap="false"
           >
-            <n-scrollbar
-              x-scrollable
-              style="flex: 1; min-width: 0; margin-right: 10px"
-              content-style="display: flex; align-items: center; height: 100%"
-            >
-              <n-flex align="center" :wrap="false" size="small">
-                <n-tag
-                  v-for="tag in historyStore.visitedRoutes"
-                  :key="tag.path"
-                  :type="tag.path === route.path ? 'primary' : 'default'"
-                  :closable="!tag.pinned"
-                  @click="handleTagClick(tag.path)"
-                  @close.stop="handleTagClose(tag.path)"
-                  style="
-                    cursor: pointer;
-                    padding: 0 8px;
-                    height: 23px;
-                    display: flex;
-                    align-items: center;
-                  "
-                  size="small"
-                  :bordered="false"
-                >
-                  <n-flex align="center" :size="4" :wrap="false">
-                    <n-icon
-                      @click.stop="historyStore.togglePin(tag.path)"
-                      :size="16"
-                      :color="tag.pinned ? themeVars.infoColor : undefined"
-                      class="pin-icon"
-                      :component="tag.pinned ? PinFilled : Pin"
-                    >
-                    </n-icon>
-                    <span style="margin: 0 4px">{{
-                      t(tag.name) || "Dashboard"
-                    }}</span>
-                  </n-flex>
-                </n-tag>
-              </n-flex>
-            </n-scrollbar>
+            <RouteTabs />
 
             <n-flex :size="[5, 0]">
               <LanguageSetting />
@@ -192,13 +101,29 @@ const contentStyle = computed(() => {
         <n-layout
           :native-scrollbar="false"
           position="absolute"
-          :style="contentStyle"
+          class="layout-content"
+          :style="{
+            bottom:
+              ptyStore.dockPosition === 'bottom' ? dockOffset + 'px' : '0px',
+            right:
+              ptyStore.dockPosition === 'right' ? dockOffset + 'px' : '0px',
+          }"
           content-style="flex:1; display: flex; height: 100%;"
           content-class="main-body"
         >
-          <RouterView />
+          <RouterView :key="route.name" />
         </n-layout>
       </n-layout>
     </n-layout>
   </div>
 </template>
+
+<style scoped>
+.layout-content {
+  top: 40px;
+  left: 25px;
+  display: flex;
+  padding-right: 15px;
+  transition: all 0.3s ease;
+}
+</style>

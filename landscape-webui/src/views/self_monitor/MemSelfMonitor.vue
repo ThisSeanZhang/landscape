@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
 import { useThemeVars } from "naive-ui";
 import { Renew } from "@vicons/carbon";
 import { HelpCircleOutline } from "@vicons/ionicons5";
@@ -25,8 +26,6 @@ const themeVars = useThemeVars();
 const capabilityStore = useCapabilityStore();
 const prefStore = usePreferenceStore();
 
-const SNAPSHOT_POLL_MS = 3000;
-const LIVE_CHART_POLL_MS = 5000;
 const DEFAULT_TOP_N = 3;
 
 const hasPersistent = computed(() => capabilityStore.HAS("metric_persistent"));
@@ -55,21 +54,30 @@ const fetchSnapshot = async () => {
 };
 
 const fetchLiveSeries = async () => {
-  liveLoading.value = true;
   try {
     liveResp.value = await get_memory_modules_history({
       limit: liveWindow.value,
     });
   } catch (e) {
     console.error(e);
+  }
+};
+
+const refreshLive = async () => {
+  if (liveLoading.value) return;
+  liveLoading.value = true;
+  try {
+    await Promise.all([fetchSnapshot(), fetchLiveSeries()]);
   } finally {
     liveLoading.value = false;
   }
 };
 
-const refreshLive = async () => {
-  await Promise.all([fetchSnapshot(), fetchLiveSeries()]);
-};
+useMetricAutoRefresh(
+  refreshLive,
+  liveLoading,
+  () => activeTab.value === "live" && hasMemTrack.value,
+);
 
 const meta = computed(() => snapshot.value?.meta);
 
@@ -298,53 +306,15 @@ watch(customTimeRange, () => {
 });
 
 watch(activeTab, (tab) => {
+  if (tab === "live") refreshLive();
   if (tab === "history" && hasPersistent.value && !historyLoaded.value) {
     fetchHistory();
   }
 });
 
-let snapshotTimer: ReturnType<typeof setInterval> | null = null;
-let liveTimer: ReturnType<typeof setInterval> | null = null;
-
-const startTimers = () => {
-  if (!snapshotTimer) {
-    snapshotTimer = setInterval(fetchSnapshot, SNAPSHOT_POLL_MS);
-  }
-  if (!liveTimer) {
-    liveTimer = setInterval(fetchLiveSeries, LIVE_CHART_POLL_MS);
-  }
-};
-
-const stopTimers = () => {
-  if (snapshotTimer) {
-    clearInterval(snapshotTimer);
-    snapshotTimer = null;
-  }
-  if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-  }
-};
-
-const handleVisibilityChange = () => {
-  if (document.hidden) {
-    stopTimers();
-  } else {
-    startTimers();
-    refreshLive();
-  }
-};
-
 onMounted(() => {
   capabilityStore.LOAD();
   refreshLive();
-  startTimers();
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-});
-
-onUnmounted(() => {
-  stopTimers();
-  document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 </script>
 
@@ -504,7 +474,8 @@ onUnmounted(() => {
               :options="liveWindowOptions"
               size="small"
               style="width: 140px"
-              @update:value="fetchLiveSeries"
+              :disabled="liveLoading"
+              @update:value="refreshLive"
             />
             <n-button size="small" :loading="liveLoading" @click="refreshLive">
               <template #icon>

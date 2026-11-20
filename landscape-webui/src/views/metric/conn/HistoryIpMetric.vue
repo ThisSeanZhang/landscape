@@ -3,19 +3,19 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useMetricStore } from "@/stores/status_metric";
-import { get_history_dst_ip_stats } from "@/api/metric";
+import { useHistoryIpStats } from "./useHistoryIpStats";
 import { formatSize } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
 import HistoryIpStatsList from "@/components/metric/connect/history/HistoryIpStatsList.vue";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 import FlowSelect from "@/components/flow/FlowSelect.vue";
 import type {
-  GetHistoryDstIpStatsParams as ConnectHistoryQueryParams,
-  IpHistoryStat,
   ConnectSortKey,
   SortOrder,
 } from "@landscape-router/types/api/schemas";
 import { usePreferenceStore } from "@/stores/preference";
+
+const { direction } = defineProps<{ direction: "src" | "dst" }>();
 
 const metricStore = useMetricStore();
 const themeVars = useThemeVars();
@@ -23,14 +23,18 @@ const prefStore = usePreferenceStore();
 const route = useRoute();
 const { t } = useI18n();
 
-const stats = ref<IpHistoryStat[]>([]);
-const loading = ref(false);
+const { stats, loading, query } = useHistoryIpStats(direction);
 
-const timeRange = ref<number | string | null>(300); // default 5 minutes
+const timeRange = ref<number | "custom" | null>(300); // default 5 minutes
 const queryLimit = ref<number | null>(100);
-const flowId = ref<number | null>(null);
-const ipSearch = ref<string>("");
-const useCustomTimeRange = ref(false);
+const initialFlow = route.query.flow_id;
+const flowId = ref<number | null>(
+  typeof initialFlow === "string" && /^\d+$/.test(initialFlow)
+    ? Number(initialFlow)
+    : null,
+);
+const ipSearch = ref(typeof route.query.ip === "string" ? route.query.ip : "");
+const useCustomTimeRange = computed(() => timeRange.value === "custom");
 const customTimeRange = ref<[number, number] | null>(null);
 
 // Sort state
@@ -57,33 +61,20 @@ const limitOptions = computed(() => [
   { label: t("metric.connect.filter.unlimited"), value: null },
 ]);
 
-const fetchStats = async () => {
-  loading.value = true;
-  try {
-    let startTime: number | undefined;
-    let endTime: number | undefined;
-
-    if (useCustomTimeRange.value && customTimeRange.value) {
-      startTime = customTimeRange.value[0];
-      endTime = customTimeRange.value[1];
-    } else if (timeRange.value !== null && timeRange.value !== "custom") {
-      startTime = Date.now() - (timeRange.value as number) * 1000;
-    }
-
-    const params: ConnectHistoryQueryParams = {
-      start_time: startTime,
-      end_time: endTime,
-      limit: queryLimit.value || undefined,
-      flow_id: flowId.value || undefined,
-      dst_ip: ipSearch.value || undefined,
-      sort_key: sortKey.value,
-      sort_order: sortOrder.value,
-    };
-    stats.value = await get_history_dst_ip_stats(params);
-  } finally {
-    loading.value = false;
-  }
-};
+function fetchStats() {
+  const range = timeRange.value;
+  const custom = range === "custom" ? customTimeRange.value : null;
+  return query({
+    start_time:
+      typeof range === "number" ? Date.now() - range * 1000 : custom?.[0],
+    end_time: custom?.[1],
+    limit: queryLimit.value ?? undefined,
+    flowId: flowId.value,
+    ip: ipSearch.value,
+    sort_key: sortKey.value,
+    sort_order: sortOrder.value,
+  });
+}
 
 const handleSortChange = ({
   key,
@@ -97,34 +88,29 @@ const handleSortChange = ({
   fetchStats();
 };
 
-watch(timeRange, (newVal) => {
-  if (newVal === "custom") {
-    useCustomTimeRange.value = true;
-  } else {
-    useCustomTimeRange.value = false;
-    customTimeRange.value = null;
-    fetchStats();
-  }
-});
+watch(
+  timeRange,
+  (range) => {
+    if (range !== "custom") customTimeRange.value = null;
+  },
+  { flush: "sync" },
+);
 
-watch([queryLimit, flowId, customTimeRange], () => {
-  fetchStats();
-});
+watch(
+  [timeRange, queryLimit, flowId, customTimeRange],
+  ([range], [previousRange]) => {
+    if (range === "custom" && previousRange !== "custom") return;
+    return fetchStats();
+  },
+);
 
 // Debounced query
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-watch(ipSearch, () => {
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    fetchStats();
-  }, 600);
+watch(ipSearch, (_, __, onCleanup) => {
+  const timer = setTimeout(fetchStats, 600);
+  onCleanup(() => clearTimeout(timer));
 });
 
 onMounted(() => {
-  if (route.query.ip) ipSearch.value = route.query.ip as string;
-  if (route.query.flow_id)
-    flowId.value = parseInt(route.query.flow_id as string);
-
   fetchStats();
   if (!metricStore.global_history_stats) {
     metricStore.UPDATE_GLOBAL_HISTORY_STATS();
@@ -184,7 +170,7 @@ onMounted(() => {
     >
       <n-input
         v-model:value="ipSearch"
-        :placeholder="$t('metric.connect.filter.search_dst')"
+        :placeholder="$t(`metric.connect.filter.search_${direction}`)"
         clearable
         style="width: 180px"
         :disabled="loading"
@@ -222,11 +208,11 @@ onMounted(() => {
     <n-spin :show="loading">
       <HistoryIpStatsList
         :stats="stats"
-        :title="$t('metric.connect.stats.history_dst')"
-        :ip-label="$t('metric.connect.col.dst_ip')"
+        :title="$t(`metric.connect.stats.history_${direction}`)"
+        :show-geo-lookup="direction === 'dst'"
+        :ip-label="$t(`metric.connect.col.${direction}_ip`)"
         :sort-key="sortKey"
         :sort-order="sortOrder"
-        show-geo-lookup
         @update:sort="handleSortChange"
         @search:ip="(ip) => (ipSearch = ip)"
       />

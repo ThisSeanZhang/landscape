@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted } from "vue";
+import { ref, computed, reactive, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { useMetricStore } from "@/stores/status_metric";
+import { get_connects_info } from "@/api/metric";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
+import { useAsyncState } from "@vueuse/core";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { ConnectFilter } from "@/lib/metric.rs";
 import { formatRate, formatPackets } from "@/lib/util";
@@ -11,7 +13,13 @@ import ConnectVirtualList from "@/components/metric/connect/live/ConnectVirtualL
 import FlowSelect from "@/components/flow/FlowSelect.vue";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 
-const metricStore = useMetricStore();
+const {
+  state: connections,
+  isLoading,
+  execute: refresh,
+} = useAsyncState(get_connects_info, [], { resetOnExecute: false });
+useMetricAutoRefresh(refresh, isLoading);
+
 const frontEndStore = useFrontEndStore();
 const themeVars = useThemeVars();
 const route = useRoute();
@@ -88,23 +96,19 @@ const systemStats = computed(() => {
     egressPps: 0,
     count: 0,
   };
-  if (metricStore.firewall_info) {
-    metricStore.firewall_info.forEach((item) => {
-      stats.ingressBps += item.ingress_bps || 0;
-      stats.egressBps += item.egress_bps || 0;
-      stats.ingressPps += item.ingress_pps || 0;
-      stats.egressPps += item.egress_pps || 0;
-      stats.count++;
-    });
-  }
+  connections.value.forEach((item) => {
+    stats.ingressBps += item.ingress_bps || 0;
+    stats.egressBps += item.egress_bps || 0;
+    stats.ingressPps += item.ingress_pps || 0;
+    stats.egressPps += item.egress_pps || 0;
+    stats.count++;
+  });
   return stats;
 });
 
 // Calculate filtered and sorted connection metrics
 const filteredConnectMetrics = computed(() => {
-  if (!metricStore.firewall_info) return [];
-
-  const filtered = metricStore.firewall_info.filter((item) => {
+  const filtered = connections.value.filter((item) => {
     if (liveFilter.src_ip && !item.src_ip.includes(liveFilter.src_ip))
       return false;
     if (liveFilter.dst_ip && !item.dst_ip.includes(liveFilter.dst_ip))
@@ -155,19 +159,17 @@ const totalStats = computed(() => {
     egressPps: 0,
     count: 0,
   };
-  if (filteredConnectMetrics.value) {
-    filteredConnectMetrics.value.forEach((item) => {
-      stats.ingressBps += item.ingress_bps || 0;
-      stats.egressBps += item.egress_bps || 0;
-      stats.ingressPps += item.ingress_pps || 0;
-      stats.egressPps += item.egress_pps || 0;
-      stats.count++;
-    });
-  }
+  filteredConnectMetrics.value.forEach((item) => {
+    stats.ingressBps += item.ingress_bps || 0;
+    stats.egressBps += item.egress_bps || 0;
+    stats.ingressPps += item.ingress_pps || 0;
+    stats.egressPps += item.egress_pps || 0;
+    stats.count++;
+  });
   return stats;
 });
 
-onMounted(async () => {
+onMounted(() => {
   // Initialize filters from route query
   const srcIp = queryString(route.query.src_ip);
   const dstIp = queryString(route.query.dst_ip);
@@ -182,13 +184,6 @@ onMounted(async () => {
   if (portEnd !== null) liveFilter.port_end = portEnd;
   if (flowId !== null) liveFilter.flow_id = flowId;
   if (ifindex !== null) liveFilter.ifindex = ifindex;
-
-  metricStore.SET_ENABLE("live", true);
-  await metricStore.UPDATE_INFO();
-
-  onUnmounted(() => {
-    metricStore.SET_ENABLE("live", false);
-  });
 });
 </script>
 
@@ -286,7 +281,7 @@ onMounted(async () => {
       <FlowSelect v-model="liveFilter.flow_id" width="120px" />
 
       <n-button-group>
-        <n-button @click="metricStore.UPDATE_INFO()" type="primary">{{
+        <n-button @click="refresh()" :loading="isLoading" type="primary">{{
           $t("metric.connect.stats.refresh_sample")
         }}</n-button>
         <n-button @click="resetLiveFilter">{{

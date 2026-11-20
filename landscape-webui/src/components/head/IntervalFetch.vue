@@ -15,14 +15,13 @@ const { t } = useI18n();
 
 const countdownRef = ref<CountdownInst | null>();
 onMounted(() => {
-  fetchIntervalStore.SETTING_CALLBACK(() => {
+  fetchIntervalStore.start(() => {
     countdownRef.value?.reset();
   });
-  fetchIntervalStore.IMMEDIATELY_EXECUTE();
 });
 
 onUnmounted(() => {
-  fetchIntervalStore.destroy();
+  fetchIntervalStore.stop();
 });
 
 const renderCountdown: CountdownProps["render"] = ({
@@ -52,9 +51,10 @@ function handleUpdateShow() {
   edit_interval.value = fetchIntervalStore.interval_time;
 }
 
-function confirmChangeImterval() {
+function confirmInterval() {
+  if (edit_interval.value == null) return;
   fetchIntervalStore.interval_time = edit_interval.value;
-  fetchIntervalStore.IMMEDIATELY_EXECUTE();
+  fetchIntervalStore.refreshNow();
 }
 </script>
 
@@ -99,7 +99,7 @@ function confirmChangeImterval() {
           :step="500"
           button-placement="both"
         />
-        <n-button @click="confirmChangeImterval" type="primary" ghost>
+        <n-button @click="confirmInterval" type="primary" ghost>
           {{ t("common.confirm") }}
         </n-button>
       </n-input-group>

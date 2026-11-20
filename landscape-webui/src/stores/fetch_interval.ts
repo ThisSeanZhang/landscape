@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref, watch } from "vue";
+import { usePolling } from "./usePolling";
 
 import { useSysInfo } from "./systeminfo";
 import { useIfaceNodeStore } from "./iface_node";
@@ -9,7 +9,7 @@ import { useLanIPv6Store } from "./status_lan_ipv6";
 import { useLanDeviceStore } from "./lan_device";
 import { useWifiConfigStore } from "./status_wifi";
 import { useDHCPv4ConfigStore } from "./status_dhcp_v4";
-import { useMetricStore } from "./status_metric";
+import { useTopologyMetricsStore } from "./topologyMetrics";
 import { useRouteLanConfigStore } from "./status_route_lan";
 import { useRouteWanConfigStore } from "./status_route_wan";
 
@@ -24,109 +24,30 @@ export const useFetchIntervalStore = defineStore("fetch_interval", () => {
   const lanDeviceStore = useLanDeviceStore();
   const wifiConfigStore = useWifiConfigStore();
   const dhcpv4ConfigStore = useDHCPv4ConfigStore();
-  const metricStore = useMetricStore();
+  const topologyMetrics = useTopologyMetricsStore();
   const routeLanConfigStore = useRouteLanConfigStore();
   const routeWanConfigStore = useRouteWanConfigStore();
 
-  // SOCK
   const dockerImgTask = useDockerImgTask();
+  const services = [
+    sysinfo,
+    dockerStore,
+    ifaceNodeStore,
+    wanLinkStore,
+    lanIpv6Store,
+    lanDeviceStore,
+    wifiConfigStore,
+    dhcpv4ConfigStore,
+    topologyMetrics,
+    routeLanConfigStore,
+    routeWanConfigStore,
+  ];
 
-  const interval_function = async () => {
-    if (start_count_down_callback.value !== undefined) {
-      start_count_down_callback.value();
+  return usePolling(async (isCurrent) => {
+    for (const service of services) {
+      if (!isCurrent()) return;
+      await service.UPDATE_INFO();
     }
-    try {
-      await sysinfo.UPDATE_INFO();
-      await dockerStore.UPDATE_INFO();
-      await ifaceNodeStore.UPDATE_INFO();
-      await wanLinkStore.UPDATE_INFO();
-      await lanIpv6Store.UPDATE_INFO();
-      await lanDeviceStore.UPDATE_INFO();
-      await wifiConfigStore.UPDATE_INFO();
-      await dhcpv4ConfigStore.UPDATE_INFO();
-      await metricStore.UPDATE_INFO();
-
-      await routeLanConfigStore.UPDATE_INFO();
-      await routeWanConfigStore.UPDATE_INFO();
-
-      dockerImgTask.CONNECT();
-    } catch (error) {
-      // console.log("1111");
-      enable_interval.value = false;
-      if (interval_timer != undefined) {
-        clean_interval();
-      }
-      if (error instanceof Error) {
-        error_message.value = error.message;
-      } else {
-        error_message.value = `An unknown error occurred: ${error}`;
-      }
-    }
-  };
-
-  const error_message = ref<string | undefined>(undefined);
-  const enable_interval = ref<boolean>(true);
-  const interval_time = ref<number>(3000);
-  const interval_timer = ref<any>(undefined);
-
-  const start_count_down_callback = ref<any>();
-
-  function set_interval() {
-    // 如果已经存在计时器，先清理掉
-    if (interval_timer.value !== undefined) {
-      clean_interval();
-    }
-    // 立即执行一次函数，然后设置新的计时器
-    interval_function();
-    interval_timer.value = setInterval(interval_function, interval_time.value);
-  }
-
-  function clean_interval() {
-    clearInterval(interval_timer.value);
-    interval_timer.value = undefined;
-  }
-
-  watch(enable_interval, (new_value, _) => {
-    if (new_value) {
-      set_interval();
-    } else {
-      clean_interval();
-    }
+    if (isCurrent()) dockerImgTask.CONNECT();
   });
-
-  const visibilityChangeHandler = () => {
-    if (document.hidden) {
-      if (interval_timer.value != undefined) {
-        clean_interval();
-      }
-    } else {
-      if (enable_interval.value) {
-        set_interval();
-      }
-    }
-  };
-
-  function destroy() {
-    clean_interval();
-    document.removeEventListener("visibilitychange", visibilityChangeHandler);
-  }
-
-  document.addEventListener("visibilitychange", visibilityChangeHandler);
-
-  function IMMEDIATELY_EXECUTE() {
-    set_interval();
-    enable_interval.value = true;
-  }
-
-  async function SETTING_CALLBACK(call_back: any) {
-    start_count_down_callback.value = call_back;
-  }
-  return {
-    enable_interval,
-    interval_time,
-    error_message,
-    IMMEDIATELY_EXECUTE,
-    SETTING_CALLBACK,
-    destroy,
-  };
 });

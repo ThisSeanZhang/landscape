@@ -12,8 +12,8 @@ const enrolledDeviceStore = useEnrolledDeviceStore();
 const fetchIntervalStore = useFetchIntervalStore();
 
 onMounted(async () => {
-  await enrolledDeviceStore.UPDATE_INFO();
   fetchIntervalStore.enable_interval = false;
+  await enrolledDeviceStore.UPDATE_INFO();
 });
 
 onUnmounted(() => {

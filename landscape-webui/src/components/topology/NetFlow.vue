@@ -15,7 +15,7 @@ import { NetDev, WLANTypeTag } from "@/lib/dev";
 import { getBridgeAttachIssue } from "@/lib/topology";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { useMetricStore } from "@/stores/status_metric";
+import { useTopologyMetricsStore } from "@/stores/topologyMetrics";
 
 interface Props {
   fit_padding?: number;
@@ -37,7 +37,7 @@ const {
 } = useVueFlow();
 const message = useMessage();
 const ifaceNodeStore = useIfaceNodeStore();
-const metricStore = useMetricStore();
+const topologyMetrics = useTopologyMetricsStore();
 const themeVars = useThemeVars();
 const containerRef = ref<HTMLElement | null>(null);
 const { width } = useElementSize(containerRef);
@@ -86,7 +86,8 @@ const flowNodes = computed(() => {
   }));
 });
 const ifaceStatsByIfindex = computed(
-  () => new Map(metricStore.iface_stats.map((item) => [item.ifindex, item])),
+  () =>
+    new Map(topologyMetrics.iface_stats.map((item) => [item.ifindex, item])),
 );
 const flowEdges = computed(() => {
   const highlighted = highlightedIfaces.value;
@@ -338,8 +339,8 @@ watch(selectedIface, (value) => {
 
 onMounted(() => {
   ifaceNodeStore.UPDATE_INFO();
-  metricStore.SET_ENABLE("iface", true);
-  metricStore.UPDATE_INFO();
+  topologyMetrics.active = true;
+  topologyMetrics.UPDATE_INFO();
 });
 
 onUnmounted(() => {
@@ -347,7 +348,7 @@ onUnmounted(() => {
     cancelAnimationFrame(heights_flush_handle);
     heights_flush_handle = null;
   }
-  metricStore.SET_ENABLE("iface", false);
+  topologyMetrics.active = false;
 });
 
 onNodeClick(({ node }) => {

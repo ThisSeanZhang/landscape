@@ -3,10 +3,8 @@ import DNSMetric from "@/views/metric/DNSMetric.vue";
 import LiveMetric from "@/views/metric/conn/LiveMetric.vue";
 import HistoryMetric from "@/views/metric/conn/HistoryMetric.vue";
 import IfaceMetric from "@/views/metric/conn/IfaceMetric.vue";
-import SrcIpMetric from "@/views/metric/conn/SrcIpMetric.vue";
-import DstIpMetric from "@/views/metric/conn/DstIpMetric.vue";
-import HistorySrcIpMetric from "@/views/metric/conn/HistorySrcIpMetric.vue";
-import HistoryDstIpMetric from "@/views/metric/conn/HistoryDstIpMetric.vue";
+import LiveIpMetric from "@/views/metric/conn/LiveIpMetric.vue";
+import HistoryIpMetric from "@/views/metric/conn/HistoryIpMetric.vue";
 
 const metric_route: Array<RouteRecordRaw> = [
   {
@@ -28,24 +26,34 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/src",
     name: "routes.connect-src",
-    component: SrcIpMetric,
+    component: LiveIpMetric,
+    props: { direction: "src" },
   },
   {
     path: "/metrics/conn/dst",
     name: "routes.connect-dst",
-    component: DstIpMetric,
+    component: LiveIpMetric,
+    props: { direction: "dst" },
   },
   {
     path: "/metrics/conn/history-src",
     name: "routes.connect-history-src",
-    component: HistorySrcIpMetric,
-    meta: { capability: "metric_persistent" },
+    component: HistoryIpMetric,
+    props: { direction: "src" },
+    meta: {
+      capability: "metric_persistent",
+      activeMenu: "routes.connect-history",
+    },
   },
   {
     path: "/metrics/conn/history-dst",
     name: "routes.connect-history-dst",
-    component: HistoryDstIpMetric,
-    meta: { capability: "metric_persistent" },
+    component: HistoryIpMetric,
+    props: { direction: "dst" },
+    meta: {
+      capability: "metric_persistent",
+      activeMenu: "routes.connect-history",
+    },
   },
   {
     path: "/metrics/dns",
