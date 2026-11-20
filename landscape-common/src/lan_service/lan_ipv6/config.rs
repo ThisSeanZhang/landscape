@@ -175,8 +175,14 @@ impl LanIPv6ConfigV2 {
         self.preferred_lifetime() * 2
     }
 
+    /// Periodic unsolicited RA interval in seconds.
+    ///
+    /// Derived as `preferred_lifetime / 3` clamped to `[20, 600]` so that
+    /// clients (including Wi-Fi power-saving stations) receive ~3 RAs per
+    /// preferred lifetime (e.g. 100s for the default 300s lifetime) and ~6 RAs
+    /// per valid lifetime, avoiding deprecation/loss on a single missed frame.
     pub fn icmp_ad_interval(&self) -> u32 {
-        self.preferred_lifetime().clamp(60, 600)
+        (self.preferred_lifetime() / 3).clamp(20, 600)
     }
 }
 
@@ -227,3 +233,27 @@ impl ZoneAwareConfig for LanIPv6ServiceConfigV2 {
 }
 
 crate::impl_trivial_validatable!(LanIPv6ServiceConfigV2);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icmp_ad_interval_tracks_one_third_preferred_lifetime_clamped() {
+        let make = |lifetime| LanIPv6ConfigV2 {
+            mode: IPv6ServiceMode::Slaac,
+            ad_interval: 30,
+            lifetime,
+            ra_flag: ra_flag_default(),
+            prefix_groups: vec![],
+            dhcpv6: None,
+        };
+
+        assert_eq!(make(60).icmp_ad_interval(), 20);
+        assert_eq!(make(90).icmp_ad_interval(), 30);
+        assert_eq!(make(300).icmp_ad_interval(), 100);
+        assert_eq!(make(900).icmp_ad_interval(), 300);
+        assert_eq!(make(1800).icmp_ad_interval(), 600);
+        assert_eq!(make(3600).icmp_ad_interval(), 600);
+    }
+}
