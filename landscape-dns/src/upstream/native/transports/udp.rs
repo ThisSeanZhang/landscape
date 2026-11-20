@@ -1,16 +1,9 @@
-//! Native plaintext-UDP transport.
-//!
-//! A small per-endpoint pool reuses connected UDP sockets across sequential
-//! queries. Each socket is checked out by one query at a time, carries a
-//! random DNS id per query, is connected (so the kernel filters foreign
-//! sources), and validates the id + question echo before accepting a
-//! response. Sockets rotate after a bounded number of uses / lifetime so the
-//! source-port exposure stays bounded. The pool retries at the attempt level,
-//! so a blackholed upstream is not hammered with datagrams.
+//! Connected UDP sockets multiplex requests by their upstream DNS ID. A socket
+//! stops accepting queries after its use or age limit. Outstanding queries
+//! keep it alive until they finish.
 
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,23 +11,17 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use hickory_proto::op::{DnsRequestOptions, Message, Query};
 use tokio::net::UdpSocket;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore, oneshot};
+use tokio::task::JoinHandle;
 
 use crate::upstream::native::mark::MarkRuntimeProvider;
 use crate::upstream::native::traits::{DnsConn, DnsConnError, DnsConnector, DnsTransport};
 
 use super::{build_message, classify_message};
 
-/// Maximum number of idle sockets kept per endpoint. A home/soft-router
-/// workload rarely needs more than this in flight; checked-out sockets are
-/// limited by concurrent queries and extras are closed on return instead of
-/// growing the cache without bound.
-const UDP_SOCKET_POOL_SIZE: usize = 16;
-/// Rotate a socket after this many completed exchanges.
-const UDP_SOCKET_MAX_REUSES: u32 = 64;
-/// Rotate a socket after this age even when it is still under the use cap.
+const UDP_SOCKET_POOL_SIZE: usize = 4;
+const UDP_SOCKET_MAX_USES: usize = 64;
 const UDP_SOCKET_MAX_AGE: Duration = Duration::from_secs(30);
-/// Scratch buffer used to drain late datagrams before reusing a socket.
-const UDP_DRAIN_BUF_SIZE: usize = 4096;
 
 /// Builds UDP connections to one endpoint.
 pub(crate) struct UdpConnector {
@@ -53,11 +40,10 @@ impl Debug for UdpConnector {
 impl DnsConnector for UdpConnector {
     async fn connect(&self) -> Result<Arc<dyn DnsConn>, DnsConnError> {
         Ok(Arc::new(UdpConn {
-            pool: Arc::new(UdpSocketPool {
-                addr: self.addr,
-                provider: self.provider.clone(),
-                idle: Mutex::new(VecDeque::new()),
-            }),
+            addr: self.addr,
+            provider: self.provider.clone(),
+            sockets: AsyncMutex::new(Vec::new()),
+            capacity: Semaphore::new(UDP_SOCKET_POOL_SIZE * UDP_SOCKET_MAX_USES),
             query_timeout: self.query_timeout,
         }))
     }
@@ -77,88 +63,145 @@ impl DnsConnector for UdpConnector {
     }
 }
 
-/// A pooled UDP endpoint. The outer pool treats this object as one logical
-/// connection; this inner pool owns the reusable stateless sockets.
 struct UdpConn {
-    pool: Arc<UdpSocketPool>,
+    addr: SocketAddr,
+    provider: MarkRuntimeProvider,
+    sockets: AsyncMutex<Vec<Arc<SharedSocket>>>,
+    capacity: Semaphore,
     query_timeout: Duration,
 }
 
 impl Debug for UdpConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UdpConn").field("addr", &self.pool.addr).finish()
+        f.debug_struct("UdpConn").field("addr", &self.addr).finish()
     }
 }
 
-struct UdpSocketPool {
-    addr: SocketAddr,
-    provider: MarkRuntimeProvider,
-    idle: Mutex<VecDeque<PooledUdpSocket>>,
+struct Pending {
+    message: Message,
+    limit: usize,
+    reply: oneshot::Sender<Message>,
 }
 
-struct PooledUdpSocket {
-    socket: UdpSocket,
-    uses: u32,
+// Keep used IDs until this socket closes. Rotation bounds the table to 64
+// entries and even an identical late question cannot match a later request.
+#[derive(Default)]
+struct SocketState {
+    requests: HashMap<u16, Option<Pending>>,
+    failed: bool,
+}
+
+struct SharedSocket {
+    socket: Arc<UdpSocket>,
+    state: Arc<Mutex<SocketState>>,
     created: Instant,
+    reader: JoinHandle<()>,
 }
 
-impl PooledUdpSocket {
-    fn expired(&self) -> bool {
-        self.uses >= UDP_SOCKET_MAX_REUSES || self.created.elapsed() >= UDP_SOCKET_MAX_AGE
-    }
-}
-
-struct UdpLease {
-    pool: Arc<UdpSocketPool>,
-    entry: Option<PooledUdpSocket>,
-}
-
-impl UdpLease {
-    fn socket(&self) -> &UdpSocket {
-        &self.entry.as_ref().expect("checked-out UDP socket is present until drop").socket
-    }
-}
-
-impl Drop for UdpLease {
+impl Drop for SharedSocket {
     fn drop(&mut self) {
-        let Some(mut entry) = self.entry.take() else { return };
-        // A late response from the previous query must never be delivered to
-        // the next borrower.
-        let mut scratch = [0u8; UDP_DRAIN_BUF_SIZE];
-        while entry.socket.try_recv(&mut scratch).is_ok() {}
-
-        entry.uses = entry.uses.saturating_add(1);
-        if entry.expired() {
-            return;
-        }
-        let mut idle = self.pool.idle.lock().unwrap_or_else(|e| e.into_inner());
-        if idle.len() < UDP_SOCKET_POOL_SIZE {
-            idle.push_back(entry);
-        }
+        self.reader.abort();
     }
 }
 
-impl UdpSocketPool {
-    async fn checkout(self: &Arc<Self>) -> io::Result<UdpLease> {
-        let reused = {
-            let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
-            loop {
-                match idle.pop_front() {
-                    Some(entry) if !entry.expired() => break Some(entry),
-                    Some(_) => continue,
-                    None => break None,
-                }
+impl SharedSocket {
+    fn new(socket: UdpSocket) -> Arc<Self> {
+        let socket = Arc::new(socket);
+        let state = Arc::new(Mutex::new(SocketState::default()));
+        let reader = tokio::spawn(read_responses(socket.clone(), state.clone()));
+        Arc::new(Self { socket, state, reader, created: Instant::now() })
+    }
+
+    fn accepting(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        !state.failed
+            && state.requests.len() < UDP_SOCKET_MAX_USES
+            && self.created.elapsed() < UDP_SOCKET_MAX_AGE
+    }
+}
+
+async fn read_responses(socket: Arc<UdpSocket>, state: Arc<Mutex<SocketState>>) {
+    let mut buffer = vec![0; 65536];
+    loop {
+        let size = match socket.recv(&mut buffer).await {
+            Ok(size) => size,
+            Err(_) => {
+                let mut state = state.lock().unwrap();
+                state.failed = true;
+                state.requests.clear();
+                return;
             }
         };
-        let entry = match reused {
-            Some(entry) => entry,
-            None => PooledUdpSocket {
-                socket: self.provider.bind_udp(self.addr).await?,
-                uses: 0,
-                created: Instant::now(),
+        if size < 2 {
+            continue;
+        }
+        let id = u16::from_be_bytes([buffer[0], buffer[1]]);
+        let mut state = state.lock().unwrap();
+        let Some(slot) = state.requests.get_mut(&id) else { continue };
+        let Some(request) = slot.as_ref() else { continue };
+        let bytes = &buffer[..size.min(request.limit)];
+        let response = match Message::from_vec(bytes) {
+            Ok(response) if validate_response(&response, &request.message) => response,
+            Ok(_) => continue,
+            Err(_) => match truncated_response(bytes, &request.message) {
+                Some(response) => response,
+                None => continue,
             },
         };
-        Ok(UdpLease { pool: Arc::clone(self), entry: Some(entry) })
+        let _ = slot.take().unwrap().reply.send(response);
+    }
+}
+
+struct PendingQuery {
+    socket: Arc<SharedSocket>,
+    id: u16,
+}
+
+impl Drop for PendingQuery {
+    fn drop(&mut self) {
+        if let Some(slot) = self.socket.state.lock().unwrap().requests.get_mut(&self.id) {
+            slot.take();
+        }
+    }
+}
+
+impl UdpConn {
+    async fn register(&self, mut request: Pending) -> Result<PendingQuery, DnsConnError> {
+        let mut sockets = self.sockets.lock().await;
+        sockets.retain(|socket| socket.accepting());
+        // Only the pool and live query guards hold SharedSocket references.
+        let least_busy = sockets.iter().min_by_key(|socket| Arc::strong_count(socket));
+        let socket = match least_busy {
+            Some(socket)
+                if Arc::strong_count(socket) == 1 || sockets.len() == UDP_SOCKET_POOL_SIZE =>
+            {
+                socket.clone()
+            }
+            _ => {
+                let bound = self
+                    .provider
+                    .bind_udp(self.addr)
+                    .await
+                    .map_err(|e| DnsConnError::Io(e.to_string()))?;
+                let socket = SharedSocket::new(bound);
+                sockets.push(socket.clone());
+                socket
+            }
+        };
+        let mut state = socket.state.lock().unwrap();
+        if state.failed {
+            return Err(DnsConnError::Io("UDP socket closed".into()));
+        }
+        let id = loop {
+            let id = rand::random();
+            if !state.requests.contains_key(&id) {
+                break id;
+            }
+        };
+        request.message.metadata.id = id;
+        state.requests.insert(id, Some(request));
+        drop(state);
+        Ok(PendingQuery { socket, id })
     }
 }
 
@@ -169,53 +212,25 @@ impl DnsConn for UdpConn {
         query: &Query,
         options: &DnsRequestOptions,
     ) -> Result<Message, DnsConnError> {
-        let mut message = build_message(query, options);
-        // A random id per query: the connected socket filters foreign sources
-        // and the id + question echo filter late/forged datagrams.
-        message.metadata.id = rand::random();
-        let bytes = message.to_vec().map_err(|e| DnsConnError::Internal(e.to_string()))?;
-
-        let lease = self.pool.checkout().await.map_err(|e| DnsConnError::Io(e.to_string()))?;
-        let socket = lease.socket();
-        socket.send(&bytes).await.map_err(|e| DnsConnError::Io(e.to_string()))?;
-
-        // The receive buffer is the advertised EDNS payload (mirrors hickory:
-        // responses larger than the advertised size are truncated and fail to
-        // decode, which is the server's protocol violation).
-        let mut buf = vec![0u8; usize::from(options.edns_payload_len.max(512))];
-        let result = tokio::time::timeout(self.query_timeout, async {
-            // Up to three receive attempts (hickory parity): mismatched or
-            // undecodable datagrams are dropped, not fatal.
-            for _ in 0..3 {
-                let len =
-                    socket.recv(&mut buf).await.map_err(|e| DnsConnError::Io(e.to_string()))?;
-                if let Ok(response) = validate_response(&buf[..len], &message) {
-                    return Ok(response);
-                }
-                // A *decodable* frame that failed validation is spoofed or
-                // late — dropped, never trusted. An *undecodable* frame
-                // carrying our id and the response bit is a kernel-truncated
-                // answer: surface it as a synthesized truncated response so
-                // the pool's truncation path (stream retry) recovers the
-                // data instead of aging the attempt into a health-counted
-                // Timeout.
-                if Message::from_vec(&buf[..len]).is_err()
-                    && let Some(truncated) = truncated_response(&buf[..len], &message)
-                {
-                    return Ok(truncated);
-                }
-            }
-            Err(DnsConnError::Timeout)
+        let _permit = self.capacity.try_acquire().map_err(|_| DnsConnError::NoConnections)?;
+        tokio::time::timeout(self.query_timeout, async {
+            let (reply, result) = oneshot::channel();
+            let request = Pending {
+                message: build_message(query, options),
+                limit: usize::from(options.edns_payload_len.max(512)),
+                reply,
+            };
+            let mut bytes =
+                request.message.to_vec().map_err(|e| DnsConnError::Internal(e.to_string()))?;
+            let guard = self.register(request).await?;
+            bytes[..2].copy_from_slice(&guard.id.to_be_bytes());
+            guard.socket.socket.send(&bytes).await.map_err(|e| DnsConnError::Io(e.to_string()))?;
+            let response =
+                result.await.map_err(|_| DnsConnError::Io("UDP socket closed".into()))?;
+            classify_message(response)
         })
-        .await;
-
-        match result {
-            Ok(result) => match result {
-                Ok(message) => classify_message(message),
-                Err(e) => Err(e),
-            },
-            Err(_) => Err(DnsConnError::Timeout),
-        }
+        .await
+        .map_err(|_| DnsConnError::Timeout)?
     }
 
     fn transport(&self) -> DnsTransport {
@@ -223,20 +238,19 @@ impl DnsConn for UdpConn {
     }
 
     fn ip(&self) -> IpAddr {
-        self.pool.addr.ip()
+        self.addr.ip()
     }
 
-    fn shutdown(&self) {}
+    fn shutdown(&self) {
+        // The outer pool drops its handle on retirement. In-flight queries
+        // retain their socket until their reply or cancellation.
+    }
 }
 
 /// Ignore datagrams that cannot be correlated with this lookup.
-fn validate_response(bytes: &[u8], query: &Message) -> Result<Message, ()> {
-    let response = Message::from_vec(bytes).map_err(|_| ())?;
-    if response.metadata.id != query.metadata.id {
-        return Err(());
-    }
-    super::validate_reply(&response, &query.queries).map_err(|_| ())?;
-    Ok(response)
+fn validate_response(response: &Message, query: &Message) -> bool {
+    response.metadata.id == query.metadata.id
+        && super::validate_reply(response, &query.queries).is_ok()
 }
 
 /// Detects a kernel-truncated response: a datagram larger than the receive
@@ -286,25 +300,130 @@ mod tests {
         response
     }
 
-    #[tokio::test]
-    async fn reuses_idle_udp_socket() {
-        let pool = Arc::new(UdpSocketPool {
-            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+    async fn endpoint(server: &UdpSocket) -> Arc<dyn DnsConn> {
+        UdpConnector {
+            addr: server.local_addr().unwrap(),
             provider: MarkRuntimeProvider::new(0, Default::default()),
-            idle: Mutex::new(VecDeque::new()),
+            query_timeout: Duration::from_secs(2),
+        }
+        .connect()
+        .await
+        .unwrap()
+    }
+
+    async fn start_query(
+        conn: &Arc<dyn DnsConn>,
+        server: &UdpSocket,
+    ) -> (tokio::task::JoinHandle<Result<Message, DnsConnError>>, Message, SocketAddr) {
+        let conn = conn.clone();
+        let handle = tokio::spawn(async move {
+            conn.query(&query().queries[0], &DnsRequestOptions::default()).await
         });
-        let first = pool.checkout().await.unwrap();
-        let first_addr = first.socket().local_addr().unwrap();
-        drop(first);
-        let second = pool.checkout().await.unwrap();
-        assert_eq!(second.socket().local_addr().unwrap(), first_addr);
+        let mut buf = [0; 512];
+        let (size, addr) = tokio::time::timeout(Duration::from_secs(1), server.recv_from(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        (handle, Message::from_vec(&buf[..size]).unwrap(), addr)
+    }
+
+    async fn respond(server: &UdpSocket, request: &Message, addr: SocketAddr) {
+        let mut response = Message::response(request.metadata.id, OpCode::Query);
+        response.queries.clone_from(&request.queries);
+        response.answers.push(Record::from_rdata(
+            request.queries[0].name().clone(),
+            60,
+            RData::A(A(std::net::Ipv4Addr::LOCALHOST)),
+        ));
+        server.send_to(&response.to_vec().unwrap(), addr).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_queries_match_on_their_socket_in_reverse_order() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let conn = endpoint(&server).await;
+        let mut pending = Vec::new();
+        let mut ids = std::collections::HashSet::new();
+        let mut ports = std::collections::HashSet::new();
+        for _ in 0..(UDP_SOCKET_POOL_SIZE * 2) {
+            let (handle, message, addr) = start_query(&conn, &server).await;
+            assert!(ids.insert((addr, message.metadata.id)));
+            ports.insert(addr);
+            pending.push((handle, message, addr));
+        }
+        assert_eq!(ports.len(), UDP_SOCKET_POOL_SIZE);
+        for (handle, message, addr) in pending.into_iter().rev() {
+            respond(&server, &message, addr).await;
+            assert_eq!(handle.await.unwrap().unwrap().metadata.id, message.metadata.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_at_capacity_admits_one_query_and_preserves_other_waiters() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let conn = UdpConnector {
+            addr: server.local_addr().unwrap(),
+            provider: MarkRuntimeProvider::new(0, Default::default()),
+            query_timeout: Duration::from_secs(30),
+        }
+        .connect()
+        .await
+        .unwrap();
+        let mut pending = Vec::new();
+        for _ in 0..UDP_SOCKET_POOL_SIZE * UDP_SOCKET_MAX_USES {
+            pending.push(start_query(&conn, &server).await);
+        }
+        let overflow = conn.query(&query().queries[0], &DnsRequestOptions::default()).await;
+        assert!(matches!(overflow, Err(DnsConnError::NoConnections)));
+
+        let (canceled, old_message, old_addr) = pending.pop().unwrap();
+        canceled.abort();
+        assert!(canceled.await.unwrap_err().is_cancelled());
+        let (replacement, new_message, new_addr) = start_query(&conn, &server).await;
+        respond(&server, &old_message, old_addr).await;
+        respond(&server, &new_message, new_addr).await;
+        assert_eq!(replacement.await.unwrap().unwrap().metadata.id, new_message.metadata.id);
+        for (task, message, addr) in pending.into_iter().rev() {
+            respond(&server, &message, addr).await;
+            assert_eq!(task.await.unwrap().unwrap().metadata.id, message.metadata.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn canceled_ids_stay_retired_and_idle_socket_rotates() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let conn = endpoint(&server).await;
+        let (handle, canceled, first_addr) = start_query(&conn, &server).await;
+        handle.abort();
+        let _ = handle.await;
+        let mut ids = std::collections::HashSet::from([canceled.metadata.id]);
+        for _ in 1..UDP_SOCKET_MAX_USES - 1 {
+            let (handle, message, addr) = start_query(&conn, &server).await;
+            assert_eq!(addr, first_addr);
+            assert!(ids.insert(message.metadata.id));
+            respond(&server, &canceled, first_addr).await;
+            respond(&server, &message, addr).await;
+            assert_eq!(handle.await.unwrap().unwrap().metadata.id, message.metadata.id);
+        }
+        let (last, old_message, old_addr) = start_query(&conn, &server).await;
+        assert_eq!(old_addr, first_addr);
+        let (handle, message, addr) = start_query(&conn, &server).await;
+        assert_ne!(addr, old_addr);
+        respond(&server, &message, addr).await;
+        assert!(handle.await.unwrap().is_ok());
+        respond(&server, &old_message, old_addr).await;
+        assert!(last.await.unwrap().is_ok());
+        let (next, message, next_addr) = start_query(&conn, &server).await;
+        assert_eq!(next_addr, addr);
+        respond(&server, &message, next_addr).await;
+        assert!(next.await.unwrap().is_ok());
     }
 
     #[test]
     fn validates_id() {
         let mut wrong_id = coded_response(hickory_proto::op::ResponseCode::NoError);
         wrong_id.metadata.id = 0x9999;
-        assert!(validate_response(&wrong_id.to_vec().unwrap(), &query()).is_err());
+        assert!(!validate_response(&wrong_id, &query()));
     }
 
     #[test]
@@ -314,22 +433,17 @@ mod tests {
         wrong_question
             .queries
             .push(Query::query(Name::from_str("other.com.").unwrap(), RecordType::A));
-        assert!(validate_response(&wrong_question.to_vec().unwrap(), &query()).is_err());
+        assert!(!validate_response(&wrong_question, &query()));
 
         // The exact echoed question is accepted.
         let mut echoed = coded_response(hickory_proto::op::ResponseCode::NoError);
         echoed.queries.clone_from(&query().queries);
-        assert!(validate_response(&echoed.to_vec().unwrap(), &query()).is_ok());
+        assert!(validate_response(&echoed, &query()));
     }
 
     #[test]
     fn rejects_non_response_messages() {
-        assert!(validate_response(&query().to_vec().unwrap(), &query()).is_err());
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert!(validate_response(&[0xde, 0xad, 0xbe, 0xef], &query()).is_err());
+        assert!(!validate_response(&query(), &query()));
     }
 
     /// A full response cut to a header prefix (kernel truncation of an

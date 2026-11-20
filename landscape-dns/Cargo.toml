@@ -13,9 +13,10 @@ workspace = true
 default = ["pool-native"]
 pool-native = ["dep:rand", "dep:webpki-roots", "dep:rustls-platform-verifier"]
 # Manual native-upstream benchmark harness; not part of production builds.
-bench = ["pool-native"]
+bench = ["pool-native", "dep:hdrhistogram"]
 
 [dependencies]
+hdrhistogram = { workspace = true, optional = true }
 landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }

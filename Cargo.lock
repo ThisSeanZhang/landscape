@@ -3046,6 +3046,7 @@ dependencies = [
  "dashmap 6.2.1",
  "futures-util",
  "h2",
+ "hdrhistogram",
  "hickory-proto",
  "hickory-resolver",
  "hickory-server",
