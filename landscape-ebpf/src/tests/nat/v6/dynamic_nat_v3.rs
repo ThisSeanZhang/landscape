@@ -331,29 +331,6 @@ mod tests {
         assert_prefix_refresh(old_src, new_src, 60);
     }
 
-    fn add_ct6_icmp_entry<T: MapCore>(
-        timer_map: &T,
-        key: &Nat6TimerKey,
-        src: Ipv6Addr,
-        trigger_addr: Ipv6Addr,
-        trigger_port: u16,
-    ) {
-        let mut value = Nat6TimerValue {
-            server_status: 1,
-            client_status: 1,
-            is_allow_reuse: 1,
-            need_prefix_replace: 1,
-            ..Default::default()
-        };
-        value.trigger_addr = trigger_addr.octets();
-        value.trigger_port = trigger_port.to_be();
-        value.client_prefix.copy_from_slice(&src.octets()[..8]);
-
-        timer_map
-            .update(key.as_bytes(), value.as_bytes(), MapFlags::ANY)
-            .expect("failed to insert v3 v6 ct entry");
-    }
-
     #[test]
     fn icmpv6_echo_round_trip_dynamic_v3() {
         let src = lan_host();
@@ -423,9 +400,9 @@ mod tests {
         let dst = remote();
         let prefix_len = 60;
 
+        // Real TCP connections live in nat6_timer_map under inner l4_protocol = TCP (6),
+        // not NEXTHDR_ICMP (58).
         let key = timer_key_for(src, CLIENT_PORT, prefix_len);
-        let mut key = key;
-        key.l4_protocol = 58;
 
         let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -438,7 +415,7 @@ mod tests {
             rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
         }
         let skel = open_skel.load().unwrap();
-        add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
+        add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(dst, src, 443, CLIENT_PORT);
         let pkt = build_ipv6_icmp_time_exceeded(src, dst, &quoted);
@@ -457,6 +434,10 @@ mod tests {
             result.return_value as i32, -1,
             "egress ICMP error should return TC_ACT_UNSPEC(-1)"
         );
+
+        let ct_after = lookup_ct6_entry(&skel.maps.nat6_timer_map, &key);
+        assert_eq!(ct_after.client_status, 1, "ICMPv6 error must not clobber TCP client_status");
+        assert_eq!(ct_after.server_status, 1, "ICMPv6 error must not clobber TCP server_status");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -498,9 +479,9 @@ mod tests {
         let wan_src = npt_wan_ip_for(src);
         let prefix_len = 60;
 
+        // Real TCP connections live in nat6_timer_map under inner l4_protocol = TCP (6),
+        // not NEXTHDR_ICMP (58).
         let key = timer_key_for(src, CLIENT_PORT, prefix_len);
-        let mut key = key;
-        key.l4_protocol = 58;
 
         let mut builder = TcNat6SkelBuilder::default();
         let pin_root = crate::tests::isolated_pin_root("nat-v6-dynamic-v3");
@@ -513,7 +494,7 @@ mod tests {
             rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
         }
         let skel = open_skel.load().unwrap();
-        add_ct6_icmp_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
+        add_ct6_entry(&skel.maps.nat6_timer_map, &key, src, dst, 443);
 
         let quoted = build_quoted_ipv6_tcp(wan_src, dst, CLIENT_PORT, 443);
         let pkt = build_ipv6_icmp_time_exceeded(dst, wan_src, &quoted);
@@ -529,6 +510,10 @@ mod tests {
 
         let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress ICMP error should return TC_ACT_OK(0)");
+
+        let ct_after = lookup_ct6_entry(&skel.maps.nat6_timer_map, &key);
+        assert_eq!(ct_after.client_status, 1, "ICMPv6 error must not clobber TCP client_status");
+        assert_eq!(ct_after.server_status, 1, "ICMPv6 error must not clobber TCP server_status");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
