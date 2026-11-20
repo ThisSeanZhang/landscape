@@ -138,7 +138,7 @@ function replace_default(config: DefaultDnsConfig) {
     id: rule.value.id,
     name: rule.value.name ?? null,
     remark: rule.value?.remark ?? "",
-    ...DEFAULT_CONFIGS[config],
+    ...structuredClone(DEFAULT_CONFIGS[config]),
     use_experimental_pool: rule.value?.use_experimental_pool ?? false,
     update_at: rule.value.update_at,
   };

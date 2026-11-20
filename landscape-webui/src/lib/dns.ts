@@ -1,4 +1,5 @@
 import type {
+  DnsUpstreamConfig,
   FlowMark,
   DNSRuleConfig,
   FilterResult,
@@ -18,20 +19,52 @@ export const UPSTREAM_OPTIONS = [
   {
     label: "UDP",
     value: DnsUpstreamModeTsEnum.Plaintext,
+    defaultPort: 53,
   },
   {
     label: "DoH",
     value: DnsUpstreamModeTsEnum.Https,
+    defaultPort: 443,
   },
   {
     label: "DoT",
     value: DnsUpstreamModeTsEnum.Tls,
+    defaultPort: 853,
   },
   {
     label: "DoQ",
     value: DnsUpstreamModeTsEnum.Quic,
+    defaultPort: 853,
   },
 ];
+
+export function changeUpstreamProtocol(
+  rule: DnsUpstreamConfig,
+  next: DnsUpstreamConfig["mode"]["t"],
+): DnsUpstreamConfig {
+  if (rule.mode.t === next) return rule;
+  const previous = UPSTREAM_OPTIONS.find(
+    (option) => option.value === rule.mode.t,
+  );
+  const selected = UPSTREAM_OPTIONS.find((option) => option.value === next);
+  const port =
+    previous && selected && rule.port === previous.defaultPort
+      ? selected.defaultPort
+      : rule.port;
+  const domain = rule.mode.t === "plaintext" ? "" : rule.mode.domain;
+  let mode: DnsUpstreamConfig["mode"];
+  switch (next) {
+    case "plaintext":
+      mode = { t: next };
+      break;
+    case "https":
+      mode = { t: next, domain, http_endpoint: null };
+      break;
+    default:
+      mode = { t: next, domain };
+  }
+  return { ...rule, mode, port };
+}
 
 export function upstream_mode_exhibit_name(mode: string): string {
   for (const each of UPSTREAM_OPTIONS) {

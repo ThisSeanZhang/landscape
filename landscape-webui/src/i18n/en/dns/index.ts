@@ -87,7 +87,10 @@ export default {
     request_mode: "Upstream request mode",
     type_plaintext: "Plaintext",
     port: "Port",
-    port_placeholder: "Used in DNS rule selection",
+    unusual_port:
+      "{protocol} usually uses port {usual}. Confirm that your upstream serves {protocol} on port {port}.",
+    confirm_port: "Confirm upstream port",
+    save_custom_port: "Save with this port",
     domain: "Domain",
     domain_placeholder: "Do not include https:// or trailing /dns-query",
     url: "URL",

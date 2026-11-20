@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { useMessage } from "naive-ui";
+import { useDialog, useMessage } from "naive-ui";
 import { isIP } from "is-ip";
 import { computed } from "vue";
 import { ref } from "vue";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
 import { get_dns_upstream, push_dns_upstream } from "@/api/dns_rule/upstream";
-import { DnsUpstreamModeTsEnum, UPSTREAM_OPTIONS } from "@/lib/dns";
+import {
+  changeUpstreamProtocol,
+  DnsUpstreamModeTsEnum,
+  UPSTREAM_OPTIONS,
+} from "@/lib/dns";
 import {
   copy_context_to_clipboard,
   read_context_from_clipboard,
@@ -19,6 +23,7 @@ type Props = {
 const props = defineProps<Props>();
 
 const message = useMessage();
+const dialog = useDialog();
 const { t } = useI18n();
 
 const emit = defineEmits(["refresh"]);
@@ -34,6 +39,28 @@ const isModified = computed(() => {
   return JSON.stringify(rule.value) !== origin_rule_json.value;
 });
 
+const protocol = computed(() =>
+  UPSTREAM_OPTIONS.find((option) => option.value === rule.value?.mode.t),
+);
+const portWarning = computed(() => {
+  const port = rule.value?.port;
+  if (port == null || !protocol.value || port === protocol.value.defaultPort) {
+    return "";
+  }
+  return t("dns.upstream_edit.unusual_port", {
+    protocol: protocol.value.label,
+    usual: protocol.value.defaultPort,
+    port,
+  });
+});
+
+function selectProtocol(value: unknown) {
+  const selected = UPSTREAM_OPTIONS.find((option) => option.value === value);
+  if (rule.value && selected) {
+    rule.value = changeUpstreamProtocol(rule.value, selected.value);
+  }
+}
+
 async function enter() {
   if (props.rule_id) {
     rule.value = await get_dns_upstream(props.rule_id);
@@ -43,7 +70,7 @@ async function enter() {
       remark: "",
       mode: { t: DnsUpstreamModeTsEnum.Plaintext },
       ips: [],
-      port: 53,
+      port: null,
       enable_ip_validation: false,
       use_experimental_pool: false,
     };
@@ -104,9 +131,24 @@ const rules = {
 };
 
 async function saveRule() {
+  if (!rule.value || commit_spin.value) return;
+  await formRef.value?.validate();
+  if (portWarning.value) {
+    dialog.warning({
+      title: t("dns.upstream_edit.confirm_port"),
+      content: portWarning.value,
+      positiveText: t("dns.upstream_edit.save_custom_port"),
+      negativeText: t("common.cancel"),
+      onPositiveClick: submitRule,
+    });
+    return;
+  }
+  await submitRule();
+}
+
+async function submitRule() {
   if (rule.value) {
     try {
-      await formRef.value?.validate();
       // 如果是 HTTPS 模式且 endpoint 为空
       if (
         rule.value.mode.t === DnsUpstreamModeTsEnum.Https &&
@@ -232,7 +274,8 @@ async function import_rules() {
           path="mode.domain"
         >
           <n-radio-group
-            v-model:value="rule.mode.t"
+            :value="rule.mode.t"
+            @update:value="selectProtocol"
             name="dns_server_upstream_mode"
           >
             <n-radio-button
@@ -257,10 +300,14 @@ async function import_rules() {
             style="flex: 1"
             :min="1"
             :max="65535"
-            :placeholder="t('dns.upstream_edit.port_placeholder')"
+            :placeholder="String(protocol?.defaultPort ?? '')"
             v-model:value="rule.port"
           />
         </n-form-item-gi>
+
+        <n-gi v-if="portWarning" :span="8">
+          <n-alert type="warning">{{ portWarning }}</n-alert>
+        </n-gi>
 
         <n-form-item-gi
           :span="4"

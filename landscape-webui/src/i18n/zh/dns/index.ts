@@ -84,7 +84,10 @@ export default {
     request_mode: "上游请求模式",
     type_plaintext: "无加密",
     port: "端口",
-    port_placeholder: "DNS 规则中进行选择时用到",
+    unusual_port:
+      "{protocol} 通常使用端口 {usual}。请确认上游在端口 {port} 提供 {protocol} 服务。",
+    confirm_port: "确认上游端口",
+    save_custom_port: "使用此端口保存",
     domain: "域名",
     domain_placeholder: "无需包含 https 以及尾部 /dns-query",
     url: "URL",
