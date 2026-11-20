@@ -93,10 +93,13 @@ pub fn build_ra(
         opts.insert(IcmpV6Option::route_information(prefix_len, prefix));
     }
 
-    // DNS servers: link-local + static + dynamic
-    opts.insert(IcmpV6Option::recursive_dns_server(600, mac_addr.to_ipv6_link_local()));
-    for ip in status.dns_servers().iter() {
-        opts.insert(IcmpV6Option::recursive_dns_server(600, ip));
+    // DNS servers: always advertise stable link-local; optionally include static + dynamic GUA
+    let rdnss_lifetime = params.valid_lifetime.max(600);
+    opts.insert(IcmpV6Option::recursive_dns_server(rdnss_lifetime, mac_addr.to_ipv6_link_local()));
+    if !params.rdnss_link_local_only {
+        for ip in status.dns_servers().iter() {
+            opts.insert(IcmpV6Option::recursive_dns_server(rdnss_lifetime, ip));
+        }
     }
 
     opts.insert(IcmpV6Option::mtu(1500));
@@ -193,35 +196,48 @@ pub fn handle_na(
     }
 }
 
-/// Build a deprecation RA with all prefix lifetimes set to zero.
+/// Build a service-shutdown deprecation RA withdrawing the default router
+/// (`router_lifetime = 0`), all advertised prefixes (`PIO valid=0, preferred=0`),
+/// all route information options (`RIO route_lifetime=0`), and all advertised
+/// RDNSS servers (`RDNSS lifetime=0`).
 pub fn build_deprecation_ra(
     status: &Ipv6ServerStatus,
+    params: &Ipv6LanReplyParams,
     mac_addr: &MacAddr,
-    ra_flags: u8,
 ) -> Icmpv6Message {
     let mut opts = IcmpV6Options::new();
     opts.insert(IcmpV6Option::source_link_layer_address(&mac_addr.octets()));
 
-    let mut has_prefix = false;
-
     for entry in status.ra_entries() {
         opts.insert(IcmpV6Option::prefix_information(entry.prefix_len, 0, 0, entry.prefix, false));
-        has_prefix = true;
+        opts.insert(IcmpV6Option::route_information_with_lifetime(
+            entry.prefix_len,
+            0,
+            entry.prefix,
+        ));
     }
 
     for (prefix, prefix_len) in onlink_only_prefixes(status) {
         opts.insert(IcmpV6Option::prefix_information(prefix_len, 0, 0, prefix, false));
-        has_prefix = true;
+        opts.insert(IcmpV6Option::route_information_with_lifetime(prefix_len, 0, prefix));
     }
 
-    if !has_prefix {
-        return Icmpv6Message::RouterAdvertisement(RouterAdvertisement::new(ra_flags, opts));
+    let link_local = mac_addr.to_ipv6_link_local();
+    opts.insert(IcmpV6Option::recursive_dns_server(0, link_local));
+    if !params.rdnss_link_local_only {
+        for ip in status.dns_servers().iter() {
+            if ip != link_local {
+                opts.insert(IcmpV6Option::recursive_dns_server(0, ip));
+            }
+        }
     }
-
-    opts.insert(IcmpV6Option::recursive_dns_server(600, mac_addr.to_ipv6_link_local()));
     opts.insert(IcmpV6Option::mtu(1500));
 
-    Icmpv6Message::RouterAdvertisement(RouterAdvertisement::new(ra_flags, opts))
+    Icmpv6Message::RouterAdvertisement(RouterAdvertisement::with_router_lifetime(
+        params.ra_flags,
+        0,
+        opts,
+    ))
 }
 
 pub async fn send_msg(sender: &Arc<UdpSocket>, msg: &Icmpv6Message, dst: SocketAddr) -> bool {
@@ -392,6 +408,168 @@ mod tests {
         assert!(matches!(
             handle_na(&bytes, SocketAddr::new(ip.into(), 0), &mut status),
             SlaacActionResult::VerificationCandidate { ip: candidate } if candidate == ip
+        ));
+    }
+
+    fn status_with_pd_subnet(prefix: &str, router: &str) -> Ipv6ServerStatus {
+        use crate::lan_service::lan_ipv6_server::{SubnetSource, SubnetState};
+        use uuid::Uuid;
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        status.update_prefix(&[SubnetState {
+            group_id: "lan-v6".to_string(),
+            sub_prefix: prefix.parse().unwrap(),
+            sub_prefix_len: 64,
+            sub_router: router.parse().unwrap(),
+            pool_index: 1,
+            ra_preferred_lifetime: 300,
+            ra_valid_lifetime: 600,
+            is_na: false,
+            has_ra: true,
+            source: SubnetSource::Pd { link_id: Uuid::nil() },
+            pd_config: None,
+        }]);
+        status
+    }
+
+    fn decode_ra(msg: &Icmpv6Message) -> RouterAdvertisement {
+        let mut buf = BytesMut::new();
+        NetProtoCodec::encode(msg, &mut buf).expect("encode RA");
+        RouterAdvertisement::from_wire_bytes(&buf).expect("decode wire RA")
+    }
+
+    #[test]
+    fn build_ra_link_local_only_omits_dynamic_gua_rdnss() {
+        let status = status_with_pd_subnet("2001:db8:abcd:1::", "2001:db8:abcd:1::1");
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let link_local = mac.to_ipv6_link_local();
+        let params = Ipv6LanReplyParams {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            ra_flags: 0,
+            ra_autonomous: true,
+            rdnss_link_local_only: true,
+        };
+
+        let ra = decode_ra(&build_ra(&status, &params, &mac, 100_000));
+        let rdnss = ra.opts.get_all(25);
+        assert_eq!(rdnss.len(), 1);
+        assert!(matches!(
+            rdnss[0],
+            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+                if addresses.as_slice() == link_local.octets()
+        ));
+    }
+
+    #[test]
+    fn build_ra_dual_rdnss_includes_link_local_and_dynamic_gua() {
+        let status = status_with_pd_subnet("2001:db8:abcd:1::", "2001:db8:abcd:1::1");
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let link_local = mac.to_ipv6_link_local();
+        let gua_dns: Ipv6Addr = "2001:db8:abcd:1::1".parse().unwrap();
+        let params = Ipv6LanReplyParams {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            ra_flags: 0,
+            ra_autonomous: true,
+            rdnss_link_local_only: false,
+        };
+
+        let ra = decode_ra(&build_ra(&status, &params, &mac, 100_000));
+        let rdnss = ra.opts.get_all(25);
+        assert_eq!(rdnss.len(), 2);
+        assert!(rdnss.iter().any(|opt| matches!(
+            opt,
+            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+                if addresses.as_slice() == link_local.octets()
+        )));
+        assert!(rdnss.iter().any(|opt| matches!(
+            opt,
+            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+                if addresses.as_slice() == gua_dns.octets()
+        )));
+    }
+
+    #[test]
+    fn build_deprecation_ra_stop_withdraws_router_pio_rio_and_rdnss_in_both_modes() {
+        let status = status_with_pd_subnet("2001:db8:abcd:1::", "2001:db8:abcd:1::1");
+        let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
+        let link_local = mac.to_ipv6_link_local();
+        let prefix: Ipv6Addr = "2001:db8:abcd:1::".parse().unwrap();
+        let gua_dns: Ipv6Addr = "2001:db8:abcd:1::1".parse().unwrap();
+
+        // Mode 1: Link-local-only RDNSS
+        let ll_params = Ipv6LanReplyParams {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            ra_flags: 0,
+            ra_autonomous: true,
+            rdnss_link_local_only: true,
+        };
+        let ra_ll = decode_ra(&build_deprecation_ra(&status, &ll_params, &mac));
+        assert_eq!(ra_ll.router_lifetime, 0, "stop RA must zero router_lifetime");
+        assert!(matches!(
+            ra_ll.opts.get(3),
+            Some(IcmpV6Option::PrefixInformation {
+                valid_lifetime: 0,
+                preferred_lifetime: 0,
+                prefix: p,
+                ..
+            }) if *p == prefix.octets()
+        ));
+        assert!(matches!(
+            ra_ll.opts.get(24),
+            Some(IcmpV6Option::RouteInformation {
+                route_lifetime: 0,
+                prefix: p,
+                ..
+            }) if p.as_slice() == prefix.octets()
+        ));
+        let rdnss_ll = ra_ll.opts.get_all(25);
+        assert_eq!(rdnss_ll.len(), 1);
+        assert!(matches!(
+            rdnss_ll[0],
+            IcmpV6Option::RecursiveDNSServer { lifetime: 0, addresses, .. }
+                if addresses.as_slice() == link_local.octets()
+        ));
+
+        // Mode 2: Dual RDNSS (link-local + GUA)
+        let dual_params = Ipv6LanReplyParams { rdnss_link_local_only: false, ..ll_params };
+        let ra_dual = decode_ra(&build_deprecation_ra(&status, &dual_params, &mac));
+        assert_eq!(ra_dual.router_lifetime, 0);
+        assert!(matches!(
+            ra_dual.opts.get(24),
+            Some(IcmpV6Option::RouteInformation {
+                route_lifetime: 0,
+                prefix: p,
+                ..
+            }) if p.as_slice() == prefix.octets()
+        ));
+        let rdnss_dual = ra_dual.opts.get_all(25);
+        assert_eq!(rdnss_dual.len(), 2);
+        assert!(rdnss_dual.iter().any(|opt| matches!(
+            opt,
+            IcmpV6Option::RecursiveDNSServer { lifetime: 0, addresses, .. }
+                if addresses.as_slice() == link_local.octets()
+        )));
+        assert!(rdnss_dual.iter().any(|opt| matches!(
+            opt,
+            IcmpV6Option::RecursiveDNSServer { lifetime: 0, addresses, .. }
+                if addresses.as_slice() == gua_dns.octets()
+        )));
+
+        // Mode 3: Empty prefixes on stop still withdraw router_lifetime & link-local RDNSS
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let empty_status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        let ra_empty = decode_ra(&build_deprecation_ra(&empty_status, &dual_params, &mac));
+        assert_eq!(ra_empty.router_lifetime, 0);
+        let rdnss_empty = ra_empty.opts.get_all(25);
+        assert_eq!(rdnss_empty.len(), 1);
+        assert!(matches!(
+            rdnss_empty[0],
+            IcmpV6Option::RecursiveDNSServer { lifetime: 0, addresses, .. }
+                if addresses.as_slice() == link_local.octets()
         ));
     }
 }

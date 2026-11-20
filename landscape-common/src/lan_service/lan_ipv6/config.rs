@@ -160,6 +160,12 @@ pub struct LanIPv6ConfigV2 {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub dhcpv6: Option<DHCPv6ServerConfig>,
+    /// When true, RA RDNSS and DHCPv6 DNS options advertise only the
+    /// interface's stable link-local address instead of dynamic PD / static GUA
+    /// subnet router addresses. Defaults to false for backward compatibility.
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub rdnss_link_local_only: bool,
 }
 
 fn default_lifetime() -> u32 {
@@ -247,6 +253,7 @@ mod tests {
             ra_flag: ra_flag_default(),
             prefix_groups: vec![],
             dhcpv6: None,
+            rdnss_link_local_only: false,
         };
 
         assert_eq!(make(60).icmp_ad_interval(), 20);
@@ -255,5 +262,45 @@ mod tests {
         assert_eq!(make(900).icmp_ad_interval(), 300);
         assert_eq!(make(1800).icmp_ad_interval(), 600);
         assert_eq!(make(3600).icmp_ad_interval(), 600);
+    }
+
+    #[test]
+    fn legacy_json_without_rdnss_link_local_only_defaults_to_false() {
+        let legacy_json = r#"{
+            "ad_interval": 300,
+            "dhcpv6": {"enable": false, "ia_na": null, "ia_pd": null},
+            "lifetime": 300,
+            "mode": "slaac",
+            "prefix_groups": [{
+                "group_id": "lan-v6",
+                "na": null,
+                "parent": {
+                    "depend_iface": "wan0",
+                    "expected_pd_len_snapshot": 60,
+                    "link_id": "00000000-0000-0000-0000-000000000001",
+                    "t": "pd"
+                },
+                "pd": null,
+                "ra": {"pool_index": 1, "preferred_lifetime": 300, "valid_lifetime": 600}
+            }],
+            "ra_flag": {
+                "home_agent": false,
+                "managed_address_config": false,
+                "nd_proxy": false,
+                "other_config": false,
+                "prf": 0,
+                "reserved": 0
+            }
+        }"#;
+
+        let cfg: LanIPv6ConfigV2 = serde_json::from_str(legacy_json).expect("legacy json parses");
+        assert!(!cfg.rdnss_link_local_only);
+    }
+
+    #[test]
+    fn explicit_rdnss_link_local_only_true_is_preserved() {
+        let json = r#"{"mode": "slaac", "lifetime": 300, "rdnss_link_local_only": true}"#;
+        let cfg: LanIPv6ConfigV2 = serde_json::from_str(json).expect("json parses");
+        assert!(cfg.rdnss_link_local_only);
     }
 }
