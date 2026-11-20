@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 
 test.use({ viewport: { width: 1920, height: 1080 } });
 
-const historyRecord = (ip: string) => ({
+const connectionRecord = (ip: string) => ({
   key: { create_time: "100000000", cpu_id: 0 },
   src_ip: ip,
   dst_ip: "192.0.2.99",
@@ -14,13 +14,17 @@ const historyRecord = (ip: string) => ({
   trace_id: 0,
   ifindex: 1,
   last_report_time: Date.now(),
+  create_time_ms: 100,
+  gress: 1,
+});
+
+const historyRecord = (ip: string) => ({
+  ...connectionRecord(ip),
   total_ingress_bytes: 100,
   total_egress_bytes: 50,
   total_ingress_pkts: 2,
   total_egress_pkts: 1,
   status: 2,
-  create_time_ms: 100,
-  gress: 1,
 });
 
 test.beforeEach(async ({ page }) => {
@@ -44,6 +48,52 @@ test.beforeEach(async ({ page }) => {
         : [];
     return route.fulfill({ json: { data } });
   });
+});
+
+test("live and history connection rows label protocol 58 as ICMPv6", async ({
+  page,
+}) => {
+  const record = {
+    ...connectionRecord("2001:db8::1"),
+    dst_ip: "2001:db8::2",
+    src_port: 0,
+    dst_port: 0,
+    l3_proto: 1,
+    l4_proto: 58,
+  };
+  await page.route("**/api/v1/system/info/capabilities", (route) =>
+    route.fulfill({ json: { data: ["metric_persistent"] } }),
+  );
+  await page.route("**/api/v1/metrics/connections", (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            ...record,
+            status: "active",
+            ingress_bps: 0,
+            egress_bps: 0,
+            ingress_pps: 0,
+            egress_pps: 0,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(/\/connections\/history(?:\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          items: [{ ...historyRecord(record.src_ip), ...record }],
+          total: 1,
+        },
+      },
+    }),
+  );
+  for (const view of ["live", "history"]) {
+    await page.goto("/metrics/conn/" + view);
+    await expect(page.getByRole("cell", { name: /\bICMPv6\b/ })).toBeVisible();
+  }
 });
 
 test("connection navigation keeps the IP view and URL filters across live and history", async ({
@@ -237,15 +287,9 @@ test("live headers sort numeric rates, source ports and durations and remember t
 }) => {
   const now = Date.now();
   const items = Array.from({ length: 60 }, (_, i) => {
-    const {
-      total_ingress_bytes,
-      total_egress_bytes,
-      total_ingress_pkts,
-      total_egress_pkts,
-      ...item
-    } = historyRecord("192.0.2." + (i + 1));
     return {
-      ...item,
+      ...connectionRecord("192.0.2." + (i + 1)),
+      status: "active",
       key: { create_time: String(i + 1), cpu_id: 0 },
       src_port: [9, 100, 20][i] ?? 10,
       dst_port: 443 - i,
