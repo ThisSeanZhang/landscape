@@ -58,11 +58,12 @@ lookup_ct6_egress(struct __sk_buff *skb, const struct ip6_scan_offsets *off,
     key.client_port = sport;
     COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
     key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = nat6_outer_protocol(off);
+    key.l4_protocol = off->l4_protocol;
 
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
     if (value) {
-        if (!nat6_is_same_prefix(value->client_prefix, src_addr, npt_id_mask)) {
+        if (!nat6_is_icmp_error(off) &&
+            !nat6_is_same_prefix(value->client_prefix, src_addr, npt_id_mask)) {
             update_ipv6_cache_value(skb, src_addr, dst_addr, dport, value);
         }
         return value;
@@ -79,7 +80,7 @@ create_ct6_egress(struct __sk_buff *skb, const struct ip6_scan_offsets *off,
     key.client_port = sport;
     COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
     key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = nat6_outer_protocol(off);
+    key.l4_protocol = off->l4_protocol;
 
     struct nat6_timer_value new_value = {};
     __builtin_memset(&new_value, 0, sizeof(new_value));
@@ -120,29 +121,33 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport, u32 ifindex) {
     int ret;
     u32 l3_offset = off->l3_offset;
-    u8 proto = nat6_outer_protocol(off);
+    u8 ct_proto = off->l4_protocol;
+    u8 outer_proto = nat6_outer_protocol(off);
 
     if (wan_ro_prefix6.b[0] == 0) {
         return TC_ACT_SHOT;
     }
 
     u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
+    bool is_icmpx_error = nat6_is_icmp_error(off);
 
     struct nat6_timer_value *ct_value =
         lookup_ct6_egress(skb, off, src_addr, dst_addr, sport, dport, npt_id_mask);
     if (ct_value) {
-        nat6_ct_advance_pkt(proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
-        nat6_metric_accumulate(skb, false, ct_value);
+        if (!is_icmpx_error) {
+            nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
+            nat6_metric_accumulate(skb, false, ct_value);
+        }
         if (!ct_value->need_prefix_replace) {
             return TC_ACT_UNSPEC;
         }
         goto do_nptv6;
     }
 
-    struct static_nat6_mapping_value *static_val = nat6_check_egress_static(proto, src_addr, sport);
+    struct static_nat6_mapping_value *static_val =
+        nat6_check_egress_static(ct_proto, src_addr, sport);
 
-    bool is_icmpx_error = nat6_is_icmp_error(off);
-    bool allow_create = nat6_allows_create_pkt(proto, off->tcp_phase, is_icmpx_error);
+    bool allow_create = nat6_allows_create_pkt(ct_proto, off->tcp_phase, is_icmpx_error);
 
     if (!allow_create) {
         if (!static_val) {
@@ -161,14 +166,14 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(
     if (!ct_value) {
         return TC_ACT_SHOT;
     }
-    nat6_ct_advance_pkt(proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
+    nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
     nat6_metric_accumulate(skb, false, ct_value);
     if (!need_prefix_replace) {
         return TC_ACT_UNSPEC;
     }
 
 do_nptv6:
-    if (nat6_is_icmp_error(off)) {
+    if (is_icmpx_error) {
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, src_addr->in6_u.u6_addr32);
         new_ip_prefix = (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
@@ -210,7 +215,7 @@ do_nptv6:
         }
 
         u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->l4_offset, proto, &l4_checksum_offset)) {
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
@@ -243,7 +248,7 @@ do_nptv6:
 
     } else {
         u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->l4_offset, proto, &l4_checksum_offset)) {
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
@@ -267,7 +272,7 @@ lookup_ct6_ingress(const struct ip6_scan_offsets *off, const struct in6_addr *ds
     key.client_port = dport;
     COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
     key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = nat6_outer_protocol(off);
+    key.l4_protocol = off->l4_protocol;
 
     return bpf_map_lookup_elem(&nat6_timer_map, &key);
 }
@@ -281,7 +286,7 @@ create_ct6_ingress(struct __sk_buff *skb, const struct ip6_scan_offsets *off,
     key.client_port = dport;
     COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
     key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = nat6_outer_protocol(off);
+    key.l4_protocol = off->l4_protocol;
 
     struct nat6_timer_value new_value = {};
     __builtin_memset(&new_value, 0, sizeof(new_value));
@@ -306,7 +311,8 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     int ret = 0;
     __be64 local_client_prefix = {0};
     u32 l3_offset = off->l3_offset;
-    u8 proto = nat6_outer_protocol(off);
+    u8 ct_proto = off->l4_protocol;
+    u8 outer_proto = nat6_outer_protocol(off);
 
     if (wan_ro_prefix6.b[0] == 0) {
         return TC_ACT_SHOT;
@@ -315,7 +321,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
 
     bool is_icmpx = nat6_is_icmp_error(off);
-    bool allow_create = nat6_allows_create_pkt(proto, off->tcp_phase, is_icmpx);
+    bool allow_create = nat6_allows_create_pkt(ct_proto, off->tcp_phase, is_icmpx);
     bool need_prefix_replace = false;
 
     struct nat6_timer_value *ct_value = lookup_ct6_ingress(off, dst_addr, dport, npt_id_mask);
@@ -323,7 +329,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
         bool ct_is_static = ct_value->is_static != 0;
 
         if (!ct_is_static) {
-            if (ct_value->is_allow_reuse == 0 && proto != NEXTHDR_ICMP) {
+            if (ct_value->is_allow_reuse == 0 && ct_proto != NEXTHDR_ICMP) {
                 if (!ip_addr_equal_x(src_addr, &ct_value->trigger_addr) ||
                     sport != ct_value->trigger_port) {
                     // ld_from_wan_log("FLOW_ALLOW_REUSE MARK not set, DROP PACKET");
@@ -336,8 +342,10 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
         }
 
         COPY_ADDR_FROM(&local_client_prefix, ct_value->client_prefix);
-        nat6_ct_advance_pkt(proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
-        nat6_metric_accumulate(skb, true, ct_value);
+        if (!is_icmpx) {
+            nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
+            nat6_metric_accumulate(skb, true, ct_value);
+        }
 
         __be64 dst_prefix;
         COPY_ADDR_FROM(&dst_prefix, dst_addr->in6_u.u6_addr8);
@@ -353,7 +361,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
         goto do_ingress_nptv6;
     }
 
-    ret = nat6_check_ingress_static(proto, dst_addr, dport, &local_client_prefix);
+    ret = nat6_check_ingress_static(ct_proto, dst_addr, dport, &local_client_prefix);
     bool is_static = (ret != NAT6_STATIC_MISS);
     need_prefix_replace = (ret == NAT6_STATIC_REPLACE);
 
@@ -370,14 +378,14 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     }
 
     if (!is_static) {
-        ld_from_wan_log("ingress dynamic no CT, l4_proto: %u, dst_port: %04x", proto, dport);
+        ld_from_wan_log("ingress dynamic no CT, l4_proto: %u, dst_port: %04x", ct_proto, dport);
         return TC_ACT_SHOT;
     }
 
     ct_value = create_ct6_ingress(skb, off, src_addr, dst_addr, sport, dport, npt_id_mask, ifindex,
                                   &client_prefix_hint, need_prefix_replace);
     if (ct_value) {
-        nat6_ct_advance_pkt(proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
+        nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
         nat6_metric_accumulate(skb, true, ct_value);
     }
 
@@ -427,7 +435,7 @@ do_ingress_nptv6:
                              &inner_l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
-        if (nat6_l4_checksum(off->l4_offset, proto, &l4_checksum_offset)) {
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
         u16 old_inner_l4_checksum, new_inner_l4_checksum;
@@ -457,7 +465,7 @@ do_ingress_nptv6:
                                     local_client_prefix, BPF_F_PSEUDO_HDR);
     } else {
         u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->l4_offset, proto, &l4_checksum_offset)) {
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
 
