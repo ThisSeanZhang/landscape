@@ -178,7 +178,7 @@ fn avg_duration((count, sum): (u64, u64)) -> f64 {
 /// 一个 (flow_id, 分钟) 的预聚合行,由 DNS writer 从原始行批次构建后追加写入。
 /// 同一 `bucket_time` 允许多行(不同批次各自成行),读侧逐行合并
 /// (SUM 计数 + 直方图合并 + top union);`report_time` 为批内最后一条 metric 的
-/// 完整时间,跨批次天然唯一,同键冲突直接忽略。
+/// 完整时间，多个批次可以在同一毫秒结束。
 #[derive(Debug, Clone)]
 #[cfg_attr(not(feature = "metric-persistent"), allow(dead_code))]
 pub(crate) struct DnsBucketRow {
@@ -327,8 +327,7 @@ pub(crate) fn merge_slow_pairs(
 }
 
 impl DnsSummaryParts {
-    /// 合并另一个摘要片段(仅测试使用)。
-    #[cfg(test)]
+    /// Merge counts, latency samples and ranking contributions across minute buckets.
     pub(crate) fn merge(&mut self, other: &DnsSummaryParts) {
         self.counts.merge(&other.counts);
         let _ = self.latency.add(&other.latency);

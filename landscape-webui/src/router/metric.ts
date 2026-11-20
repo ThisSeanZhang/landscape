@@ -1,5 +1,5 @@
 import { RouteRecordRaw } from "vue-router";
-import DNSMetric from "@/views/metric/DNSMetric.vue";
+import DNSMetricPage from "@/views/metric/DNSMetricPage.vue";
 import LiveMetric from "@/views/metric/conn/LiveMetric.vue";
 import HistoryMetric from "@/views/metric/conn/HistoryMetric.vue";
 import IfaceMetric from "@/views/metric/conn/IfaceMetric.vue";
@@ -58,8 +58,7 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/dns",
     name: "routes.dns-metric",
-    component: DNSMetric,
-    meta: { capability: "metric_persistent" },
+    component: DNSMetricPage,
   },
 ];
 

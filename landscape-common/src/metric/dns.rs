@@ -9,6 +9,38 @@ use std::sync::Arc;
 
 pub use super::api::{DnsHistoryResponse, DnsLightweightSummaryResponse, DnsSummaryResponse};
 
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::IntoParams))]
+#[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
+pub struct DnsLiveQuery {
+    pub flow_id: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DnsMinutePoint {
+    pub start_ms: u64,
+    pub queries: u64,
+    pub hits: u64,
+    pub blocks: u64,
+    pub errors: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DnsLatencyBand {
+    pub upper_ms: Option<u64>,
+    pub count: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DnsLiveDashboard {
+    pub summary: DnsSummaryResponse,
+    pub minutes: Vec<DnsMinutePoint>,
+    pub latency: Vec<DnsLatencyBand>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]

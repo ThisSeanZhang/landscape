@@ -8,9 +8,8 @@ use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::agg::dns_bucket::dns_bucket_rows_from_batch;
 use crate::agg::dns_window::DnsRecentWindow;
-use crate::sink::DnsMetricSink;
+use crate::sink::{DnsMetricSink, DnsWriteBatch};
 
 use super::WriteQueueStats;
 
@@ -35,80 +34,48 @@ pub(crate) async fn run_dns_writer(
     cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup_interval.tick().await;
 
-    let mut closed = false;
     loop {
         tokio::select! {
-            _ = cleanup_interval.tick() => {
-                sink.cleanup_dns(&config).await;
-            }
-            msg_opt = rx.recv(), if !closed => {
-                match msg_opt {
-                    Some(metrics) => {
-                        let rows = dns_bucket_rows_from_batch(&metrics);
-                        let raw_ok = sink.apply_dns_batch(metrics).await;
-                        let bucket_ok = sink.apply_dns_bucket_rows(rows).await;
-                        if !raw_ok || !bucket_ok {
-                            stats.failed();
-                        }
-                    }
-                    None => closed = true,
+            _ = cleanup_interval.tick() => sink.cleanup_dns(&config).await,
+            batch = rx.recv() => {
+                let Some(metrics) = batch else { break };
+                if !sink.apply_dns_batch(DnsWriteBatch::new(metrics)).await {
+                    stats.failed();
                 }
             }
         }
+    }
+}
 
-        if closed {
-            break;
+/// Buffers events for the history writer only when persistence is enabled.
+struct DnsHistoryBuffer<'a> {
+    writer: &'a DnsBatchTx,
+    stats: WriteQueueStats,
+    pending: Vec<DnsMetric>,
+}
+
+impl DnsHistoryBuffer<'_> {
+    fn push(&mut self, metric: DnsMetric) -> bool {
+        self.pending.push(metric);
+        self.pending.len() >= DNS_BATCH_MAX_ROWS
+    }
+
+    fn flush(&mut self) {
+        if !self.pending.is_empty()
+            && self.writer.try_send(std::mem::take(&mut self.pending)).is_err()
+        {
+            self.stats.dropped();
         }
     }
-}
 
-fn flush_dns_batch(
-    writer_tx: &Option<DnsBatchTx>,
-    stats: &WriteQueueStats,
-    batch: &mut Vec<DnsMetric>,
-) {
-    if batch.is_empty() {
-        return;
-    }
-    let Some(tx) = writer_tx else {
-        batch.clear();
-        return;
-    };
-    let metrics = std::mem::take(batch);
-    if tx.try_send(metrics).is_err() {
-        stats.dropped();
-    }
-}
-
-async fn flush_dns_batch_on_shutdown(
-    writer_tx: &Option<DnsBatchTx>,
-    stats: &WriteQueueStats,
-    batch: &mut Vec<DnsMetric>,
-) {
-    if batch.is_empty() {
-        return;
-    }
-    let Some(tx) = writer_tx else {
-        batch.clear();
-        return;
-    };
-    let metrics = std::mem::take(batch);
-    let send_result = tokio::time::timeout(Duration::from_secs(5), tx.send(metrics)).await;
-    if !matches!(send_result, Ok(Ok(()))) {
-        stats.dropped();
-    }
-}
-
-fn ingest_dns_metric(
-    window: &DnsRecentWindow,
-    raw_batch: Option<&mut Vec<DnsMetric>>,
-    event: DnsMetricEvent,
-) {
-    let metric = event.into_metric();
-    let now_ms = now_ms();
-    window.ingest(&metric, now_ms);
-    if let Some(batch) = raw_batch {
-        batch.push(metric);
+    async fn flush_on_shutdown(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let send = self.writer.send(std::mem::take(&mut self.pending));
+        if !matches!(tokio::time::timeout(Duration::from_secs(5), send).await, Ok(Ok(()))) {
+            self.stats.dropped();
+        }
     }
 }
 
@@ -130,7 +97,11 @@ pub(crate) async fn run_dns_worker(
     flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     flush_interval.tick().await;
 
-    let mut raw_batch: Vec<DnsMetric> = Vec::new();
+    let mut history = writer_tx.as_ref().map(|writer| DnsHistoryBuffer {
+        writer,
+        stats: queue_stats,
+        pending: Vec::new(),
+    });
     let writer_closed = async {
         match &writer_tx {
             Some(tx) => tx.closed().await,
@@ -144,34 +115,31 @@ pub(crate) async fn run_dns_worker(
             biased;
             _ = shutdown.cancelled() => break,
             _ = &mut writer_closed => break,
-            _ = flush_interval.tick(), if writer_tx.is_some() => {
-                flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
+            _ = flush_interval.tick(), if history.is_some() => {
+                if let Some(buffer) = &mut history { buffer.flush(); }
             }
-            msg_opt = dns_rx.recv() => {
-                match msg_opt {
-                    Some(metric) => {
-                        ingest_dns_metric(&window, writer_tx.as_ref().map(|_| &mut raw_batch), metric);
-                        if raw_batch.len() >= DNS_BATCH_MAX_ROWS {
-                            flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
-                        }
-                    }
-                    None => break,
+            event = dns_rx.recv() => {
+                let Some(event) = event else { break };
+                let metric = window.record_event(event, now_ms());
+                if let Some(buffer) = &mut history && buffer.push(metric) {
+                    buffer.flush();
                 }
             }
         }
     }
 
     dns_rx.close();
-    while let Ok(metric) = dns_rx.try_recv() {
-        ingest_dns_metric(&window, writer_tx.as_ref().map(|_| &mut raw_batch), metric);
-        if raw_batch.len() >= DNS_BATCH_MAX_ROWS {
-            flush_dns_batch_on_shutdown(&writer_tx, &queue_stats, &mut raw_batch).await;
+    while let Ok(event) = dns_rx.try_recv() {
+        let metric = window.record_event(event, now_ms());
+        if let Some(buffer) = &mut history
+            && buffer.push(metric)
+        {
+            buffer.flush_on_shutdown().await;
         }
     }
-
-    // shutdown 收尾:窗口为纯内存结构,直接丢弃,不落库;仅 flush 剩余原始行批次
-    // (1m 桶由 writer 从该批次同批构建)。
-    flush_dns_batch_on_shutdown(&writer_tx, &queue_stats, &mut raw_batch).await;
+    if let Some(buffer) = &mut history {
+        buffer.flush_on_shutdown().await;
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +246,40 @@ mod tests {
             dns_batches.push(metrics.len());
         }
         assert_eq!(dns_batches, vec![DNS_BATCH_MAX_ROWS]);
+    }
+
+    #[tokio::test]
+    async fn saturated_history_queue_does_not_block_the_recent_window() {
+        let (tx, rx) = mpsc::channel(crate::agg::CHANNEL_CAPACITY);
+        let (writer, _reader) = mpsc::channel(1);
+        writer.try_send(Vec::new()).unwrap();
+        let stats = WriteQueueStats::default();
+        let window = DnsRecentWindow::new();
+        let worker = tokio::spawn(run_dns_worker(
+            rx,
+            Some(writer),
+            stats.clone(),
+            dns_config(),
+            window.clone(),
+            CancellationToken::new(),
+        ));
+        let timestamp = now_ms();
+        for _ in 0..DNS_BATCH_MAX_ROWS {
+            tx.send(dns_metric_event(timestamp)).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while stats.snapshot().0 == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            window.range_parts(0, u64::MAX, None).counts.total_queries,
+            DNS_BATCH_MAX_ROWS as u64
+        );
+        drop(tx);
+        worker.await.unwrap();
     }
 
     #[tokio::test]

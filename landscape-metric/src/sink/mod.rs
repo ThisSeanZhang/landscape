@@ -9,7 +9,7 @@ use landscape_common::metric::dns::{
 use landscape_common::sys_config::ConnectMetricRuntimeConfig;
 
 use crate::agg::Batch;
-use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
+use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts, dns_bucket_rows_from_batch};
 
 pub(crate) mod memory;
 #[cfg(feature = "metric-persistent")]
@@ -33,12 +33,23 @@ pub(crate) trait ConnectMetricSink: MetricStorage {
     async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError>;
 }
 
+/// One history write. Both representations are committed or rolled back together.
+#[cfg_attr(not(any(feature = "metric-persistent", test)), allow(dead_code))]
+pub(crate) struct DnsWriteBatch {
+    pub metrics: Vec<DnsMetric>,
+    pub buckets: Vec<DnsBucketRow>,
+}
+
+impl DnsWriteBatch {
+    pub fn new(metrics: Vec<DnsMetric>) -> Self {
+        let buckets = dns_bucket_rows_from_batch(&metrics);
+        Self { metrics, buckets }
+    }
+}
+
 #[async_trait::async_trait]
 pub(crate) trait DnsMetricSink: MetricStorage {
-    async fn apply_dns_batch(&self, metrics: Vec<DnsMetric>) -> bool;
-    /// 追加写入 1m 预聚合桶行(dns_metrics_1m + top 表,纯 INSERT,同键冲突忽略)。
-    /// 桶行由 DNS writer 从原始行批次构建后与原始行同批落库。
-    async fn apply_dns_bucket_rows(&self, rows: Vec<DnsBucketRow>) -> bool;
+    async fn apply_dns_batch(&self, batch: DnsWriteBatch) -> bool;
     async fn cleanup_dns(&self, config: &landscape_common::sys_config::DnsMetricRuntimeConfig);
     async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse;
     async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse;

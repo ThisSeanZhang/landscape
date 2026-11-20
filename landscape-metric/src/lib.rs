@@ -12,7 +12,7 @@ use landscape_common::metric::connect::{
 };
 use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsLiveDashboard,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
 use landscape_common::sys_config::{
@@ -316,6 +316,10 @@ impl DnsMetricEngine {
         if let Some(sink) = &self.sink {
             sink.close().await;
         }
+    }
+
+    pub fn get_dns_live_dashboard(&self, flow_id: Option<u32>) -> DnsLiveDashboard {
+        self.dns_window.dashboard(now_ms(), flow_id)
     }
 
     pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {

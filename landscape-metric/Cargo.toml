@@ -39,3 +39,8 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "test-util"] }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[[bench]]
+name = "dns_pipeline"
+harness = false
+required-features = ["metric-persistent"]

@@ -1,37 +1,34 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, h, computed, watch } from "vue";
+import { ref, shallowRef, reactive, onMounted, h, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import type {
-  DnsMetric,
-  ApiFlowConfig as FlowConfig,
-  LandscapeDnsRecordType,
-} from "@landscape-router/types/api/schemas";
+import type { LandscapeDnsRecordType } from "@landscape-router/types/api/schemas";
 import { get_dns_history } from "@/api/metric";
 import {
   NDataTable,
   NTag,
   NTime,
   NButton,
-  NSpace,
   NInput,
   NDatePicker,
   NIcon,
   NTooltip,
   NTabs,
-  NTabPane,
+  NTab,
   NSelect,
   NInputNumber,
   NFlex,
   NEllipsis,
+  useThemeVars,
 } from "naive-ui";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 
 const enrolledDeviceStore = useEnrolledDeviceStore();
-import { useFrontEndStore } from "@/stores/front_end_config";
 import type { DataTableColumns } from "naive-ui";
+import { parseDnsAnswer, type DnsLogEntry } from "@/lib/metric/dnsAnswer";
+import DnsAnswerDrawer from "@/components/metric/dns/DnsAnswerDrawer.vue";
 import {
-  Refresh,
-  TrashOutline,
+  RefreshOutline,
+  ChevronForwardOutline,
   HelpCircleOutline,
   TimeOutline,
   Search,
@@ -42,20 +39,29 @@ import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 import CheckDomainDrawer from "@/components/dns/CheckDomainDrawer.vue";
 import { SearchLocate } from "@vicons/carbon";
 import { usePreferenceStore } from "@/stores/preference";
-import { getFlowRules } from "@landscape-router/types/api/flow-rules/flow-rules";
+
+const flowId = defineModel<number | null>("flowId", { required: true });
 
 const prefStore = usePreferenceStore();
 
-const activeTab = ref("dashboard");
-const dashboardRef = ref<any>(null);
+const activeTab = ref("history");
+const dashboardRef = ref<InstanceType<typeof DNSDashboard> | null>(null);
+const logFailed = ref(false);
+const failed = computed(() =>
+  activeTab.value === "history"
+    ? logFailed.value
+    : !!dashboardRef.value?.failed,
+);
 const showCheckDomainDrawer = ref(false);
 const checkDomainName = ref("");
 const checkDomainFlowId = ref(0);
 const checkDomainType = ref<LandscapeDnsRecordType>("A");
-const { t } = useI18n();
-const frontEndStore = useFrontEndStore();
+const { t, n } = useI18n();
+const theme = useThemeVars();
 
-const data = ref<DnsMetric[]>([]);
+const data = ref<DnsLogEntry[]>([]);
+const selectedQuery = shallowRef<DnsLogEntry>();
+const showAnswers = ref(false);
 const loading = ref(false);
 
 const DEFAULT_TIME_WINDOW = 10 * 60 * 1000; // 10 minutes
@@ -67,7 +73,6 @@ const searchParams = reactive({
   status: null as string | null,
   min_duration_ms: null as number | null,
   max_duration_ms: null as number | null,
-  flow_id: null as number | null,
   timeRange: [Date.now() - DEFAULT_TIME_WINDOW, Date.now()] as
     [number, number] | null,
   sort_key: "time",
@@ -79,6 +84,9 @@ const pagination = reactive({
   pageSize: 15, // Default 15
   itemCount: 0,
   showSizePicker: true,
+  pageSlot: 5,
+  prefix: ({ itemCount }: { itemCount?: number }) =>
+    t("metric.dns.records_found", { count: n(itemCount ?? 0) }),
   pageSizes: [15, 30, 50, 100],
   onChange: (page: number) => {
     pagination.page = page;
@@ -122,23 +130,7 @@ const statusOptions = computed(() => [
   { label: t("metric.dns.status_error"), value: "error" },
 ]);
 
-const flows = ref<FlowConfig[]>([]);
-const flowOptions = computed(() => {
-  const opts = flows.value.map((f) => ({
-    label: f.remark ? `${f.flow_id} - ${f.remark}` : `Flow ${f.flow_id}`,
-    value: f.flow_id,
-  }));
-  return [
-    { label: t("metric.dns.all_flows") || "All Flows", value: null as any },
-    ...opts,
-  ];
-});
-
-const loadFlows = async () => {
-  flows.value = await getFlowRules();
-};
-
-const columns = computed<DataTableColumns<DnsMetric>>(() => [
+const columns = computed<DataTableColumns<DnsLogEntry>>(() => [
   {
     title: t("metric.dns.col_time"),
     key: "report_time",
@@ -188,6 +180,8 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
                     NButton,
                     {
                       size: "tiny",
+                      class: "domain-action",
+                      "aria-label": t("metric.dns.tip.search_domain"),
                       quaternary: true,
                       circle: true,
                       onClick: (e) => {
@@ -212,6 +206,8 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
                     NButton,
                     {
                       size: "tiny",
+                      class: "domain-action",
+                      "aria-label": t("metric.dns.tip.check_domain"),
                       quaternary: true,
                       circle: true,
                       onClick: (e) => {
@@ -241,11 +237,7 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
     key: "query_type",
     width: 80,
     render(row) {
-      return h(
-        NTag,
-        { type: "info", size: "small" },
-        { default: () => row.query_type },
-      );
+      return h("span", { class: "query-type" }, row.query_type);
     },
   },
   {
@@ -265,14 +257,9 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
     render(row) {
       if (!row.flow_id || row.flow_id === 0) {
         return h(
-          NTag,
-          {
-            type: "info",
-            bordered: false,
-            size: "small",
-            style: { opacity: 0.6 },
-          },
-          { default: () => t("metric.dns.tip.default_flow") },
+          "span",
+          { class: "default-flow" },
+          t("metric.dns.tip.default_flow"),
         );
       }
       return h(FlowExhibit, { flow_id: row.flow_id });
@@ -286,13 +273,9 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
       const code = String(row.response_code || "").toLowerCase();
       const isOk = code === "noerror" || code === "no error";
       return h(
-        NTag,
-        {
-          type: isOk ? "success" : "error",
-          size: "small",
-          style: { minWidth: "80px", justifyContent: "center" },
-        },
-        { default: () => row.response_code },
+        "span",
+        { class: isOk ? "response-ok" : "response-error" },
+        row.response_code,
       );
     },
   },
@@ -317,7 +300,7 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
           type: s.type,
           size: "small",
           bordered: false,
-          style: { minWidth: "70px", justifyContent: "center" },
+          round: true,
         },
         { default: () => s.label },
       );
@@ -326,6 +309,7 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
   {
     title: t("metric.dns.col_duration"),
     key: "duration_ms",
+    align: "right",
     width: 120,
     sorter: true,
     sortOrder:
@@ -338,25 +322,50 @@ const columns = computed<DataTableColumns<DnsMetric>>(() => [
   {
     title: t("metric.dns.col_answers"),
     key: "answers",
-    ellipsis: {
-      tooltip: true,
-    },
     render(row) {
-      if (!row.answers || row.answers.length === 0) return "-";
-      return row.answers
-        .map((ip) => enrolledDeviceStore.GET_NAME_WITH_FALLBACK(formatIp(ip)))
-        .join(", ");
+      const first = row.records[0];
+      if (!first) return "—";
+      const preview =
+        row.records.find((r) => r.type === "A" || r.type === "AAAA") ?? first;
+      const value = enrolledDeviceStore.GET_NAME_WITH_FALLBACK(
+        formatIp(preview.value),
+      );
+      return h(
+        "button",
+        {
+          class: "answer-preview",
+          type: "button",
+          "aria-haspopup": "dialog",
+          "aria-label": t("metric.dns.show_answers", { domain: row.domain }),
+          onClick: () => {
+            selectedQuery.value = row;
+            showAnswers.value = true;
+          },
+        },
+        [
+          h("span", { class: "answer-value" }, value),
+          row.records.length > 1
+            ? h("small", `+${row.records.length - 1}`)
+            : null,
+          h(NIcon, {
+            component: ChevronForwardOutline,
+            size: 13,
+            "aria-hidden": true,
+          }),
+        ],
+      );
     },
   },
 ]);
 
+let requestId = 0;
 const loadData = async (resetPage = false) => {
   if (resetPage) pagination.page = 1;
   if (activeTab.value === "dashboard") {
-    dashboardRef.value?.refresh();
-    return;
+    return dashboardRef.value?.refresh();
   }
 
+  const id = ++requestId;
   loading.value = true;
   try {
     const params: any = {
@@ -390,8 +399,8 @@ const loadData = async (resetPage = false) => {
     ) {
       params.max_duration_ms = searchParams.max_duration_ms;
     }
-    if (searchParams.flow_id !== null && searchParams.flow_id !== undefined) {
-      params.flow_id = searchParams.flow_id;
+    if (flowId.value !== null) {
+      params.flow_id = flowId.value;
     }
 
     const now = Date.now();
@@ -399,13 +408,20 @@ const loadData = async (resetPage = false) => {
       searchParams.timeRange?.[0] || now - DEFAULT_TIME_WINDOW;
     params.end_time = searchParams.timeRange?.[1] || now;
 
-    const res = await get_dns_history(params);
-    data.value = res.items;
+    const res = await get_dns_history(params, { silent: true });
+    if (id !== requestId) return;
+    data.value = res.items.map((row, index) => ({
+      ...row,
+      rowIndex: params.offset + index,
+      records: (row.answers ?? []).map(parseDnsAnswer),
+    }));
     pagination.itemCount = res.total;
+    logFailed.value = false;
   } catch (e) {
+    if (id === requestId) logFailed.value = true;
     console.error(e);
   } finally {
-    loading.value = false;
+    if (id === requestId) loading.value = false;
   }
 };
 
@@ -426,7 +442,7 @@ watch(
 );
 
 watch(
-  () => searchParams.timeRange,
+  () => [searchParams.timeRange, flowId.value],
   () => {
     // 仅在历史记录模式下触发 loadData
     // 仪表盘模式下，DNSDashboard 组件内部会自行执行其 timeRange 的监听逻辑
@@ -492,225 +508,172 @@ const handleReset = () => {
   searchParams.status = null;
   searchParams.min_duration_ms = null;
   searchParams.max_duration_ms = null;
-  searchParams.flow_id = null;
+  flowId.value = null;
   searchParams.timeRange = [Date.now() - DEFAULT_TIME_WINDOW, Date.now()];
   searchParams.sort_key = "time";
   searchParams.sort_order = "desc";
   loadData(true);
 };
-
-onMounted(() => {
-  loadFlows();
-  // 初始加载时，如果是仪表盘模式，由于它是首个展示的 Tab 且 Prop 已初始化，
-  // DNSDashboard 的 immediate watch 会负责首次加载。
-  // 我们只在初始是历史记录页面时才手动加载。
-  if (activeTab.value === "history") {
-    loadData();
-  }
-});
+onMounted(() => loadData());
+defineExpose({ refresh: () => loadData(), failed });
 </script>
 
 <template>
-  <div style="width: 100%; padding: 12px">
-    <div
-      style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-      "
-    >
-      <h3 style="margin: 0; font-weight: 500; font-size: 1.1rem">
-        {{ t("metric.dns.title") }}
-      </h3>
-      <n-space :size="8">
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-icon
-              size="18"
-              style="
-                vertical-align: middle;
-                cursor: help;
-                color: rgba(0, 0, 0, 0.35);
-              "
+  <div class="dns-history">
+    <div class="history-controls">
+      <div class="history-toolbar">
+        <n-tabs
+          class="history-tabs"
+          v-model:value="activeTab"
+          type="bar"
+          size="small"
+        >
+          <n-tab name="history">{{ t("metric.dns.query_log") }}</n-tab>
+          <n-tab name="dashboard">{{ t("metric.dns.range_stats") }}</n-tab>
+        </n-tabs>
+        <div class="history-time">
+          <n-date-picker
+            v-model:value="searchParams.timeRange"
+            class="history-dates"
+            size="small"
+            type="datetimerange"
+            clearable
+            :shortcuts="shortcuts"
+            :placeholder="t('metric.dns.time_range')"
+            :time-picker-props="{ timeZone: prefStore.timezone }"
+          />
+          <n-tooltip>
+            <template #trigger>
+              <n-button size="small" secondary @click="syncToNow">
+                <template #icon
+                  ><n-icon><TimeOutline /></n-icon
+                ></template>
+                {{ t("metric.dns.now") }}
+              </n-button>
+            </template>
+            {{ t("metric.dns.sync_to_now_tip") }}
+          </n-tooltip>
+          <n-button size="small" quaternary @click="handleReset">
+            <template #icon
+              ><n-icon><RefreshOutline /></n-icon
+            ></template>
+            {{ t("metric.dns.reset") }}
+          </n-button>
+        </div>
+      </div>
+      <div v-if="activeTab === 'history'" class="history-filters">
+        <div>
+          <div class="domain-label">
+            <label for="dns-domain">{{ t("metric.dns.domain") }}</label>
+            <n-tooltip
+              ><template #trigger
+                ><n-icon
+                  :component="HelpCircleOutline"
+                  tabindex="0"
+                  :aria-label="t('metric.dns.auto_search_tip')" /></template
+              >{{ t("metric.dns.auto_search_tip") }}</n-tooltip
             >
-              <HelpCircleOutline />
-            </n-icon>
-          </template>
-          {{ t("metric.dns.auto_search_tip") }}
-        </n-tooltip>
-        <n-button circle size="tiny" @click="loadData(true)" tertiary>
-          <template #icon>
-            <n-icon><Refresh /></n-icon>
-          </template>
-        </n-button>
-      </n-space>
-    </div>
-
-    <div v-if="activeTab === 'dashboard'" style="margin-bottom: 10px">
-      <n-space align="center" :size="[8, 8]" :wrap="false">
-        <n-select
-          v-model:value="searchParams.flow_id"
-          size="small"
-          :options="flowOptions"
-          :placeholder="t('metric.dns.all_flows')"
-          clearable
-          style="width: 160px"
-        />
-        <n-date-picker
-          v-model:value="searchParams.timeRange"
-          size="small"
-          type="datetimerange"
-          clearable
-          :shortcuts="shortcuts"
-          :placeholder="t('metric.dns.time_range')"
-          style="width: 320px"
-          :time-picker-props="{ timeZone: prefStore.timezone }"
-        />
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button
-              strong
-              secondary
+          </div>
+          <n-input
+            v-model:value="searchParams.domain"
+            :input-props="{ id: 'dns-domain' }"
+            size="small"
+            placeholder="example.com"
+            clearable
+          >
+            <template #prefix><n-icon :component="Search" /></template>
+          </n-input>
+        </div>
+        <div>
+          <label for="dns-source-ip">{{ t("metric.dns.col_src_ip") }}</label>
+          <n-input
+            v-model:value="searchParams.src_ip"
+            :input-props="{ id: 'dns-source-ip' }"
+            size="small"
+            placeholder="192.0.2.1"
+            clearable
+          />
+        </div>
+        <div>
+          <label for="dns-query-type">{{ t("metric.dns.type") }}</label>
+          <n-select
+            v-model:value="searchParams.query_type"
+            :input-props="{ id: 'dns-query-type' }"
+            size="small"
+            :options="queryTypeOptions"
+            :placeholder="t('metric.dns.all_types')"
+            clearable
+          />
+        </div>
+        <div>
+          <label for="dns-query-status">{{ t("metric.dns.status") }}</label>
+          <n-select
+            v-model:value="searchParams.status"
+            :input-props="{ id: 'dns-query-status' }"
+            size="small"
+            :options="statusOptions"
+            :placeholder="t('metric.dns.all_status')"
+            clearable
+          />
+        </div>
+        <div>
+          <span class="filter-label">{{ t("metric.dns.col_duration") }}</span>
+          <div class="duration-filter">
+            <n-input-number
+              v-model:value="searchParams.min_duration_ms"
+              :input-props="{ 'aria-label': t('metric.dns.min_ms') }"
               size="small"
-              @click="syncToNow"
-              type="info"
-            >
-              <template #icon>
-                <n-icon><TimeOutline /></n-icon>
-              </template>
-              {{ t("metric.dns.now") }}
-            </n-button>
-          </template>
-          {{ t("metric.dns.sync_to_now_tip") }}
-        </n-tooltip>
-        <n-button @click="handleReset" size="small" secondary>
-          <template #icon
-            ><n-icon><TrashOutline /></n-icon
-          ></template>
-          {{ t("metric.dns.reset") }}
-        </n-button>
-      </n-space>
-    </div>
-
-    <div v-if="activeTab === 'history'" style="margin-bottom: 10px">
-      <n-space align="center" :size="[8, 8]" :wrap="false">
-        <n-input
-          v-model:value="searchParams.domain"
-          size="small"
-          :placeholder="t('metric.dns.domain')"
-          clearable
-          style="width: 200px"
-        />
-        <n-select
-          v-model:value="searchParams.flow_id"
-          size="small"
-          :options="flowOptions"
-          :placeholder="t('metric.dns.all_flows')"
-          clearable
-          style="width: 120px"
-        />
-        <n-input
-          v-model:value="searchParams.src_ip"
-          size="small"
-          :placeholder="t('metric.dns.ip')"
-          clearable
-          style="width: 140px"
-        />
-        <n-select
-          v-model:value="searchParams.query_type"
-          size="small"
-          :options="queryTypeOptions"
-          :placeholder="t('metric.dns.type')"
-          clearable
-          style="width: 130px"
-        />
-        <n-select
-          v-model:value="searchParams.status"
-          size="small"
-          :options="statusOptions"
-          :placeholder="t('metric.dns.status')"
-          clearable
-          style="width: 130px"
-        />
-        <n-input-number
-          v-model:value="searchParams.min_duration_ms"
-          size="small"
-          :placeholder="t('metric.dns.min_ms')"
-          clearable
-          :min="0"
-          :show-button="false"
-          style="width: 80px"
-        />
-        <n-input-number
-          v-model:value="searchParams.max_duration_ms"
-          size="small"
-          :placeholder="t('metric.dns.max_ms')"
-          clearable
-          :min="0"
-          :show-button="false"
-          style="width: 80px"
-        />
-        <n-date-picker
-          v-model:value="searchParams.timeRange"
-          size="small"
-          type="datetimerange"
-          clearable
-          :shortcuts="shortcuts"
-          :placeholder="t('metric.dns.time_range')"
-          style="width: 320px"
-          :time-picker-props="{ timeZone: prefStore.timezone }"
-        />
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button
-              strong
-              secondary
+              :placeholder="t('metric.dns.min_ms')"
+              clearable
+              :min="0"
+              :show-button="false"
+            />
+            <span aria-hidden="true">–</span>
+            <n-input-number
+              v-model:value="searchParams.max_duration_ms"
+              :input-props="{ 'aria-label': t('metric.dns.max_ms') }"
               size="small"
-              @click="syncToNow"
-              type="info"
-            >
-              <template #icon>
-                <n-icon><TimeOutline /></n-icon>
-              </template>
-              {{ t("metric.dns.now") }}
-            </n-button>
-          </template>
-          {{ t("metric.dns.sync_to_now_tip") }}
-        </n-tooltip>
-        <n-button @click="handleReset" size="small" secondary>
-          <template #icon
-            ><n-icon><TrashOutline /></n-icon
-          ></template>
-          {{ t("metric.dns.reset") }}
-        </n-button>
-      </n-space>
+              :placeholder="t('metric.dns.max_ms')"
+              clearable
+              :min="0"
+              :show-button="false"
+            />
+          </div>
+        </div>
+      </div>
     </div>
-
-    <n-tabs v-model:value="activeTab" type="line" animated>
-      <n-tab-pane name="dashboard" :tab="t('metric.dns.dashboard')">
-        <DNSDashboard
-          ref="dashboardRef"
-          :time-range="searchParams.timeRange"
-          :flow-id="searchParams.flow_id"
-        />
-      </n-tab-pane>
-      <n-tab-pane name="history" :tab="t('metric.dns.query_log')">
-        <n-data-table
-          remote
-          :columns="columns"
-          :data="data"
-          :loading="loading"
-          :pagination="pagination"
-          @update:sorter="handleSorterChange"
-          size="small"
-          :row-key="(row) => row.report_time + row.domain + row.flow_id"
-          :bordered="false"
-          class="dns-history-table"
-        />
-      </n-tab-pane>
-    </n-tabs>
-
+    <n-data-table
+      v-if="activeTab === 'history'"
+      table-layout="fixed"
+      :scroll-x="1280"
+      remote
+      :columns="columns"
+      :data="data"
+      :loading="loading"
+      :pagination="pagination"
+      @update:sorter="handleSorterChange"
+      size="small"
+      :row-key="(row) => row.rowIndex"
+      :bordered="false"
+      :theme-overrides="{
+        tdColorSorting: theme.cardColor,
+        thPaddingSmall: '9px 12px',
+        tdPaddingSmall: '7px 12px',
+        paginationMargin: '0',
+      }"
+      class="dns-history-table"
+    />
+    <DNSDashboard
+      v-else
+      ref="dashboardRef"
+      :time-range="searchParams.timeRange"
+      :flow-id="flowId"
+    />
+    <DnsAnswerDrawer
+      v-if="selectedQuery"
+      v-model:show="showAnswers"
+      :query="selectedQuery"
+    />
     <CheckDomainDrawer
       v-model:show="showCheckDomainDrawer"
       :initial-domain="checkDomainName"
@@ -721,7 +684,155 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.dns-history-table :deep(.n-data-table-wrapper) {
+.dns-history {
+  container-type: inline-size;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+.history-controls,
+.dns-history-table {
+  box-sizing: border-box;
+  background: v-bind("theme.cardColor");
+  border: 1px solid v-bind("theme.dividerColor");
   border-radius: 8px;
+  min-width: 0;
+}
+.history-toolbar,
+.history-time,
+.domain-label,
+.duration-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.history-toolbar {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  gap: 12px;
+}
+.history-tabs {
+  width: max-content;
+  max-width: 100%;
+}
+.history-time {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.history-dates {
+  width: 390px;
+  max-width: 100%;
+}
+.history-filters {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1fr 1fr 1.65fr;
+  gap: 10px 16px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid v-bind("theme.dividerColor");
+}
+.history-filters > div,
+.duration-filter > * {
+  min-width: 0;
+}
+.history-filters label,
+.filter-label,
+.domain-label,
+.duration-filter > span {
+  color: v-bind("theme.textColor3");
+  font-size: 12px;
+}
+.history-filters label,
+.filter-label {
+  display: block;
+  margin-bottom: 4px;
+}
+.domain-label {
+  gap: 5px;
+  margin-bottom: 4px;
+}
+.domain-label label {
+  margin: 0;
+}
+.dns-history-table {
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+.dns-history-table :deep(.n-data-table__pagination) {
+  padding: 10px 14px;
+}
+.dns-history-table :deep(.n-pagination) {
+  width: 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.dns-history-table :deep(.n-pagination-prefix) {
+  margin-right: auto;
+  color: v-bind("theme.textColor3");
+  font-size: 12px;
+}
+.dns-history-table :deep(.default-flow) {
+  color: v-bind("theme.textColor3");
+}
+.dns-history-table :deep(.answer-preview) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: v-bind("theme.textColor2");
+  font: inherit;
+  cursor: pointer;
+}
+.dns-history-table :deep(.answer-value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dns-history-table :deep(.answer-preview small) {
+  color: v-bind("theme.textColor3");
+}
+.dns-history-table :deep(.answer-preview:hover),
+.dns-history-table :deep(.answer-preview:focus-visible) {
+  color: v-bind("theme.primaryColor");
+}
+.dns-history-table :deep(.query-type),
+.dns-history-table :deep(.response-ok),
+.dns-history-table :deep(.response-error) {
+  font-size: 12px;
+  font-weight: 500;
+}
+.dns-history-table :deep(.response-ok) {
+  color: v-bind("theme.successColor");
+}
+.dns-history-table :deep(.response-error) {
+  color: v-bind("theme.errorColor");
+}
+@media (hover: hover) {
+  .dns-history-table :deep(tr:not(:hover):not(:focus-within) .domain-action) {
+    opacity: 0;
+  }
+}
+@container (max-width: 900px) {
+  .history-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .history-filters > :last-child {
+    grid-column: span 2;
+  }
+}
+@container (max-width: 600px) {
+  .history-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .history-time {
+    width: 100%;
+  }
+  .history-dates {
+    flex-basis: 100%;
+  }
 }
 </style>

@@ -15,7 +15,7 @@ use landscape_common::{
     },
     metric::dns::DnsMetricReporter,
     metric::dns::{
-        DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
+        DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsLiveDashboard,
         DnsSummaryQueryParams, DnsSummaryResponse,
     },
     self_monitor::memory::{MemHistoryQueryParams, MemHistoryResponse},
@@ -203,6 +203,10 @@ impl MetricService {
         force_refresh: bool,
     ) -> Result<ConnectGlobalStats, DbError> {
         self.connect.engine().get_global_stats(force_refresh).await
+    }
+
+    pub fn get_dns_live_dashboard(&self, flow_id: Option<u32>) -> DnsLiveDashboard {
+        self.dns.engine().get_dns_live_dashboard(flow_id)
     }
 
     pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {

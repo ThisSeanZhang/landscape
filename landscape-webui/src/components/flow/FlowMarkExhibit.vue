@@ -47,7 +47,10 @@ enum FlowMarkActionCode {
       v-else-if="mark.action.t == FlowMarkActionCode.REDIRECT"
       type="warning"
     >
-      <FlowExhibit :flow_id="mark.flow_id"></FlowExhibit>
+      <template v-if="mark.flow_id === 0">{{
+        t("flow.default_card.title")
+      }}</template>
+      <FlowExhibit v-else :flow_id="mark.flow_id" />
     </n-tag>
 
     <n-tag v-if="mark.allow_reuse_port" :bordered="false" type="success">

@@ -234,7 +234,7 @@ pub(crate) mod testing {
     use crate::agg::dns_bucket::DnsBucketRow;
     use crate::agg::dns_bucket::DnsSummaryParts;
     use crate::agg::{Batch, FlowCache, IfaceRealtimeCache};
-    use crate::sink::{ConnectMetricSink, DnsMetricSink, MetricStorage};
+    use crate::sink::{ConnectMetricSink, DnsMetricSink, DnsWriteBatch, MetricStorage};
 
     pub(crate) fn test_config() -> ConnectMetricRuntimeConfig {
         use landscape_common::sys_config::{ConnectMetricConfig, RuntimeConfigSource};
@@ -377,19 +377,12 @@ pub(crate) mod testing {
 
     #[async_trait::async_trait]
     impl DnsMetricSink for RecordingSink {
-        async fn apply_dns_batch(&self, metrics: Vec<DnsMetric>) -> bool {
+        async fn apply_dns_batch(&self, batch: DnsWriteBatch) -> bool {
             if self.fail.load(Ordering::Relaxed) {
                 return false;
             }
-            self.dns_batches.lock().unwrap().push(metrics);
-            true
-        }
-
-        async fn apply_dns_bucket_rows(&self, rows: Vec<DnsBucketRow>) -> bool {
-            if self.fail.load(Ordering::Relaxed) {
-                return false;
-            }
-            self.dns_bucket_batches.lock().unwrap().push(rows);
+            self.dns_batches.lock().unwrap().push(batch.metrics);
+            self.dns_bucket_batches.lock().unwrap().push(batch.buckets);
             true
         }
 

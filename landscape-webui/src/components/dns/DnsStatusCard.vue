@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
+import { dnsLatencyStats } from "@/components/metric/dns/latencyStats";
 import { useI18n } from "vue-i18n";
 import {
   useThemeVars,
@@ -29,19 +30,20 @@ const loading = ref(true);
 const show_rule_drawer = ref(false);
 const show_ip_rule = ref(false);
 
+let requestId = 0;
 const loadSummary = async () => {
+  const id = ++requestId;
   loading.value = true;
   try {
-    const now = Date.now();
-    const startTime = props.startTime || now - 5 * 60 * 1000;
-    summary.value = await get_dns_lightweight_summary({
-      start_time: startTime,
-      end_time: now,
+    const result = await get_dns_lightweight_summary({
+      start_time: props.startTime ?? 0,
+      end_time: 0,
     });
+    if (requestId === id) summary.value = result;
   } catch (e) {
     console.error(e);
   } finally {
-    loading.value = false;
+    if (requestId === id) loading.value = false;
   }
 };
 
@@ -63,34 +65,6 @@ const calculatePercent = (count: number) => {
   if (!summary.value || summary.value.total_queries === 0) return 0;
   return Number(((count / summary.value.total_queries) * 100).toFixed(1));
 };
-
-const latencyStats = computed(() => [
-  {
-    label: t("metric.dns.dash.avg"),
-    value: summary.value?.avg_duration_ms,
-    color: themeVars.value.successColor,
-  },
-  {
-    label: t("metric.dns.dash.p50"),
-    value: summary.value?.p50_duration_ms,
-    color: themeVars.value.infoColor,
-  },
-  {
-    label: t("metric.dns.dash.p95"),
-    value: summary.value?.p95_duration_ms,
-    color: themeVars.value.warningColor,
-  },
-  {
-    label: t("metric.dns.dash.p99"),
-    value: summary.value?.p99_duration_ms,
-    color: themeVars.value.errorColor,
-  },
-  {
-    label: t("metric.dns.dash.max"),
-    value: summary.value?.max_duration_ms,
-    color: themeVars.value.primaryColor,
-  },
-]);
 
 defineExpose({ refresh: loadSummary });
 </script>
@@ -262,22 +236,22 @@ defineExpose({ refresh: loadSummary });
             vertical
             align="center"
             :size="2"
-            v-for="stat in latencyStats"
-            :key="stat.label"
+            v-for="stat in dnsLatencyStats"
+            :key="stat.field"
           >
             <n-text
               depth="3"
               style="font-size: 10px; text-transform: uppercase"
-              >{{ stat.label }}</n-text
+              >{{ t(stat.label) }}</n-text
             >
             <n-text
               strong
               style="font-size: 14px"
-              :style="{ color: stat.color }"
+              :style="{ color: themeVars[stat.color] }"
             >
               <n-number-animation
                 :from="0"
-                :to="stat.value || 0"
+                :to="summary?.[stat.field] ?? 0"
                 :precision="1"
               />
             </n-text>

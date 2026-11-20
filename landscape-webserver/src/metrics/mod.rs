@@ -6,8 +6,8 @@ use landscape_common::metric::connect::{
     IpRealtimeStat, MetricChartRequest,
 };
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
-    DnsSummaryQueryParams, DnsSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsLiveDashboard,
+    DnsLiveQuery, DnsSummaryQueryParams, DnsSummaryResponse,
 };
 use landscape_common::service::ServiceStatus;
 use utoipa_axum::router::OpenApiRouter;
@@ -30,6 +30,7 @@ pub fn get_metric_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(get_dst_ip_stats))
         .routes(routes!(get_history_src_ip_stats))
         .routes(routes!(get_history_dst_ip_stats))
+        .routes(routes!(get_dns_live_dashboard))
         .routes(routes!(get_dns_history))
         .routes(routes!(get_dns_summary))
         .routes(routes!(get_dns_lightweight_summary))
@@ -231,4 +232,16 @@ async fn get_dns_lightweight_summary(
 ) -> LandscapeApiResult<DnsLightweightSummaryResponse> {
     let data = state.system.metric_service.get_dns_lightweight_summary(params).await;
     LandscapeApiResp::success(data)
+}
+
+#[utoipa::path(
+    get, path = "/dns/live", tag = "Metric", operation_id = "get_dns_live_dashboard",
+    params(DnsLiveQuery),
+    responses((status = 200, description = "Recent in-memory DNS metrics", body = CommonApiResp<DnsLiveDashboard>))
+)]
+async fn get_dns_live_dashboard(
+    State(state): State<LandscapeApp>,
+    Query(params): Query<DnsLiveQuery>,
+) -> LandscapeApiResult<DnsLiveDashboard> {
+    LandscapeApiResp::success(state.system.metric_service.get_dns_live_dashboard(params.flow_id))
 }

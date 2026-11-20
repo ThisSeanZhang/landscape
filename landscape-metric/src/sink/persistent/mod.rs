@@ -12,17 +12,17 @@ use landscape_common::metric::connect::{
     ConnectMetricPoint, IpHistoryStat, MetricResolution,
 };
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsMetric, DnsSummaryQueryParams, DnsSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsSummaryQueryParams, DnsSummaryResponse,
 };
 use landscape_common::sys_config::{ConnectMetricRuntimeConfig, DnsMetricRuntimeConfig};
 use landscape_common::utils::time::now_ms;
 use sqlx::SqlitePool;
 use tokio::task::JoinHandle;
 
-use super::{ConnectMetricSink, DnsMetricSink, MetricStorage};
+use super::{ConnectMetricSink, DnsMetricSink, DnsWriteBatch, MetricStorage};
 use crate::agg::Batch;
 use crate::agg::batch::BucketKind;
-use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
+use crate::agg::dns_bucket::DnsSummaryParts;
 use crate::agg::flow::MS_PER_DAY;
 
 /// 全局统计缓存每日漂移校正间隔:超过该时长未重建则后台重建一次。
@@ -417,18 +417,18 @@ impl ConnectMetricSink for PersistentMetricStore {
 
 #[async_trait::async_trait]
 impl DnsMetricSink for PersistentMetricStore {
-    async fn apply_dns_batch(&self, metrics: Vec<DnsMetric>) -> bool {
-        if metrics.is_empty() {
+    async fn apply_dns_batch(&self, batch: DnsWriteBatch) -> bool {
+        if batch.metrics.is_empty() {
             return true;
         }
         let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
         loop {
-            match sqlite::dns::insert_dns_batch(&self.pool, &metrics).await {
+            match sqlite::dns::write_dns_batch(&self.pool, &batch).await {
                 Ok(()) => return true,
                 Err(error) => {
                     if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
                         if let Err(retry_error) =
-                            sqlite::dns::insert_dns_batch(&self.pool, &metrics).await
+                            sqlite::dns::write_dns_batch(&self.pool, &batch).await
                         {
                             tracing::error!(
                                 "failed to write persistent dns batch (retry after reclaim), dropping it: {}",
@@ -463,61 +463,6 @@ impl DnsMetricSink for PersistentMetricStore {
                         return false;
                     }
                     tracing::error!("failed to write persistent dns batch, dropping it: {}", error);
-                    return false;
-                }
-            }
-        }
-    }
-
-    async fn apply_dns_bucket_rows(&self, rows: Vec<DnsBucketRow>) -> bool {
-        if rows.is_empty() {
-            return true;
-        }
-        let mut busy_retries_left = BUSY_RETRY_ATTEMPTS;
-        loop {
-            match sqlite::dns::insert_dns_bucket_rows(&self.pool, &rows).await {
-                Ok(()) => return true,
-                Err(error) => {
-                    if sqlite::is_sqlite_full(&error) && self.reclaim_dns_space().await {
-                        if let Err(retry_error) =
-                            sqlite::dns::insert_dns_bucket_rows(&self.pool, &rows).await
-                        {
-                            tracing::error!(
-                                "failed to write persistent dns metric buckets (retry after reclaim), dropping them: {}",
-                                retry_error
-                            );
-                            return false;
-                        }
-                        return true;
-                    }
-                    if sqlite::is_sqlite_busy(&error) {
-                        if busy_retries_left > 0 {
-                            let attempt = BUSY_RETRY_ATTEMPTS - busy_retries_left + 1;
-                            let delay = BUSY_RETRY_DELAYS_MS[attempt - 1];
-                            tracing::warn!(
-                                attempt,
-                                "persistent dns metric buckets write blocked by sqlite lock (busy), \
-                                 retrying in {}ms: {}",
-                                delay,
-                                error
-                            );
-                            tokio::time::sleep(Duration::from_millis(delay)).await;
-                            busy_retries_left -= 1;
-                            continue;
-                        }
-                        tracing::error!(
-                            "failed to write persistent dns metric buckets after {} busy retries, \
-                             dropping them (possible leaked write lock; restart the service \
-                             if this keeps happening): {}",
-                            BUSY_RETRY_ATTEMPTS,
-                            error
-                        );
-                        return false;
-                    }
-                    tracing::error!(
-                        "failed to write persistent dns metric buckets, dropping them: {}",
-                        error
-                    );
                     return false;
                 }
             }
@@ -854,7 +799,7 @@ mod tests {
 
         let metrics = vec![dns_test_metric(2, 2_000)];
         assert!(
-            store.apply_dns_batch(metrics).await,
+            store.apply_dns_batch(DnsWriteBatch::new(metrics)).await,
             "batch must be written via busy retry once the lock is released"
         );
 
@@ -914,7 +859,7 @@ mod tests {
 
         let start = Instant::now();
         assert!(
-            store.apply_dns_batch(metrics).await,
+            store.apply_dns_batch(DnsWriteBatch::new(metrics)).await,
             "write must recover once disk space is freed"
         );
         assert!(
