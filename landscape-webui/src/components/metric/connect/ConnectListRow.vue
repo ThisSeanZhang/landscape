@@ -1,0 +1,294 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useThemeVars } from "naive-ui";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Catalog,
+  ChartLine,
+  Flash,
+  Search,
+} from "@vicons/carbon";
+import { GlobeSearch24Regular } from "@vicons/fluent";
+import type {
+  ConnectHistoryStatus,
+  ConnectRealtimeStatus,
+} from "@landscape-router/types/api/schemas";
+import { formatCount, formatPackets, formatRate, formatSize } from "@/lib/util";
+import { useFrontEndStore } from "@/stores/front_end_config";
+import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
+import { usePreferenceStore } from "@/stores/preference";
+
+const props = defineProps<{
+  item: ConnectHistoryStatus | ConnectRealtimeStatus;
+  mode: "live" | "history";
+  index: number;
+}>();
+const emit = defineEmits<{ chart: []; filter: [] }>();
+const router = useRouter();
+const devices = useEnrolledDeviceStore();
+const frontEnd = useFrontEndStore();
+const pref = usePreferenceStore();
+const theme = useThemeVars();
+const protocols: Record<number, string> = {
+  1: "ICMP",
+  6: "TCP",
+  17: "UDP",
+  58: "ICMPv6",
+};
+
+function endpoint(ip: string, port: number) {
+  const name = devices.GET_NAME_WITH_FALLBACK(ip);
+  return `${name.includes(":") ? `[${name}]` : name}:${frontEnd.MASK_PORT(port)}`;
+}
+const source = computed(() => endpoint(props.item.src_ip, props.item.src_port));
+const destination = computed(() =>
+  endpoint(props.item.dst_ip, props.item.dst_port),
+);
+const lastReport = computed(
+  () => props.item.last_report_time || props.item.create_time_ms,
+);
+const traffic = computed(() => {
+  const item = props.item;
+  if ("egress_bps" in item) {
+    return [
+      {
+        value: formatRate(item.egress_bps),
+        packets: formatPackets(item.egress_pps),
+      },
+      {
+        value: formatRate(item.ingress_bps),
+        packets: formatPackets(item.ingress_pps),
+      },
+    ];
+  }
+  return [
+    {
+      value: formatSize(item.total_egress_bytes),
+      packets: formatCount(item.total_egress_pkts) + " pkt",
+    },
+    {
+      value: formatSize(item.total_ingress_bytes),
+      packets: formatCount(item.total_ingress_pkts) + " pkt",
+    },
+  ];
+});
+function switchView() {
+  const item = props.item;
+  router.push({
+    path:
+      props.mode === "history" ? "/metrics/conn/live" : "/metrics/conn/history",
+    query: {
+      src_ip: item.src_ip,
+      dst_ip: item.dst_ip,
+      port_start: item.src_port,
+      port_end: item.dst_port,
+      flow_id: item.flow_id,
+      ifindex: item.ifindex,
+    },
+  });
+}
+</script>
+
+<template>
+  <div
+    class="connection-line connection-row"
+    :class="{ striped: index % 2 === 1 }"
+    role="row"
+    :aria-rowindex="index + 2"
+  >
+    <div role="cell">
+      <n-tooltip>
+        <template #trigger>
+          <span class="stack">
+            <n-time
+              :time="lastReport"
+              format="HH:mm:ss"
+              :time-zone="pref.timezone"
+            />
+            <small v-if="mode === 'history'"
+              ><n-time
+                :time="lastReport"
+                format="yyyy-MM-dd"
+                :time-zone="pref.timezone"
+            /></small>
+          </span>
+        </template>
+        {{ $t("metric.connect.filter.create_time") }}
+        <n-time
+          :time="item.create_time_ms"
+          format="yyyy-MM-dd HH:mm:ss"
+          :time-zone="pref.timezone"
+        />
+      </n-tooltip>
+    </div>
+    <div role="cell">
+      <DurationTime
+        :seconds="Math.max(0, lastReport - item.create_time_ms) / 1000"
+      />
+    </div>
+    <div role="cell" class="source">
+      <span class="endpoint" :title="source">{{ source }}</span>
+      <n-icon
+        aria-hidden="true"
+        :component="item.gress === 0 ? ArrowLeft : ArrowRight"
+      />
+    </div>
+    <div role="cell" class="endpoint" :title="destination">
+      {{ destination }}
+    </div>
+    <div role="cell" class="stack">
+      <span class="protocol">
+        {{ protocols[item.l4_proto] ?? item.l4_proto }}
+        <small>IPv{{ item.l3_proto === 0 ? 4 : 6 }}</small>
+        <small
+          v-if="item.gress === 0"
+          class="inbound"
+          :title="$t('metric.connect.filter.gress_ingress')"
+          >IN</small
+        >
+      </span>
+      <small>Flow {{ item.flow_id }} · IF {{ item.ifindex }}</small>
+    </div>
+    <div
+      v-for="(entry, i) in traffic"
+      :key="i"
+      role="cell"
+      class="stack traffic"
+    >
+      <strong :class="i === 0 ? 'upload' : 'download'">{{
+        entry.value
+      }}</strong>
+      <small>{{ entry.packets }}</small>
+    </div>
+    <div role="cell" class="actions">
+      <a
+        :href="`https://edge-geo.y8955.workers.dev/${item.dst_ip}`"
+        target="_blank"
+        rel="noopener noreferrer"
+        :title="$t('metric.connect.ip_stats.query_ip_ownership')"
+        :aria-label="$t('metric.connect.ip_stats.query_ip_ownership')"
+      >
+        <n-icon :component="GlobeSearch24Regular" />
+      </a>
+      <button
+        type="button"
+        @click="emit('filter')"
+        :title="$t('metric.connect.tip.precise_filter')"
+        :aria-label="$t('metric.connect.tip.precise_filter')"
+      >
+        <n-icon :component="Search" />
+      </button>
+      <button
+        type="button"
+        @click="switchView"
+        :title="
+          $t(
+            mode === 'live'
+              ? 'metric.connect.tip.view_history'
+              : 'metric.connect.tip.view_live',
+          )
+        "
+        :aria-label="
+          $t(
+            mode === 'live'
+              ? 'metric.connect.tip.view_history'
+              : 'metric.connect.tip.view_live',
+          )
+        "
+      >
+        <n-icon :component="mode === 'live' ? Catalog : Flash" />
+      </button>
+      <button
+        type="button"
+        @click="emit('chart')"
+        :title="$t('metric.connect.tip.chart')"
+        :aria-label="$t('metric.connect.tip.chart')"
+      >
+        <n-icon :component="ChartLine" />
+      </button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.connection-row {
+  height: var(--row-height);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.striped {
+  background: v-bind("theme.tableColor");
+}
+.connection-row:hover,
+.connection-row:focus-within {
+  background: v-bind("theme.hoverColor");
+}
+.source {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.source .n-icon {
+  flex: none;
+  color: var(--muted);
+}
+.endpoint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+.protocol {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.inbound {
+  color: v-bind("theme.warningColor");
+}
+.traffic {
+  align-items: flex-end;
+}
+.upload {
+  color: var(--upload);
+}
+.download {
+  color: var(--download);
+}
+.actions {
+  display: flex;
+  justify-content: center;
+}
+.actions :is(a, button) {
+  box-sizing: border-box;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}
+.actions :is(a, button):hover,
+.actions :is(a, button):focus-visible {
+  color: v-bind("theme.primaryColor");
+  background: v-bind("theme.buttonColor2Hover");
+}
+</style>

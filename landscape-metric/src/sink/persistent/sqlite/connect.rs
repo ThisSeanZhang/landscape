@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectHistoryStatus,
-    ConnectKey, ConnectMetricPoint, ConnectSortKey, ConnectStatusType, IpHistoryStat,
-    MetricResolution, SortOrder,
+    ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectSortKey, ConnectStatusType,
+    IpHistoryStat, MetricResolution, SortOrder,
 };
 use landscape_common::utils::time::now_ms;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
@@ -22,6 +22,9 @@ impl BucketKind {
         }
     }
 }
+
+// The widest INSERT binds 19 columns, so 50 rows fit within 999 SQLite variables.
+const ROWS_PER_INSERT: usize = 50;
 
 pub(crate) const GLOBAL_STATS_CACHE_KEY: i64 = 1;
 
@@ -109,7 +112,7 @@ struct SummaryTotals {
 }
 
 impl SummaryTotals {
-    fn from_metric(metric: &landscape_common::metric::connect::ConnectMetric) -> Self {
+    fn from_metric(metric: &ConnectMetric) -> Self {
         Self {
             total_ingress_bytes: metric.ingress_bytes,
             total_egress_bytes: metric.egress_bytes,
@@ -118,7 +121,7 @@ impl SummaryTotals {
         }
     }
 
-    fn merge_metric(self, metric: &landscape_common::metric::connect::ConnectMetric) -> Self {
+    fn merge_metric(self, metric: &ConnectMetric) -> Self {
         Self {
             total_ingress_bytes: self.total_ingress_bytes.max(metric.ingress_bytes),
             total_egress_bytes: self.total_egress_bytes.max(metric.egress_bytes),
@@ -138,20 +141,17 @@ struct GlobalStatsDelta {
 }
 
 impl GlobalStatsDelta {
-    fn from_summary_change(previous: Option<SummaryTotals>, current: SummaryTotals) -> Self {
-        let count_delta = if previous.is_some() { 0 } else { 1 };
+    fn add_summary_change(&mut self, previous: Option<SummaryTotals>, current: SummaryTotals) {
+        self.total_connect_count += i128::from(previous.is_none());
         let previous = previous.unwrap_or_default();
-        Self {
-            total_ingress_bytes: current.total_ingress_bytes as i128
-                - previous.total_ingress_bytes as i128,
-            total_egress_bytes: current.total_egress_bytes as i128
-                - previous.total_egress_bytes as i128,
-            total_ingress_pkts: current.total_ingress_pkts as i128
-                - previous.total_ingress_pkts as i128,
-            total_egress_pkts: current.total_egress_pkts as i128
-                - previous.total_egress_pkts as i128,
-            total_connect_count: count_delta,
-        }
+        self.total_ingress_bytes +=
+            i128::from(current.total_ingress_bytes) - i128::from(previous.total_ingress_bytes);
+        self.total_egress_bytes +=
+            i128::from(current.total_egress_bytes) - i128::from(previous.total_egress_bytes);
+        self.total_ingress_pkts +=
+            i128::from(current.total_ingress_pkts) - i128::from(previous.total_ingress_pkts);
+        self.total_egress_pkts +=
+            i128::from(current.total_egress_pkts) - i128::from(previous.total_egress_pkts);
     }
 
     fn from_removed_stats(stats: &ConnectGlobalStats) -> Self {
@@ -264,17 +264,37 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
     Ok(())
 }
 
-async fn upsert_summary_tx(
+async fn upsert_summaries_tx(
     conn: &mut SqliteConnection,
-    metric: &landscape_common::metric::connect::ConnectMetric,
+    metrics: &[ConnectMetric],
 ) -> Result<(), sqlx::Error> {
-    let status: u8 = metric.status_type().into();
-    sqlx::query(
-        "INSERT INTO conn_summaries (
+    for chunk in metrics.chunks(ROWS_PER_INSERT) {
+        let mut query = QueryBuilder::<Sqlite>::new("INSERT INTO conn_summaries (
             create_time, cpu_id, src_ip, dst_ip, src_port, dst_port, l4_proto, l3_proto, flow_id, trace_id, ifindex,
             last_report_time, total_ingress_bytes, total_egress_bytes, total_ingress_pkts, total_egress_pkts, status, create_time_ms, gress
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-        ON CONFLICT (create_time, cpu_id) DO UPDATE SET
+        ) ");
+        query.push_values(chunk, |mut row, metric| {
+            row.push_bind(metric.create_time as i64)
+                .push_bind(metric.cpu_id as i64)
+                .push_bind(clean_ip_string(&metric.src_ip()))
+                .push_bind(clean_ip_string(&metric.dst_ip()))
+                .push_bind(metric.src_port as i64)
+                .push_bind(metric.dst_port as i64)
+                .push_bind(metric.l4_proto as i64)
+                .push_bind(metric.l3_proto as i64)
+                .push_bind(metric.flow_id as i64)
+                .push_bind(metric.trace_id as i64)
+                .push_bind(metric.ifindex as i64)
+                .push_bind(metric.report_time as i64)
+                .push_bind(metric.ingress_bytes as i64)
+                .push_bind(metric.egress_bytes as i64)
+                .push_bind(metric.ingress_packets as i64)
+                .push_bind(metric.egress_packets as i64)
+                .push_bind(i64::from(u8::from(metric.status_type())))
+                .push_bind(metric.create_time_ms() as i64)
+                .push_bind(metric.gress as i64);
+        });
+        query.push(" ON CONFLICT (create_time, cpu_id) DO UPDATE SET
             ifindex = CASE
                 WHEN excluded.last_report_time >= conn_summaries.last_report_time THEN excluded.ifindex
                 ELSE conn_summaries.ifindex
@@ -287,30 +307,9 @@ async fn upsert_summary_tx(
             status = CASE
                 WHEN excluded.last_report_time >= conn_summaries.last_report_time THEN excluded.status
                 ELSE conn_summaries.status
-            END",
-    )
-    .bind(metric.key().create_time as i64)
-    .bind(metric.key().cpu_id as i64)
-    .bind(clean_ip_string(&metric.src_ip()))
-    .bind(clean_ip_string(&metric.dst_ip()))
-    .bind(metric.src_port as i64)
-    .bind(metric.dst_port as i64)
-    .bind(metric.l4_proto as i64)
-    .bind(metric.l3_proto as i64)
-    .bind(metric.flow_id as i64)
-    .bind(metric.trace_id as i64)
-    .bind(metric.ifindex as i64)
-    .bind(metric.report_time as i64)
-    .bind(metric.ingress_bytes as i64)
-    .bind(metric.egress_bytes as i64)
-    .bind(metric.ingress_packets as i64)
-    .bind(metric.egress_packets as i64)
-    .bind(status as i64)
-    .bind(metric.create_time_ms() as i64)
-    .bind(metric.gress as i64)
-    .execute(&mut *conn)
-    .await?;
-
+            END");
+        query.build().execute(&mut *conn).await?;
+    }
     Ok(())
 }
 
@@ -323,7 +322,7 @@ async fn apply_global_stats_delta_tx(
         return Ok(());
     }
 
-    sqlx::query(
+    let mut update = sqlx::query(
         "UPDATE conn_global_stats_cache
         SET
             total_ingress_bytes = MAX(0, total_ingress_bytes + ?1),
@@ -333,16 +332,25 @@ async fn apply_global_stats_delta_tx(
             total_connect_count = MAX(0, total_connect_count + ?5),
             last_calculate_time = ?6
         WHERE cache_key = ?7",
-    )
-    .bind(delta.total_ingress_bytes as i64)
-    .bind(delta.total_egress_bytes as i64)
-    .bind(delta.total_ingress_pkts as i64)
-    .bind(delta.total_egress_pkts as i64)
-    .bind(delta.total_connect_count as i64)
-    .bind(last_calculate_time as i64)
-    .bind(GLOBAL_STATS_CACHE_KEY)
-    .execute(&mut *conn)
-    .await?;
+    );
+    for change in [
+        delta.total_ingress_bytes,
+        delta.total_egress_bytes,
+        delta.total_ingress_pkts,
+        delta.total_egress_pkts,
+        delta.total_connect_count,
+    ] {
+        // SQLite promotes overflowing integer sums to REAL. Never wrap a large batch delta.
+        update = match i64::try_from(change) {
+            Ok(value) => update.bind(value),
+            Err(_) => update.bind(change as f64),
+        };
+    }
+    update
+        .bind(last_calculate_time as i64)
+        .bind(GLOBAL_STATS_CACHE_KEY)
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
 }
@@ -350,34 +358,37 @@ async fn apply_global_stats_delta_tx(
 /// 桶行追加写:同 (create_time, cpu_id, report_time) 冲突直接忽略。
 /// 不对齐桶做读改写合并——同一对齐桶的多次发射(1h 刷新、时钟乱序)以多行共存,
 /// 由读侧按 bucket_time 分组取最新,天然兼容不可变/追加写存储。
-async fn insert_bucket_tx(
+async fn insert_buckets_tx(
     conn: &mut SqliteConnection,
-    table: &str,
-    write: &BucketWrite,
+    kind: BucketKind,
+    writes: &[BucketWrite],
 ) -> Result<(), sqlx::Error> {
-    let status: u8 = write.metric.status_type().into();
-    sqlx::query(&format!(
-        "INSERT INTO {table} (
-            create_time, cpu_id, report_time, bucket_time, ifindex,
-            ingress_bytes, ingress_packets, egress_bytes, egress_packets,
-            status, create_time_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-        ON CONFLICT (create_time, cpu_id, report_time) DO NOTHING"
-    ))
-    .bind(write.metric.key().create_time as i64)
-    .bind(write.metric.key().cpu_id as i64)
-    .bind(write.metric.report_time as i64)
-    .bind(write.bucket_report_time as i64)
-    .bind(write.metric.ifindex as i64)
-    .bind(write.metric.ingress_bytes as i64)
-    .bind(write.metric.ingress_packets as i64)
-    .bind(write.metric.egress_bytes as i64)
-    .bind(write.metric.egress_packets as i64)
-    .bind(status as i64)
-    .bind(write.metric.create_time_ms() as i64)
-    .execute(&mut *conn)
-    .await?;
-
+    let rows: Vec<_> = writes.iter().filter(|write| write.kind == kind).collect();
+    let table = kind.table_name();
+    for chunk in rows.chunks(ROWS_PER_INSERT) {
+        let mut query = QueryBuilder::<Sqlite>::new(format!(
+            "INSERT INTO {table} (
+                create_time, cpu_id, report_time, bucket_time, ifindex,
+                ingress_bytes, ingress_packets, egress_bytes, egress_packets, status, create_time_ms
+            ) "
+        ));
+        query.push_values(chunk, |mut row, write| {
+            let metric = &write.metric;
+            row.push_bind(metric.create_time as i64)
+                .push_bind(metric.cpu_id as i64)
+                .push_bind(metric.report_time as i64)
+                .push_bind(write.bucket_report_time as i64)
+                .push_bind(metric.ifindex as i64)
+                .push_bind(metric.ingress_bytes as i64)
+                .push_bind(metric.ingress_packets as i64)
+                .push_bind(metric.egress_bytes as i64)
+                .push_bind(metric.egress_packets as i64)
+                .push_bind(i64::from(u8::from(metric.status_type())))
+                .push_bind(metric.create_time_ms() as i64);
+        });
+        query.push(" ON CONFLICT (create_time, cpu_id, report_time) DO NOTHING");
+        query.build().execute(&mut *conn).await?;
+    }
     Ok(())
 }
 
@@ -436,25 +447,22 @@ pub(crate) async fn apply_connect_batch(
                 }
             }
 
+            let mut delta = GlobalStatsDelta::default();
             for metric in &batch.summary_metrics {
                 let previous_totals = totals.get(&metric.key()).copied();
-                upsert_summary_tx(&mut *conn, metric).await?;
                 let merged_totals = previous_totals
                     .map(|totals| totals.merge_metric(metric))
                     .unwrap_or_else(|| SummaryTotals::from_metric(metric));
-                let delta = GlobalStatsDelta::from_summary_change(previous_totals, merged_totals);
-                apply_global_stats_delta_tx(&mut *conn, delta, last_calculate_time).await?;
+                delta.add_summary_change(previous_totals, merged_totals);
                 // 同一批次内同 key 的后续 summary 以合并后的值为基准。
                 totals.insert(metric.key(), merged_totals);
             }
 
+            upsert_summaries_tx(conn, &batch.summary_metrics).await?;
             for kind in [BucketKind::Minute, BucketKind::Hour, BucketKind::Day] {
-                for write in batch.bucket_writes.iter().filter(|write| write.kind == kind) {
-                    insert_bucket_tx(&mut *conn, kind.table_name(), write).await?;
-                }
+                insert_buckets_tx(conn, kind, &batch.bucket_writes).await?;
             }
-
-            Ok(())
+            apply_global_stats_delta_tx(conn, delta, last_calculate_time).await
         })
     })
     .await
@@ -1167,6 +1175,89 @@ mod tests {
         assert_eq!(history.items.len(), 1);
         assert_eq!(history.items[0].key, key);
         assert_eq!(history.items[0].total_ingress_bytes, 300);
+    }
+
+    #[tokio::test]
+    async fn replayed_multirow_batch_preserves_summary_and_bucket_conflict_order() {
+        let (_dir, pool) = test_pool().await;
+        let mut batch = Batch::default();
+        for cpu in 0..ROWS_PER_INSERT as u32 {
+            let metric = test_metric(1_000, cpu, 65_000, 100, 200, ConnectStatusType::Active);
+            batch.push_summary(metric.clone());
+            batch.push_bucket(BucketKind::Minute, metric, 60_000);
+        }
+
+        // Repeat the first connection across the chunk boundary with an equal timestamp,
+        // followed by an older report with a higher ingress counter.
+        let mut closed = test_metric(1_000, 0, 65_000, 10, 500, ConnectStatusType::Disabled);
+        closed.ifindex = 42;
+        let key = closed.key();
+        batch.push_summary(closed.clone());
+        batch.push_bucket(BucketKind::Minute, closed, 60_000);
+        batch.push_summary(test_metric(1_000, 0, 64_000, 300, 50, ConnectStatusType::Active));
+        for _ in 0..2 {
+            apply_connect_batch(&pool, &batch).await.unwrap();
+        }
+
+        let stats = query_global_stats(&pool).await.unwrap();
+        let connections = ROWS_PER_INSERT as u64;
+        assert_eq!(stats.total_connect_count, connections);
+        assert_eq!(stats.total_ingress_bytes, connections * 100 + 200);
+        assert_eq!(stats.total_egress_bytes, connections * 200 + 300);
+        assert_eq!(stats.total_ingress_pkts, connections * 10 + 20);
+        assert_eq!(stats.total_egress_pkts, connections * 20 + 30);
+        let closed = query_historical_summaries_complex(
+            &pool,
+            ConnectHistoryQueryParams {
+                status: Some(ConnectStatusType::Disabled.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(closed.total, 1);
+        assert_eq!(closed.items[0].key, key);
+        assert_eq!(closed.items[0].ifindex, 42);
+        assert_eq!(closed.items[0].last_report_time, 65_000);
+        let points = query_metric_by_key(&pool, &key, MetricResolution::Minute).await.unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].status, ConnectStatusType::Active);
+        assert_eq!(points[0].egress_bytes, 200);
+    }
+
+    #[tokio::test]
+    async fn failed_last_bucket_chunk_rolls_back_and_can_be_retried() {
+        let (_dir, pool) = test_pool().await;
+        let mut batch = Batch::default();
+        for cpu in 0..=ROWS_PER_INSERT as u32 {
+            batch.record_final(&test_metric(
+                1_000,
+                cpu,
+                65_000,
+                10,
+                20,
+                ConnectStatusType::Disabled,
+            ));
+        }
+        sqlx::query(&format!(
+            "CREATE TRIGGER fail_last BEFORE INSERT ON conn_metrics_1d WHEN NEW.cpu_id = {ROWS_PER_INSERT}
+             BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
+        )).execute(&pool).await.unwrap();
+        assert!(apply_connect_batch(&pool, &batch).await.is_err());
+        for table in ["conn_summaries", "conn_metrics_1m", "conn_metrics_1h", "conn_metrics_1d"] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        assert_eq!(query_global_stats(&pool).await.unwrap().total_connect_count, 0);
+        sqlx::query("DROP TRIGGER fail_last").execute(&pool).await.unwrap();
+        apply_connect_batch(&pool, &batch).await.unwrap();
+        assert_eq!(
+            query_global_stats(&pool).await.unwrap().total_connect_count,
+            ROWS_PER_INSERT as u64 + 1
+        );
     }
 
     #[tokio::test]

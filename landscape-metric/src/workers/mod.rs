@@ -94,7 +94,6 @@ fn flush_connect_batch(writer_tx: &ConnectBatchTx, stats: &WriteQueueStats, pend
     if writer_tx.try_send(std::mem::take(pending)).is_err() {
         stats.dropped();
     }
-    *pending = Batch::default();
 }
 
 async fn flush_connect_batch_on_shutdown(
@@ -137,8 +136,15 @@ pub(crate) async fn run_connect_worker(
     flush_interval.tick().await;
 
     let mut pending = Batch::default();
-    let ingest = |metric| {
-        process_connect_metric(&flow_cache, &iface_realtime, metric, second_window, second_ring_cap)
+    let ingest = |metric, pending: &mut Batch| {
+        process_connect_metric(
+            &flow_cache,
+            &iface_realtime,
+            metric,
+            second_window,
+            second_ring_cap,
+            writer_tx.as_ref().map(|_| pending),
+        )
     };
 
     let writer_closed = async {
@@ -156,14 +162,14 @@ pub(crate) async fn run_connect_worker(
             _ = &mut writer_closed => break,
             _ = cleanup_interval.tick() => {
                 let now_ms = now_ms();
-                let (flow_stats, batch) = cleanup_flow_cache(
+                let flow_stats = cleanup_flow_cache(
                     &flow_cache,
                     &iface_realtime,
                     now_ms,
                     second_window,
+                    writer_tx.as_ref().map(|_| &mut pending),
                 );
                 if let Some(tx) = &writer_tx {
-                    pending.extend(batch);
                     flush_connect_batch(tx, &queue_stats, &mut pending);
                 }
 
@@ -180,12 +186,9 @@ pub(crate) async fn run_connect_worker(
             }
             msg_opt = connect_rx.recv() => {
                 let Some(metric) = msg_opt else { break };
-                let batch = ingest(metric);
-                if let Some(tx) = &writer_tx {
-                    pending.extend(batch);
-                    if pending.op_count() >= write_batch_size {
-                        flush_connect_batch(tx, &queue_stats, &mut pending);
-                    }
+                ingest(metric, &mut pending);
+                if let Some(tx) = &writer_tx && pending.op_count() >= write_batch_size {
+                    flush_connect_batch(tx, &queue_stats, &mut pending);
                 }
             }
         }
@@ -194,20 +197,18 @@ pub(crate) async fn run_connect_worker(
     connect_rx.close();
     // Drain accepted events without waiting for producers that still hold send permits.
     while let Ok(metric) = connect_rx.try_recv() {
-        let batch = ingest(metric);
-        if let Some(tx) = &writer_tx {
-            pending.extend(batch);
-            if pending.op_count() >= write_batch_size {
-                flush_connect_batch_on_shutdown(tx, &queue_stats, &mut pending).await;
-            }
+        ingest(metric, &mut pending);
+        if let Some(tx) = &writer_tx
+            && pending.op_count() >= write_batch_size
+        {
+            flush_connect_batch_on_shutdown(tx, &queue_stats, &mut pending).await;
         }
     }
 
     let Some(tx) = &writer_tx else { return };
     flush_connect_batch_on_shutdown(tx, &queue_stats, &mut pending).await;
 
-    let final_batch = finalize_all_flows(&flow_cache, &iface_realtime);
-    pending.extend(final_batch);
+    pending = finalize_all_flows(&flow_cache, &iface_realtime);
     flush_connect_batch_on_shutdown(tx, &queue_stats, &mut pending).await;
 }
 
@@ -342,29 +343,29 @@ pub(crate) mod testing {
             &self,
             _key: ConnectKey,
             _resolution: MetricResolution,
-        ) -> Vec<ConnectMetricPoint> {
-            Vec::new()
+        ) -> Result<Vec<ConnectMetricPoint>, DbError> {
+            Ok(Vec::new())
         }
 
         async fn history_summaries_complex(
             &self,
             _params: ConnectHistoryQueryParams,
-        ) -> ConnectHistoryResponse {
-            ConnectHistoryResponse::default()
+        ) -> Result<ConnectHistoryResponse, DbError> {
+            Ok(ConnectHistoryResponse::default())
         }
 
         async fn history_src_ip_stats(
             &self,
             _params: ConnectHistoryQueryParams,
-        ) -> Vec<IpHistoryStat> {
-            Vec::new()
+        ) -> Result<Vec<IpHistoryStat>, DbError> {
+            Ok(Vec::new())
         }
 
         async fn history_dst_ip_stats(
             &self,
             _params: ConnectHistoryQueryParams,
-        ) -> Vec<IpHistoryStat> {
-            Vec::new()
+        ) -> Result<Vec<IpHistoryStat>, DbError> {
+            Ok(Vec::new())
         }
 
         async fn get_global_stats(

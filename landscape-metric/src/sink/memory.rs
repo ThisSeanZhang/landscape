@@ -62,26 +62,26 @@ impl MemoryMetricStore {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
         self.connect.query_metric_by_key(key, resolution).await
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
+    ) -> Result<ConnectHistoryResponse, DbError> {
         self.connect.history_summaries_complex(params).await
     }
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         self.connect.history_src_ip_stats(params).await
     }
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         self.connect.history_dst_ip_stats(params).await
     }
     pub async fn get_global_stats(
@@ -165,7 +165,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
-        let points = store.query_metric_by_key(key, MetricResolution::Second).await;
+        let points = store.query_metric_by_key(key, MetricResolution::Second).await.unwrap();
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].ingress_bytes, 100);
         store.shutdown();

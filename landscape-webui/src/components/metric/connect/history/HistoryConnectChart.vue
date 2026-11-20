@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from "vue";
+import { ref, watch, computed } from "vue";
+import { useLatestHistoryQuery } from "@/composables/useLatestHistoryQuery";
 import { get_connect_metric_info } from "@/api/metric";
 import type {
   ConnectKey,
@@ -19,7 +20,7 @@ interface Props {
 
 const props = defineProps<Props>();
 const chartData = ref<ConnectMetricPoint[]>([]);
-const loading = ref(false);
+const { loading, failed, run } = useLatestHistoryQuery();
 
 // 自动选择合适的初始分辨率
 const resolution = ref<MetricResolution>(
@@ -43,16 +44,13 @@ const resolutionOptions = computed(() => [
   { label: t("metric.connect.chart.day_level"), value: "day" },
 ]);
 
-async function fetchData() {
-  loading.value = true;
-  try {
-    chartData.value = await get_connect_metric_info(
-      props.conn,
-      resolution.value,
-    );
-  } finally {
-    loading.value = false;
-  }
+function fetchData() {
+  return run(
+    () => get_connect_metric_info(props.conn, resolution.value),
+    (points) => {
+      chartData.value = points;
+    },
+  );
 }
 
 // 数据降采样
@@ -128,8 +126,7 @@ function formatVolume(val: number): string {
 
 const formatPackets = (value: number) => `${Math.round(value)} pkt`;
 
-watch(resolution, fetchData);
-onMounted(fetchData);
+watch([() => props.conn, resolution], fetchData, { immediate: true });
 </script>
 
 <template>
@@ -145,6 +142,14 @@ onMounted(fetchData);
         </n-radio-button>
       </n-radio-group>
     </n-flex>
+    <n-button
+      v-if="failed"
+      type="error"
+      secondary
+      :loading="loading"
+      @click="fetchData"
+      >{{ t("metric.connect.history_state.failed") }}</n-button
+    >
     <n-spin :show="loading">
       <MetricLineChart
         :series="bytesSeries"

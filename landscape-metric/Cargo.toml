@@ -44,3 +44,12 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 name = "dns_pipeline"
 harness = false
 required-features = ["metric-persistent"]
+
+[[bench]]
+name = "connect_pipeline"
+harness = false
+required-features = ["metric-persistent"]
+
+[[bench]]
+name = "connect_realtime"
+harness = false

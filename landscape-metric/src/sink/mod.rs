@@ -23,13 +23,19 @@ pub(crate) trait ConnectMetricSink: MetricStorage {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint>;
+    ) -> Result<Vec<ConnectMetricPoint>, DbError>;
     async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse;
-    async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat>;
-    async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat>;
+    ) -> Result<ConnectHistoryResponse, DbError>;
+    async fn history_src_ip_stats(
+        &self,
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError>;
+    async fn history_dst_ip_stats(
+        &self,
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError>;
     async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError>;
 }
 

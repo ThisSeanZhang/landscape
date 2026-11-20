@@ -1,3 +1,7 @@
+import type {
+  ConnectSortKey,
+  SortOrder,
+} from "@landscape-router/types/api/schemas";
 import { mask_string } from "@/lib/common";
 import { defineStore } from "pinia";
 import { ref } from "vue";
@@ -30,13 +34,11 @@ export const useFrontEndStore = defineStore(
       }
     }
 
-    const conn_sort_key = ref<"time" | "port" | "ingress" | "egress">("time");
-    const conn_sort_order = ref<"asc" | "desc">("desc");
+    const conn_sort_key = ref<ConnectSortKey>("time");
+    const conn_sort_order = ref<SortOrder>("desc");
 
-    const history_conn_sort_key = ref<
-      "time" | "port" | "ingress" | "egress" | "duration"
-    >("time");
-    const history_conn_sort_order = ref<"asc" | "desc">("desc");
+    const history_conn_sort_key = ref<ConnectSortKey>("time");
+    const history_conn_sort_order = ref<SortOrder>("desc");
 
     return {
       presentation_mode,

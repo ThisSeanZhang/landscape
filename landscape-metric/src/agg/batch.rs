@@ -1,5 +1,25 @@
 use landscape_common::metric::connect::ConnectMetric;
 
+use super::flow::{MS_PER_DAY, MS_PER_HOUR, MS_PER_MINUTE};
+
+const MS_PER_TEN_MINUTES: u64 = 10 * MS_PER_MINUTE;
+
+fn bucket_start(report_time: u64, bucket_ms: u64) -> u64 {
+    report_time / bucket_ms * bucket_ms
+}
+
+fn minute_slot(report_time: u64) -> u64 {
+    bucket_start(report_time, MS_PER_MINUTE)
+}
+
+fn hour_refresh_slot(report_time: u64) -> u64 {
+    bucket_start(report_time, MS_PER_TEN_MINUTES)
+}
+
+fn day_refresh_slot(report_time: u64) -> u64 {
+    bucket_start(report_time, MS_PER_HOUR)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BucketKind {
     Minute,
@@ -16,7 +36,7 @@ pub(crate) struct BucketWrite {
 }
 
 /// 聚合层产出的待持久化批次:连接汇总 + 1m/1h/1d 时间桶。
-/// sink 层负责将批次写入具体存储;内存 sink 直接丢弃。
+/// 仅在启用持久化时填充，由 writer 异步写入存储。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Batch {
     pub summary_metrics: Vec<ConnectMetric>,
@@ -32,9 +52,33 @@ impl Batch {
         self.summary_metrics.len() + self.bucket_writes.len()
     }
 
-    pub(crate) fn extend(&mut self, other: Self) {
-        self.summary_metrics.extend(other.summary_metrics);
-        self.bucket_writes.extend(other.bucket_writes);
+    /// Seal elapsed buckets with their last observation; refresh open buckets with the new one.
+    pub(crate) fn record_progress(&mut self, previous: &ConnectMetric, metric: &ConnectMetric) {
+        let time = metric.report_time;
+        let minute = minute_slot(previous.report_time);
+        if minute_slot(time) == minute {
+            return;
+        }
+        self.push_bucket(BucketKind::Minute, previous.clone(), minute);
+        self.push_summary(metric.clone());
+        if hour_refresh_slot(time) > hour_refresh_slot(previous.report_time) {
+            let bucket = bucket_start(previous.report_time, MS_PER_HOUR);
+            let sample = if bucket == bucket_start(time, MS_PER_HOUR) { metric } else { previous };
+            self.push_bucket(BucketKind::Hour, sample.clone(), bucket);
+        }
+        if day_refresh_slot(time) > day_refresh_slot(previous.report_time) {
+            let bucket = bucket_start(previous.report_time, MS_PER_DAY);
+            let sample = if bucket == bucket_start(time, MS_PER_DAY) { metric } else { previous };
+            self.push_bucket(BucketKind::Day, sample.clone(), bucket);
+        }
+    }
+
+    pub(crate) fn record_final(&mut self, metric: &ConnectMetric) {
+        let time = metric.report_time;
+        self.push_bucket(BucketKind::Minute, metric.clone(), minute_slot(time));
+        self.push_bucket(BucketKind::Hour, metric.clone(), bucket_start(time, MS_PER_HOUR));
+        self.push_bucket(BucketKind::Day, metric.clone(), bucket_start(time, MS_PER_DAY));
+        self.push_summary(metric.clone());
     }
 
     pub(crate) fn push_summary(&mut self, metric: ConnectMetric) {
@@ -101,28 +145,43 @@ mod tests {
     }
 
     #[test]
-    fn extend_merges_summaries_and_buckets() {
-        let mut left = Batch::default();
-        left.push_summary(metric(0));
-        left.push_bucket(BucketKind::Day, metric(0), 0);
-
-        let mut right = Batch::default();
-        right.push_summary(metric(1));
-        right.push_bucket(BucketKind::Minute, metric(1), 60_000);
-        right.push_bucket(BucketKind::Hour, metric(1), 3_600_000);
-
-        left.extend(right);
-        assert_eq!(left.summary_metrics.len(), 2);
-        assert_eq!(left.bucket_writes.len(), 3);
-        assert_eq!(left.op_count(), 5);
+    fn bucket_start_aligns_down_to_bucket_boundary() {
+        assert_eq!(bucket_start(60_000, MS_PER_MINUTE), 60_000);
+        assert_eq!(bucket_start(65_000, MS_PER_MINUTE), 60_000);
+        assert_eq!(bucket_start(59_999, MS_PER_MINUTE), 0);
+        assert_eq!(bucket_start(3_700_000, MS_PER_HOUR), 3_600_000);
+        assert_eq!(bucket_start(86_400_000, MS_PER_DAY), 86_400_000);
+        assert_eq!(bucket_start(86_400_001, MS_PER_DAY), 86_400_000);
     }
 
     #[test]
-    fn extending_with_empty_batch_is_noop() {
+    fn slot_helpers_use_expected_granularity() {
+        assert_eq!(minute_slot(61_000), 60_000);
+        assert_eq!(hour_refresh_slot(605_000), 600_000);
+        assert_eq!(hour_refresh_slot(599_999), 0);
+        assert_eq!(day_refresh_slot(3_700_000), 3_600_000);
+        assert_eq!(day_refresh_slot(7_199_999), 7_200_000 - MS_PER_HOUR);
+    }
+
+    #[test]
+    fn crossing_midnight_emits_all_previous_buckets_once() {
         let mut batch = Batch::default();
-        batch.push_summary(metric(0));
-        batch.extend(Batch::default());
-        assert_eq!(batch.op_count(), 1);
-        assert_eq!(batch.summary_metrics[0].key().cpu_id, 0);
+        let mut current = metric(0);
+        current.report_time = MS_PER_DAY;
+        let mut previous = current.clone();
+        previous.report_time -= 1;
+        batch.record_progress(&previous, &current);
+        batch.record_progress(&current, &current);
+        assert_eq!(batch.summary_metrics.len(), 1);
+        let buckets: Vec<_> =
+            batch.bucket_writes.iter().map(|row| (row.kind, row.bucket_report_time)).collect();
+        assert_eq!(
+            buckets,
+            [
+                (BucketKind::Minute, MS_PER_DAY - MS_PER_MINUTE),
+                (BucketKind::Hour, MS_PER_DAY - MS_PER_HOUR),
+                (BucketKind::Day, 0)
+            ]
+        );
     }
 }

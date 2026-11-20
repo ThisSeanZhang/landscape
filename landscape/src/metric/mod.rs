@@ -173,28 +173,28 @@ impl MetricService {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
         self.connect.engine().query_metric_by_key(key, resolution).await
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
+    ) -> Result<ConnectHistoryResponse, DbError> {
         self.connect.engine().history_summaries_complex(params).await
     }
 
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         self.connect.engine().history_src_ip_stats(params).await
     }
 
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         self.connect.engine().history_dst_ip_stats(params).await
     }
 

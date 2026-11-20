@@ -23,7 +23,8 @@ const prefStore = usePreferenceStore();
 const route = useRoute();
 const { t } = useI18n();
 
-const { stats, loading, query } = useHistoryIpStats(direction);
+const { stats, loading, failed, hasResult, query, invalidate } =
+  useHistoryIpStats(direction);
 
 const timeRange = ref<number | "custom" | null>(300); // default 5 minutes
 const queryLimit = ref<number | null>(100);
@@ -106,13 +107,14 @@ watch(
 
 // Debounced query
 watch(ipSearch, (_, __, onCleanup) => {
+  invalidate();
   const timer = setTimeout(fetchStats, 600);
   onCleanup(() => clearTimeout(timer));
 });
 
 onMounted(() => {
   fetchStats();
-  if (!metricStore.global_history_stats) {
+  if (!metricStore.global_history_stats || metricStore.globalStatsFailed) {
     metricStore.UPDATE_GLOBAL_HISTORY_STATS();
   }
 });
@@ -158,6 +160,16 @@ onMounted(() => {
             >
           </n-flex>
         </n-flex>
+        <n-button
+          v-if="metricStore.globalStatsFailed"
+          type="error"
+          secondary
+          size="small"
+          :loading="metricStore.globalStatsLoading"
+          @click="metricStore.UPDATE_GLOBAL_HISTORY_STATS()"
+        >
+          {{ t("metric.connect.history_state.totals_failed") }}
+        </n-button>
       </n-flex>
     </n-card>
 
@@ -200,13 +212,23 @@ onMounted(() => {
         :disabled="loading"
         style="width: 150px"
       />
-      <n-button @click="fetchStats" type="primary" :loading="loading">{{
-        $t("metric.connect.stats.query")
-      }}</n-button>
+      <n-button
+        @click="fetchStats"
+        :type="failed ? 'error' : 'primary'"
+        :loading="loading"
+        >{{
+          $t(
+            failed
+              ? "metric.connect.history_state.failed"
+              : "metric.connect.stats.query",
+          )
+        }}</n-button
+      >
     </n-flex>
 
     <n-spin :show="loading">
       <HistoryIpStatsList
+        v-if="hasResult"
         :stats="stats"
         :title="$t(`metric.connect.stats.history_${direction}`)"
         :show-geo-lookup="direction === 'dst'"

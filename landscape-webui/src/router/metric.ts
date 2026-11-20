@@ -1,10 +1,9 @@
 import { RouteRecordRaw } from "vue-router";
 import DNSMetricPage from "@/views/metric/DNSMetricPage.vue";
 import LiveMetric from "@/views/metric/conn/LiveMetric.vue";
-import HistoryMetric from "@/views/metric/conn/HistoryMetric.vue";
+import ConnectHistoryPage from "@/views/metric/conn/ConnectHistoryPage.vue";
 import IfaceMetric from "@/views/metric/conn/IfaceMetric.vue";
 import LiveIpMetric from "@/views/metric/conn/LiveIpMetric.vue";
-import HistoryIpMetric from "@/views/metric/conn/HistoryIpMetric.vue";
 
 const metric_route: Array<RouteRecordRaw> = [
   {
@@ -15,7 +14,7 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/history",
     name: "routes.connect-history",
-    component: HistoryMetric,
+    component: ConnectHistoryPage,
     meta: { capability: "metric_persistent" },
   },
   {
@@ -38,7 +37,7 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/history-src",
     name: "routes.connect-history-src",
-    component: HistoryIpMetric,
+    component: ConnectHistoryPage,
     props: { direction: "src" },
     meta: {
       capability: "metric_persistent",
@@ -48,7 +47,7 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/history-dst",
     name: "routes.connect-history-dst",
-    component: HistoryIpMetric,
+    component: ConnectHistoryPage,
     props: { direction: "dst" },
     meta: {
       capability: "metric_persistent",

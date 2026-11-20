@@ -353,47 +353,49 @@ impl ConnectMetricSink for PersistentMetricStore {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
-        match sqlite::connect::query_metric_by_key(&self.pool, &key, resolution).await {
-            Ok(points) => points,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect metrics by key: {}", error);
-                Vec::new()
-            }
-        }
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
+        sqlite::connect::query_metric_by_key(&self.pool, &key, resolution).await.map_err(|error| {
+            DbError::Internal(format!("failed to query persistent connect metrics by key: {error}"))
+        })
     }
 
     async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
-        match sqlite::connect::query_historical_summaries_complex(&self.pool, params).await {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect history summaries: {}", error);
-                ConnectHistoryResponse::default()
-            }
-        }
+    ) -> Result<ConnectHistoryResponse, DbError> {
+        sqlite::connect::query_historical_summaries_complex(&self.pool, params).await.map_err(
+            |error| {
+                DbError::Internal(format!(
+                    "failed to query persistent connect history summaries: {error}"
+                ))
+            },
+        )
     }
 
-    async fn history_src_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match sqlite::connect::query_connection_ip_history(&self.pool, params, true).await {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect src ip history: {}", error);
-                Vec::new()
-            }
-        }
+    async fn history_src_ip_stats(
+        &self,
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        sqlite::connect::query_connection_ip_history(&self.pool, params, true).await.map_err(
+            |error| {
+                DbError::Internal(format!(
+                    "failed to query persistent connect src ip history: {error}"
+                ))
+            },
+        )
     }
 
-    async fn history_dst_ip_stats(&self, params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        match sqlite::connect::query_connection_ip_history(&self.pool, params, false).await {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::error!("failed to query persistent connect dst ip history: {}", error);
-                Vec::new()
-            }
-        }
+    async fn history_dst_ip_stats(
+        &self,
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        sqlite::connect::query_connection_ip_history(&self.pool, params, false).await.map_err(
+            |error| {
+                DbError::Internal(format!(
+                    "failed to query persistent connect dst ip history: {error}"
+                ))
+            },
+        )
     }
 
     async fn get_global_stats(&self, force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {

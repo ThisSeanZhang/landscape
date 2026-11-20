@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted } from "vue";
+import { computed, reactive, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { get_connects_info } from "@/api/metric";
@@ -10,7 +10,7 @@ import { createConnectionFilter } from "@/lib/metric/connectionFilter";
 import type { ConnectRealtimeStatus } from "@landscape-router/types/api/schemas";
 import { formatRate, formatPackets } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
-import ConnectVirtualList from "@/components/metric/connect/live/ConnectVirtualList.vue";
+import ConnectList from "@/components/metric/connect/ConnectList.vue";
 import FlowSelect from "@/components/flow/FlowSelect.vue";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 
@@ -60,15 +60,6 @@ const resetLiveFilter = () => {
   Object.assign(liveFilter, createConnectionFilter());
 };
 
-const toggleSort = (key: "time" | "port" | "ingress" | "egress") => {
-  if (frontEndStore.conn_sort_key === key) {
-    frontEndStore.conn_sort_order =
-      frontEndStore.conn_sort_order === "asc" ? "desc" : "asc";
-  } else {
-    frontEndStore.conn_sort_key = key;
-    frontEndStore.conn_sort_order = "desc";
-  }
-};
 const handleSearchTuple = (conn: ConnectRealtimeStatus) => {
   liveFilter.src_ip = conn.src_ip;
   liveFilter.dst_ip = conn.dst_ip;
@@ -140,6 +131,16 @@ const filteredConnectMetrics = computed(() => {
       const timeA = a.last_report_time || a.create_time_ms || 0;
       const timeB = b.last_report_time || b.create_time_ms || 0;
       result = timeA - timeB;
+    } else if (sortKey.value === "duration") {
+      const durationA = Math.max(
+        0,
+        (a.last_report_time || a.create_time_ms) - a.create_time_ms,
+      );
+      const durationB = Math.max(
+        0,
+        (b.last_report_time || b.create_time_ms) - b.create_time_ms,
+      );
+      result = durationA - durationB;
     } else if (sortKey.value === "port") {
       result = (a.src_port || 0) - (b.src_port || 0);
     } else if (sortKey.value === "ingress") {
@@ -189,7 +190,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <n-flex vertical style="flex: 1; overflow: hidden">
+  <n-flex vertical :wrap="false" style="flex: 1; overflow: hidden">
     <!-- System-wide active connection stats -->
     <n-card
       size="small"
@@ -289,38 +290,6 @@ onMounted(() => {
           $t("metric.connect.reset")
         }}</n-button>
       </n-button-group>
-      <n-divider vertical />
-
-      <n-button-group>
-        <n-button
-          :type="sortKey === 'time' ? 'primary' : 'default'"
-          @click="toggleSort('time')"
-        >
-          {{ $t("metric.connect.filter.time") }}
-          {{ sortKey === "time" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'port' ? 'primary' : 'default'"
-          @click="toggleSort('port')"
-        >
-          {{ $t("metric.connect.filter.port") }}
-          {{ sortKey === "port" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'egress' ? 'primary' : 'default'"
-          @click="toggleSort('egress')"
-        >
-          {{ $t("metric.connect.stats.filter_egress") }}
-          {{ sortKey === "egress" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'ingress' ? 'primary' : 'default'"
-          @click="toggleSort('ingress')"
-        >
-          {{ $t("metric.connect.stats.filter_ingress") }}
-          {{ sortKey === "ingress" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-      </n-button-group>
     </n-flex>
 
     <n-grid x-gap="12" :cols="5" style="margin-bottom: 12px">
@@ -392,12 +361,12 @@ onMounted(() => {
       </n-gi>
     </n-grid>
 
-    <ConnectVirtualList
-      v-if="filteredConnectMetrics"
-      :connect_metrics="filteredConnectMetrics"
-      @search:tuple="handleSearchTuple"
-      @search:src="(ip) => (liveFilter.src_ip = ip)"
-      @search:dst="(ip) => (liveFilter.dst_ip = ip)"
+    <ConnectList
+      mode="live"
+      :items="filteredConnectMetrics"
+      v-model:sort-key="frontEndStore.conn_sort_key"
+      v-model:sort-order="frontEndStore.conn_sort_order"
+      @filter="handleSearchTuple"
     />
   </n-flex>
 </template>

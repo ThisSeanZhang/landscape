@@ -179,44 +179,44 @@ impl ConnectMetricEngine {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
         if resolution == MetricResolution::Second {
             let cutoff = now_ms().saturating_sub(self.second_window_ms);
-            return agg::second_points_by_key(&self.flow_cache, &key, cutoff);
+            return Ok(agg::second_points_by_key(&self.flow_cache, &key, cutoff));
         }
         match &self.sink {
             Some(sink) => sink.query_metric_by_key(key, resolution).await,
-            None => Default::default(),
+            None => Ok(Default::default()),
         }
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
+    ) -> Result<ConnectHistoryResponse, DbError> {
         match &self.sink {
             Some(sink) => sink.history_summaries_complex(params).await,
-            None => Default::default(),
+            None => Ok(Default::default()),
         }
     }
 
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         match &self.sink {
             Some(sink) => sink.history_src_ip_stats(params).await,
-            None => Default::default(),
+            None => Ok(Default::default()),
         }
     }
 
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
         match &self.sink {
             Some(sink) => sink.history_dst_ip_stats(params).await,
-            None => Default::default(),
+            None => Ok(Default::default()),
         }
     }
 
@@ -464,7 +464,8 @@ mod tests {
                 },
                 MetricResolution::Minute,
             )
-            .await;
+            .await
+            .unwrap();
         assert!(points.is_empty());
         let stats = engine.get_global_stats(false).await.unwrap();
         assert_eq!(stats.total_connect_count, 0);
@@ -487,14 +488,15 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let points = engine.query_metric_by_key(key.clone(), MetricResolution::Second).await;
+            let points =
+                engine.query_metric_by_key(key.clone(), MetricResolution::Second).await.unwrap();
             if points.len() == 2 {
                 break;
             }
             assert!(tokio::time::Instant::now() < deadline, "timed out waiting for ring points");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let points = engine.query_metric_by_key(key, MetricResolution::Second).await;
+        let points = engine.query_metric_by_key(key, MetricResolution::Second).await.unwrap();
         assert_eq!(points.last().unwrap().ingress_bytes, 200);
 
         engine.shutdown().await;
@@ -565,6 +567,50 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn closing_across_midnight_preserves_both_snapshots_at_every_resolution() {
+            let dir = tempfile::tempdir().unwrap();
+            let config = connect_config(MetricStoreBackend::Sqlite);
+            let engine = ConnectMetricEngine::new(dir.path().into(), config.clone()).await.unwrap();
+            let tx = engine.get_connect_msg_channel().unwrap();
+            let day = 86_400_000;
+            let midnight = now_ms() / day * day;
+            let active = connect_metric(1, midnight - 5_000, midnight - 2_000, 100);
+            let key = active.key();
+            let mut closed = connect_metric(1, midnight - 5_000, midnight + 1_000, 160);
+            closed.status = ConnectStatusType::Disabled.into();
+            tx.send(active).await.unwrap();
+            tx.send(closed).await.unwrap();
+            engine.shutdown().await;
+            assert_eq!(engine.writer_stats(), (0, 0));
+
+            let reader = ConnectMetricEngine::new(dir.path().into(), config).await.unwrap();
+            for (resolution, span) in [
+                (MetricResolution::Minute, 60_000),
+                (MetricResolution::Hour, 3_600_000),
+                (MetricResolution::Day, day),
+            ] {
+                let points = reader.query_metric_by_key(key.clone(), resolution).await.unwrap();
+                let samples: Vec<_> = points
+                    .into_iter()
+                    .map(|p| (p.report_time, p.ingress_bytes, p.status))
+                    .collect();
+                assert_eq!(
+                    samples,
+                    [
+                        (midnight - span, 100, ConnectStatusType::Active),
+                        (midnight, 160, ConnectStatusType::Disabled)
+                    ]
+                );
+            }
+            reader.shutdown().await;
+            // A closed database must surface a read error instead of an empty result.
+            assert!(reader.history_summaries_complex(Default::default()).await.is_err());
+            assert!(reader.history_src_ip_stats(Default::default()).await.is_err());
+            assert!(reader.history_dst_ip_stats(Default::default()).await.is_err());
+            assert!(reader.query_metric_by_key(key, MetricResolution::Minute).await.is_err());
+        }
+
+        #[tokio::test]
         async fn connect_pipeline_writes_summaries_buckets_and_global_stats() {
             let temp = tempfile::tempdir().unwrap();
             let engine = ConnectMetricEngine::new(
@@ -602,7 +648,8 @@ mod tests {
             assert_eq!(stats.total_ingress_bytes, 200);
             assert_eq!(stats.total_egress_bytes, 400);
 
-            let points = engine.query_metric_by_key(key.clone(), MetricResolution::Minute).await;
+            let points =
+                engine.query_metric_by_key(key.clone(), MetricResolution::Minute).await.unwrap();
             assert_eq!(points.len(), 1);
             assert_eq!(points[0].ingress_bytes, 200);
 
@@ -611,7 +658,8 @@ mod tests {
                     limit: Some(10),
                     ..Default::default()
                 })
-                .await;
+                .await
+                .unwrap();
             assert_eq!(history.items.len(), 1);
             assert_eq!(history.items[0].key, key);
 
@@ -714,7 +762,8 @@ mod tests {
                     limit: Some(10),
                     ..Default::default()
                 })
-                .await;
+                .await
+                .unwrap();
             assert_eq!(history.items.len(), 1);
             assert_eq!(history.items[0].total_ingress_bytes, 200);
             restarted.shutdown().await;

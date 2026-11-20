@@ -89,7 +89,7 @@ async fn get_connect_metric_info(
     JsonBody(req): JsonBody<MetricChartRequest>,
 ) -> LandscapeApiResult<Vec<ConnectMetricPoint>> {
     let resolution = req.resolution.unwrap_or_default();
-    let data = state.system.metric_service.query_metric_by_key(req.key, resolution).await;
+    let data = state.system.metric_service.query_metric_by_key(req.key, resolution).await?;
     LandscapeApiResp::success(data)
 }
 
@@ -105,7 +105,7 @@ async fn get_connect_history(
     State(state): State<LandscapeApp>,
     Query(params): Query<ConnectHistoryQueryParams>,
 ) -> LandscapeApiResult<ConnectHistoryResponse> {
-    let data = state.system.metric_service.history_summaries_complex(params).await;
+    let data = state.system.metric_service.history_summaries_complex(params).await?;
     LandscapeApiResp::success(data)
 }
 
@@ -166,7 +166,7 @@ async fn get_history_src_ip_stats(
     State(state): State<LandscapeApp>,
     Query(params): Query<ConnectHistoryQueryParams>,
 ) -> LandscapeApiResult<Vec<IpHistoryStat>> {
-    let data = state.system.metric_service.history_src_ip_stats(params).await;
+    let data = state.system.metric_service.history_src_ip_stats(params).await?;
     LandscapeApiResp::success(data)
 }
 
@@ -182,7 +182,7 @@ async fn get_history_dst_ip_stats(
     State(state): State<LandscapeApp>,
     Query(params): Query<ConnectHistoryQueryParams>,
 ) -> LandscapeApiResult<Vec<IpHistoryStat>> {
-    let data = state.system.metric_service.history_dst_ip_stats(params).await;
+    let data = state.system.metric_service.history_dst_ip_stats(params).await?;
     LandscapeApiResp::success(data)
 }
 
