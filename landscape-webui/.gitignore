@@ -29,3 +29,7 @@ components.d.ts
 
 # Build artifacts
 public/scalar
+
+# Playwright
+/test-results/
+/playwright-report/

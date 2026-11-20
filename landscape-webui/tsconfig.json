@@ -22,7 +22,7 @@
       "@landscape-router/types/*": ["../landscape-types/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "e2e/**/*.ts"],
   "references": [
     {
       "path": "./tsconfig.node.json"

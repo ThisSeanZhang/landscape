@@ -23,3 +23,14 @@
 同目录模块使用相对路径，跨目录引用可使用 `@/` 指向 `src/`。测试与被测模块放在一起。
 
 提交 JSON 请求时，可选字段需要省略的，在对应 API 适配函数中转换为 `undefined`。可空字段按 schema 保留 `null`，必填字段在表单中校验。例如设备登记允许省略未填的 IP 地址，同时需要保留空标签列表 `tag: []`。
+
+## Linux 无头浏览器测试
+
+新检出的仓库先在根目录执行 `just init`，安装依赖并生成前端 API 类型。随后在 `landscape-webui` 目录执行以下命令。首次安装 Chromium 和系统依赖时可能需要 sudo 权限。
+
+```sh
+pnpm exec playwright install --with-deps --only-shell chromium
+pnpm test:e2e
+```
+
+Playwright 会构建前端，在本机 `127.0.0.1:4173` 启动 HTTPS 预览，并使用无头 Chromium 运行 `e2e/*.e2e.ts`。登录和 LAN 设备刷新用例在浏览器内模拟 API 响应，可以独立于 Rust 服务运行。失败时，执行 `pnpm exec playwright show-trace <trace.zip>` 可查看测试输出中列出的跟踪文件。
