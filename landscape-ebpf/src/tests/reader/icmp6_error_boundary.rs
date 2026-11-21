@@ -165,6 +165,29 @@ fn icmp6_error_inner_udp() {
 }
 
 #[test]
+fn icmp6_error_requires_eight_quoted_transport_bytes() {
+    let inner = inner_udp();
+    let (mut ip, udp) = Ipv6Header::from_slice(&inner).unwrap();
+    let end = Ipv6Header::LEN + 8;
+    assert_accept(
+        &outer_icmp6_error(&inner[..end], None),
+        INNER_DST,
+        OUTER_DST,
+        102,
+        17,
+        6666,
+        5555,
+    );
+    assert_reject(&outer_icmp6_error(&inner[..end - 1], None));
+
+    // The outer packet contains eight bytes, but the quoted IPv6 header declares only seven.
+    ip.set_payload_length(7).unwrap();
+    let mut quote = ip.to_bytes().to_vec();
+    quote.extend_from_slice(&udp[..8]);
+    assert_reject(&outer_icmp6_error(&quote, None));
+}
+
+#[test]
 fn icmp6_error_truncated_inner_ipv6_rejected() {
     let inner = inner_udp();
     let pkt = outer_icmp6_error(&inner[..30], None);

@@ -52,17 +52,17 @@ static __always_inline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_of
     __u32 inner_l3_offset = l4_offset + sizeof(struct icmp6hdr);
     const struct ipv6hdr *emb = (const struct ipv6hdr *)(data + inner_l3_offset);
     if ((const void *)(emb + 1) > (const void *)data_end || emb->version != IPV6_VERSION) return -1;
+    __u32 quote_end = icmp6_quote_end(icmp, emb, inner_l3_offset, packet_end);
 
     struct ip6_scan_offsets inner = {};
     __be32 inner_frag_id = 0;
     __u8 inner_frag_next = 0;
-    __u32 inner_packet_end = 0;
     if (ip6_scan_ext_linear(data, data_end, inner_l3_offset, IP6_SCAN_MAX_EXT, &inner,
-                            &inner_frag_id, &inner_frag_next, &inner_packet_end) < 0)
+                            &inner_frag_id, &inner_frag_next, NULL) < 0)
         return -1;
 
     if (inner.frag_code == LAND_FRAG_NON_INITIAL) return -1;
-    if (inner.l4_offset > packet_end || inner.l4_offset + 8U > packet_end) return -1;
+    if (inner.l4_offset + 8U > quote_end) return -1;
     if ((const void *)(data + inner.l4_offset) + 8U > (const void *)data_end) return -1;
 
     outer = (const struct ipv6hdr *)(data + l3_offset);
@@ -74,6 +74,7 @@ static __always_inline int xdp_icmp6_parse_error(struct xdp_md *ctx, __u32 l3_of
     meta->dst_addr = outer->daddr;
     meta->inner_l3_offset = inner_l3_offset;
     meta->inner_l4_offset = inner.l4_offset;
+    meta->quote_end = quote_end;
     meta->proto = inner.l4_protocol;
     meta->tcp_phase = NAPT_TCP_PHASE_NONE;
 
@@ -193,6 +194,7 @@ static __always_inline int xdp_nat_read6(struct xdp_md *ctx, __u32 l3_offset, __
             *dport = meta.dst_port;
             off->icmp_error_l3_offset = (__u16)meta.inner_l3_offset;
             off->icmp_inner_l4_offset = (__u16)meta.inner_l4_offset;
+            off->icmp_quote_end = meta.quote_end;
             off->icmp_inner_l4_protocol = meta.proto;
             off->l4_protocol = meta.proto;
             off->tcp_phase = meta.tcp_phase;

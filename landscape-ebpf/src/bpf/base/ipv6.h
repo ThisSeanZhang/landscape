@@ -87,6 +87,7 @@ struct ip6_scan_offsets {
 
     __u16 icmp_error_l3_offset;
     __u16 icmp_inner_l4_offset;
+    __u16 icmp_quote_end;
     __u8 icmp_inner_l4_protocol;
 
     /* Reader/test observability; the NAT modify path does not consume it. */
@@ -301,9 +302,22 @@ struct icmp6_error_meta {
     __be16 dst_port;
     __u32 inner_l3_offset;
     __u32 inner_l4_offset;
+    __u16 quote_end;
     __u8 proto;
     __u8 tcp_phase;
 };
+
+static __always_inline __u32 icmp6_quote_end(const struct icmp6hdr *icmp,
+                                             const struct ipv6hdr *inner, __u32 inner_offset,
+                                             __u32 packet_end) {
+    __u32 end = inner_offset + IPV6_HDR_LEN + bpf_ntohs(inner->payload_len);
+    /* RFC 4884: these two errors can carry extensions after the quoted datagram. */
+    if (icmp->icmp6_type == ICMPV6_DEST_UNREACH || icmp->icmp6_type == ICMPV6_TIME_EXCEED) {
+        __u32 len = (__u32)icmp->icmp6_dataun.un_data8[0] * 8U;
+        if (len && inner_offset + len < end) end = inner_offset + len;
+    }
+    return end < packet_end ? end : packet_end;
+}
 
 static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_offset,
                                              __u32 l4_offset, __u32 packet_end,
@@ -336,17 +350,17 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     __u32 inner_l3_offset = l4_offset + sizeof(struct icmp6hdr);
     struct ipv6hdr *emb = (struct ipv6hdr *)(data + inner_l3_offset);
     if ((char *)(emb + 1) > data_end || emb->version != IPV6_VERSION) return -1;
+    __u32 quote_end = icmp6_quote_end(icmp, emb, inner_l3_offset, packet_end);
 
     struct ip6_scan_offsets inner = {};
     __be32 inner_frag_id = 0;
     __u8 inner_frag_next = 0;
-    __u32 inner_packet_end = 0;
     if (ip6_scan_ext(skb, inner_l3_offset, IP6_SCAN_MAX_EXT, &inner, &inner_frag_id,
-                     &inner_frag_next, &inner_packet_end) < 0)
+                     &inner_frag_next, NULL) < 0)
         return -1;
 
     if (inner.frag_code == LAND_FRAG_NON_INITIAL) return -1;
-    if (inner.l4_offset > packet_end || inner.l4_offset + 8U > packet_end) return -1;
+    if (inner.l4_offset + 8U > quote_end) return -1;
     if (bpf_skb_pull_data(skb, inner.l4_offset + 8U) != 0) return -1;
 
     data = ip6_skb_data(skb);
@@ -361,6 +375,7 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     meta->dst_addr = outer->daddr;
     meta->inner_l3_offset = inner_l3_offset;
     meta->inner_l4_offset = inner.l4_offset;
+    meta->quote_end = quote_end;
     meta->proto = inner.l4_protocol;
     meta->tcp_phase = NAPT_TCP_PHASE_NONE;
 
