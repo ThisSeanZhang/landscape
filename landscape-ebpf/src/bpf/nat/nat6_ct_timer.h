@@ -58,8 +58,14 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
                      &value->trigger_addr.in6_u.u6_addr8, current_status);
     }
 
-    if (current_status == TIMER_RELEASE) {
-        if (!ct_try_set_status(&value->status, TIMER_RELEASE, TIMER_CLEAN_START)) return true;
+    if (current_status == TIMER_WAIT_TIMEOUT) {
+        /* A short wakeup from a previous wait can fire during this one. */
+        u64 now = bpf_ktime_get_ns();
+        if (now < value->wait_deadline_ns) {
+            *next_timeout = value->wait_deadline_ns - now;
+            return true;
+        }
+        if (!ct_try_set_status(&value->status, TIMER_WAIT_TIMEOUT, TIMER_CLEAN_START)) return true;
         current_status = TIMER_CLEAN_START;
     }
 
@@ -83,19 +89,19 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     nat6_metric_try_report(key, value, NAT_CONN_ACTIVE);
 
     if (current_status == TIMER_ACTIVE) {
-        next_status = TIMER_TIMEOUT_1;
+        next_status = TIMER_IDLE_CHECK_1;
 
         if (value->trigger_port == TEST_PORT) {
-            ld_timer_log("change next status TIMER_TIMEOUT_1");
+            ld_timer_log("change next status TIMER_IDLE_CHECK_1");
         }
-    } else if (current_status == TIMER_TIMEOUT_1) {
-        next_status = TIMER_TIMEOUT_2;
+    } else if (current_status == TIMER_IDLE_CHECK_1) {
+        next_status = TIMER_IDLE_CHECK_2;
 
         if (value->trigger_port == TEST_PORT) {
-            ld_timer_log("change next status TIMER_TIMEOUT_2");
+            ld_timer_log("change next status TIMER_IDLE_CHECK_2");
         }
-    } else if (current_status == TIMER_TIMEOUT_2) {
-        next_status = TIMER_RELEASE;
+    } else if (current_status == TIMER_IDLE_CHECK_2) {
+        next_status = TIMER_WAIT_TIMEOUT;
         if (key->l4_protocol == IPPROTO_TCP) {
             if (client_status == CT_SYN && server_status == CT_SYN) {
                 *next_timeout = TCP_TIMEOUT;
@@ -108,10 +114,10 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
 
         if (value->trigger_port == TEST_PORT) {
             u64 show = *next_timeout / 1000000000ULL;
-            ld_timer_log("change next status TIMER_RELEASE, next_timeout: %d", show);
+            ld_timer_log("change next status TIMER_WAIT_TIMEOUT, next_timeout: %d", show);
         }
     } else {
-        next_status = TIMER_TIMEOUT_2;
+        next_status = TIMER_IDLE_CHECK_2;
     }
 
     if (__sync_val_compare_and_swap(&value->status, current_status, next_status) !=
@@ -119,14 +125,23 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
         ld_timer_log("call back modify status fail, current status: %d new status: %d",
                      current_status, next_status);
         *next_timeout = REPORT_INTERVAL;
+    } else if (next_status == TIMER_WAIT_TIMEOUT) {
+        value->wait_deadline_ns = bpf_ktime_get_ns() + *next_timeout;
     }
     return true;
+}
+
+static __always_inline void nat6_timer_rearm(struct nat6_timer_value *value, u64 delay) {
+    bpf_timer_start(&value->timer, delay, 0);
+    /* A packet may have armed the short tick after the callback selected a long delay. */
+    if (delay > REPORT_INTERVAL && value->status == TIMER_ACTIVE)
+        bpf_timer_start(&value->timer, REPORT_INTERVAL, 0);
 }
 
 static int nat6_timer_clean_callback(void *map, struct nat6_timer_key *key,
                                      struct nat6_timer_value *value) {
     u64 next_timeout;
-    if (nat6_timer_step(key, value, &next_timeout)) bpf_timer_start(&value->timer, next_timeout, 0);
+    if (nat6_timer_step(key, value, &next_timeout)) nat6_timer_rearm(value, next_timeout);
     return 0;
 }
 
@@ -168,6 +183,10 @@ static __always_inline bool nat6_allows_create_pkt(u8 l4_protocol, u8 tcp_phase,
 
 static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 gress,
                                                struct nat6_timer_value *ct_timer_value) {
+    if (l4_protocol == NEXTHDR_TCP && tcp_phase == NAPT_TCP_PHASE_ESTABLISHED &&
+        ct_timer_value->status == TIMER_ACTIVE)
+        return NAT_OP_OK;
+
     u64 curr_state, *modify_status = NULL;
     if (gress == NAT_MAPPING_INGRESS) {
         curr_state = ct_timer_value->server_status;
@@ -200,15 +219,16 @@ static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
     }
 
     u64 current_status = ct_timer_value->status;
-    if (ct_status_can_activate(current_status)) {
-        u64 prev_status =
+    /* A competing tick can advance either short check, then enter WAIT_TIMEOUT. */
+    for (int i = 0; i < 3 && ct_status_can_activate(current_status); i++) {
+        u64 observed =
             __sync_val_compare_and_swap(&ct_timer_value->status, current_status, TIMER_ACTIVE);
-        if (prev_status == current_status) {
-            if (ct_timer_value->trigger_port == TEST_PORT) {
-                ld_log("flush status to TIMER_ACTIVE: 20");
-            }
-            bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
+        if (observed == current_status) {
+            if (current_status == TIMER_WAIT_TIMEOUT)
+                bpf_timer_start(&ct_timer_value->timer, REPORT_INTERVAL, 0);
+            break;
         }
+        current_status = observed;
     }
 
     return NAT_OP_OK;

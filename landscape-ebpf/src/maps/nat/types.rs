@@ -53,6 +53,7 @@ pub(crate) struct Nat6TimerValue {
     pub cpu_id: u32,
     pub ifindex: u32,
     pub client_prefix: [u8; 8],
+    pub wait_deadline_ns: u64,
 }
 
 #[cfg(test)]
@@ -93,5 +94,6 @@ mod tests {
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, need_prefix_replace);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, delete_report_failures);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, client_prefix);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, wait_deadline_ns);
     }
 }

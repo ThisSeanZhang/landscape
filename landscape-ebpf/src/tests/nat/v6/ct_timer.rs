@@ -1,8 +1,8 @@
-use std::{cell::RefCell, mem::MaybeUninit};
+use std::{cell::RefCell, mem::MaybeUninit, time::Duration};
 
 use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
-    MapCore, MapFlags, ProgramInput, RingBufferBuilder,
+    MapCore, MapFlags, ProgramInput, ProgramMut, RingBufferBuilder,
     skel::{OpenSkel, SkelBuilder as _},
 };
 use zerocopy::{FromBytes, IntoBytes};
@@ -10,24 +10,27 @@ use zerocopy::{FromBytes, IntoBytes};
 use crate::{
     maps::{Nat6TimerKey, Nat6TimerValue},
     tests::{
+        helper::net::wait_for,
         isolated_pin_root,
         nat::test_nat6_v3::{TestNat6V3Skel, TestNat6V3SkelBuilder},
     },
 };
 
 const ACTIVE: u64 = 20;
-const TIMEOUT_1: u64 = 30;
-const TIMEOUT_2: u64 = 31;
-const RELEASE: u64 = 40;
+const IDLE_CHECK_1: u64 = 30;
+const IDLE_CHECK_2: u64 = 31;
+const WAIT_TIMEOUT: u64 = 40;
 const CLEAN_START: u64 = 50;
 
-fn tick_ms(skel: &TestNat6V3Skel<'_>) -> u32 {
+fn run(prog: &ProgramMut<'_>) -> u32 {
     let packet = [0; 64];
-    skel.progs
-        .nat6_report_tick
-        .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
+    prog.test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .unwrap()
         .return_value
+}
+
+fn tick_ms(skel: &TestNat6V3Skel<'_>) -> u32 {
+    run(&skel.progs.nat6_report_tick)
 }
 
 fn check_report_pressure(drain_after_failures: Option<usize>) {
@@ -75,10 +78,14 @@ fn check_report_pressure(drain_after_failures: Option<usize>) {
         assert_eq!(tick_ms(&skel), 1000);
     }
     seed(2);
-    for (delay, status) in [(1000, TIMEOUT_1), (1000, TIMEOUT_2), (300_000, RELEASE)] {
+    for (delay, status) in [(1000, IDLE_CHECK_1), (1000, IDLE_CHECK_2), (300_000, WAIT_TIMEOUT)] {
         assert_eq!(tick_ms(&skel), delay);
         assert_eq!(read().unwrap().status, status);
     }
+    // Advance the disarmed entry to expiry before exercising the DELETE retries.
+    let mut expired = read().unwrap();
+    expired.wait_deadline_ns = 1;
+    ct.update(key.as_bytes(), expired.as_bytes(), MapFlags::EXIST).unwrap();
 
     let retries = drain_after_failures.unwrap_or(2);
     for (attempt, delay) in [10, 20].into_iter().take(retries).enumerate() {
@@ -123,4 +130,47 @@ fn delete_removes_ct_as_soon_as_the_report_succeeds() {
     for failures in 0..=2 {
         check_report_pressure(Some(failures));
     }
+}
+
+#[test]
+fn packets_only_arm_the_long_wait_and_stale_wakeups_preserve_its_deadline() {
+    let pin_root = isolated_pin_root("nat6-ct-wakeup");
+    let mut builder = TestNat6V3SkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut object = MaybeUninit::uninit();
+    let mut open = builder.open(&mut object).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().REPORT_INTERVAL = 100_000_000;
+    let skel = open.load().unwrap();
+    let ct = &skel.maps.nat6_timer_map;
+    let key = Nat6TimerKey { l4_protocol: 17, ..Default::default() };
+    let read = || {
+        let raw = ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().expect("CT still present");
+        Nat6TimerValue::read_from_bytes(&raw).unwrap()
+    };
+    for (status, expected, armed) in [
+        (0, ACTIVE, 0),
+        (ACTIVE, ACTIVE, 0),
+        (IDLE_CHECK_1, ACTIVE, 0),
+        (IDLE_CHECK_2, ACTIVE, 0),
+        (CLEAN_START, CLEAN_START, 0),
+        (WAIT_TIMEOUT, ACTIVE, 1),
+    ] {
+        let value = Nat6TimerValue { status, ..Default::default() };
+        ct.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).unwrap();
+        assert_eq!(run(&skel.progs.nat6_packet_wakeup), armed, "starting status {status}");
+        assert_eq!(read().status, expected);
+    }
+
+    let value = Nat6TimerValue { status: WAIT_TIMEOUT, ..Default::default() };
+    ct.update(key.as_bytes(), value.as_bytes(), MapFlags::EXIST).unwrap();
+    assert_eq!(run(&skel.progs.nat6_rearm_idle_wait), 0);
+    wait_for("active ticks after stale idle rearm", Duration::from_secs(3), || {
+        let value = read();
+        value.status == WAIT_TIMEOUT && value.wait_deadline_ns != 0
+    });
+    let deadline = read().wait_deadline_ns;
+    let remaining_ms = tick_ms(&skel);
+    assert!((1..300_000).contains(&remaining_ms));
+    let waiting = read();
+    assert_eq!((waiting.status, waiting.wait_deadline_ns), (WAIT_TIMEOUT, deadline));
 }

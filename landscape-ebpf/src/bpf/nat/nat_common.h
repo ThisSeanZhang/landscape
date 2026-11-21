@@ -95,15 +95,17 @@ struct nat6_timer_value {
     u32 cpu_id;
     u32 ifindex;
     u8 client_prefix[8];
+    u64 wait_deadline_ns; /* CLOCK_MONOTONIC, written by the timer on entry to WAIT_TIMEOUT. */
 };
 
 enum timer_status {
     TIMER_INIT = 0ULL,
     TIMER_PENDING_REF = 10ULL,
     TIMER_ACTIVE = 20ULL,
-    TIMER_TIMEOUT_1 = 30ULL,
-    TIMER_TIMEOUT_2 = 31ULL,
-    TIMER_RELEASE = 40ULL,
+    TIMER_IDLE_CHECK_1 = 30ULL,
+    TIMER_IDLE_CHECK_2 = 31ULL,
+    /* Packets can wake the CT until the timer claims it for cleanup. */
+    TIMER_WAIT_TIMEOUT = 40ULL,
     TIMER_CLEAN_START = 50ULL,
     TIMER_DELETE_EGRESS = TIMER_CLEAN_START,
     TIMER_DELETE_INGRESS = 51ULL,

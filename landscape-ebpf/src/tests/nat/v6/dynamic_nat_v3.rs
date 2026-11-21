@@ -17,7 +17,7 @@ const IFINDEX: u32 = 6;
 const L4PROTO_TCP: u8 = 6;
 const CLIENT_PORT: u16 = 12345;
 const TIMER_ACTIVE: u64 = 20;
-const TIMER_RELEASE: u64 = 40;
+const TIMER_WAIT_TIMEOUT: u64 = 40;
 const TIMER_CLEAN_START: u64 = 50;
 const PREFIX60_WAN_NPT_PREFIX: [u8; 8] = [0x24, 0x09, 0x88, 0x88, 0x66, 0x66, 0x4f, 0x25];
 
@@ -308,8 +308,8 @@ mod tests {
     }
 
     #[test]
-    fn tcp_egress_reactivates_release_with_single_cas() {
-        assert_egress_ct_status_transition(TIMER_RELEASE, TIMER_ACTIVE);
+    fn tcp_egress_reactivates_wait_timeout() {
+        assert_egress_ct_status_transition(TIMER_WAIT_TIMEOUT, TIMER_ACTIVE);
     }
 
     #[test]

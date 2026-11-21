@@ -25,6 +25,34 @@ int nat6_report_tick(struct __sk_buff *skb) {
     return next_timeout / 1000000ULL;
 }
 
+static __always_inline struct nat6_timer_value *wake_test_ct(void) {
+    struct nat6_timer_key key = {.l4_protocol = IPPROTO_UDP};
+    struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
+    if (!value || bpf_timer_init(&value->timer, &nat6_timer_map, CLOCK_MONOTONIC) ||
+        bpf_timer_set_callback(&value->timer, nat6_timer_clean_callback))
+        return NULL;
+    if (nat6_ct_advance_pkt(key.l4_protocol, NAPT_TCP_PHASE_NONE, NAT_MAPPING_EGRESS, value))
+        return NULL;
+    return value;
+}
+
+SEC("tc")
+int nat6_packet_wakeup(struct __sk_buff *skb) {
+    struct nat6_timer_value *value = wake_test_ct();
+    if (!value) return -1;
+    /* The timer started disarmed. Cancel returns 1 only if the packet armed it. */
+    return bpf_timer_cancel(&value->timer);
+}
+
+SEC("tc")
+int nat6_rearm_idle_wait(struct __sk_buff *skb) {
+    struct nat6_timer_value *value = wake_test_ct();
+    if (!value) return -1;
+    /* Resume a callback that selected its delay before the packet woke the CT. */
+    nat6_timer_rearm(value, UDP_TIMEOUT);
+    return 0;
+}
+
 SEC("tc/egress")
 int handle_ipv6_egress(struct __sk_buff *skb) {
     struct ip6_scan_offsets off = {};
