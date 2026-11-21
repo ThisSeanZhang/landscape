@@ -146,6 +146,8 @@ static __always_inline int ip6_scan_ext(struct __sk_buff *skb, __u32 l3_offset, 
     __u8 frag_nh = 0;
     int seen_fragment = 0;
 
+    if (likely(cur == IPV6_NH_TCP || cur == IPV6_NH_UDP)) goto done;
+
     for (__u32 i = 0; i < max_ext; i++) {
         if (cur == IPV6_NH_FRAGMENT) {
             if (seen_fragment) return -1;
@@ -241,6 +243,8 @@ static __always_inline int ip6_scan_ext_linear(const char *data, const char *dat
     __be32 id = 0;
     __u8 frag_nh = 0;
     int seen_fragment = 0;
+
+    if (likely(cur == IPV6_NH_TCP || cur == IPV6_NH_UDP)) goto done;
 
     for (__u32 i = 0; i < max_ext; i++) {
         if (cur == IPV6_NH_FRAGMENT) {
