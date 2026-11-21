@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 
 import { CountdownInst, CountdownProps } from "naive-ui";
 import { SpinnerIos20Regular } from "@vicons/fluent";
-import { PauseFilled, Renew } from "@vicons/carbon";
+import { PauseFilled } from "@vicons/carbon";
 import { useI18n } from "vue-i18n";
 
 import { useFetchIntervalStore } from "@/stores/fetch_interval";
@@ -60,9 +60,19 @@ function confirmInterval() {
 
 <template>
   <n-flex style="max-height: 24px; overflow: hidden" align="center">
-    <n-popover @update:show="handleUpdateShow" trigger="hover">
+    <n-button
+      v-if="fetchIntervalStore.error_message !== undefined"
+      size="tiny"
+      type="warning"
+      secondary
+      @click="fetchIntervalStore.refreshNow()"
+    >
+      {{ t("common.refresh_paused") }}
+    </n-button>
+    <n-popover v-else @update:show="handleUpdateShow" trigger="hover">
       <template #trigger>
         <n-switch
+          :aria-label="t('common.auto_refresh')"
           :round="fetchIntervalStore.enable_interval"
           v-model:value="fetchIntervalStore.enable_interval"
         >

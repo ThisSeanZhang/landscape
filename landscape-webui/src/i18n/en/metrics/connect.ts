@@ -1,4 +1,9 @@
 export default {
+  sort_by: "Sort by",
+  ascending: "Ascending",
+  descending: "Descending",
+  lookup: "IP lookup",
+  chart_label: "Chart",
   title: "Connection Metrics",
   all_types: "All",
   reset: "Reset",

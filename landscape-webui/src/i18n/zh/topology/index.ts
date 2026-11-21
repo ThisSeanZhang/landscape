@@ -1,4 +1,21 @@
 export default {
+  interfaces: "网络接口",
+  list_view: "列表",
+  graph_view: "拓扑图",
+  bridge: "网桥",
+  bridge_member: "网桥成员 · {name}",
+  load_failed: "无法获取接口列表",
+  empty_interfaces: "暂无网络接口",
+  link_state: {
+    up: "已连接",
+    down: "未连接",
+    unknown: "状态未知",
+    dormant: "休眠",
+    testing: "测试中",
+    lowerlayerdown: "底层链路断开",
+    notpresent: "设备缺失",
+    other: "其他状态",
+  },
   bridge_loop_warning: "还没做好 Bridge 环路检测",
   bridge_right_side_only: "只能从 Bridge 的右边开始连",
   bridge_connection_rule:

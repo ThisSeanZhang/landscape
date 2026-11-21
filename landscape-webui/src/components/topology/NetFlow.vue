@@ -45,7 +45,7 @@ const selectedIfaceId = ref<number | null>(null);
 const connectionLoading = ref(false);
 
 const MOBILE_BREAKPOINT = 960;
-const DESKTOP_MIN_READABLE_ZOOM = 0.78;
+const MIN_READABLE_ZOOM = 0.78;
 const MINIMAP_WIDTH = 180;
 const MINIMAP_HEIGHT = 112;
 const TOP_ALIGN_PADDING = 56;
@@ -151,13 +151,16 @@ async function fitTopology(mode: "overview" | "readable" = "readable") {
     padding: props.fit_padding,
   };
 
-  if (mode === "readable" && !isDrawerMode.value) {
-    fit_params.minZoom = DESKTOP_MIN_READABLE_ZOOM;
+  if (mode === "readable") {
+    fit_params.minZoom = MIN_READABLE_ZOOM;
   }
 
   await fitView(fit_params);
 
-  if (isDrawerMode.value || ifaceNodeStore.nodes.length === 0) {
+  if (
+    !ifaceNodeStore.nodes.length ||
+    (isDrawerMode.value && mode === "overview")
+  ) {
     return;
   }
 
@@ -167,7 +170,8 @@ async function fitTopology(mode: "overview" | "readable" = "readable") {
       (node) => node.position?.y ?? TOP_ALIGN_PADDING,
     ),
   );
-  const aligned_y = TOP_ALIGN_PADDING - top_y * viewport.zoom;
+  const topPadding = isDrawerMode.value ? 80 : TOP_ALIGN_PADDING;
+  const aligned_y = topPadding - top_y * viewport.zoom;
 
   if (Math.abs(viewport.y - aligned_y) > 1) {
     await setViewport(
@@ -344,6 +348,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  ifaceNodeStore.SETTING_CALL_BACK();
   if (heights_flush_handle !== null) {
     cancelAnimationFrame(heights_flush_handle);
     heights_flush_handle = null;
@@ -376,6 +381,10 @@ onPaneClick(() => {
       :connect-on-click="false"
       :zoom-on-scroll="false"
       :fit-view-on-init="false"
+      @nodes-initialized="
+        isDrawerMode && ifaceNodeStore.view_locked && scheduleFitTopology()
+      "
+      :min-zoom="isDrawerMode ? 0.15 : 0.5"
       :pane-click-distance="4"
       @connect="handleConnect"
     >

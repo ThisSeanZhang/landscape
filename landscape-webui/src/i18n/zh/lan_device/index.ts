@@ -28,5 +28,6 @@ export default {
   source_dhcpv6: "DHCPv6",
   source_slaac: "SLAAC",
   source_link_local: "链路本地",
+  no_matches: "没有符合条件的设备",
   empty: "尚未观测到局域网设备",
 };

@@ -336,6 +336,8 @@ export const useIfaceNodeStore = defineStore(
   "iface_node",
   () => {
     const net_devs = ref<NetDev[]>([]);
+    const loadState = ref<"pending" | "ready" | "failed">("pending");
+    let latestRequest = 0;
     const pppd_links = ref<WanLink[]>([]);
     const pppd_link_map = computed(
       () =>
@@ -484,12 +486,21 @@ export const useIfaceNodeStore = defineStore(
     );
 
     async function UPDATE_INFO() {
-      const [devs, wan_links_result] = await Promise.all([
-        ifaces(),
-        get_all_wan_links().catch(() => [] as WanLink[]),
-      ]);
-      pppd_links.value = wan_links_result;
-      net_devs.value = merge_pppd_placeholders(devs, wan_links_result);
+      const id = ++latestRequest;
+      try {
+        const [devs, wan_links_result] = await Promise.all([
+          ifaces(),
+          get_all_wan_links().catch(() => [] as WanLink[]),
+        ]);
+        if (id !== latestRequest) return;
+        pppd_links.value = wan_links_result;
+        net_devs.value = merge_pppd_placeholders(devs, wan_links_result);
+        loadState.value = "ready";
+      } catch (error) {
+        if (id !== latestRequest) return;
+        loadState.value = "failed";
+        throw error;
+      }
     }
 
     /** Merge measured heights; only real changes (> 0.5px) relayout. */
@@ -514,7 +525,7 @@ export const useIfaceNodeStore = defineStore(
       }
     }
 
-    async function SETTING_CALL_BACK(call_back: () => void) {
+    async function SETTING_CALL_BACK(call_back?: () => void) {
       node_call_back.value = call_back;
     }
 
@@ -559,6 +570,7 @@ export const useIfaceNodeStore = defineStore(
 
     return {
       net_devs,
+      loadState,
       pppd_links,
       pppd_link_map,
       visible_net_devs,

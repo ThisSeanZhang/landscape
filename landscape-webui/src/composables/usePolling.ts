@@ -20,6 +20,7 @@ export function usePolling(
   async function run() {
     if (running || !active()) return;
     running = true;
+    error_message.value = undefined;
     const current = generation;
     try {
       await refresh(() => current === generation);

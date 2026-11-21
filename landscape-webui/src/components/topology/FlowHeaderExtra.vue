@@ -27,6 +27,7 @@ function toggle_down_devices() {
     shape="square"
     :left="20"
     :top="20"
+    class="topology-tools"
     position="absolute"
     style="z-index: 6"
   >
@@ -65,3 +66,15 @@ function toggle_down_devices() {
     <BridgeCreateModal v-model:show="show_create_dev" />
   </n-float-button-group>
 </template>
+
+<style scoped>
+@media (max-width: 768px) {
+  .topology-tools {
+    flex-direction: row;
+  }
+  .topology-tools :deep(.n-float-button:not(:last-child)) {
+    border-bottom: 0;
+    border-inline-end: 1px solid var(--n-button-border-color);
+  }
+}
+</style>

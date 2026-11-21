@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, onMounted } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { get_connects_info } from "@/api/metric";
+import { useMobileLayout } from "@/composables/useMobileLayout";
+import { Filter } from "@vicons/carbon";
 import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
 import { useAsyncState } from "@vueuse/core";
 import { useFrontEndStore } from "@/stores/front_end_config";
@@ -17,6 +19,7 @@ import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher
 const {
   state: connections,
   isLoading,
+  isReady,
   execute: refresh,
 } = useAsyncState(get_connects_info, [], { resetOnExecute: false });
 useMetricAutoRefresh(refresh, isLoading);
@@ -28,6 +31,14 @@ const { t } = useI18n();
 
 // Live filter state
 const liveFilter = reactive(createConnectionFilter());
+const mobile = useMobileLayout();
+const filtersOpen = ref(false);
+const filterCount = computed(
+  () =>
+    Object.values(liveFilter).filter((value) => value !== null && value !== "")
+      .length,
+);
+const showFilters = computed(() => !mobile.value || filtersOpen.value);
 
 // Protocol options
 const protocolOptions = computed(() => [
@@ -190,7 +201,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <n-flex vertical :wrap="false" style="flex: 1; overflow: hidden">
+  <n-flex vertical :wrap="false" class="live-page">
     <!-- System-wide active connection stats -->
     <n-card
       size="small"
@@ -200,7 +211,7 @@ onMounted(() => {
       <n-flex align="center" justify="space-between">
         <ConnectViewSwitcher />
 
-        <n-flex align="center" size="large">
+        <n-flex align="center" size="large" class="system-totals">
           <n-flex align="center" size="small">
             <span style="color: #888; font-size: 13px"
               >{{ $t("metric.connect.stats.total_active_conns") }}:</span
@@ -230,8 +241,27 @@ onMounted(() => {
       </n-flex>
     </n-card>
 
-    <!-- Live mode toolbar -->
-    <n-flex align="center" :wrap="true" style="margin-bottom: 12px">
+    <n-flex v-if="mobile" align="center" size="small">
+      <n-button
+        secondary
+        :type="filterCount ? 'primary' : 'default'"
+        :aria-expanded="filtersOpen"
+        aria-controls="live-filters"
+        @click="filtersOpen = !filtersOpen"
+      >
+        <template #icon><n-icon :component="Filter" /></template>
+        {{ t("common.filters")
+        }}<template v-if="filterCount"> ({{ filterCount }})</template>
+      </n-button>
+      <n-button secondary :loading="isLoading" @click="refresh()">{{
+        t("metric.connect.stats.refresh_sample")
+      }}</n-button>
+      <n-text v-if="filterCount" depth="3"
+        >{{ t("metric.connect.stats.filter_total") }} ·
+        {{ totalStats.count }}</n-text
+      >
+    </n-flex>
+    <div v-show="showFilters" id="live-filters" class="live-filters">
       <n-input
         v-model:value="liveFilter.src_ip"
         :placeholder="$t('metric.connect.filter.src_ip')"
@@ -283,16 +313,26 @@ onMounted(() => {
       <FlowSelect v-model="liveFilter.flow_id" width="120px" />
 
       <n-button-group>
-        <n-button @click="refresh()" :loading="isLoading" type="primary">{{
-          $t("metric.connect.stats.refresh_sample")
-        }}</n-button>
+        <n-button
+          v-if="!mobile"
+          @click="refresh()"
+          :loading="isLoading"
+          type="primary"
+          >{{ $t("metric.connect.stats.refresh_sample") }}</n-button
+        >
         <n-button @click="resetLiveFilter">{{
           $t("metric.connect.reset")
         }}</n-button>
       </n-button-group>
-    </n-flex>
+    </div>
 
-    <n-grid x-gap="12" :cols="5" style="margin-bottom: 12px">
+    <n-grid
+      v-if="showFilters"
+      x-gap="8"
+      y-gap="8"
+      cols="2 480:3 820:5"
+      style="margin-bottom: 12px"
+    >
       <n-gi>
         <n-card
           size="small"
@@ -364,9 +404,61 @@ onMounted(() => {
     <ConnectList
       mode="live"
       :items="filteredConnectMetrics"
+      :show-empty="mobile && isReady && filteredConnectMetrics.length === 0"
       v-model:sort-key="frontEndStore.conn_sort_key"
       v-model:sort-order="frontEndStore.conn_sort_order"
       @filter="handleSearchTuple"
     />
   </n-flex>
 </template>
+
+<style scoped>
+.live-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.live-page {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+@media (max-width: 768px) {
+  .live-page {
+    overflow-y: auto;
+  }
+  .live-page > * {
+    flex-shrink: 0;
+  }
+  .live-page :deep(.connection-list) {
+    min-height: 180px;
+  }
+  .system-totals {
+    display: grid !important;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px !important;
+  }
+  .system-totals > .n-flex {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+  }
+  .system-totals > .n-divider {
+    display: none;
+  }
+  .live-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .live-filters > * {
+    width: 100% !important;
+    min-width: 0;
+  }
+  .live-filters > .n-input-group {
+    grid-column: span 2;
+  }
+}
+</style>

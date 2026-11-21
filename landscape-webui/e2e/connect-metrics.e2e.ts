@@ -388,3 +388,65 @@ test("history column sorting queries from page one with the selected key and ord
     ).toBeVisible();
   }
 });
+
+test("mobile connection details follow the same connection through refresh and sort", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  const ip = "2001:db8:1234:1234:1234:1234:1234:abcd";
+  const peer = "2001:db8:abcd:1234:5678:9abc:def0:4321";
+  const record = {
+    ...connectionRecord(ip),
+    dst_ip: peer,
+    l3_proto: 1,
+    status: "active",
+    ingress_bps: 100,
+    egress_bps: 25,
+    ingress_pps: 1,
+    egress_pps: 2,
+  };
+  const other = {
+    ...record,
+    key: { create_time: "100000001", cpu_id: 0 },
+    src_ip: "2001:db8::5",
+    src_port: 4444,
+  };
+  let records = [record, other];
+  await page.route("**/api/v1/metrics/connections", (route) =>
+    route.fulfill({ json: { data: records } }),
+  );
+  await page.goto("/metrics/conn/live");
+  const card = page.getByRole("article").filter({ hasText: ip });
+  const toggle = card.getByRole("button", { name: new RegExp(ip) });
+  await expect(toggle).toBeInViewport();
+  const filter = page.getByPlaceholder("Src IP", { exact: true });
+  await expect(filter).toBeHidden();
+  await toggle.click();
+  await expect(card.getByText("Protocol / Flow")).toBeVisible();
+  await expect(card.getByText("TCP")).toBeVisible();
+  await expect(
+    card.getByRole("link", { name: "Query IP Ownership", exact: false }),
+  ).toHaveCount(1);
+  await expect
+    .poll(() => card.evaluate((el) => el.scrollWidth <= el.clientWidth))
+    .toBe(true);
+
+  records = [
+    other,
+    { ...record, ingress_bps: 500, last_report_time: Date.now() },
+  ];
+  await page
+    .getByRole("button", { name: "Refresh Samples", exact: true })
+    .click();
+  await page.getByLabel("Sort by").selectOption("port");
+  await expect(page.getByRole("article").first()).toContainText(other.src_ip);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(card.getByText("500 bps", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "Precise filter this tuple" }).click();
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await page.getByRole("button", { name: "Filters (4)", exact: true }).click();
+  await expect(filter).toHaveValue(ip);
+  await page.getByRole("button", { name: "Filters (4)", exact: true }).click();
+  await toggle.click();
+  await expect(card.getByText("Protocol / Flow")).toBeHidden();
+});

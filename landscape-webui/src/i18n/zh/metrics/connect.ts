@@ -1,4 +1,9 @@
 export default {
+  sort_by: "排序",
+  ascending: "升序",
+  descending: "降序",
+  lookup: "IP 归属",
+  chart_label: "图表",
   title: "连接指标",
   all_types: "全部",
   reset: "重置",

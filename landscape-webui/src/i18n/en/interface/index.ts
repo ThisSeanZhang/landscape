@@ -28,7 +28,7 @@ export default {
     "Changing zone will reset all services running on this interface and delete its PPPoE dial-up configs",
   change_zone_warning_2:
     "It is recommended to set the IP configuration method in `/etc/network/interfaces` to manual",
-  zone_undefined: "Undefined",
+  zone_undefined: "Unassigned",
   console_parse_bitmask_failed: "Failed to parse bitmask:",
   console_get_config_failed: "Failed to get config:",
   console_save_config_failed: "Failed to save config:",

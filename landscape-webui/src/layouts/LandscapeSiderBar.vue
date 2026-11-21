@@ -11,6 +11,8 @@ const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
 const capabilityStore = useCapabilityStore();
+defineProps<{ mobile: boolean }>();
+const open = defineModel<boolean>("open", { default: false });
 const collapsed = ref(true);
 
 function buildMenu(items: NavigationItem[]): MenuOption[] {
@@ -39,11 +41,27 @@ function buildMenu(items: NavigationItem[]): MenuOption[] {
 const menuOptions = computed(() => buildMenu(navigation));
 const activeMenu = computed(() => String(route.meta.activeMenu ?? route.name));
 function openRoute(name: string) {
+  open.value = false;
   router.push({ name });
 }
 </script>
 <template>
+  <n-drawer v-if="mobile" v-model:show="open" placement="left" :width="280">
+    <n-drawer-content
+      :title="t('common.navigation')"
+      closable
+      :body-content-style="{ padding: 0 }"
+    >
+      <n-menu
+        :options="menuOptions"
+        :value="activeMenu"
+        @update:value="openRoute"
+      />
+      <template #footer><CopyRight :icon="true" /></template>
+    </n-drawer-content>
+  </n-drawer>
   <n-layout-sider
+    v-else
     position="relative"
     :native-scrollbar="false"
     bordered

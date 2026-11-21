@@ -3,7 +3,8 @@
   lang="ts"
   generic="T extends ConnectRealtimeStatus | ConnectHistoryStatus"
 >
-import { computed, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
+import { useMobileLayout } from "@/composables/useMobileLayout";
 import { useThemeVars, type VirtualListInst } from "naive-ui";
 import {
   ArrowDown,
@@ -32,6 +33,23 @@ const sortKey = defineModel<ConnectSortKey>("sortKey", { required: true });
 const sortOrder = defineModel<SortOrder>("sortOrder", { required: true });
 const theme = useThemeVars();
 const frontEnd = useFrontEndStore();
+const mobile = useMobileLayout();
+const cards = computed(() => mobile.value && props.mode === "live");
+const mobileRows = computed(() =>
+  props.items.map((item) => ({
+    key: `${item.key.cpu_id}:${item.key.create_time}`,
+    item,
+  })),
+);
+const expandedKey = ref<string>();
+watch(
+  () =>
+    expandedKey.value &&
+    !mobileRows.value.some((row) => row.key === expandedKey.value),
+  (missing) => {
+    if (missing) expandedKey.value = undefined;
+  },
+);
 const rowHeight = 44;
 const list = ref<VirtualListInst>();
 const columns = computed(
@@ -87,6 +105,59 @@ function openChart(item: T) {
 <template>
   <div class="connection-list">
     <div
+      v-if="cards"
+      class="connection-cards"
+      :aria-label="$t('metric.connect.switcher.connections')"
+    >
+      <div class="sort-controls">
+        <label>
+          {{ $t("metric.connect.sort_by") }}
+          <select v-model="sortKey" @change="list?.scrollTo({ top: 0 })">
+            <template v-for="col in columns" :key="col.label">
+              <option v-if="'key' in col" :value="col.key">
+                {{ $t(col.label) }}
+              </option>
+            </template>
+          </select>
+        </label>
+        <n-button size="small" quaternary @click="toggleSort(sortKey)">
+          <template #icon
+            ><n-icon :component="sortOrder === 'asc' ? ArrowUp : ArrowDown"
+          /></template>
+          {{
+            $t(
+              sortOrder === "asc"
+                ? "metric.connect.ascending"
+                : "metric.connect.descending",
+            )
+          }}
+        </n-button>
+      </div>
+      <n-virtual-list
+        ref="list"
+        class="list-body"
+        :items="mobileRows"
+        :item-size="110"
+        item-resizable
+      >
+        <template #default="{ item: row, index }">
+          <ConnectListRow
+            :item="row.item"
+            :mode="mode"
+            :index="index"
+            mobile
+            :expanded="expandedKey === row.key"
+            @toggle="
+              expandedKey = expandedKey === row.key ? undefined : row.key
+            "
+            @filter="emit('filter', row.item)"
+            @chart="openChart(row.item)"
+          />
+        </template>
+      </n-virtual-list>
+    </div>
+    <div
+      v-else
       class="connection-table"
       role="table"
       :aria-rowcount="items.length + 1"
@@ -185,15 +256,41 @@ function openChart(item: T) {
   overflow-x: auto;
   position: relative;
 }
+.connection-cards,
 .connection-table {
-  display: flex;
-  flex-direction: column;
-  min-width: 970px;
-  height: 100%;
   --muted: v-bind("theme.textColor3");
   --upload: v-bind("theme.infoColor");
   --download: v-bind("theme.successColor");
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
+.connection-table {
+  min-width: 970px;
+}
+.sort-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-block: 2px 8px;
+  font-size: 13px;
+}
+.sort-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: v-bind("theme.textColor2");
+}
+.sort-controls select {
+  font: inherit;
+  color: v-bind("theme.textColor1");
+  background: v-bind("theme.cardColor");
+  border: 1px solid v-bind("theme.borderColor");
+  border-radius: 5px;
+  padding: 5px 8px;
+  max-width: 55vw;
+}
+
 .connection-table :deep(.connection-line) {
   display: grid;
   grid-template-columns:
@@ -246,5 +343,18 @@ function openChart(item: T) {
   position: absolute;
   top: 64px;
   inset-inline: 0;
+}
+@media (max-width: 768px) {
+  .connection-table :deep(.connection-line) {
+    grid-template-columns:
+      minmax(152px, 1fr) minmax(152px, 1fr)
+      100px 86px 100px 100px 100px 104px;
+  }
+  .connection-table :deep(.row-fields > :nth-child(3)),
+  .connection-table :deep(.row-fields > :nth-child(4)),
+  .connection-table :deep(.list-header > :nth-child(3)),
+  .connection-table :deep(.list-header > :nth-child(4)) {
+    order: -1;
+  }
 }
 </style>

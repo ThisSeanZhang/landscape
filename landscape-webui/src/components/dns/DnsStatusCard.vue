@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from "vue";
+import SampleStatus from "@/components/sysinfo/SampleStatus.vue";
 import { dnsLatencyStats } from "@/components/metric/dns/latencyStats";
 import { useI18n } from "vue-i18n";
 import {
@@ -22,10 +23,13 @@ const { t } = useI18n();
 
 const props = defineProps<{
   startTime?: number;
+  compact?: boolean;
 }>();
 
 const summary = ref<DnsLightweightSummaryResponse | null>(null);
 const loading = ref(true);
+const failed = ref(false);
+const updatedAt = ref<number>();
 
 const show_rule_drawer = ref(false);
 const show_ip_rule = ref(false);
@@ -39,9 +43,13 @@ const loadSummary = async () => {
       start_time: props.startTime ?? 0,
       end_time: 0,
     });
-    if (requestId === id) summary.value = result;
-  } catch (e) {
-    console.error(e);
+    if (requestId === id) {
+      summary.value = result;
+      updatedAt.value = Date.now();
+      failed.value = false;
+    }
+  } catch {
+    if (requestId === id) failed.value = true;
   } finally {
     if (requestId === id) loading.value = false;
   }
@@ -71,7 +79,6 @@ defineExpose({ refresh: loadSummary });
 
 <template>
   <n-card
-    :loading="loading"
     class="dns-status-card"
     content-style="display: flex; flex-direction: column; height: 100%; padding-top: 26px;"
   >
@@ -84,7 +91,7 @@ defineExpose({ refresh: loadSummary });
       </n-flex>
     </template>
 
-    <template #header-extra>
+    <template v-if="!compact" #header-extra>
       <n-flex :size="6" align="center">
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -93,6 +100,7 @@ defineExpose({ refresh: loadSummary });
               secondary
               circle
               :loading="loading"
+              :aria-label="t('common.refresh')"
               @click="loadSummary"
             >
               <template #icon>
@@ -111,8 +119,20 @@ defineExpose({ refresh: loadSummary });
       </n-flex>
     </template>
 
-    <!-- DNS Metrics Content -->
-    <n-flex vertical :size="16">
+    <SampleStatus
+      :failed="failed"
+      :updated-at="updatedAt"
+      @retry="loadSummary"
+    />
+    <div v-if="compact && summary">
+      <strong class="overview-value">{{
+        summary.total_queries.toLocaleString()
+      }}</strong>
+      <n-text depth="3" class="query-label">{{
+        t("metric.dns.dash.total_queries")
+      }}</n-text>
+    </div>
+    <n-flex v-else-if="summary" vertical :size="16">
       <n-grid :cols="3" :x-gap="12">
         <!-- Total Queries -->
         <n-gi>
@@ -266,6 +286,10 @@ defineExpose({ refresh: loadSummary });
 </template>
 
 <style scoped>
+.query-label {
+  display: block;
+  font-size: 12px;
+}
 .no-data-text {
   font-size: 11px;
 }

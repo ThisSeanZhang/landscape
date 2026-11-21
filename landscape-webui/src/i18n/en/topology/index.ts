@@ -1,4 +1,21 @@
 export default {
+  interfaces: "Network interfaces",
+  list_view: "List",
+  graph_view: "Map",
+  bridge: "Bridge",
+  bridge_member: "Bridge member · {name}",
+  load_failed: "Could not load interfaces",
+  empty_interfaces: "No network interfaces",
+  link_state: {
+    up: "Up",
+    down: "Down",
+    unknown: "Unknown",
+    dormant: "Dormant",
+    testing: "Testing",
+    lowerlayerdown: "Lower layer down",
+    notpresent: "Not present",
+    other: "Other",
+  },
   bridge_loop_warning: "Bridge loop detection not yet implemented",
   bridge_right_side_only: "Can only connect from the right side of Bridge",
   bridge_connection_rule:

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import RouteTabs from "@/components/layout/header/RouteTabs.vue";
 
 import { useI18n } from "vue-i18n";
-import { Logout, Terminal } from "@vicons/carbon";
+import { Logout, Menu, Terminal } from "@vicons/carbon";
 import { LANDSCAPE_TOKEN_KEY } from "@/lib/common";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useCapabilityStore } from "@/stores/capability";
@@ -13,6 +13,14 @@ import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import IntervalFetch from "@/components/layout/header/IntervalFetch.vue";
 import GlobalTerminal from "@/components/GlobalTerminal.vue";
 import LandscapeSiderBar from "@/layouts/LandscapeSiderBar.vue";
+
+import { useMobileLayout } from "@/composables/useMobileLayout";
+
+const mobile = useMobileLayout();
+const menuOpen = ref(false);
+watch(mobile, () => {
+  menuOpen.value = false;
+});
 
 const router = useRouter();
 const route = useRoute();
@@ -28,6 +36,7 @@ void capabilityStore.LOAD();
 watch(
   () => route.path,
   () => {
+    menuOpen.value = false;
     void enrolledDeviceStore.UPDATE_INFO();
   },
   { immediate: true },
@@ -47,18 +56,25 @@ const dockOffset = computed(() =>
 <template>
   <div style="flex: 1">
     <n-layout position="absolute" has-sider>
-      <LandscapeSiderBar />
+      <LandscapeSiderBar :mobile="mobile" v-model:open="menuOpen" />
       <n-layout>
-        <n-layout-header
-          style="height: 30px; padding: 0 10px; display: flex"
-          bordered
-        >
+        <n-layout-header class="app-header" bordered>
           <n-flex
             style="flex: 1; width: 0"
             justify="space-between"
             align="center"
             :wrap="false"
           >
+            <n-button
+              v-if="mobile"
+              quaternary
+              circle
+              :aria-label="t('common.navigation')"
+              :aria-expanded="menuOpen"
+              @click="menuOpen = true"
+            >
+              <template #icon><n-icon :component="Menu" /></template>
+            </n-button>
             <RouteTabs />
 
             <n-flex :size="[5, 0]">
@@ -117,11 +133,27 @@ const dockOffset = computed(() =>
 </template>
 
 <style scoped>
+.app-header {
+  height: 30px;
+  padding: 0 10px;
+  display: flex;
+}
 .layout-content {
   top: 40px;
   left: 25px;
   display: flex;
   padding-right: 15px;
   transition: all 0.3s ease;
+}
+@media (max-width: 768px) {
+  .app-header {
+    height: 44px;
+    padding: 0 8px;
+  }
+  .layout-content {
+    top: 54px;
+    left: 12px;
+    padding-right: 12px;
+  }
 }
 </style>

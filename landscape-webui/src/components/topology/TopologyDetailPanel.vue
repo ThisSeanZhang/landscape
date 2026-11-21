@@ -691,7 +691,11 @@ async function handleDeleteBridge() {
             </h3>
             <div class="topology-detail__title-actions">
               <n-tag size="small" :type="zoneTagType(node.zone_type)" round>
-                {{ node.zone_type }}
+                {{
+                  node.zone_type === IfaceZoneType.undefined
+                    ? t("interface.zone_undefined")
+                    : node.zone_type.toUpperCase()
+                }}
               </n-tag>
               <n-button quaternary circle size="small" @click="closePanel">
                 ×

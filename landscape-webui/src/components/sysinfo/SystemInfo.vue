@@ -2,12 +2,13 @@
 import type { LandscapeSystemInfo } from "@landscape-router/types/api/schemas";
 import { get_sysinfo } from "@/api/sys";
 
-import { onMounted, ref, computed } from "vue";
+import { onMounted, onUnmounted, ref, computed } from "vue";
 import { useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { InformationFilled, WarningAltFilled } from "@vicons/carbon";
+import { InformationFilled, Router, WarningAltFilled } from "@vicons/carbon";
 
 import { usePreferenceStore } from "@/stores/preference";
+defineProps<{ compact?: boolean }>();
 const { t } = useI18n({ useScope: "global" });
 const themeVars = useThemeVars();
 const prefStore = usePreferenceStore();
@@ -24,9 +25,10 @@ const sysinfo = ref<LandscapeSystemInfo>({
 
 const now = ref<number>(new Date().getTime());
 
-setInterval(() => {
+const uptimeTimer = setInterval(() => {
   now.value = new Date().getTime();
 }, 1000);
+onUnmounted(() => clearInterval(uptimeTimer));
 
 onMounted(async () => {
   sysinfo.value = await get_sysinfo();
@@ -62,7 +64,18 @@ const uptime = computed(() => {
 </script>
 
 <template>
-  <n-card content-style="display: flex; flex-direction: column; height: 100%;">
+  <div v-if="compact" class="host-summary">
+    <span class="host-icon"><n-icon :component="Router" /></span>
+    <div class="host-identity">
+      <strong>{{ sysinfo.host_name || t("sysinfo.system") }}</strong>
+      <small v-if="uptime">{{ t("sysinfo.uptime") }} · {{ uptime }}</small>
+    </div>
+    <slot name="details" />
+  </div>
+  <n-card
+    v-else
+    content-style="display: flex; flex-direction: column; height: 100%;"
+  >
     <!-- Header -->
     <template #header>
       <n-flex align="center" justify="space-between">
@@ -175,6 +188,54 @@ const uptime = computed(() => {
 </template>
 
 <style scoped>
+.host-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 14px;
+  border-bottom: 1px solid v-bind("themeVars.dividerColor");
+}
+.host-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  color: v-bind("themeVars.primaryColor");
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 25px;
+}
+.host-identity {
+  display: grid;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.host-identity strong {
+  font-size: 20px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.host-identity small {
+  font-size: 12px;
+  color: v-bind("themeVars.textColor2");
+}
+
+@media (max-width: 380px) {
+  .host-summary {
+    gap: 8px;
+    padding: 12px 10px;
+  }
+  .host-icon {
+    width: 34px;
+    height: 34px;
+    font-size: 21px;
+  }
+  .host-identity strong {
+    font-size: 18px;
+  }
+}
 .info-label {
   font-size: 12px;
   line-height: 1.2;

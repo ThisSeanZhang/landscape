@@ -551,7 +551,11 @@ const node_style = computed(() => ({
 
           <div class="topology-node__tags">
             <n-tag size="tiny" :type="zone_type" round>
-              {{ node.zone_type }}
+              {{
+                node.zone_type === IfaceZoneType.undefined
+                  ? t("interface.zone_undefined")
+                  : node.zone_type.toUpperCase()
+              }}
             </n-tag>
             <n-tag v-if="link_health" size="tiny" :type="health_tag_type" round>
               {{ t(`route_status.health_${link_health}`) }}

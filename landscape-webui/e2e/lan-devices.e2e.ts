@@ -55,4 +55,27 @@ test("refreshes an empty LAN device list and shows the new DHCP lease", async ({
   const ipOnlyRow = page.getByRole("row").filter({ hasText: "ip-only-client" });
   await expect(ipOnlyRow.getByRole("button")).toBeDisabled();
   await expect(page.getByText("No LAN devices observed yet")).toBeHidden();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const name = page.getByRole("button", { name: device.hostname, exact: true });
+  await expect(name).toBeInViewport();
+  await expect(page.getByText(device.mac, { exact: true })).toBeHidden();
+  await name.click();
+  await expect(page.getByText(device.mac, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add Device Binding" }).first(),
+  ).toBeEnabled();
+  await page.locator(".device-filters .n-select").first().click();
+  await page
+    .locator(".n-base-select-option")
+    .getByText("lan0", { exact: true })
+    .click();
+  await page.locator(".device-filters .n-select").nth(1).click();
+  await page
+    .locator(".n-base-select-option")
+    .getByText("Offline", { exact: true })
+    .click();
+  await expect(page.getByText("No devices match these filters")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(name).toBeVisible();
 });
