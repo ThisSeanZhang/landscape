@@ -1,8 +1,8 @@
 use std::{mem::MaybeUninit, net::Ipv6Addr, os::fd::AsFd};
 
 use etherparse::{
-    Ethernet2Header, Icmpv6Type, IpFragOffset, Ipv6FragmentHeader, Ipv6Header, Ipv6RawExtHeader,
-    PacketBuilder, UdpHeader, icmpv6, ip_number,
+    Ethernet2Header, IcmpEchoHeader, Icmpv6Type, IpFragOffset, IpHeaders, Ipv6Extensions,
+    Ipv6FragmentHeader, Ipv6Header, Ipv6RawExtHeader, PacketBuilder, UdpHeader, icmpv6, ip_number,
 };
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput, ProgramMut, ProgramType,
@@ -35,9 +35,17 @@ const XDP_DROP: i32 = 1;
 const XDP_PASS: i32 = 2;
 
 fn with_nat6(test: impl FnOnce(&TcNat6Skel<'_>, &XdpNat6Skel<'_>)) {
+    with_nat6_config(60, Ethernet2Header::LEN, test);
+}
+
+fn with_nat6_config(
+    prefix_len: u8,
+    l3_offset: usize,
+    test: impl FnOnce(&TcNat6Skel<'_>, &XdpNat6Skel<'_>),
+) {
     let root = isolated_pin_root("nat6-checksums");
     let prefix = crate::stages::nat6::wan_ro_prefix6(Some(WAN_PREFIX));
-    let mask = crate::maps::wan::compute_npt_mask(60);
+    let mask = crate::maps::wan::compute_npt_mask(prefix_len);
     let mut tc_obj = MaybeUninit::uninit();
     let mut builder = TcNat6SkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&root).unwrap();
@@ -45,6 +53,7 @@ fn with_nat6(test: impl FnOnce(&TcNat6Skel<'_>, &XdpNat6Skel<'_>)) {
     let rodata = tc.maps.rodata_data.as_deref_mut().unwrap();
     rodata.wan_ro_prefix6.b = prefix;
     rodata.wan_ro_npt_mask = mask;
+    rodata.current_l3_offset = l3_offset as u32;
     let tc = tc.load().unwrap();
 
     let mut xdp_obj = MaybeUninit::uninit();
@@ -52,9 +61,12 @@ fn with_nat6(test: impl FnOnce(&TcNat6Skel<'_>, &XdpNat6Skel<'_>)) {
     builder.object_builder_mut().pin_root_path(&root).unwrap();
     let mut xdp = builder.open(&mut xdp_obj).unwrap();
     xdp.maps.nat6_timer_map.reuse_fd(tc.maps.nat6_timer_map.as_fd()).unwrap();
+    xdp.maps.frag6_cache_lan.reuse_fd(tc.maps.frag6_cache_lan.as_fd()).unwrap();
+    xdp.maps.frag6_cache_wan.reuse_fd(tc.maps.frag6_cache_wan.as_fd()).unwrap();
     let rodata = xdp.maps.rodata_data.as_deref_mut().unwrap();
     rodata.wan_ro_prefix6.b = prefix;
     rodata.wan_ro_npt_mask = mask;
+    rodata.current_l3_offset = l3_offset as u32;
     let xdp = xdp.load().unwrap();
     test(&tc, &xdp);
 }
@@ -221,6 +233,60 @@ fn xdp_ingress_udp_checksums() {
     });
 }
 
+#[test]
+fn static_ingress_fragments_stay_in_their_wan_subnet_across_hooks() {
+    with_nat6(|tc, xdp| {
+        map_udp53(tc, LAN_CLIENT);
+        let tc = (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK, TC_ACT_SHOT);
+        let xdp = (&xdp.progs.ingress_nat_v6, XDP_PASS, XDP_DROP);
+        let other_subnet = "2001:db8:1:26::100".parse().unwrap();
+        for (first_hook, later_hook, id) in [(xdp, tc, 7), (tc, xdp, 8)] {
+            let [first, later, _] = udp_fragments(REMOTE, WAN_CLIENT, id);
+            let [expected_first, expected_later, _] = udp_fragments(REMOTE, LAN_CLIENT, id);
+            let [_, other_later, _] = udp_fragments(REMOTE, other_subnet, id);
+            assert_eq!(run(first_hook.0, &first, first_hook.1, 0), expected_first);
+            run(later_hook.0, &other_later, later_hook.2, 0);
+            assert_eq!(run(later_hook.0, &later, later_hook.1, 0), expected_later);
+        }
+    });
+}
+
+#[test]
+fn prefix56_routes_interleaved_replies_to_clients_with_the_same_iid_and_port() {
+    let clients = [
+        (LAN_CLIENT, "2001:db8:1:5::100".parse().unwrap()),
+        ("fd00:2:0:a5::100".parse().unwrap(), "2001:db8:1:a5::100".parse().unwrap()),
+    ];
+    let reply = |dst: Ipv6Addr| {
+        let mut frame = Vec::new();
+        PacketBuilder::ethernet2([2; 6], [4; 6])
+            .ipv6(REMOTE.octets(), dst.octets(), 64)
+            .udp(53, 10000)
+            .write(&mut frame, b"reply")
+            .unwrap();
+        frame
+    };
+    with_nat6_config(56, Ethernet2Header::LEN, |tc, xdp| {
+        let egress =
+            [(&tc.progs.tc_nat_wan_egress_v6, TC_ACT_UNSPEC), (&xdp.progs.egress_nat_v6, XDP_PASS)];
+        for ((lan, wan), (prog, verdict)) in clients.into_iter().zip(egress) {
+            assert_eq!(
+                run(prog, &simple_ipv6_udp(lan, REMOTE), verdict, 0),
+                simple_ipv6_udp(wan, REMOTE)
+            );
+        }
+        assert_eq!(tc.maps.nat6_timer_map.keys().count(), 2);
+        for (lan, wan) in clients.into_iter().rev() {
+            for (prog, verdict) in [
+                (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK),
+                (&xdp.progs.ingress_nat_v6, XDP_PASS),
+            ] {
+                assert_eq!(run(prog, &reply(wan), verdict, 0), reply(lan));
+            }
+        }
+    });
+}
+
 fn icmp6_error(src: Ipv6Addr, dst: Ipv6Addr, kind: Icmpv6Type, quote: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
     PacketBuilder::ethernet2([2; 6], [4; 6])
@@ -232,37 +298,103 @@ fn icmp6_error(src: Ipv6Addr, dst: Ipv6Addr, kind: Icmpv6Type, quote: &[u8]) -> 
 }
 
 #[test]
+fn packet_too_big_quotes_echo_with_destination_options() {
+    for l3_offset in [Ethernet2Header::LEN, 0] {
+        let packet = |src: Ipv6Addr, dst: Ipv6Addr, kind, payload: &[u8]| {
+            let ip = Ipv6Header {
+                source: src.octets(),
+                destination: dst.octets(),
+                hop_limit: 64,
+                ..Default::default()
+            };
+            let ext = Ipv6Extensions {
+                destination_options: Some(
+                    Ipv6RawExtHeader::new_raw(ip_number::IPV6_ICMP, &[0; 6]).unwrap(),
+                ),
+                ..Default::default()
+            };
+            let mut frame = Vec::new();
+            PacketBuilder::ethernet2([2; 6], [4; 6])
+                .ip(IpHeaders::Ipv6(ip, ext))
+                .icmpv6(kind)
+                .write(&mut frame, payload)
+                .unwrap();
+            frame[Ethernet2Header::LEN - l3_offset..].to_vec()
+        };
+        let echo = Icmpv6Type::EchoRequest(IcmpEchoHeader { id: 0, seq: 7 });
+        let lan = packet(LAN_CLIENT, REMOTE, echo.clone(), &[0x5a; 1461]);
+        let wan = packet(WAN_CLIENT, REMOTE, echo, &[0x5a; 1461]);
+        // Include the options header, the Echo header and one payload byte.
+        let quote = l3_offset..l3_offset + Ipv6Header::LEN + 8 + 9;
+        let ptb = Icmpv6Type::PacketTooBig { mtu: 1492 };
+        let expected = packet(ROUTER, LAN_CLIENT, ptb.clone(), &lan[quote.clone()]);
+        with_nat6_config(60, l3_offset, |tc, xdp| {
+            for (egress, out, ingress, back) in [
+                (
+                    &tc.progs.tc_nat_wan_egress_v6,
+                    TC_ACT_UNSPEC,
+                    &tc.progs.tc_nat_wan_ingress_v6,
+                    TC_ACT_OK,
+                ),
+                (&xdp.progs.egress_nat_v6, XDP_PASS, &xdp.progs.ingress_nat_v6, XDP_PASS),
+            ] {
+                let translated = run(egress, &lan, out, 0);
+                assert_eq!(translated, wan);
+                let error = packet(ROUTER, WAN_CLIENT, ptb.clone(), &translated[quote.clone()]);
+                for &flag in checksum_test_flags(ingress) {
+                    assert_eq!(run(ingress, &error, back, flag), expected);
+                }
+            }
+        });
+    }
+}
+
+#[test]
 fn icmp6_error_matches_existing_dynamic_flow() {
-    let tcp = |client: Ipv6Addr, syn: bool| {
-        let mut frame = Vec::new();
-        let packet = PacketBuilder::ethernet2([2; 6], [4; 6])
-            .ipv6(client.octets(), REMOTE.octets(), 64)
-            .tcp(12345, 443, 1234, 4096);
-        if syn {
-            packet.syn().write(&mut frame, &[]).unwrap();
-        } else {
-            packet.ack(1).write(&mut frame, &[0x55; 1400]).unwrap();
-        }
-        frame
+    let tcp = |client: Ipv6Addr| {
+        let from_client = |seq| {
+            PacketBuilder::ethernet2([2; 6], [4; 6])
+                .ipv6(client.octets(), REMOTE.octets(), 64)
+                .tcp(12345, 443, seq, 4096)
+        };
+        let mut syn = Vec::new();
+        from_client(100).syn().write(&mut syn, &[]).unwrap();
+        let mut syn_ack = Vec::new();
+        PacketBuilder::ethernet2([2; 6], [4; 6])
+            .ipv6(REMOTE.octets(), client.octets(), 64)
+            .tcp(443, 12345, 200, 4096)
+            .syn()
+            .ack(101)
+            .write(&mut syn_ack, &[])
+            .unwrap();
+        let mut ack = Vec::new();
+        from_client(101).ack(201).write(&mut ack, &[]).unwrap();
+        let mut data = Vec::new();
+        from_client(101).ack(201).write(&mut data, &[0x55; 1400]).unwrap();
+        [syn, syn_ack, ack, data]
     };
     for create_in_xdp in [false, true] {
         with_nat6(|tc, xdp| {
-            let (egress, verdict) = if create_in_xdp {
-                (&xdp.progs.egress_nat_v6, XDP_PASS)
+            let (egress, verdict, ingress, back) = if create_in_xdp {
+                (&xdp.progs.egress_nat_v6, XDP_PASS, &xdp.progs.ingress_nat_v6, XDP_PASS)
             } else {
-                (&tc.progs.tc_nat_wan_egress_v6, TC_ACT_UNSPEC)
+                (
+                    &tc.progs.tc_nat_wan_egress_v6,
+                    TC_ACT_UNSPEC,
+                    &tc.progs.tc_nat_wan_ingress_v6,
+                    TC_ACT_OK,
+                )
             };
-            assert_eq!(run(egress, &tcp(LAN_CLIENT, true), verdict, 0), tcp(WAN_CLIENT, true));
+            let [lan_syn, lan_syn_ack, lan_ack, lan_data] = tcp(LAN_CLIENT);
+            let [wan_syn, wan_syn_ack, wan_ack, wan_data] = tcp(WAN_CLIENT);
+            assert_eq!(run(egress, &lan_syn, verdict, 0), wan_syn);
+            assert_eq!(run(ingress, &wan_syn_ack, back, 0), lan_syn_ack);
+            assert_eq!(run(egress, &lan_ack, verdict, 0), wan_ack);
             // The UDP checksum after translating the quote back to the LAN is 0xffff.
             let (wan_udp, lan_udp) =
                 udp_with_computed_zero((WAN_CLIENT, REMOTE), (LAN_CLIENT, REMOTE));
             for (proto, lan, wan, error) in [
-                (
-                    ip_number::TCP,
-                    tcp(LAN_CLIENT, false),
-                    tcp(WAN_CLIENT, false),
-                    Icmpv6Type::PacketTooBig { mtu: 1280 },
-                ),
+                (ip_number::TCP, lan_data, wan_data, Icmpv6Type::PacketTooBig { mtu: 1280 }),
                 (
                     ip_number::UDP,
                     lan_udp,
@@ -347,6 +479,17 @@ fn icmp6_error_without_matching_dynamic_flow_is_dropped() {
         reject(&wan);
         assert_eq!(ct.keys().count(), 0, "an ICMPv6 error cannot create a flow");
 
+        add_static_nat6_mapping(
+            &tc.maps.nat6_static_map,
+            [StaticNatMappingV6Item {
+                port: 10000,
+                lan_ip: LAN_CLIENT,
+                l4_protocol: ip_number::TCP.0,
+            }],
+        );
+        reject(&wan); // The quoted UDP port has a static rule for TCP only.
+        assert_eq!(ct.keys().count(), 0);
+
         let lan = udp(LAN_CLIENT, REMOTE, 53);
         assert_eq!(run(&tc.progs.tc_nat_wan_egress_v6, &lan, TC_ACT_UNSPEC, 0), wan);
         let key = ct.keys().next().expect("outgoing UDP must create the flow");
@@ -369,14 +512,23 @@ fn icmp6_short_tcp_quote() {
                 l4_protocol: ip_number::TCP.0,
             }],
         );
-        for (programs, (outer_src, outer_dst), (new_src, new_dst), ports) in [
+        let lan_router = "fd00:2:0:8::1".parse().unwrap();
+        let translated_router = "2001:db8:1:28::1".parse().unwrap();
+        for (
+            programs,
+            (outer_src, outer_dst),
+            (new_src, new_dst),
+            (quoted_dst, new_quoted_dst),
+            ports,
+        ) in [
             (
                 [
                     (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK),
                     (&xdp.progs.ingress_nat_v6, XDP_PASS),
                 ],
-                (REMOTE, WAN_CLIENT),
-                (REMOTE, LAN_CLIENT),
+                (ROUTER, WAN_CLIENT),
+                (ROUTER, LAN_CLIENT),
+                (REMOTE, REMOTE),
                 (443, 12345),
             ),
             (
@@ -384,8 +536,9 @@ fn icmp6_short_tcp_quote() {
                     (&tc.progs.tc_nat_wan_egress_v6, TC_ACT_UNSPEC),
                     (&xdp.progs.egress_nat_v6, XDP_PASS),
                 ],
-                (LAN_CLIENT, REMOTE),
-                (WAN_CLIENT, REMOTE),
+                (lan_router, REMOTE),
+                (translated_router, REMOTE),
+                (LAN_CLIENT, WAN_CLIENT),
                 (12345, 443),
             ),
         ] {
@@ -397,8 +550,8 @@ fn icmp6_short_tcp_quote() {
                     .unwrap();
                 pkt
             };
-            let original = quoted_tcp(outer_dst, outer_src);
-            let translated = quoted_tcp(new_dst, new_src);
+            let original = quoted_tcp(outer_dst, quoted_dst);
+            let translated = quoted_tcp(new_dst, new_quoted_dst);
             let check = |input: &[u8], expected: &[u8]| {
                 for (prog, verdict) in programs {
                     for &flag in checksum_test_flags(prog) {

@@ -178,7 +178,10 @@ fn icmp6_error_requires_eight_quoted_transport_bytes() {
         6666,
         5555,
     );
-    assert_reject(&outer_icmp6_error(&inner[..end - 1], None));
+    let mut short = outer_icmp6_error(&inner[..end - 1], None);
+    assert_reject(&short);
+    short.push(0xa5); // Ethernet padding is outside the outer IPv6 payload.
+    assert_reject(&short);
 
     // The outer packet contains eight bytes, but the quoted IPv6 header declares only seven.
     ip.set_payload_length(7).unwrap();
