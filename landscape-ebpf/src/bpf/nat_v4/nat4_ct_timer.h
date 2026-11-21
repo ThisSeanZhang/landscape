@@ -21,16 +21,18 @@
 #define NAPT_CLEAN_RETRY_MAX_NS (100U * 1000U * 1000U)
 
 enum napt_ct_status {
-    NAPT_CT_INIT = 0ULL,
-    NAPT_CT_PENDING_REF = 10ULL,
+    NAPT_CT_READY = 0ULL,
+    NAPT_CT_ACQUIRE_REF = 10ULL,
     NAPT_CT_ACTIVE = 20ULL,
-    NAPT_CT_IDLE_1 = 30ULL,
-    NAPT_CT_IDLE_2 = 31ULL,
-    NAPT_CT_RELEASE = 40ULL,
+    NAPT_CT_IDLE_CHECK_1 = 30ULL,
+    NAPT_CT_IDLE_CHECK_2 = 31ULL,
+    /* A packet for this CT can reactivate it while the protocol timeout is running. */
+    NAPT_CT_WAIT_TIMEOUT = 40ULL,
+    /* Cleanup owns the CT from this point on. */
     NAPT_CT_CLEAN_START = 50ULL,
-    NAPT_CT_DELETE_EGRESS = NAPT_CT_CLEAN_START,
-    NAPT_CT_DELETE_INGRESS = 51ULL,
-    NAPT_CT_PUSH_QUEUE = 52ULL,
+    NAPT_CT_DELETE_LAN_MAPPING = NAPT_CT_CLEAN_START,
+    NAPT_CT_CLEAR_WAN_SLOT = 51ULL,
+    NAPT_CT_RETURN_PORT = 52ULL,
 };
 
 enum napt_tcp_state {
@@ -44,11 +46,11 @@ enum napt_tcp_state {
 #define NAPT_TIMER_STEP_RESTART 2U
 
 static __always_inline int napt_ct_status_usable(__u64 status) {
-    return status != NAPT_CT_PENDING_REF && status < NAPT_CT_CLEAN_START;
+    return status != NAPT_CT_ACQUIRE_REF && status < NAPT_CT_CLEAN_START;
 }
 
 static __always_inline int napt_ct_status_can_activate(__u64 status) {
-    return status != NAPT_CT_ACTIVE && status != NAPT_CT_PENDING_REF &&
+    return status != NAPT_CT_ACTIVE && status != NAPT_CT_ACQUIRE_REF &&
            status < NAPT_CT_CLEAN_START;
 }
 
@@ -108,10 +110,11 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
     *queue_push_ret = -2;
     *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
 
-    if (current == NAPT_CT_PENDING_REF) return napt_ct_delete(key);
+    if (current == NAPT_CT_ACQUIRE_REF) return napt_ct_delete(key);
 
-    if (current == NAPT_CT_RELEASE) {
-        if (!__sync_bool_compare_and_swap(&value->status, NAPT_CT_RELEASE, NAPT_CT_CLEAN_START))
+    if (current == NAPT_CT_WAIT_TIMEOUT) {
+        if (!__sync_bool_compare_and_swap(&value->status, NAPT_CT_WAIT_TIMEOUT,
+                                          NAPT_CT_CLEAN_START))
             return NAPT_TIMER_STEP_RESTART;
 
         ret = napt_metric_try_report(key, value, NAPT_METRIC_DELETE);
@@ -133,27 +136,27 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
         return napt_ct_delete(key);
     }
 
-    if (current == NAPT_CT_DELETE_EGRESS) {
+    if (current == NAPT_CT_DELETE_LAN_MAPPING) {
         if (napt_lan_delete_dynamic(key->internal_addr, key->internal_port, key->proto,
                                     value->external_port, value->from_wan_gen) != 0)
             return napt_cleanup_retry(value, next_timeout);
 
-        return napt_cleanup_next(value, NAPT_CT_DELETE_INGRESS, next_timeout);
+        return napt_cleanup_next(value, NAPT_CT_CLEAR_WAN_SLOT, next_timeout);
     }
 
-    if (current == NAPT_CT_DELETE_INGRESS) {
+    if (current == NAPT_CT_CLEAR_WAN_SLOT) {
         struct napt_from_wan_value *mapping = napt_wan_lookup(key->proto, value->external_port);
 
-        if (!mapping) return napt_cleanup_next(value, NAPT_CT_PUSH_QUEUE, next_timeout);
+        if (!mapping) return napt_cleanup_next(value, NAPT_CT_RETURN_PORT, next_timeout);
         if (mapping->kind != NAPT_MAPPING_DYNAMIC || mapping->generation != value->from_wan_gen)
             return napt_ct_delete(key);
 
         if (napt_wan_clear(key->proto, value->external_port) != 0)
             return napt_cleanup_retry(value, next_timeout);
-        return napt_cleanup_next(value, NAPT_CT_PUSH_QUEUE, next_timeout);
+        return napt_cleanup_next(value, NAPT_CT_RETURN_PORT, next_timeout);
     }
 
-    if (current == NAPT_CT_PUSH_QUEUE) {
+    if (current == NAPT_CT_RETURN_PORT) {
         if (value->is_static) return napt_ct_delete(key);
 
         *queue_push_ret = force_queue_push_fail ? -1
@@ -171,16 +174,16 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
     }
 
     if (current == NAPT_CT_ACTIVE) {
-        next = NAPT_CT_IDLE_1;
+        next = NAPT_CT_IDLE_CHECK_1;
         *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
-    } else if (current == NAPT_CT_IDLE_1) {
-        next = NAPT_CT_IDLE_2;
+    } else if (current == NAPT_CT_IDLE_CHECK_1) {
+        next = NAPT_CT_IDLE_CHECK_2;
         *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
-    } else if (current == NAPT_CT_IDLE_2) {
-        next = NAPT_CT_RELEASE;
+    } else if (current == NAPT_CT_IDLE_CHECK_2) {
+        next = NAPT_CT_WAIT_TIMEOUT;
         *next_timeout = napt_ct_wait_ns(key, value);
     } else {
-        next = NAPT_CT_IDLE_2;
+        next = NAPT_CT_IDLE_CHECK_2;
         *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
     }
 
@@ -234,7 +237,7 @@ napt_ct_create(u32 ifindex, u32 mark, const struct napt_ct_key *key, __be16 exte
     initial.external_port = external_port;
     initial.from_wan_gen = gen;
     initial.is_static = is_static ? 1 : 0;
-    initial.status = is_static ? NAPT_CT_INIT : NAPT_CT_PENDING_REF;
+    initial.status = is_static ? NAPT_CT_READY : NAPT_CT_ACQUIRE_REF;
     initial.client_status = NAPT_TCP_STATE_INIT;
     initial.server_status = NAPT_TCP_STATE_INIT;
     initial.create_time = bpf_ktime_get_tai_ns();
@@ -251,7 +254,7 @@ napt_ct_create(u32 ifindex, u32 mark, const struct napt_ct_key *key, __be16 exte
             bpf_map_delete_elem(&napt_ct, key);
             return 0;
         }
-        value->status = NAPT_CT_INIT;
+        value->status = NAPT_CT_READY;
     }
 
     return value;
