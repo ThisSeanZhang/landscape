@@ -211,7 +211,14 @@ pub fn build_deprecation_ra(
     opts.insert(IcmpV6Option::source_link_layer_address(&mac_addr.octets()));
 
     for entry in status.ra_entries() {
-        opts.insert(IcmpV6Option::prefix_information(entry.prefix_len, 0, 0, entry.prefix, false));
+        // SLAAC address lifetimes are only updated when A is set (RFC 4862 §5.5.3(a)).
+        opts.insert(IcmpV6Option::prefix_information(
+            entry.prefix_len,
+            0,
+            0,
+            entry.prefix,
+            params.ra_autonomous,
+        ));
         opts.insert(IcmpV6Option::route_information_with_lifetime(
             entry.prefix_len,
             0,
@@ -493,6 +500,51 @@ mod tests {
             IcmpV6Option::RecursiveDNSServer { lifetime: 1800, addresses, .. }
                 if addresses.as_slice() == gua_dns.octets()
         )));
+    }
+
+    #[test]
+    fn shutdown_pio_preserves_the_autonomous_flag_for_each_prefix() {
+        use crate::lan_service::lan_ipv6_server::SubnetState;
+
+        let mut status = status_with_pd_subnet("2001:db8:1::", "2001:db8:1::1");
+        let ra_subnet = status.cached_subnets[0].clone();
+        let na_subnet = SubnetState {
+            sub_prefix: "2001:db8:2::".parse().unwrap(),
+            sub_router: "2001:db8:2::1".parse().unwrap(),
+            has_ra: false,
+            is_na: true,
+            ..ra_subnet.clone()
+        };
+        let ra_prefix = ra_subnet.sub_prefix.octets();
+        let na_prefix = na_subnet.sub_prefix.octets();
+        status.update_prefix(&[ra_subnet, na_subnet]);
+        let mac = MacAddr::from([0x02, 0, 0, 0, 0, 1]);
+
+        for ra_autonomous in [true, false] {
+            let params = Ipv6LanReplyParams {
+                preferred_lifetime: 300,
+                valid_lifetime: 600,
+                rdnss_lifetime: 600,
+                ra_flags: 0x80,
+                ra_autonomous,
+                rdnss_link_local_only: false,
+            };
+            let shutdown = decode_ra(&build_deprecation_ra(&status, &params, &mac));
+            let pios = shutdown.opts.get_all(3);
+            assert_eq!(pios.len(), 2);
+            for (prefix, autonomous) in [(ra_prefix, ra_autonomous), (na_prefix, false)] {
+                assert!(
+                    pios.iter().any(|pio| matches!(
+                        pio,
+                        IcmpV6Option::PrefixInformation {
+                            prefix: p, flags, preferred_lifetime: 0, valid_lifetime: 0, ..
+                        } if *p == prefix && (flags & 0x40 != 0) == autonomous
+                    )),
+                    "wrong shutdown PIO for {}",
+                    Ipv6Addr::from(prefix)
+                );
+            }
+        }
     }
 
     #[test]
