@@ -23,7 +23,7 @@ static __always_inline int napt_is_non_initial(const struct tc_nat_view *view) {
 
 static __always_inline int napt_allows_create(const struct tc_nat_view *view) {
     if (napt_is_icmp_error(view) || napt_is_non_initial(view)) return 0;
-    if (view->l4_protocol == IPV4_PROTO_TCP) return view->tcp_phase == NAPT_TCP_PHASE_SYN;
+    if (view->l4_protocol == IPV4_PROTO_TCP) return napt_tcp_phase_is_syn(view->tcp_phase);
     return view->l4_protocol == IPV4_PROTO_UDP || view->l4_protocol == IPV4_PROTO_ICMP;
 }
 

@@ -85,8 +85,8 @@ struct napt_ct_value {
     __u8 pad0;
     __u32 from_wan_gen;
     __u64 status;
-    __u64 client_status;
-    __u64 server_status;
+    __u64 tcp_flags;        /* A reconnect replaces both directions' flags in one CAS. */
+    __u64 wait_deadline_ns; /* Monotonic deadline owned by the timer. */
     struct bpf_timer timer;
     __u64 create_time;
     __u64 ingress_bytes;

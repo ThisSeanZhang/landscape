@@ -32,7 +32,7 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
     int non_initial = view->frag_code == LAND_FRAG_NON_INITIAL;
     __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
-                       (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN
+                       (proto == IPV4_PROTO_TCP ? napt_tcp_phase_is_syn(tcp_phase)
                                                 : (proto == IPV4_PROTO_UDP || icmp));
     __be16 internal_port = view->sport;
     __be16 remote_port = icmp ? 0 : view->dport;
@@ -135,7 +135,7 @@ static __always_inline int xdp_napt_wan_state(const struct xdp_nat_view *view, _
     int non_initial = view->frag_code == LAND_FRAG_NON_INITIAL;
     __u8 tcp_phase = view->tcp_phase;
     int allow_create = !icmp_error && !non_initial &&
-                       (proto == IPV4_PROTO_TCP ? tcp_phase == NAPT_TCP_PHASE_SYN
+                       (proto == IPV4_PROTO_TCP ? napt_tcp_phase_is_syn(tcp_phase)
                                                 : (proto == IPV4_PROTO_UDP || icmp));
     __be16 external_port = icmp ? view->sport : view->dport;
     __be16 remote_port = icmp ? 0 : view->sport;

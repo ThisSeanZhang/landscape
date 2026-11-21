@@ -15,6 +15,7 @@
 #define NAPT_NSEC_PER_SEC 1000000000ULL
 #define NAPT_CT_REPORT_INTERVAL_NS NAPT_NSEC_PER_SEC
 #define NAPT_TCP_SYN_TIMEOUT_NS (6ULL * NAPT_NSEC_PER_SEC)
+#define NAPT_TCP_CLOSE_TIMEOUT_NS (6ULL * NAPT_NSEC_PER_SEC)
 #define NAPT_TCP_TIMEOUT_NS (10ULL * 60ULL * NAPT_NSEC_PER_SEC)
 #define NAPT_UDP_TIMEOUT_NS (5ULL * 60ULL * NAPT_NSEC_PER_SEC)
 #define NAPT_CLEAN_STEP_NS 1000U
@@ -30,6 +31,7 @@ enum napt_ct_status {
     NAPT_CT_IDLE_CHECK_2 = 31ULL,
     /* A packet for this CT can reactivate it while the protocol timeout is running. */
     NAPT_CT_WAIT_TIMEOUT = 40ULL,
+    NAPT_CT_WAIT_TCP_CLOSE = 41ULL,
     /* Cleanup owns the CT from this point on. */
     NAPT_CT_CLEAN_START = 49ULL,
     NAPT_CT_RELEASE_REF = NAPT_CT_CLEAN_START,
@@ -39,11 +41,14 @@ enum napt_ct_status {
     NAPT_CT_RETRY_DELETE_REPORT = 53ULL,
 };
 
-enum napt_tcp_state {
-    NAPT_TCP_STATE_INIT = 0ULL,
-    NAPT_TCP_STATE_SYN = 1ULL,
-    NAPT_TCP_STATE_FIN = 2ULL,
-    NAPT_TCP_STATE_LESS_EST = 3ULL,
+enum napt_tcp_flags {
+    NAPT_TCP_LAN_SYN = 1U << 0,
+    NAPT_TCP_WAN_SYN = 1U << 1,
+    NAPT_TCP_LAN_FIN = 1U << 2,
+    NAPT_TCP_WAN_FIN = 1U << 3,
+    NAPT_TCP_RST_SEEN = 1U << 4,
+    NAPT_TCP_BOTH_SYN = NAPT_TCP_LAN_SYN | NAPT_TCP_WAN_SYN,
+    NAPT_TCP_BOTH_FIN = NAPT_TCP_LAN_FIN | NAPT_TCP_WAN_FIN,
 };
 
 #define NAPT_TIMER_STEP_DELETE_CT 1U
@@ -54,12 +59,16 @@ static __always_inline int napt_ct_status_usable(__u64 status) {
 }
 
 static __always_inline int napt_ct_status_can_activate(__u64 status) {
-    return status != NAPT_CT_ACTIVE && status != NAPT_CT_ACQUIRE_REF &&
-           status < NAPT_CT_CLEAN_START;
+    return status < NAPT_CT_WAIT_TCP_CLOSE && status != NAPT_CT_ACQUIRE_REF &&
+           status != NAPT_CT_ACTIVE;
 }
 
 static __always_inline int napt_ct_timer_start(struct napt_ct_value *value, __u64 ns) {
-    return bpf_timer_start(&value->timer, ns, 0) == 0;
+    long ret = bpf_timer_start(&value->timer, ns, 0);
+    /* A packet may have woken a long idle wait between the timer's CAS and its rearm. */
+    if (ns > NAPT_CT_REPORT_INTERVAL_NS && value->status == NAPT_CT_ACTIVE)
+        ret = bpf_timer_start(&value->timer, NAPT_CT_REPORT_INTERVAL_NS, 0);
+    return ret == 0;
 }
 
 static __always_inline u32 napt_ct_delete(struct napt_ct_key *key) {
@@ -114,16 +123,10 @@ static __always_inline u32 napt_ct_release_ref(struct napt_ct_key *key, struct n
 
 static __always_inline __u64 napt_ct_wait_ns(const struct napt_ct_key *key,
                                              const struct napt_ct_value *value) {
-    if (key->proto == IPV4_PROTO_UDP) return NAPT_UDP_TIMEOUT_NS;
+    if (key->proto != IPV4_PROTO_TCP) return NAPT_UDP_TIMEOUT_NS;
 
-    if (key->proto == IPV4_PROTO_TCP) {
-        if (value->client_status == NAPT_TCP_STATE_SYN &&
-            value->server_status == NAPT_TCP_STATE_SYN)
-            return NAPT_TCP_TIMEOUT_NS;
-        return NAPT_TCP_SYN_TIMEOUT_NS;
-    }
-
-    return NAPT_UDP_TIMEOUT_NS;
+    if ((value->tcp_flags & NAPT_TCP_BOTH_SYN) == NAPT_TCP_BOTH_SYN) return NAPT_TCP_TIMEOUT_NS;
+    return NAPT_TCP_SYN_TIMEOUT_NS;
 }
 
 /*
@@ -143,9 +146,14 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
 
     if (current == NAPT_CT_ACQUIRE_REF) return napt_ct_delete(key);
 
-    if (current == NAPT_CT_WAIT_TIMEOUT) {
-        if (!__sync_bool_compare_and_swap(&value->status, NAPT_CT_WAIT_TIMEOUT,
-                                          NAPT_CT_RELEASE_REF))
+    if (current == NAPT_CT_WAIT_TIMEOUT || current == NAPT_CT_WAIT_TCP_CLOSE) {
+        /* A packet waking an earlier idle wait can leave a one-second timer pending. */
+        __u64 now = bpf_ktime_get_ns();
+        if (now < value->wait_deadline_ns) {
+            *next_timeout = value->wait_deadline_ns - now;
+            return NAPT_TIMER_STEP_RESTART;
+        }
+        if (!__sync_bool_compare_and_swap(&value->status, current, NAPT_CT_RELEASE_REF))
             return NAPT_TIMER_STEP_RESTART;
 
         value->delete_report_failures = napt_metric_try_report(key, value, NAPT_METRIC_DELETE) != 0;
@@ -203,23 +211,25 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
     /* Reports carry cumulative counters, so a full metric ring can skip this sample. */
     napt_metric_try_report(key, value, NAPT_METRIC_ACTIVE);
 
-    if (current == NAPT_CT_ACTIVE) {
+    if (key->proto == IPV4_PROTO_TCP &&
+        (value->tcp_flags & NAPT_TCP_BOTH_FIN) == NAPT_TCP_BOTH_FIN) {
+        next = NAPT_CT_WAIT_TCP_CLOSE;
+        *next_timeout = NAPT_TCP_CLOSE_TIMEOUT_NS;
+    } else if (current == NAPT_CT_ACTIVE) {
         next = NAPT_CT_IDLE_CHECK_1;
-        *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
     } else if (current == NAPT_CT_IDLE_CHECK_1) {
         next = NAPT_CT_IDLE_CHECK_2;
-        *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
     } else if (current == NAPT_CT_IDLE_CHECK_2) {
         next = NAPT_CT_WAIT_TIMEOUT;
         *next_timeout = napt_ct_wait_ns(key, value);
     } else {
         next = NAPT_CT_IDLE_CHECK_2;
-        *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
     }
 
     if (!__sync_bool_compare_and_swap(&value->status, current, next)) {
         *next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
-        return NAPT_TIMER_STEP_RESTART;
+    } else if (next == NAPT_CT_WAIT_TIMEOUT || next == NAPT_CT_WAIT_TCP_CLOSE) {
+        value->wait_deadline_ns = bpf_ktime_get_ns() + *next_timeout;
     }
 
     return NAPT_TIMER_STEP_RESTART;
@@ -231,7 +241,7 @@ static int napt_ct_timer_cb(void *map, struct napt_ct_key *key, struct napt_ct_v
     __u64 next_timeout = NAPT_CT_REPORT_INTERVAL_NS;
     u32 action = napt_ct_timer_step(key, value, 0, &queue_push_ret, &next_timeout);
 
-    if (action == NAPT_TIMER_STEP_RESTART) bpf_timer_start(&value->timer, next_timeout, 0);
+    if (action == NAPT_TIMER_STEP_RESTART) napt_ct_timer_start(value, next_timeout);
     return 0;
 }
 
@@ -268,8 +278,6 @@ napt_ct_create(u32 ifindex, u32 mark, const struct napt_ct_key *key, __be16 exte
     initial.from_wan_gen = gen;
     initial.is_static = is_static ? 1 : 0;
     initial.status = is_static ? NAPT_CT_READY : NAPT_CT_ACQUIRE_REF;
-    initial.client_status = NAPT_TCP_STATE_INIT;
-    initial.server_status = NAPT_TCP_STATE_INIT;
     initial.create_time = bpf_ktime_get_tai_ns();
     initial.cpu_id = bpf_get_smp_processor_id();
     initial.ifindex = ifindex;
@@ -292,40 +300,41 @@ napt_ct_create(u32 ifindex, u32 mark, const struct napt_ct_key *key, __be16 exte
 
 static __always_inline int napt_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 gress,
                                                struct napt_ct_value *value) {
-    __u64 current_state;
-    __u64 *modify_state;
-    __u64 next_state;
-
-    if (gress == NAPT_GRESS_WAN) {
-        current_state = value->server_status;
-        modify_state = &value->server_status;
-    } else {
-        current_state = value->client_status;
-        modify_state = &value->client_status;
-    }
-
-    next_state = current_state;
     if (l4_protocol == IPV4_PROTO_TCP) {
-        if (tcp_phase == NAPT_TCP_PHASE_SYN)
-            next_state = NAPT_TCP_STATE_SYN;
-        else if (tcp_phase == NAPT_TCP_PHASE_RST)
-            next_state = NAPT_TCP_STATE_INIT;
-        else if (tcp_phase == NAPT_TCP_PHASE_FIN)
-            next_state = NAPT_TCP_STATE_FIN;
-    } else {
-        next_state = NAPT_TCP_STATE_LESS_EST;
-    }
+        __u64 status = value->status;
+        if (status == NAPT_CT_ACTIVE && tcp_phase == NAPT_TCP_PHASE_ESTABLISHED) return TC_ACT_OK;
+        if (!napt_ct_status_usable(status)) return TC_ACT_SHOT;
+        if (status == NAPT_CT_WAIT_TCP_CLOSE)
+            return napt_tcp_phase_is_syn(tcp_phase) ? TC_ACT_SHOT : TC_ACT_OK;
 
-    if (next_state != current_state &&
-        !__sync_bool_compare_and_swap(modify_state, current_state, next_state))
-        return TC_ACT_SHOT;
+        __u64 seen = value->tcp_flags;
+        __u64 flag = 0;
+        if (napt_tcp_phase_is_syn(tcp_phase)) {
+            if ((seen & NAPT_TCP_BOTH_FIN) == NAPT_TCP_BOTH_FIN) return TC_ACT_SHOT;
+            flag = gress == NAPT_GRESS_WAN ? NAPT_TCP_WAN_SYN : NAPT_TCP_LAN_SYN;
+        } else if (tcp_phase == NAPT_TCP_PHASE_FIN) {
+            flag = gress == NAPT_GRESS_WAN ? NAPT_TCP_WAN_FIN : NAPT_TCP_LAN_FIN;
+        } else if (tcp_phase == NAPT_TCP_PHASE_RST) {
+            flag = NAPT_TCP_RST_SEEN;
+        }
+        if (tcp_phase == NAPT_TCP_PHASE_SYN && (seen & NAPT_TCP_RST_SEEN)) {
+            /* A fresh SYN after RST reuses the mapping with a new handshake. */
+            if (!__sync_bool_compare_and_swap(&value->tcp_flags, seen, flag)) return TC_ACT_SHOT;
+        } else if (flag && !(seen & flag)) {
+            __sync_fetch_and_or(&value->tcp_flags, flag);
+        }
+    }
 
     __u64 status = value->status;
-    if (napt_ct_status_can_activate(status)) {
-        __u64 prev = __sync_val_compare_and_swap(&value->status, status, NAPT_CT_ACTIVE);
-        if (prev == status) napt_ct_timer_start(value, NAPT_CT_REPORT_INTERVAL_NS);
-    }
+    if (!napt_ct_status_can_activate(status)) return TC_ACT_OK;
 
+    if (status != NAPT_CT_WAIT_TIMEOUT) {
+        /* These states already have a one-second tick unless the timer just entered a long wait. */
+        __u64 prev = __sync_val_compare_and_swap(&value->status, status, NAPT_CT_ACTIVE);
+        if (prev != NAPT_CT_WAIT_TIMEOUT) return TC_ACT_OK;
+    }
+    if (__sync_bool_compare_and_swap(&value->status, NAPT_CT_WAIT_TIMEOUT, NAPT_CT_ACTIVE))
+        napt_ct_timer_start(value, NAPT_CT_REPORT_INTERVAL_NS);
     return TC_ACT_OK;
 }
 

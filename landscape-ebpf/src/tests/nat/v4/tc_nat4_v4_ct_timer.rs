@@ -23,22 +23,34 @@ const STATE_SHIFT: u64 = 56;
 const STATE_ACTIVE: u64 = 1;
 const STATE_CLOSED: u64 = 2;
 
+const CT_READY: u64 = 0;
 const CT_ACQUIRE_REF: u64 = 10;
 const CT_ACTIVE: u64 = 20;
 const CT_IDLE_CHECK_1: u64 = 30;
 const CT_IDLE_CHECK_2: u64 = 31;
 const CT_WAIT_TIMEOUT: u64 = 40;
+const CT_WAIT_TCP_CLOSE: u64 = 41;
 const CT_RELEASE_REF: u64 = 49;
 const CT_DELETE_LAN_MAPPING: u64 = 50;
 const CT_CLEAR_WAN_SLOT: u64 = 51;
 const CT_RETURN_PORT: u64 = 52;
 const CT_RETRY_DELETE_REPORT: u64 = 53;
+const TCP_SYN: u8 = 1;
+const TCP_ACK: u8 = 2;
+const TCP_FIN: u8 = 3;
+const TCP_RST: u8 = 4;
+const TCP_SYN_ACK: u8 = 5;
+
+const LAN_SYN: u64 = 1;
+const WAN_SYN: u64 = 2;
+const BOTH_SYN: u64 = LAN_SYN | WAN_SYN;
 
 const STEP_DELETE_CT: u32 = 1;
 const STEP_RESTART: u32 = 2;
 
 const REPORT_INTERVAL: u64 = 1_000_000_000;
 const TCP_SYN_TIMEOUT: u64 = 6_000_000_000;
+const TCP_CLOSE_TIMEOUT: u64 = 6_000_000_000;
 const TCP_TIMEOUT: u64 = 600_000_000_000;
 const UDP_TIMEOUT: u64 = 300_000_000_000;
 const CLEAN_STEP_NS: u64 = 1_000;
@@ -113,8 +125,7 @@ fn ct_value(status: u64, generation: u32, is_static: u8) -> types::napt_ct_value
         pad0: 0,
         from_wan_gen: generation,
         status,
-        client_status: 1,
-        server_status: 1,
+        tcp_flags: BOTH_SYN,
         ..Default::default()
     }
 }
@@ -529,16 +540,307 @@ mod tests {
     }
 
     #[test]
-    fn idle_check_2_tcp_non_syn_uses_syn_timeout() {
+    fn idle_check_2_tcp_incomplete_handshake_uses_syn_timeout() {
         with_skel(|skel| {
             let mut value = ct_value(CT_IDLE_CHECK_2, GENERATION, 0);
-            value.client_status = 3;
-            value.server_status = 3;
+            value.tcp_flags = LAN_SYN;
             put_ct(&skel.maps.napt_ct, PROTO_TCP, &value);
             let result = run_step(skel, PROTO_TCP, false);
             assert_eq!(result.action, STEP_RESTART);
             assert_eq!(result.status, CT_WAIT_TIMEOUT);
             assert_eq!(result.next_timeout, TCP_SYN_TIMEOUT);
+        });
+    }
+
+    #[test]
+    fn tcp_half_close_keeps_long_idle_timeout_until_peer_fin() {
+        with_skel(|skel| {
+            for first in [0, 1] {
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, GENERATION, 0));
+                for _ in 0..2 {
+                    let fin = run_advance(skel, PROTO_TCP, TCP_FIN, first);
+                    assert_eq!((fin.action, fin.status), (0, CT_ACTIVE));
+                }
+                for expected in [CT_IDLE_CHECK_1, CT_IDLE_CHECK_2] {
+                    assert_eq!(run_step(skel, PROTO_TCP, false).status, expected);
+                }
+                let idle = run_step(skel, PROTO_TCP, false);
+                assert_eq!((idle.status, idle.next_timeout), (CT_WAIT_TIMEOUT, TCP_TIMEOUT));
+                let peer = 1 - first;
+                assert_eq!(run_advance(skel, PROTO_TCP, TCP_ACK, peer).status, CT_ACTIVE);
+                let fin = run_advance(skel, PROTO_TCP, TCP_FIN, peer);
+                assert_eq!((fin.action, fin.status), (0, CT_ACTIVE));
+                for phase in [TCP_SYN, TCP_SYN_ACK] {
+                    assert_eq!(run_advance(skel, PROTO_TCP, phase, first).action, 2);
+                }
+                let closing = run_step(skel, PROTO_TCP, false);
+                assert_eq!(
+                    (closing.status, closing.next_timeout),
+                    (CT_WAIT_TCP_CLOSE, TCP_CLOSE_TIMEOUT)
+                );
+                for phase in [TCP_ACK, TCP_FIN, TCP_RST, TCP_SYN] {
+                    let late = run_advance(skel, PROTO_TCP, phase, peer);
+                    assert_eq!(
+                        (late.action, late.status),
+                        (if phase == TCP_SYN { 2 } else { 0 }, CT_WAIT_TCP_CLOSE)
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn rst_uses_normal_tcp_idle_timeout() {
+        with_skel(|skel| {
+            for direction in [0, 1] {
+                for (handshake, timeout) in [(LAN_SYN, TCP_SYN_TIMEOUT), (BOTH_SYN, TCP_TIMEOUT)] {
+                    let mut ct = ct_value(CT_WAIT_TIMEOUT, GENERATION, 1);
+                    ct.tcp_flags = handshake;
+                    put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct);
+                    for _ in 0..2 {
+                        let rst = run_advance(skel, PROTO_TCP, TCP_RST, direction);
+                        assert_eq!((rst.action, rst.status), (0, CT_ACTIVE));
+                    }
+                    assert_eq!(run_step(skel, PROTO_TCP, false).status, CT_IDLE_CHECK_1);
+                    assert_eq!(
+                        run_advance(skel, PROTO_TCP, TCP_ACK, 1 - direction).status,
+                        CT_ACTIVE
+                    );
+                    for expected in [CT_IDLE_CHECK_1, CT_IDLE_CHECK_2] {
+                        assert_eq!(run_step(skel, PROTO_TCP, false).status, expected);
+                    }
+                    let idle = run_step(skel, PROTO_TCP, false);
+                    assert_eq!((idle.status, idle.next_timeout), (CT_WAIT_TIMEOUT, timeout));
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn unanswered_syn_then_fin_keeps_short_handshake_timeout() {
+        with_skel(|skel| {
+            for direction in [0, 1] {
+                let mut ct = ct_value(CT_READY, GENERATION, 0);
+                ct.tcp_flags = 0;
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct);
+                for phase in [TCP_SYN, TCP_FIN] {
+                    assert_eq!(run_advance(skel, PROTO_TCP, phase, direction).action, 0);
+                }
+                for expected in [CT_IDLE_CHECK_1, CT_IDLE_CHECK_2] {
+                    assert_eq!(run_step(skel, PROTO_TCP, false).status, expected);
+                }
+                let idle = run_step(skel, PROTO_TCP, false);
+                assert_eq!((idle.status, idle.next_timeout), (CT_WAIT_TIMEOUT, TCP_SYN_TIMEOUT));
+            }
+        });
+    }
+
+    #[test]
+    fn only_initial_syn_after_rst_starts_a_fresh_handshake() {
+        with_skel(|skel| {
+            for (initiator, syn_flag) in [(0, WAN_SYN), (1, LAN_SYN)] {
+                let peer = 1 - initiator;
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, GENERATION, 0));
+                run_advance(skel, PROTO_TCP, TCP_FIN, initiator);
+                let rst = run_advance(skel, PROTO_TCP, TCP_RST, peer);
+                let delayed_syn_ack = run_advance(skel, PROTO_TCP, TCP_SYN_ACK, peer);
+                assert_eq!((delayed_syn_ack.action, delayed_syn_ack.tcp_flags), (0, rst.tcp_flags));
+
+                let syn = run_advance(skel, PROTO_TCP, TCP_SYN, initiator);
+                assert_eq!((syn.action, syn.tcp_flags), (0, syn_flag));
+                for expected in [CT_IDLE_CHECK_1, CT_IDLE_CHECK_2] {
+                    assert_eq!(run_step(skel, PROTO_TCP, false).status, expected);
+                }
+                let idle = run_step(skel, PROTO_TCP, false);
+                assert_eq!((idle.status, idle.next_timeout), (CT_WAIT_TIMEOUT, TCP_SYN_TIMEOUT));
+                let reply = run_advance(skel, PROTO_TCP, TCP_SYN_ACK, peer);
+                assert_eq!((reply.action, reply.tcp_flags, reply.status), (0, BOTH_SYN, CT_ACTIVE));
+                run_advance(skel, PROTO_TCP, TCP_FIN, peer);
+                assert_eq!(run_step(skel, PROTO_TCP, false).status, CT_IDLE_CHECK_1);
+                run_advance(skel, PROTO_TCP, TCP_FIN, initiator);
+                assert_eq!(run_step(skel, PROTO_TCP, false).status, CT_WAIT_TCP_CLOSE);
+            }
+        });
+    }
+
+    #[test]
+    fn packet_only_arms_timer_when_waking_a_long_idle_wait() {
+        with_skel(|skel| {
+            let input =
+                types::napt_ct_timer_test_input { key: ct_key(PROTO_TCP), ..Default::default() };
+            skel.maps
+                .napt_ct_timer_test_input
+                .update(&0u32.to_ne_bytes(), as_bytes(&input), MapFlags::ANY)
+                .unwrap();
+            for (status, armed) in [
+                (CT_READY, 0),
+                (CT_ACTIVE, 0),
+                (CT_IDLE_CHECK_1, 0),
+                (CT_IDLE_CHECK_2, 0),
+                (CT_WAIT_TIMEOUT, 1),
+                (CT_WAIT_TCP_CLOSE, 0),
+            ] {
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(status, GENERATION, 1));
+                let data = [0; 64];
+                let run = ProgramInput { data_in: Some(&data), ..Default::default() };
+                let result = skel.progs.napt_ct_packet_wakeup_test.test_run(run).unwrap();
+                assert_eq!(result.return_value, armed, "CT status {status}");
+            }
+        });
+    }
+
+    #[test]
+    fn early_wakeup_preserves_idle_and_close_deadlines() {
+        with_skel(|skel| {
+            let read_ct = || {
+                let key = ct_key(PROTO_TCP);
+                let bytes =
+                    skel.maps.napt_ct.lookup(as_bytes(&key), MapFlags::ANY).unwrap().unwrap();
+                read_unaligned::<types::napt_ct_value>(&bytes)
+            };
+            for (waiting, timeout) in
+                [(CT_WAIT_TIMEOUT, TCP_TIMEOUT), (CT_WAIT_TCP_CLOSE, TCP_CLOSE_TIMEOUT)]
+            {
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_IDLE_CHECK_2, GENERATION, 1));
+                if waiting == CT_WAIT_TCP_CLOSE {
+                    run_advance(skel, PROTO_TCP, TCP_FIN, 0);
+                    run_advance(skel, PROTO_TCP, TCP_FIN, 1);
+                }
+                let entered = run_step(skel, PROTO_TCP, false);
+                assert_eq!((entered.status, entered.next_timeout), (waiting, timeout));
+                let deadline = read_ct().wait_deadline_ns;
+                if waiting == CT_WAIT_TCP_CLOSE {
+                    run_advance(skel, PROTO_TCP, TCP_RST, 1);
+                }
+                let early = run_step(skel, PROTO_TCP, false);
+                assert_eq!((early.action, early.status), (STEP_RESTART, waiting));
+                assert!((1..timeout).contains(&early.next_timeout));
+
+                let mut expired = read_ct();
+                assert_eq!(expired.wait_deadline_ns, deadline);
+                expired.wait_deadline_ns = 1;
+                put_ct(&skel.maps.napt_ct, PROTO_TCP, &expired);
+                let done = run_step(skel, PROTO_TCP, false);
+                assert_eq!((done.action, done.timer_exists), (STEP_DELETE_CT, 0));
+            }
+        });
+    }
+
+    #[test]
+    fn tcp_fin_across_tc_and_xdp_wakes_idle_timer_and_returns_port_after_close_wait() {
+        use super::super::common::{self, WAN_IP};
+        use crate::skel::xdp_nat4_v4::XdpNat4V4SkelBuilder;
+        use crate::tests::helper::net::wait_for;
+        use std::os::fd::AsFd;
+        use std::time::{Duration, Instant};
+
+        common::with_skel(&[], &[NAT_PORT], &[], |tc| {
+            let mut object = MaybeUninit::uninit();
+            let mut open = XdpNat4V4SkelBuilder::default().open(&mut object).unwrap();
+            open.maps.rodata_data.as_deref_mut().unwrap().land_nat_external_addr = be32(WAN_IP);
+            open.maps.napt_ct.reuse_fd(tc.maps.napt_ct.as_fd()).unwrap();
+            open.maps.napt_from_lan.reuse_fd(tc.maps.napt_from_lan.as_fd()).unwrap();
+            open.maps.napt_from_wan.reuse_fd(tc.maps.napt_from_wan.as_fd()).unwrap();
+            let xdp = open.load().unwrap();
+
+            let mut timer_object = MaybeUninit::uninit();
+            let mut open = TestNat4V4CtTimerSkelBuilder::default().open(&mut timer_object).unwrap();
+            open.maps.napt_ct.reuse_fd(tc.maps.napt_ct.as_fd()).unwrap();
+            let timer = open.load().unwrap();
+            let key = ct_key(PROTO_TCP);
+            let input = types::napt_ct_timer_test_input { key, ..Default::default() };
+            timer
+                .maps
+                .napt_ct_timer_test_input
+                .update(&0u32.to_ne_bytes(), as_bytes(&input), MapFlags::ANY)
+                .unwrap();
+
+            let tcp = |src: Ipv4Addr, dst: Ipv4Addr, sport, dport, phase, payload: &[u8]| {
+                let mut pkt = Vec::new();
+                let builder = etherparse::PacketBuilder::ethernet2([2; 6], [4; 6])
+                    .ipv4(src.octets(), dst.octets(), 64)
+                    .tcp(sport, dport, 42, 4096)
+                    .ack(1);
+                let builder = match phase {
+                    TCP_SYN_ACK => builder.syn(),
+                    TCP_FIN => builder.fin(),
+                    TCP_RST => builder.rst(),
+                    TCP_ACK => builder,
+                    _ => unreachable!(),
+                };
+                builder.write(&mut pkt, payload).unwrap();
+                pkt
+            };
+            let from_wan = |packet: &[u8]| {
+                let mut translated = vec![0; packet.len()];
+                let result = xdp
+                    .progs
+                    .ingress_nat_v4_v4
+                    .test_run(ProgramInput {
+                        data_in: Some(packet),
+                        data_out: Some(&mut translated),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                assert_eq!(result.return_value, 2); // XDP_PASS
+                assert_eq!(common::parse_tcp_ports(result.data.unwrap()), (REMOTE_PORT, LAN_PORT));
+                translated
+            };
+            let syn = common::tcp_pkt(LAN_IP, REMOTE_IP, LAN_PORT, REMOTE_PORT, true);
+            let syn_ack = tcp(REMOTE_IP, WAN_IP, REMOTE_PORT, NAT_PORT, TCP_SYN_ACK, &[]);
+            let first = tcp(LAN_IP, REMOTE_IP, LAN_PORT, REMOTE_PORT, TCP_FIN, &[]);
+            assert_eq!(common::run(&tc.progs.tc_v4_from_lan, &syn).0, -1);
+            from_wan(&syn_ack);
+            assert_eq!(common::run(&tc.progs.tc_v4_from_lan, &first).0, -1);
+            from_wan(&tcp(REMOTE_IP, WAN_IP, REMOTE_PORT, NAT_PORT, TCP_RST, &[]));
+            from_wan(&syn_ack); // Delayed reply from the old handshake.
+            let (action, out) = common::run(&tc.progs.tc_v4_from_lan, &syn);
+            assert_eq!(action, -1);
+            assert_eq!(common::parse_tcp_ports(&out), (NAT_PORT, REMOTE_PORT));
+            let bytes = tc.maps.napt_ct.lookup(as_bytes(&key), MapFlags::ANY).unwrap().unwrap();
+            assert_eq!(read_unaligned::<types::napt_ct_value>(&bytes).tcp_flags, LAN_SYN);
+            from_wan(&syn_ack);
+            assert_eq!(common::run(&tc.progs.tc_v4_from_lan, &first).0, -1);
+            let peer_data =
+                tcp(REMOTE_IP, WAN_IP, REMOTE_PORT, NAT_PORT, TCP_ACK, b"last response");
+            assert!(from_wan(&peer_data).ends_with(b"last response"));
+            let lookup = || {
+                tc.maps
+                    .napt_ct
+                    .lookup(as_bytes(&key), MapFlags::ANY)
+                    .unwrap()
+                    .map(|bytes| read_unaligned::<types::napt_ct_value>(&bytes).status)
+            };
+            wait_for("half-closed CT to enter the long idle wait", Duration::from_secs(6), || {
+                lookup() == Some(CT_WAIT_TIMEOUT)
+            });
+            let second = tcp(REMOTE_IP, WAN_IP, REMOTE_PORT, NAT_PORT, TCP_FIN, &[]);
+            let before_close = Instant::now();
+            from_wan(&second);
+            assert_eq!(common::run(&tc.progs.tc_v4_from_lan, &syn).0, 2); // TC_ACT_SHOT
+            let run = ProgramInput { data_in: Some(&second), ..Default::default() };
+            assert_eq!(
+                timer.progs.napt_ct_rearm_idle_timer_test.test_run(run).unwrap().return_value,
+                0
+            );
+            wait_for("next tick to start the TCP close wait", Duration::from_secs(3), || {
+                lookup() == Some(CT_WAIT_TCP_CLOSE)
+            });
+            let ack = common::tcp_pkt(LAN_IP, REMOTE_IP, LAN_PORT, REMOTE_PORT, false);
+            let (action, out) = common::run(&tc.progs.tc_v4_from_lan, &ack);
+            assert_eq!(action, -1);
+            assert_eq!(common::parse_tcp_ports(&out), (NAT_PORT, REMOTE_PORT));
+            assert_eq!(lookup(), Some(CT_WAIT_TCP_CLOSE));
+
+            wait_for("TCP close timer to release the CT", Duration::from_secs(9), || {
+                lookup().is_none()
+            });
+            assert!(before_close.elapsed() >= Duration::from_nanos(TCP_CLOSE_TIMEOUT));
+            let bytes =
+                tc.maps.napt_tcp_ports.lookup_and_delete(&[]).unwrap().expect("recycled port");
+            let slot = read_unaligned::<types::napt_port_slot>(&bytes);
+            assert_eq!((u16::from_be(slot.port), slot.generation), (NAT_PORT, 1));
+            assert!(tc.maps.napt_tcp_ports.lookup_and_delete(&[]).unwrap().is_none());
         });
     }
 
@@ -889,14 +1191,12 @@ mod tests {
     fn advance_reactivates_wait_timeout_and_updates_client_state() {
         with_skel(|skel| {
             let mut value = ct_value(CT_WAIT_TIMEOUT, GENERATION, 0);
-            value.client_status = 0;
-            value.server_status = 0;
+            value.tcp_flags = 0;
             put_ct(&skel.maps.napt_ct, PROTO_TCP, &value);
             let result = run_advance(skel, PROTO_TCP, 1, 1);
             assert_eq!(result.action, 0);
             assert_eq!(result.status, CT_ACTIVE);
-            assert_eq!(result.client_status, 1);
-            assert_eq!(result.server_status, 0);
+            assert_eq!(result.tcp_flags, LAN_SYN);
         });
     }
 
@@ -904,14 +1204,12 @@ mod tests {
     fn advance_reactivates_wait_timeout_and_updates_server_state() {
         with_skel(|skel| {
             let mut value = ct_value(CT_WAIT_TIMEOUT, GENERATION, 0);
-            value.client_status = 0;
-            value.server_status = 0;
+            value.tcp_flags = 0;
             put_ct(&skel.maps.napt_ct, PROTO_TCP, &value);
             let result = run_advance(skel, PROTO_TCP, 1, 0);
             assert_eq!(result.action, 0);
             assert_eq!(result.status, CT_ACTIVE);
-            assert_eq!(result.client_status, 0);
-            assert_eq!(result.server_status, 1);
+            assert_eq!(result.tcp_flags, WAN_SYN);
         });
     }
 
@@ -954,12 +1252,11 @@ mod tests {
         with_skel(|skel| {
             put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_DELETE_LAN_MAPPING, GENERATION, 0));
 
-            let result = run_advance(skel, PROTO_TCP, 1, 1);
-            assert_eq!(
-                result.status, CT_DELETE_LAN_MAPPING,
-                "cleanup state must not be reactivated"
-            );
-            assert_eq!(result.client_status, 1);
+            for phase in [TCP_SYN, TCP_FIN, TCP_RST, TCP_ACK] {
+                let result = run_advance(skel, PROTO_TCP, phase, 1);
+                assert_eq!((result.action, result.status), (2, CT_DELETE_LAN_MAPPING));
+                assert_eq!(result.tcp_flags, BOTH_SYN);
+            }
         });
     }
 }

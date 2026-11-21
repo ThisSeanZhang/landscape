@@ -168,7 +168,7 @@ delete_timer:
 
 static __always_inline bool nat6_allows_create_pkt(u8 l4_protocol, u8 tcp_phase, bool icmp_error) {
     if (icmp_error) return false;
-    if (l4_protocol == NEXTHDR_TCP) return tcp_phase == NAPT_TCP_PHASE_SYN;
+    if (l4_protocol == NEXTHDR_TCP) return napt_tcp_phase_is_syn(tcp_phase);
     return l4_protocol == NEXTHDR_UDP || l4_protocol == NEXTHDR_ICMP;
 }
 
@@ -192,6 +192,7 @@ static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
             next_status = CT_INIT;
             break;
         case NAPT_TCP_PHASE_SYN:
+        case NAPT_TCP_PHASE_SYN_ACK:
             next_status = CT_SYN;
             break;
         case NAPT_TCP_PHASE_FIN:

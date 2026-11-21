@@ -405,8 +405,6 @@ pub(crate) fn seed_static_ct(
         pad0: 0,
         from_wan_gen: 0,
         status: CT_ACTIVE,
-        client_status: 0,
-        server_status: 0,
         ..Default::default()
     };
     skel.maps
@@ -485,8 +483,6 @@ pub(crate) fn seed_dynamic_ct(
         pad0: 0,
         from_wan_gen: generation,
         status,
-        client_status: 0,
-        server_status: 0,
         ..Default::default()
     };
     skel.maps
