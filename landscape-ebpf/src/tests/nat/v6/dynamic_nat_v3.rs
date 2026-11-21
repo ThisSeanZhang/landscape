@@ -120,7 +120,7 @@ fn set_ct6_status<T: MapCore>(timer_map: &T, key: &Nat6TimerKey, status: u64) {
         .expect("failed to update v6 ct status");
 }
 
-fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64) {
+fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64, verdict: i32) {
     let src = lan_host();
     let dst = remote();
     let prefix_len = 60;
@@ -151,10 +151,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64)
     };
 
     let result = skel.progs.tc_nat_wan_egress_v6.test_run(input).expect("test_run failed");
-    assert_eq!(
-        result.return_value as i32, -1,
-        "timer status contention must not fail the current packet"
-    );
+    assert_eq!(result.return_value as i32, verdict);
     assert_eq!(lookup_ct6_entry(&skel.maps.nat6_timer_map, &key).status, expected_status);
 }
 
@@ -300,12 +297,12 @@ mod tests {
 
     #[test]
     fn tcp_egress_reactivates_wait_timeout() {
-        assert_egress_ct_status_transition(TIMER_WAIT_TIMEOUT, TIMER_ACTIVE);
+        assert_egress_ct_status_transition(TIMER_WAIT_TIMEOUT, TIMER_ACTIVE, -1);
     }
 
     #[test]
-    fn tcp_egress_does_not_reactivate_cleanup_state() {
-        assert_egress_ct_status_transition(TIMER_CLEAN_START, TIMER_CLEAN_START);
+    fn tcp_egress_drops_packets_in_cleanup() {
+        assert_egress_ct_status_transition(TIMER_CLEAN_START, TIMER_CLEAN_START, 2);
     }
 
     #[test]

@@ -23,7 +23,7 @@ const ACTIVE: u64 = 20;
 const IDLE_CHECK_1: u64 = 30;
 const IDLE_CHECK_2: u64 = 31;
 const WAIT_TIMEOUT: u64 = 40;
-const CLEAN_START: u64 = 50;
+pub(super) const CLEAN_START: u64 = 50;
 
 fn run(prog: &ProgramMut<'_>) -> u32 {
     let packet = [0; 64];
@@ -48,6 +48,25 @@ fn tick_key(skel: &TestNat6V3Skel<'_>, key: &Nat6TimerKey) -> u32 {
         .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
         .unwrap()
         .return_value
+}
+
+fn fill_metric_ring(skel: &TestNat6V3Skel<'_>) {
+    let key = Nat6TimerKey {
+        local: Nat6MappingKey { l4_protocol: 17, ..Default::default() },
+        ..Default::default()
+    };
+    let filler = Nat6TimerValue {
+        status: ACTIVE,
+        create_time: 1,
+        ..Default::default()
+    };
+    let ct = &skel.maps.nat6_timer_map;
+    let capacity = skel.maps.nat_metric_events.max_entries() as usize / size_of::<ConnectMetric>();
+    for _ in 0..=capacity {
+        ct.update(key.as_bytes(), filler.as_bytes(), MapFlags::ANY).unwrap();
+        assert!(tick_key(skel, &key) > 0);
+    }
+    ct.delete(key.as_bytes()).unwrap();
 }
 
 fn check_report_pressure(drain_after_failures: Option<usize>) {
@@ -77,27 +96,24 @@ fn check_report_pressure(drain_after_failures: Option<usize>) {
         ..Default::default()
     };
     let ct = &skel.maps.nat6_timer_map;
-    let seed = |tag| {
-        let value = Nat6TimerValue {
-            status: ACTIVE,
-            create_time: tag,
-            ..Default::default()
-        };
-        ct.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).unwrap();
-    };
     let read = || {
         ct.lookup(key.as_bytes(), MapFlags::ANY)
             .unwrap()
             .map(|raw| Nat6TimerValue::read_from_bytes(&raw).unwrap())
     };
 
-    let max_events =
-        skel.maps.nat_metric_events.max_entries() as usize / size_of::<ConnectMetric>();
-    for _ in 0..=max_events {
-        seed(1);
-        assert_eq!(tick_ms(&skel), 1000);
-    }
-    seed(2);
+    fill_metric_ring(&skel);
+    let value = Nat6TimerValue {
+        status: ACTIVE,
+        create_time: 2,
+        is_static: 1,
+        ..Default::default()
+    };
+    ct.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).unwrap();
+    // An unrelated dynamic mapping for this endpoint is not owned by the static CT.
+    let mappings = &skel.maps.nat6_mapping_map;
+    let unrelated = Nat6MappingValue { refs: 1, ..Default::default() };
+    mappings.update(key.local.as_bytes(), unrelated.as_bytes(), MapFlags::NO_EXIST).unwrap();
     for (delay, status) in [(1000, IDLE_CHECK_1), (1000, IDLE_CHECK_2), (300_000, WAIT_TIMEOUT)] {
         assert_eq!(tick_ms(&skel), delay);
         assert_eq!(read().unwrap().status, status);
@@ -130,6 +146,7 @@ fn check_report_pressure(drain_after_failures: Option<usize>) {
     }
     assert_eq!(tick_ms(&skel), 0);
     assert!(read().is_none());
+    assert!(mappings.lookup(key.local.as_bytes(), MapFlags::ANY).unwrap().is_some());
     if drain_after_failures.is_some() {
         let final_events = drain();
         assert_eq!(final_events.len(), 1);
@@ -170,17 +187,17 @@ fn packets_only_arm_the_long_wait_and_stale_wakeups_preserve_its_deadline() {
         let raw = ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().expect("CT still present");
         Nat6TimerValue::read_from_bytes(&raw).unwrap()
     };
-    for (status, expected, armed) in [
+    for (status, expected, result) in [
         (0, ACTIVE, 0),
         (ACTIVE, ACTIVE, 0),
         (IDLE_CHECK_1, ACTIVE, 0),
         (IDLE_CHECK_2, ACTIVE, 0),
-        (CLEAN_START, CLEAN_START, 0),
+        (CLEAN_START, CLEAN_START, u32::MAX), // Packet rejected by the wakeup test program.
         (WAIT_TIMEOUT, ACTIVE, 1),
     ] {
         let value = Nat6TimerValue { status, ..Default::default() };
         ct.update(key.as_bytes(), value.as_bytes(), MapFlags::ANY).unwrap();
-        assert_eq!(run(&skel.progs.nat6_packet_wakeup), armed, "starting status {status}");
+        assert_eq!(run(&skel.progs.nat6_packet_wakeup), result, "starting status {status}");
         assert_eq!(read().status, expected);
     }
 
@@ -206,6 +223,7 @@ fn shared_mapping_outlives_its_trigger_and_failed_ct_creation() {
     let mut object = MaybeUninit::uninit();
     let mut open = builder.open(&mut object).unwrap();
     open.maps.nat6_timer_map.set_max_entries(2).unwrap();
+    open.maps.nat_metric_events.set_max_entries(4096).unwrap();
     let ro = open.maps.rodata_data.as_deref_mut().unwrap();
     let wan: Ipv6Addr = "2001:db8:a::10".parse().unwrap();
     ro.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan));
@@ -261,8 +279,7 @@ fn shared_mapping_outlives_its_trigger_and_failed_ct_creation() {
         value.status = WAIT_TIMEOUT;
         value.wait_deadline_ns = 1;
         ct.update(key.as_bytes(), value.as_bytes(), MapFlags::EXIST).unwrap();
-        assert_eq!(tick_key(&skel, key), 0);
-        assert!(ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().is_none());
+        assert_eq!(tick_key(&skel, key), 10);
     };
     let events = RefCell::new(Vec::new());
     let mut ring = RingBufferBuilder::new();
@@ -272,6 +289,7 @@ fn shared_mapping_outlives_its_trigger_and_failed_ct_creation() {
     })
     .unwrap();
     let ring = ring.build().unwrap();
+    fill_metric_ring(&skel);
     assert_eq!(packet(false, a, 53), 2); // Dynamic ingress requires an existing mapping.
     assert_eq!(packet(true, a, 53), -1);
     assert_eq!(packet(false, b, 53), -1);
@@ -281,10 +299,26 @@ fn shared_mapping_outlives_its_trigger_and_failed_ct_creation() {
     expire(&key(a));
     let shared = mapping().unwrap();
     assert_eq!((shared.refs, shared.trigger_addr), (1, a.octets()));
+    let pending = ct.lookup(key(a).as_bytes(), MapFlags::ANY).unwrap().unwrap();
+    assert_eq!(packet(true, a, 53), 2);
+    assert_eq!(packet(false, a, 53), 2);
+    assert_eq!(ct.lookup(key(a).as_bytes(), MapFlags::ANY).unwrap().unwrap(), pending);
     assert_eq!(packet(false, b, 53), -1);
+    assert_eq!(tick_key(&skel, &key(a)), 20);
+    assert_eq!(mapping().unwrap().refs, 1);
+
     expire(&key(b));
     assert!(mapping().is_none());
-    assert_eq!(ct.keys().count(), 0);
+    ring.consume().unwrap();
+    assert!(events.take().iter().all(|e| e.status_type() == ConnectStatusType::Active));
+    assert_eq!(tick_key(&skel, &key(a)), 0);
+    assert!(ct.lookup(key(a).as_bytes(), MapFlags::ANY).unwrap().is_none());
+    // A creates a new mapping while B still has a pending DELETE for the old one.
+    assert_eq!(packet(true, a, 53), -1);
+    assert_eq!(tick_key(&skel, &key(b)), 0);
+    assert_eq!(ct.keys().count(), 1);
+    assert!(ct.lookup(key(b).as_bytes(), MapFlags::ANY).unwrap().is_none());
+    assert_eq!(mapping().unwrap().refs, 1);
     ring.consume().unwrap();
     let reports = events.take();
     assert_eq!(reports.len(), 2);

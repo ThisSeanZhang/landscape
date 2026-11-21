@@ -65,25 +65,25 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
             return true;
         }
         if (!ct_try_set_status(&value->status, current_status, TIMER_CLEAN_START)) return true;
+        /* Only the callback that claims cleanup owns the mapping reference. */
+        if (!value->is_static) {
+            struct nat6_mapping_value *mapping =
+                bpf_map_lookup_elem(&nat6_mapping_map, &key->local);
+            if (mapping) nat6_mapping_put(&key->local, mapping);
+        }
+        if (key->remote_port == TEST_PORT) {
+            ld_timer_log("release CONNECT");
+        }
         current_status = TIMER_CLEAN_START;
     }
 
     if (current_status == TIMER_CLEAN_START) {
-        if (key->remote_port == TEST_PORT) {
-            ld_timer_log("release CONNECT");
-        }
-
         u8 failures = value->delete_report_failures;
         if (nat6_metric_try_report(key, value, NAT_CONN_DELETE) != 0 &&
             failures < NAT6_DELETE_REPORT_MAX_ATTEMPTS - 1) {
             value->delete_report_failures = failures + 1;
             *next_timeout = NAT6_DELETE_REPORT_RETRY_NS << failures;
             return true;
-        }
-        if (!value->is_static) {
-            struct nat6_mapping_value *mapping =
-                bpf_map_lookup_elem(&nat6_mapping_map, &key->local);
-            if (mapping) nat6_mapping_put(&key->local, mapping);
         }
         bpf_map_delete_elem(&nat6_timer_map, key);
         return false;
@@ -195,8 +195,11 @@ static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
     if (l4_protocol == NEXTHDR_TCP) {
         u64 status = ct_timer_value->status;
         if (status == TIMER_ACTIVE && tcp_phase == NAPT_TCP_PHASE_ESTABLISHED) return NAT_OP_OK;
-        if (status >= TIMER_WAIT_TCP_CLOSE)
-            return napt_tcp_phase_is_syn(tcp_phase) ? NAT_OP_ERR : NAT_OP_OK;
+        if (unlikely(status >= TIMER_WAIT_TCP_CLOSE)) {
+            if (status == TIMER_WAIT_TCP_CLOSE && !napt_tcp_phase_is_syn(tcp_phase))
+                return NAT_OP_OK;
+            return NAT_OP_ERR;
+        }
         if (!napt_tcp_track_flags(&ct_timer_value->tcp_flags, tcp_phase,
                                   gress == NAT_MAPPING_INGRESS))
             return NAT_OP_ERR;
@@ -215,7 +218,8 @@ static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
         current_status = observed;
     }
 
-    return NAT_OP_OK;
+    /* A packet trying to wake a wait may have lost its CAS to cleanup. */
+    return current_status >= TIMER_CLEAN_START ? NAT_OP_ERR : NAT_OP_OK;
 }
 
 #endif /* __LD_NAT6_CT_TIMER_H__ */

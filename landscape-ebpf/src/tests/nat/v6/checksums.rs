@@ -457,7 +457,7 @@ fn icmp6_error_matches_existing_dynamic_flow() {
 }
 
 #[test]
-fn icmp6_error_without_matching_dynamic_flow_is_dropped() {
+fn icmp6_error_without_usable_dynamic_flow_is_dropped() {
     with_nat6(|tc, xdp| {
         let udp = |client: Ipv6Addr, peer: Ipv6Addr, port: u16| {
             let mut frame = Vec::new();
@@ -498,6 +498,13 @@ fn icmp6_error_without_matching_dynamic_flow_is_dropped() {
         reject(&udp(WAN_CLIENT, REMOTE, 54));
         assert_eq!(ct.keys().count(), 1);
         assert_eq!(ct.lookup(&key, MapFlags::ANY).unwrap().unwrap(), before);
+
+        let mut retiring = Nat6TimerValue::read_from_bytes(&before).unwrap();
+        retiring.status = super::ct_timer::CLEAN_START;
+        ct.update(&key, retiring.as_bytes(), MapFlags::EXIST).unwrap();
+        reject(&wan); // An exact CT retained for DELETE reporting cannot translate a quote.
+        run(&xdp.progs.egress_nat_v6, &lan, XDP_DROP, 0);
+        assert_eq!(ct.lookup(&key, MapFlags::ANY).unwrap().unwrap(), retiring.as_bytes());
     });
 }
 

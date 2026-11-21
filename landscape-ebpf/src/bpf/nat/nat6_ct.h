@@ -133,6 +133,8 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
             __sync_fetch_and_add(&ct->ingress_bytes, bytes);
             __sync_fetch_and_add(&ct->ingress_packets, 1);
         }
+    } else if (ct->status >= TIMER_CLEAN_START) {
+        return NAT_OP_ERR;
     }
 
     out->is_static = ct->is_static;
