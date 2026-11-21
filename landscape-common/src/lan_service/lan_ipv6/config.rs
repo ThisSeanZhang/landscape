@@ -190,6 +190,11 @@ impl LanIPv6ConfigV2 {
     pub fn icmp_ad_interval(&self) -> u32 {
         (self.preferred_lifetime() / 3).clamp(20, 600)
     }
+
+    /// Keep DNS usable for at least 600 seconds and three RA intervals (RFC 8106 §5.1).
+    pub fn rdnss_lifetime(&self) -> u32 {
+        (3 * self.icmp_ad_interval()).max(600)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,7 +250,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icmp_ad_interval_tracks_one_third_preferred_lifetime_clamped() {
+    fn ra_interval_and_rdnss_lifetime_follow_configured_lifetime() {
         let make = |lifetime| LanIPv6ConfigV2 {
             mode: IPv6ServiceMode::Slaac,
             ad_interval: 30,
@@ -256,12 +261,18 @@ mod tests {
             rdnss_link_local_only: false,
         };
 
-        assert_eq!(make(60).icmp_ad_interval(), 20);
-        assert_eq!(make(90).icmp_ad_interval(), 30);
-        assert_eq!(make(300).icmp_ad_interval(), 100);
-        assert_eq!(make(900).icmp_ad_interval(), 300);
-        assert_eq!(make(1800).icmp_ad_interval(), 600);
-        assert_eq!(make(3600).icmp_ad_interval(), 600);
+        for (lifetime, interval, dns_lifetime) in [
+            (60, 20, 600),
+            (90, 30, 600),
+            (300, 100, 600),
+            (900, 300, 900),
+            (1800, 600, 1800),
+            (3600, 600, 1800),
+        ] {
+            let config = make(lifetime);
+            assert_eq!(config.icmp_ad_interval(), interval);
+            assert_eq!(config.rdnss_lifetime(), dns_lifetime);
+        }
     }
 
     #[test]

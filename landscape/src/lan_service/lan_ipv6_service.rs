@@ -240,6 +240,7 @@ impl ServiceStarterTrait for LanIPv6Service {
             let params = Ipv6LanReplyParams {
                 preferred_lifetime,
                 valid_lifetime,
+                rdnss_lifetime: config.config.rdnss_lifetime(),
                 ra_flags: ra_flags_raw,
                 ra_autonomous,
                 rdnss_link_local_only: config.config.rdnss_link_local_only,

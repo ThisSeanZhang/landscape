@@ -94,11 +94,13 @@ pub fn build_ra(
     }
 
     // DNS servers: always advertise stable link-local; optionally include static + dynamic GUA
-    let rdnss_lifetime = params.valid_lifetime.max(600);
-    opts.insert(IcmpV6Option::recursive_dns_server(rdnss_lifetime, mac_addr.to_ipv6_link_local()));
+    opts.insert(IcmpV6Option::recursive_dns_server(
+        params.rdnss_lifetime,
+        mac_addr.to_ipv6_link_local(),
+    ));
     if !params.rdnss_link_local_only {
         for ip in status.dns_servers().iter() {
-            opts.insert(IcmpV6Option::recursive_dns_server(rdnss_lifetime, ip));
+            opts.insert(IcmpV6Option::recursive_dns_server(params.rdnss_lifetime, ip));
         }
     }
 
@@ -447,6 +449,7 @@ mod tests {
         let params = Ipv6LanReplyParams {
             preferred_lifetime: 300,
             valid_lifetime: 600,
+            rdnss_lifetime: 600,
             ra_flags: 0,
             ra_autonomous: true,
             rdnss_link_local_only: true,
@@ -469,24 +472,25 @@ mod tests {
         let link_local = mac.to_ipv6_link_local();
         let gua_dns: Ipv6Addr = "2001:db8:abcd:1::1".parse().unwrap();
         let params = Ipv6LanReplyParams {
-            preferred_lifetime: 300,
-            valid_lifetime: 600,
+            preferred_lifetime: 3600,
+            valid_lifetime: 7200,
+            rdnss_lifetime: 1800,
             ra_flags: 0,
             ra_autonomous: true,
             rdnss_link_local_only: false,
         };
 
-        let ra = decode_ra(&build_ra(&status, &params, &mac, 100_000));
+        let ra = decode_ra(&build_ra(&status, &params, &mac, 600_000));
         let rdnss = ra.opts.get_all(25);
         assert_eq!(rdnss.len(), 2);
         assert!(rdnss.iter().any(|opt| matches!(
             opt,
-            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+            IcmpV6Option::RecursiveDNSServer { lifetime: 1800, addresses, .. }
                 if addresses.as_slice() == link_local.octets()
         )));
         assert!(rdnss.iter().any(|opt| matches!(
             opt,
-            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+            IcmpV6Option::RecursiveDNSServer { lifetime: 1800, addresses, .. }
                 if addresses.as_slice() == gua_dns.octets()
         )));
     }
@@ -503,6 +507,7 @@ mod tests {
         let ll_params = Ipv6LanReplyParams {
             preferred_lifetime: 300,
             valid_lifetime: 600,
+            rdnss_lifetime: 600,
             ra_flags: 0,
             ra_autonomous: true,
             rdnss_link_local_only: true,
