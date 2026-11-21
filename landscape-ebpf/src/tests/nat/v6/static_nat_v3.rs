@@ -96,8 +96,7 @@ fn add_ct6_entry<T: MapCore>(
         _pad: 0,
     };
     let value = Nat6TimerValue {
-        server_status: 1,
-        client_status: 1,
+        tcp_flags: if l4proto == 6 { super::TCP_BOTH_SYN } else { 0 },
         is_static: 1,
         need_prefix_replace: need_prefix_replace as u8,
         client_prefix,

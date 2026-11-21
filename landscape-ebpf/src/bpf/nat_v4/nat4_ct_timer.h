@@ -41,16 +41,6 @@ enum napt_ct_status {
     NAPT_CT_RETRY_DELETE_REPORT = 53ULL,
 };
 
-enum napt_tcp_flags {
-    NAPT_TCP_LAN_SYN = 1U << 0,
-    NAPT_TCP_WAN_SYN = 1U << 1,
-    NAPT_TCP_LAN_FIN = 1U << 2,
-    NAPT_TCP_WAN_FIN = 1U << 3,
-    NAPT_TCP_RST_SEEN = 1U << 4,
-    NAPT_TCP_BOTH_SYN = NAPT_TCP_LAN_SYN | NAPT_TCP_WAN_SYN,
-    NAPT_TCP_BOTH_FIN = NAPT_TCP_LAN_FIN | NAPT_TCP_WAN_FIN,
-};
-
 #define NAPT_TIMER_STEP_DELETE_CT 1U
 #define NAPT_TIMER_STEP_RESTART 2U
 
@@ -307,22 +297,8 @@ static __always_inline int napt_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 
         if (status == NAPT_CT_WAIT_TCP_CLOSE)
             return napt_tcp_phase_is_syn(tcp_phase) ? TC_ACT_SHOT : TC_ACT_OK;
 
-        __u64 seen = value->tcp_flags;
-        __u64 flag = 0;
-        if (napt_tcp_phase_is_syn(tcp_phase)) {
-            if ((seen & NAPT_TCP_BOTH_FIN) == NAPT_TCP_BOTH_FIN) return TC_ACT_SHOT;
-            flag = gress == NAPT_GRESS_WAN ? NAPT_TCP_WAN_SYN : NAPT_TCP_LAN_SYN;
-        } else if (tcp_phase == NAPT_TCP_PHASE_FIN) {
-            flag = gress == NAPT_GRESS_WAN ? NAPT_TCP_WAN_FIN : NAPT_TCP_LAN_FIN;
-        } else if (tcp_phase == NAPT_TCP_PHASE_RST) {
-            flag = NAPT_TCP_RST_SEEN;
-        }
-        if (tcp_phase == NAPT_TCP_PHASE_SYN && (seen & NAPT_TCP_RST_SEEN)) {
-            /* A fresh SYN after RST reuses the mapping with a new handshake. */
-            if (!__sync_bool_compare_and_swap(&value->tcp_flags, seen, flag)) return TC_ACT_SHOT;
-        } else if (flag && !(seen & flag)) {
-            __sync_fetch_and_or(&value->tcp_flags, flag);
-        }
+        if (!napt_tcp_track_flags(&value->tcp_flags, tcp_phase, gress == NAPT_GRESS_WAN))
+            return TC_ACT_SHOT;
     }
 
     __u64 status = value->status;

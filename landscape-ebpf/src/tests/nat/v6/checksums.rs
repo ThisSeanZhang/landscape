@@ -444,10 +444,7 @@ fn icmp6_error_matches_existing_dynamic_flow() {
                 }
                 let after = entry();
                 assert_eq!(after.create_time, before.create_time);
-                assert_eq!(
-                    (after.client_status, after.server_status),
-                    (before.client_status, before.server_status)
-                );
+                assert_eq!(after.tcp_flags, before.tcp_flags);
                 assert_eq!(
                     (after.ingress_packets, after.egress_packets),
                     (before.ingress_packets, before.egress_packets)

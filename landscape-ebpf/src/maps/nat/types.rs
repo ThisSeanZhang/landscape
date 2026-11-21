@@ -58,8 +58,7 @@ pub(crate) struct Nat6MappingValue {
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Nat6TimerValue {
     pub timer: [u8; 16],
-    pub server_status: u64,
-    pub client_status: u64,
+    pub tcp_flags: u64,
     pub status: u64,
     pub is_trigger: u8,
     pub allow_reuse: u8,
@@ -124,8 +123,7 @@ mod tests {
         assert_field!(Nat6MappingValue, share6::nat6_mapping_value, allow_reuse);
         assert_size!(Nat6TimerValue, share6::nat6_timer_value);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, timer);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, server_status);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, client_status);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, tcp_flags);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, status);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_trigger);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, allow_reuse);

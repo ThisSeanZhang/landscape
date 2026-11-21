@@ -8,6 +8,7 @@
 #include "nat/nat6_dyn_map.h"
 #include "nat/nat6_map_ops.h"
 
+#define NAT6_TCP_CLOSE_TIMEOUT_NS (6ULL * 1000000000ULL)
 #define NAT6_DELETE_REPORT_MAX_ATTEMPTS 3U
 #define NAT6_DELETE_REPORT_RETRY_NS (10ULL * 1000 * 1000)
 
@@ -47,8 +48,6 @@ static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_k
 
 static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
                                             struct nat6_timer_value *value, u64 *next_timeout) {
-    u64 client_status = value->client_status;
-    u64 server_status = value->server_status;
     u64 current_status = value->status;
     u64 next_status = current_status;
     *next_timeout = REPORT_INTERVAL;
@@ -58,14 +57,14 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
                      &key->remote_addr.in6_u.u6_addr8, current_status);
     }
 
-    if (current_status == TIMER_WAIT_TIMEOUT) {
+    if (current_status == TIMER_WAIT_TIMEOUT || current_status == TIMER_WAIT_TCP_CLOSE) {
         /* A short wakeup from a previous wait can fire during this one. */
         u64 now = bpf_ktime_get_ns();
         if (now < value->wait_deadline_ns) {
             *next_timeout = value->wait_deadline_ns - now;
             return true;
         }
-        if (!ct_try_set_status(&value->status, TIMER_WAIT_TIMEOUT, TIMER_CLEAN_START)) return true;
+        if (!ct_try_set_status(&value->status, current_status, TIMER_CLEAN_START)) return true;
         current_status = TIMER_CLEAN_START;
     }
 
@@ -93,7 +92,11 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     /* The next successful sample includes counters from skipped ACTIVE reports. */
     nat6_metric_try_report(key, value, NAT_CONN_ACTIVE);
 
-    if (current_status == TIMER_ACTIVE) {
+    u64 flags = value->tcp_flags;
+    if (key->local.l4_protocol == IPPROTO_TCP && (flags & NAPT_TCP_BOTH_FIN) == NAPT_TCP_BOTH_FIN) {
+        next_status = TIMER_WAIT_TCP_CLOSE;
+        *next_timeout = NAT6_TCP_CLOSE_TIMEOUT_NS;
+    } else if (current_status == TIMER_ACTIVE) {
         next_status = TIMER_IDLE_CHECK_1;
 
         if (key->remote_port == TEST_PORT) {
@@ -108,7 +111,7 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     } else if (current_status == TIMER_IDLE_CHECK_2) {
         next_status = TIMER_WAIT_TIMEOUT;
         if (key->local.l4_protocol == IPPROTO_TCP) {
-            if (client_status == CT_SYN && server_status == CT_SYN) {
+            if ((flags & NAPT_TCP_BOTH_SYN) == NAPT_TCP_BOTH_SYN) {
                 *next_timeout = TCP_TIMEOUT;
             } else {
                 *next_timeout = TCP_SYN_TIMEOUT;
@@ -130,7 +133,7 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
         ld_timer_log("call back modify status fail, current status: %d new status: %d",
                      current_status, next_status);
         *next_timeout = REPORT_INTERVAL;
-    } else if (next_status == TIMER_WAIT_TIMEOUT) {
+    } else if (next_status == TIMER_WAIT_TIMEOUT || next_status == TIMER_WAIT_TCP_CLOSE) {
         value->wait_deadline_ns = bpf_ktime_get_ns() + *next_timeout;
     }
     return true;
@@ -189,39 +192,14 @@ static __always_inline bool nat6_allows_create_pkt(u8 l4_protocol, u8 tcp_phase,
 
 static __always_inline int nat6_ct_advance_pkt(u8 l4_protocol, u8 tcp_phase, u8 gress,
                                                struct nat6_timer_value *ct_timer_value) {
-    if (l4_protocol == NEXTHDR_TCP && tcp_phase == NAPT_TCP_PHASE_ESTABLISHED &&
-        ct_timer_value->status == TIMER_ACTIVE)
-        return NAT_OP_OK;
-
-    u64 curr_state, *modify_status = NULL;
-    if (gress == NAT_MAPPING_INGRESS) {
-        curr_state = ct_timer_value->server_status;
-        modify_status = &ct_timer_value->server_status;
-    } else {
-        curr_state = ct_timer_value->client_status;
-        modify_status = &ct_timer_value->client_status;
-    }
-
-    u64 next_status = curr_state;
-    if (l4_protocol != NEXTHDR_TCP) {
-        next_status = CT_LESS_EST;
-    } else {
-        switch (tcp_phase) {
-        case NAPT_TCP_PHASE_RST:
-            next_status = CT_INIT;
-            break;
-        case NAPT_TCP_PHASE_SYN:
-        case NAPT_TCP_PHASE_SYN_ACK:
-            next_status = CT_SYN;
-            break;
-        case NAPT_TCP_PHASE_FIN:
-            next_status = CT_FIN;
-            break;
-        }
-    }
-
-    if (next_status != curr_state && !ct_try_set_status(modify_status, curr_state, next_status)) {
-        return NAT_OP_ERR;
+    if (l4_protocol == NEXTHDR_TCP) {
+        u64 status = ct_timer_value->status;
+        if (status == TIMER_ACTIVE && tcp_phase == NAPT_TCP_PHASE_ESTABLISHED) return NAT_OP_OK;
+        if (status >= TIMER_WAIT_TCP_CLOSE)
+            return napt_tcp_phase_is_syn(tcp_phase) ? NAT_OP_ERR : NAT_OP_OK;
+        if (!napt_tcp_track_flags(&ct_timer_value->tcp_flags, tcp_phase,
+                                  gress == NAT_MAPPING_INGRESS))
+            return NAT_OP_ERR;
     }
 
     u64 current_status = ct_timer_value->status;

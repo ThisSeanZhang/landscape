@@ -17,12 +17,6 @@
 #define NAT_CONN_ACTIVE 1
 #define NAT_CONN_DELETE 2
 
-// connection tracking states (advanced by pkt_type)
-#define CT_INIT 0
-#define CT_SYN 1
-#define CT_FIN 2
-#define CT_LESS_EST 3
-
 // 33333
 volatile const __be16 TEST_PORT = 0x3582;
 
@@ -95,8 +89,7 @@ struct nat6_mapping_value {
 
 struct nat6_timer_value {
     struct bpf_timer timer;
-    u64 server_status;
-    u64 client_status;
+    u64 tcp_flags;
     u64 status;
     u8 is_trigger;
     u8 allow_reuse; /* Last mark applied by the trigger CT. */
@@ -126,6 +119,7 @@ enum timer_status {
     TIMER_IDLE_CHECK_2 = 31ULL,
     /* Packets can wake the CT until the timer claims it for cleanup. */
     TIMER_WAIT_TIMEOUT = 40ULL,
+    TIMER_WAIT_TCP_CLOSE = 41ULL, /* Both FINs seen; packets cannot extend this wait. */
     TIMER_CLEAN_START = 50ULL,
     TIMER_DELETE_EGRESS = TIMER_CLEAN_START,
     TIMER_DELETE_INGRESS = 51ULL,
@@ -145,7 +139,7 @@ static __always_inline bool ct_try_set_status(u64 *status_in_value, u64 curr_sta
 }
 
 static __always_inline bool ct_status_can_activate(u64 status) {
-    return status != TIMER_ACTIVE && status != TIMER_PENDING_REF && status < TIMER_CLEAN_START;
+    return status != TIMER_ACTIVE && status != TIMER_PENDING_REF && status < TIMER_WAIT_TCP_CLOSE;
 }
 
 struct nat4_action {

@@ -101,6 +101,9 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
     }
 
     if (!icmp_error) {
+        if (nat6_ct_advance_pkt(off->l4_protocol, off->tcp_phase,
+                                egress ? NAT_MAPPING_EGRESS : NAT_MAPPING_INGRESS, ct))
+            return NAT_OP_ERR;
         if (egress) {
             bool moved = ((ct->client_prefix ^ prefix) & ~((u64)mask << 56)) != 0;
             if (unlikely(moved || (ct->is_trigger && ct->allow_reuse != allow_reuse))) {
@@ -123,8 +126,6 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
                 ct->flow_id = get_flow_id(mark);
             }
         }
-        nat6_ct_advance_pkt(off->l4_protocol, off->tcp_phase,
-                            egress ? NAT_MAPPING_EGRESS : NAT_MAPPING_INGRESS, ct);
         if (egress) {
             __sync_fetch_and_add(&ct->egress_bytes, bytes);
             __sync_fetch_and_add(&ct->egress_packets, 1);

@@ -304,7 +304,7 @@ mod tests {
         assert_field!(Nat6MappingKey, xdp6::nat6_mapping_key, l4_protocol);
         assert_size!(Nat6TimerValue, xdp6::nat6_timer_value);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, timer);
-        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, server_status);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, tcp_flags);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, status);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_trigger);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, allow_reuse);

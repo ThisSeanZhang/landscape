@@ -18,8 +18,38 @@ enum napt_tcp_phase {
     NAPT_TCP_PHASE_SYN_ACK = 5,
 };
 
+enum napt_tcp_flags {
+    NAPT_TCP_LAN_SYN = 1U << 0,
+    NAPT_TCP_WAN_SYN = 1U << 1,
+    NAPT_TCP_LAN_FIN = 1U << 2,
+    NAPT_TCP_WAN_FIN = 1U << 3,
+    NAPT_TCP_RST_SEEN = 1U << 4,
+    NAPT_TCP_BOTH_SYN = NAPT_TCP_LAN_SYN | NAPT_TCP_WAN_SYN,
+    NAPT_TCP_BOTH_FIN = NAPT_TCP_LAN_FIN | NAPT_TCP_WAN_FIN,
+};
+
 static __always_inline bool napt_tcp_phase_is_syn(__u8 phase) {
     return phase == NAPT_TCP_PHASE_SYN || phase == NAPT_TCP_PHASE_SYN_ACK;
+}
+
+static __always_inline bool napt_tcp_track_flags(__u64 *flags, __u8 tcp_phase, bool from_wan) {
+    __u64 seen = *flags;
+    __u64 flag = 0;
+    if (napt_tcp_phase_is_syn(tcp_phase)) {
+        if ((seen & NAPT_TCP_BOTH_FIN) == NAPT_TCP_BOTH_FIN) return false;
+        flag = from_wan ? NAPT_TCP_WAN_SYN : NAPT_TCP_LAN_SYN;
+    } else if (tcp_phase == NAPT_TCP_PHASE_FIN) {
+        flag = from_wan ? NAPT_TCP_WAN_FIN : NAPT_TCP_LAN_FIN;
+    } else if (tcp_phase == NAPT_TCP_PHASE_RST) {
+        flag = NAPT_TCP_RST_SEEN;
+    }
+    if (tcp_phase == NAPT_TCP_PHASE_SYN && (seen & NAPT_TCP_RST_SEEN)) {
+        /* A fresh SYN after RST reuses the mapping with a new handshake. */
+        if (!__sync_bool_compare_and_swap(flags, seen, flag)) return false;
+    } else if (flag && !(seen & flag)) {
+        __sync_fetch_and_or(flags, flag);
+    }
+    return true;
 }
 
 static __always_inline __u8 napt_tcp_phase_from_flags(__u8 flags) {

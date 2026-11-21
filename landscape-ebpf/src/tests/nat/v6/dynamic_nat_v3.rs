@@ -7,6 +7,7 @@ use libbpf_rs::{
 };
 use zerocopy::{FromBytes, IntoBytes};
 
+use super::TCP_BOTH_SYN;
 use crate::{
     maps::{Nat6MappingKey, Nat6MappingValue, Nat6TimerKey, Nat6TimerValue},
     skel::tc_nat6::TcNat6SkelBuilder,
@@ -92,8 +93,7 @@ fn timer_key_for(
 
 fn add_ct6_entry<T: MapCore>(timer_map: &T, key: &Nat6TimerKey, src: Ipv6Addr) {
     let mut value = Nat6TimerValue {
-        server_status: 1,
-        client_status: 1,
+        tcp_flags: TCP_BOTH_SYN,
         need_prefix_replace: 1,
         ..Default::default()
     };
@@ -427,8 +427,7 @@ mod tests {
         );
 
         let ct_after = lookup_ct6_entry(&skel.maps.nat6_timer_map, &key);
-        assert_eq!(ct_after.client_status, 1, "ICMPv6 error must not clobber TCP client_status");
-        assert_eq!(ct_after.server_status, 1, "ICMPv6 error must not clobber TCP server_status");
+        assert_eq!(ct_after.tcp_flags, TCP_BOTH_SYN, "ICMPv6 error must preserve the handshake");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -503,8 +502,7 @@ mod tests {
         assert_eq!(result.return_value as i32, 0, "ingress ICMP error should return TC_ACT_OK(0)");
 
         let ct_after = lookup_ct6_entry(&skel.maps.nat6_timer_map, &key);
-        assert_eq!(ct_after.client_status, 1, "ICMPv6 error must not clobber TCP client_status");
-        assert_eq!(ct_after.server_status, 1, "ICMPv6 error must not clobber TCP server_status");
+        assert_eq!(ct_after.tcp_flags, TCP_BOTH_SYN, "ICMPv6 error must preserve the handshake");
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
