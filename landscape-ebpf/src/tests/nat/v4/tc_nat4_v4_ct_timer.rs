@@ -28,6 +28,7 @@ const CT_ACTIVE: u64 = 20;
 const CT_IDLE_CHECK_1: u64 = 30;
 const CT_IDLE_CHECK_2: u64 = 31;
 const CT_WAIT_TIMEOUT: u64 = 40;
+const CT_RELEASE_REF: u64 = 49;
 const CT_DELETE_LAN_MAPPING: u64 = 50;
 const CT_CLEAR_WAN_SLOT: u64 = 51;
 const CT_RETURN_PORT: u64 = 52;
@@ -165,11 +166,20 @@ fn run_step(
     proto: u8,
     force_queue_push_fail: bool,
 ) -> types::napt_ct_timer_test_result {
-    let input = types::napt_ct_timer_test_input {
-        key: ct_key(proto),
-        force_queue_push_fail: force_queue_push_fail as u8,
-        pad: [0; 3],
-    };
+    run_step_with_input(
+        skel,
+        types::napt_ct_timer_test_input {
+            key: ct_key(proto),
+            force_queue_push_fail: force_queue_push_fail as u8,
+            ..Default::default()
+        },
+    )
+}
+
+fn run_step_with_input(
+    skel: &TestNat4V4CtTimerSkel<'_>,
+    input: types::napt_ct_timer_test_input,
+) -> types::napt_ct_timer_test_result {
     let key = 0u32;
     skel.maps
         .napt_ct_timer_test_input
@@ -343,12 +353,12 @@ mod tests {
             assert_eq!(result.action, STEP_RESTART);
             assert_eq!(result.status, CT_DELETE_LAN_MAPPING);
             assert_eq!(result.next_timeout, CLEAN_STEP_NS);
-            assert_dynamic_mapping(skel, STATE_CLOSED, 1);
+            assert_dynamic_mapping(skel, STATE_CLOSED, 0);
         });
     }
 
     #[test]
-    fn timeout_with_multiple_refs_decrements_and_deletes_ct() {
+    fn last_ref_release_retries_when_another_ct_acquires_a_ref() {
         with_skel(|skel| {
             put_lan(&skel.maps.napt_from_lan, PROTO_UDP, &lan_value(KIND_DYNAMIC, GENERATION));
             put_wan(
@@ -356,12 +366,27 @@ mod tests {
                 PROTO_UDP,
                 &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_ACTIVE, 2)),
             );
-            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_WAIT_TIMEOUT, GENERATION, 0));
+            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_RELEASE_REF, GENERATION, 0));
+
+            // The timer saw one reference before the other CT acquired the second.
+            let retry = run_step_with_input(
+                skel,
+                types::napt_ct_timer_test_input {
+                    key: ct_key(PROTO_UDP),
+                    observed_state_ref: state_ref(STATE_ACTIVE, 1),
+                    ..Default::default()
+                },
+            );
+            assert_eq!((retry.action, retry.status), (STEP_RESTART, CT_RELEASE_REF));
+            assert_eq!(retry.next_timeout, CLEAN_STEP_NS);
+            assert_dynamic_mapping(skel, STATE_ACTIVE, 2);
 
             let result = run_step(skel, PROTO_UDP, false);
             assert_eq!(result.action, STEP_DELETE_CT);
             assert_eq!(result.timer_exists, 0);
+            assert_eq!(result.lan_exists, 1);
             assert_dynamic_mapping(skel, STATE_ACTIVE, 1);
+            assert!(skel.maps.napt_udp_ports.lookup_and_delete(&[]).unwrap().is_none());
         });
     }
 
@@ -374,17 +399,19 @@ mod tests {
                 PROTO_UDP,
                 &wan_value(KIND_DYNAMIC, GENERATION + 1, state_ref(STATE_ACTIVE, 1)),
             );
-            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_WAIT_TIMEOUT, GENERATION, 0));
-
-            let result = run_step(skel, PROTO_UDP, false);
-            assert_eq!(result.action, STEP_DELETE_CT);
-            assert_eq!(result.timer_exists, 0);
-            assert_eq!(result.lan_exists, 1);
-            assert_eq!(result.wan_exists, 1);
-            let wan = lookup_wan(&skel.maps.napt_from_wan, PROTO_UDP).unwrap();
-            assert_eq!(wan.kind, KIND_DYNAMIC);
-            assert_eq!(wan.generation, GENERATION + 1);
-            assert_eq!(wan.state_ref, state_ref(STATE_ACTIVE, 1));
+            for status in [CT_WAIT_TIMEOUT, CT_RELEASE_REF] {
+                put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(status, GENERATION, 0));
+                let result = run_step(skel, PROTO_UDP, false);
+                assert_eq!(result.action, STEP_DELETE_CT);
+                assert_eq!(result.timer_exists, 0);
+                assert_eq!(result.lan_exists, 1);
+                assert_eq!(result.wan_exists, 1);
+                let wan = lookup_wan(&skel.maps.napt_from_wan, PROTO_UDP).unwrap();
+                assert_eq!(wan.kind, KIND_DYNAMIC);
+                assert_eq!(wan.generation, GENERATION + 1);
+                assert_eq!(wan.state_ref, state_ref(STATE_ACTIVE, 1));
+                assert!(skel.maps.napt_udp_ports.lookup_and_delete(&[]).unwrap().is_none());
+            }
         });
     }
 
@@ -434,7 +461,7 @@ mod tests {
             put_wan(
                 &skel.maps.napt_from_wan,
                 PROTO_UDP,
-                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_CLOSED, 1)),
+                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_CLOSED, 0)),
             );
             put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_DELETE_LAN_MAPPING, GENERATION, 0));
 
@@ -453,7 +480,7 @@ mod tests {
             put_wan(
                 &skel.maps.napt_from_wan,
                 PROTO_UDP,
-                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_CLOSED, 1)),
+                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_CLOSED, 0)),
             );
             let mut ct = ct_value(CT_CLEAR_WAN_SLOT, GENERATION, 0);
             ct.cleanup_retry_ns = CLEAN_RETRY_MAX_NS as u32;
@@ -476,7 +503,7 @@ mod tests {
             put_wan(
                 &skel.maps.napt_from_wan,
                 PROTO_UDP,
-                &wan_value(KIND_DYNAMIC, GENERATION + 1, state_ref(STATE_CLOSED, 1)),
+                &wan_value(KIND_DYNAMIC, GENERATION + 1, state_ref(STATE_CLOSED, 0)),
             );
             put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_CLEAR_WAN_SLOT, GENERATION, 0));
 
@@ -574,19 +601,61 @@ mod tests {
     }
 
     #[test]
-    fn full_release_cleanup_sequence_completes() {
+    fn racing_ct_releases_retry_and_return_the_shared_port_once() {
         with_skel(|skel| {
             put_lan(&skel.maps.napt_from_lan, PROTO_UDP, &lan_value(KIND_DYNAMIC, GENERATION));
             put_wan(
                 &skel.maps.napt_from_wan,
                 PROTO_UDP,
-                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_ACTIVE, 1)),
+                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_ACTIVE, 2)),
             );
-            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_WAIT_TIMEOUT, GENERATION, 0));
+            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_RELEASE_REF, GENERATION, 0));
+            let other = types::napt_ct_key {
+                remote_port: (REMOTE_PORT + 1).to_be(),
+                ..ct_key(PROTO_UDP)
+            };
+            skel.maps
+                .napt_ct
+                .update(
+                    as_bytes(&other),
+                    as_bytes(&ct_value(CT_WAIT_TIMEOUT, GENERATION, 0)),
+                    MapFlags::NO_EXIST,
+                )
+                .unwrap();
+
+            // Both CTs see two references. Let the other CT commit its release first.
+            let observed_state_ref =
+                lookup_wan(&skel.maps.napt_from_wan, PROTO_UDP).unwrap().state_ref;
+            let first = run_step_with_input(
+                skel,
+                types::napt_ct_timer_test_input { key: other, ..Default::default() },
+            );
+            assert_eq!((first.action, first.timer_exists), (STEP_DELETE_CT, 0));
+            assert_dynamic_mapping(skel, STATE_ACTIVE, 1);
+
+            let retry = run_step_with_input(
+                skel,
+                types::napt_ct_timer_test_input {
+                    key: ct_key(PROTO_UDP),
+                    observed_state_ref,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(
+                (retry.action, retry.status, retry.timer_exists),
+                (STEP_RESTART, CT_RELEASE_REF, 1)
+            );
+            assert_eq!(retry.next_timeout, CLEAN_STEP_NS);
+            assert_eq!(retry.lan_exists, 1);
+            assert_dynamic_mapping(skel, STATE_ACTIVE, 1);
+            assert!(skel.maps.napt_udp_ports.lookup_and_delete(&[]).unwrap().is_none());
+            assert_eq!(run_resolve(skel, PROTO_UDP, GENERATION, KIND_DYNAMIC).action, 0);
+            assert_eq!(run_advance(skel, PROTO_UDP, 0, 1).status, CT_RELEASE_REF);
 
             let timeout = run_step(skel, PROTO_UDP, false);
             assert_eq!(timeout.status, CT_DELETE_LAN_MAPPING);
             assert_eq!(timeout.next_timeout, CLEAN_STEP_NS);
+            assert_dynamic_mapping(skel, STATE_CLOSED, 0);
 
             let delete_lan_mapping = run_step(skel, PROTO_UDP, false);
             assert_eq!(delete_lan_mapping.status, CT_CLEAR_WAN_SLOT);

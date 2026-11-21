@@ -223,25 +223,6 @@ static __always_inline int napt_wan_ref_inc(struct napt_from_wan_value *value) {
     return -1;
 }
 
-static __always_inline int napt_wan_ref_dec(struct napt_from_wan_value *value) {
-    for (int i = 0; i < 8; i++) {
-        __u64 old = value->state_ref;
-        if (napt_state_get(old) != NAPT_WAN_STATE_ACTIVE) return -1;
-        __u64 refs = napt_state_refs(old);
-        if (refs <= 1) return -1;
-        __u64 next = napt_state_make(NAPT_WAN_STATE_ACTIVE, refs - 1);
-        __u64 prev = __sync_val_compare_and_swap(&value->state_ref, old, next);
-        if (prev == old) return 0;
-    }
-    return -1;
-}
-
-static __always_inline int napt_wan_close_last(struct napt_from_wan_value *value) {
-    __u64 old = napt_state_make(NAPT_WAN_STATE_ACTIVE, 1);
-    __u64 next = napt_state_make(NAPT_WAN_STATE_CLOSED, 1);
-    return __sync_val_compare_and_swap(&value->state_ref, old, next) == old ? 0 : -1;
-}
-
 static __always_inline void napt_lan_key_init(struct napt_from_lan_key *key, __be32 internal_addr,
                                               __be16 internal_port, __u8 proto) {
     key->internal_addr = internal_addr;

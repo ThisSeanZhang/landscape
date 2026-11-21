@@ -8,8 +8,9 @@ char LICENSE[] SEC("license") = "GPL";
 
 struct napt_ct_timer_test_input {
     struct napt_ct_key key;
+    __u64 observed_state_ref;
     __u8 force_queue_push_fail;
-    __u8 pad[3];
+    __u8 pad[7];
 };
 
 struct napt_ct_timer_test_result {
@@ -99,8 +100,18 @@ int napt_ct_timer_step_test(struct __sk_buff *skb) {
     int queue_push_ret = -2;
     __u64 next_timeout = 0;
 
-    result->action = napt_ct_timer_step(&input->key, value, input->force_queue_push_fail,
-                                        &queue_push_ret, &next_timeout);
+    if (input->observed_state_ref) {
+        /* Resume a release after another CT has changed the shared reference count. */
+        struct napt_from_wan_value *wan = napt_wan_lookup(input->key.proto, external_port);
+        if (value->status != NAPT_CT_RELEASE_REF || !wan || wan->generation != gen ||
+            wan->kind != NAPT_MAPPING_DYNAMIC)
+            return TC_ACT_SHOT;
+        result->action =
+            napt_ct_release_ref(&input->key, value, wan, input->observed_state_ref, &next_timeout);
+    } else {
+        result->action = napt_ct_timer_step(&input->key, value, input->force_queue_push_fail,
+                                            &queue_push_ret, &next_timeout);
+    }
     result->queue_push_ret = queue_push_ret;
     result->next_timeout = next_timeout;
     result->external_port = external_port;

@@ -29,8 +29,9 @@ enum napt_ct_status {
     /* A packet for this CT can reactivate it while the protocol timeout is running. */
     NAPT_CT_WAIT_TIMEOUT = 40ULL,
     /* Cleanup owns the CT from this point on. */
-    NAPT_CT_CLEAN_START = 50ULL,
-    NAPT_CT_DELETE_LAN_MAPPING = NAPT_CT_CLEAN_START,
+    NAPT_CT_CLEAN_START = 49ULL,
+    NAPT_CT_RELEASE_REF = NAPT_CT_CLEAN_START,
+    NAPT_CT_DELETE_LAN_MAPPING = 50ULL,
     NAPT_CT_CLEAR_WAN_SLOT = 51ULL,
     NAPT_CT_RETURN_PORT = 52ULL,
 };
@@ -80,6 +81,21 @@ static __always_inline u32 napt_cleanup_next(struct napt_ct_value *value, __u64 
     return NAPT_TIMER_STEP_RESTART;
 }
 
+static __always_inline u32 napt_ct_release_ref(struct napt_ct_key *key, struct napt_ct_value *value,
+                                               struct napt_from_wan_value *mapping, __u64 observed,
+                                               __u64 *next_timeout) {
+    __u64 refs = napt_state_refs(observed);
+    if (napt_state_get(observed) != NAPT_WAN_STATE_ACTIVE || refs == 0) return napt_ct_delete(key);
+
+    /* Dropping the last reference also claims ownership of port cleanup. */
+    __u64 next = refs == 1 ? napt_state_make(NAPT_WAN_STATE_CLOSED, 0) : observed - 1;
+    if (!__sync_bool_compare_and_swap(&mapping->state_ref, observed, next))
+        return napt_cleanup_retry(value, next_timeout);
+
+    if (refs == 1) return napt_cleanup_next(value, NAPT_CT_DELETE_LAN_MAPPING, next_timeout);
+    return napt_ct_delete(key);
+}
+
 static __always_inline __u64 napt_ct_wait_ns(const struct napt_ct_key *key,
                                              const struct napt_ct_value *value) {
     if (key->proto == IPV4_PROTO_UDP) return NAPT_UDP_TIMEOUT_NS;
@@ -114,11 +130,14 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
 
     if (current == NAPT_CT_WAIT_TIMEOUT) {
         if (!__sync_bool_compare_and_swap(&value->status, NAPT_CT_WAIT_TIMEOUT,
-                                          NAPT_CT_CLEAN_START))
+                                          NAPT_CT_RELEASE_REF))
             return NAPT_TIMER_STEP_RESTART;
 
-        ret = napt_metric_try_report(key, value, NAPT_METRIC_DELETE);
+        napt_metric_try_report(key, value, NAPT_METRIC_DELETE);
+        current = NAPT_CT_RELEASE_REF;
+    }
 
+    if (current == NAPT_CT_RELEASE_REF) {
         if (value->is_static) return napt_ct_delete(key);
 
         struct napt_from_wan_value *mapping = napt_wan_lookup(key->proto, value->external_port);
@@ -126,14 +145,7 @@ static __always_inline u32 napt_ct_timer_step(struct napt_ct_key *key, struct na
             mapping->generation != value->from_wan_gen)
             return napt_ct_delete(key);
 
-        if (napt_wan_close_last(mapping) == 0) {
-            *next_timeout = NAPT_CLEAN_STEP_NS;
-            return NAPT_TIMER_STEP_RESTART;
-        }
-
-        if (napt_wan_ref_dec(mapping) == 0) return napt_ct_delete(key);
-
-        return napt_ct_delete(key);
+        return napt_ct_release_ref(key, value, mapping, mapping->state_ref, next_timeout);
     }
 
     if (current == NAPT_CT_DELETE_LAN_MAPPING) {
@@ -326,7 +338,7 @@ static __always_inline int napt_ct_resolve(const struct napt_ct_key *key,
                                            struct napt_ct_value **value_out) {
     struct napt_ct_value *value = bpf_map_lookup_elem(&napt_ct, key);
 
-    /* A cleaning CT still owns the port until its queue push succeeds. */
+    /* The timer owns the CT until it releases its reference and finishes any port cleanup. */
     if (!value || !napt_ct_status_usable(value->status)) return -1;
 
     if (mapping && mapping->kind == NAPT_MAPPING_DYNAMIC &&

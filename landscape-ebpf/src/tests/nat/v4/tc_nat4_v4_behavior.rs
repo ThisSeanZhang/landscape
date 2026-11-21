@@ -26,6 +26,7 @@ const KIND_DYNAMIC: u8 = 1;
 const KIND_STATIC: u8 = 2;
 
 const STATE_ACTIVE: u64 = 1;
+const STATE_CLOSED: u64 = 2;
 const STATE_SHIFT: u64 = 56;
 const CT_ACTIVE: u64 = 20;
 
@@ -582,7 +583,7 @@ fn closed_mapping_is_not_reused_and_requeued_generation_advances() {
         closed[4..6].copy_from_slice(&LAN_PORT.to_be_bytes());
         closed[6] = KIND_DYNAMIC;
         closed[16..20].copy_from_slice(&0u32.to_ne_bytes());
-        closed[24..32].copy_from_slice(&((2u64 << STATE_SHIFT) | 1).to_ne_bytes());
+        closed[24..32].copy_from_slice(&(STATE_CLOSED << STATE_SHIFT).to_ne_bytes());
         skel.maps.napt_from_wan.update(&wan_key, &closed, MapFlags::ANY).unwrap();
 
         let (ret, _) =
