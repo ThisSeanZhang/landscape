@@ -68,19 +68,13 @@ pub fn build_deprecation_ra_from_subnets(
                 withdrawn_dns.push(ip);
             }
         }
-        for sn in removed {
-            if sn.has_router() && seen.insert(sn.sub_router) {
-                withdrawn_dns.push(sn.sub_router);
-            }
-        }
     }
 
     if !has_prefix && withdrawn_dns.is_empty() {
         return Icmpv6Message::RouterAdvertisement(RouterAdvertisement::new(params.ra_flags, opts));
     }
 
-    let rdnss_lifetime = params.valid_lifetime.max(600);
-    opts.insert(IcmpV6Option::recursive_dns_server(rdnss_lifetime, link_local));
+    opts.insert(IcmpV6Option::recursive_dns_server(params.rdnss_lifetime, link_local));
     for ip in withdrawn_dns {
         opts.insert(IcmpV6Option::recursive_dns_server(0, ip));
     }
@@ -92,7 +86,7 @@ pub fn build_deprecation_ra_from_subnets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lan_service::lan_ipv6_server::SubnetSource;
+    use crate::lan_service::lan_ipv6_server::{Ipv6ServerStatus, SubnetSource};
     use bytes::BytesMut;
     use landscape_common::net_proto::NetProtoCodec;
     use uuid::Uuid;
@@ -128,6 +122,7 @@ mod tests {
         let params = Ipv6LanReplyParams {
             preferred_lifetime: 300,
             valid_lifetime: 600,
+            rdnss_lifetime: 600,
             ra_flags: 0,
             ra_autonomous: true,
             rdnss_link_local_only: true,
@@ -178,6 +173,48 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_unadvertised_dns_subnet_withdraws_only_its_prefix_and_route() {
+        let kept = sample_pd_subnet("2001:db8:1::", "2001:db8:1::1");
+        let removed = sample_pd_subnet("2001:db8:2::", "2001:db8:2::1");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut status = Ipv6ServerStatus::new(None, None, vec![], tx);
+        status.update_prefix(&[kept.clone(), removed.clone()]);
+        let old_dns: Vec<_> = status.dns_servers().iter().collect();
+        assert_eq!(old_dns, vec![kept.sub_router]);
+        status.update_prefix(&[kept]);
+        assert_eq!(status.dns_servers().iter().collect::<Vec<_>>(), old_dns);
+
+        let mac = MacAddr::from([0x02, 0, 0, 0, 0, 1]);
+        let params = Ipv6LanReplyParams {
+            preferred_lifetime: 300,
+            valid_lifetime: 600,
+            rdnss_lifetime: 600,
+            ra_flags: 0,
+            ra_autonomous: true,
+            rdnss_link_local_only: false,
+        };
+        let prefix_bytes = removed.sub_prefix.octets();
+        let ra = decode_ra(&build_deprecation_ra_from_subnets(&[removed], &[], &mac, &params));
+        assert!(matches!(
+            ra.opts.get(3),
+            Some(IcmpV6Option::PrefixInformation { valid_lifetime: 0, preferred_lifetime: 0, prefix, .. })
+                if *prefix == prefix_bytes
+        ));
+        assert!(matches!(
+            ra.opts.get(24),
+            Some(IcmpV6Option::RouteInformation { route_lifetime: 0, prefix, .. })
+                if prefix.as_slice() == prefix_bytes
+        ));
+        let rdnss = ra.opts.get_all(25);
+        assert_eq!(rdnss.len(), 1);
+        assert!(matches!(
+            rdnss[0],
+            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+                if addresses.as_slice() == mac.to_ipv6_link_local().octets()
+        ));
+    }
+
+    #[test]
     fn pd_rotation_deprecation_dual_rdnss_withdraws_old_gua_rdnss_and_rio_with_zero_lifetime() {
         let mac = MacAddr::from([0x02, 0x00, 0x00, 0x12, 0x34, 0x56]);
         let link_local = mac.to_ipv6_link_local();
@@ -185,8 +222,9 @@ mod tests {
         let old_gua_dns: Ipv6Addr = "2001:db8:1:1::1".parse().unwrap();
         let removed = vec![sample_pd_subnet("2001:db8:1:1::", "2001:db8:1:1::1")];
         let params = Ipv6LanReplyParams {
-            preferred_lifetime: 300,
-            valid_lifetime: 600,
+            preferred_lifetime: 3600,
+            valid_lifetime: 7200,
+            rdnss_lifetime: 1800,
             ra_flags: 0,
             ra_autonomous: true,
             rdnss_link_local_only: false,
@@ -213,7 +251,7 @@ mod tests {
         assert_eq!(rdnss.len(), 2, "must keep link-local RDNSS and withdraw old GUA RDNSS");
         assert!(rdnss.iter().any(|opt| matches!(
             opt,
-            IcmpV6Option::RecursiveDNSServer { lifetime: 600, addresses, .. }
+            IcmpV6Option::RecursiveDNSServer { lifetime: 1800, addresses, .. }
                 if addresses.as_slice() == link_local.octets()
         )));
         assert!(rdnss.iter().any(|opt| matches!(
