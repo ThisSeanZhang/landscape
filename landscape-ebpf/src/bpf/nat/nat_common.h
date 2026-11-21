@@ -37,7 +37,7 @@ const volatile u64 UDP_TIMEOUT = 1E9 * 60 * 5;
 #endif
 
 // 检查间隔时间
-const volatile u64 REPORT_INTERVAL = 1E9 * 5;
+const volatile u64 REPORT_INTERVAL = 1000000000ULL;
 
 #define GRESS_MASK (1 << 0)
 
@@ -85,7 +85,7 @@ struct nat6_timer_value {
     u8 gress;
     u8 is_static;
     u8 need_prefix_replace;
-    u8 _pad;
+    u8 delete_report_failures;
 
     u64 create_time;
     u64 ingress_bytes;

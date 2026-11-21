@@ -44,7 +44,7 @@ pub(crate) struct Nat6TimerValue {
     pub gress: u8,
     pub is_static: u8,
     pub need_prefix_replace: u8,
-    pub _pad: u8,
+    pub delete_report_failures: u8,
     pub create_time: u64,
     pub ingress_bytes: u64,
     pub ingress_packets: u64,
@@ -91,6 +91,7 @@ mod tests {
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_allow_reuse);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_static);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, need_prefix_replace);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, delete_report_failures);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, client_prefix);
     }
 }

@@ -13,6 +13,18 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile u32 current_l3_offset = 14;
 
+/* Drive a disarmed CT through one production timer step. Return the delay in milliseconds. */
+SEC("tc")
+int nat6_report_tick(struct __sk_buff *skb) {
+    struct nat6_timer_key key = {.l4_protocol = IPPROTO_UDP};
+    struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
+    if (!value) return -1;
+
+    u64 next_timeout;
+    if (!nat6_timer_step(&key, value, &next_timeout)) return 0;
+    return next_timeout / 1000000ULL;
+}
+
 SEC("tc/egress")
 int handle_ipv6_egress(struct __sk_buff *skb) {
     struct ip6_scan_offsets off = {};

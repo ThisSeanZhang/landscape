@@ -8,6 +8,9 @@
 #include "nat/nat6_dyn_map.h"
 #include "nat/nat6_map_ops.h"
 
+#define NAT6_DELETE_REPORT_MAX_ATTEMPTS 3U
+#define NAT6_DELETE_REPORT_RETRY_NS (10ULL * 1000 * 1000)
+
 static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_key,
                                                   struct nat6_timer_value *timer_value, u8 status) {
     struct nat_conn_metric_event *event;
@@ -42,14 +45,13 @@ static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_k
     return 0;
 }
 
-static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer_key *key,
-                                     struct nat6_timer_value *value) {
+static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
+                                            struct nat6_timer_value *value, u64 *next_timeout) {
     u64 client_status = value->client_status;
     u64 server_status = value->server_status;
     u64 current_status = value->status;
     u64 next_status = current_status;
-    u64 next_timeout = REPORT_INTERVAL;
-    int ret;
+    *next_timeout = REPORT_INTERVAL;
 
     if (value->trigger_port == TEST_PORT) {
         ld_timer_log("timer_clean_callback: %pI6, current_status: %llu",
@@ -57,10 +59,7 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
     }
 
     if (current_status == TIMER_RELEASE) {
-        if (!ct_try_set_status(&value->status, TIMER_RELEASE, TIMER_CLEAN_START)) {
-            bpf_timer_start(&value->timer, REPORT_INTERVAL, 0);
-            return 0;
-        }
+        if (!ct_try_set_status(&value->status, TIMER_RELEASE, TIMER_CLEAN_START)) return true;
         current_status = TIMER_CLEAN_START;
     }
 
@@ -69,32 +68,28 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
             ld_timer_log("release CONNECT");
         }
 
-        ret = nat6_metric_try_report(key, value, NAT_CONN_DELETE);
-        if (ret) {
-            ld_timer_log("call back report fail");
-            bpf_timer_start(&value->timer, next_timeout, 0);
-            return 0;
+        u8 failures = value->delete_report_failures;
+        if (nat6_metric_try_report(key, value, NAT_CONN_DELETE) != 0 &&
+            failures < NAT6_DELETE_REPORT_MAX_ATTEMPTS - 1) {
+            value->delete_report_failures = failures + 1;
+            *next_timeout = NAT6_DELETE_REPORT_RETRY_NS << failures;
+            return true;
         }
-        goto release;
+        bpf_map_delete_elem(&nat6_timer_map, key);
+        return false;
     }
 
-    ret = nat6_metric_try_report(key, value, NAT_CONN_ACTIVE);
-    if (ret) {
-        ld_timer_log("call back report fail");
-        bpf_timer_start(&value->timer, next_timeout, 0);
-        return 0;
-    }
+    /* The next successful sample includes counters from skipped ACTIVE reports. */
+    nat6_metric_try_report(key, value, NAT_CONN_ACTIVE);
 
     if (current_status == TIMER_ACTIVE) {
         next_status = TIMER_TIMEOUT_1;
-        next_timeout = REPORT_INTERVAL;
 
         if (value->trigger_port == TEST_PORT) {
             ld_timer_log("change next status TIMER_TIMEOUT_1");
         }
     } else if (current_status == TIMER_TIMEOUT_1) {
         next_status = TIMER_TIMEOUT_2;
-        next_timeout = REPORT_INTERVAL;
 
         if (value->trigger_port == TEST_PORT) {
             ld_timer_log("change next status TIMER_TIMEOUT_2");
@@ -103,36 +98,35 @@ static int nat6_timer_clean_callback(void *map_mapping_timer_, struct nat6_timer
         next_status = TIMER_RELEASE;
         if (key->l4_protocol == IPPROTO_TCP) {
             if (client_status == CT_SYN && server_status == CT_SYN) {
-                next_timeout = TCP_TIMEOUT;
+                *next_timeout = TCP_TIMEOUT;
             } else {
-                next_timeout = TCP_SYN_TIMEOUT;
+                *next_timeout = TCP_SYN_TIMEOUT;
             }
         } else {
-            next_timeout = UDP_TIMEOUT;
+            *next_timeout = UDP_TIMEOUT;
         }
 
         if (value->trigger_port == TEST_PORT) {
-            u64 show = (next_timeout / 1000000000ULL);
+            u64 show = *next_timeout / 1000000000ULL;
             ld_timer_log("change next status TIMER_RELEASE, next_timeout: %d", show);
         }
     } else {
         next_status = TIMER_TIMEOUT_2;
-        next_timeout = REPORT_INTERVAL;
     }
 
     if (__sync_val_compare_and_swap(&value->status, current_status, next_status) !=
         current_status) {
         ld_timer_log("call back modify status fail, current status: %d new status: %d",
                      current_status, next_status);
-        bpf_timer_start(&value->timer, REPORT_INTERVAL, 0);
-        return 0;
+        *next_timeout = REPORT_INTERVAL;
     }
+    return true;
+}
 
-    bpf_timer_start(&value->timer, next_timeout, 0);
-
-    return 0;
-release:;
-    bpf_map_delete_elem(&nat6_timer_map, key);
+static int nat6_timer_clean_callback(void *map, struct nat6_timer_key *key,
+                                     struct nat6_timer_value *value) {
+    u64 next_timeout;
+    if (nat6_timer_step(key, value, &next_timeout)) bpf_timer_start(&value->timer, next_timeout, 0);
     return 0;
 }
 
