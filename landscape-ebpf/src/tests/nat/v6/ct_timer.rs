@@ -1,4 +1,4 @@
-use std::{cell::RefCell, mem::MaybeUninit, time::Duration};
+use std::{cell::RefCell, mem::MaybeUninit, net::Ipv6Addr, time::Duration};
 
 use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
 use libbpf_rs::{
@@ -8,8 +8,9 @@ use libbpf_rs::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    maps::{Nat6TimerKey, Nat6TimerValue},
+    maps::{Nat6MappingKey, Nat6MappingValue, Nat6TimerKey, Nat6TimerValue},
     tests::{
+        TestSkb,
         helper::net::wait_for,
         isolated_pin_root,
         nat::test_nat6_v3::{TestNat6V3Skel, TestNat6V3SkelBuilder},
@@ -30,7 +31,21 @@ fn run(prog: &ProgramMut<'_>) -> u32 {
 }
 
 fn tick_ms(skel: &TestNat6V3Skel<'_>) -> u32 {
-    run(&skel.progs.nat6_report_tick)
+    let key = Nat6TimerKey {
+        local: Nat6MappingKey { l4_protocol: 17, ..Default::default() },
+        ..Default::default()
+    };
+    tick_key(skel, &key)
+}
+
+fn tick_key(skel: &TestNat6V3Skel<'_>, key: &Nat6TimerKey) -> u32 {
+    let mut packet = [0; 64];
+    packet[14..14 + size_of::<Nat6TimerKey>()].copy_from_slice(key.as_bytes());
+    skel.progs
+        .nat6_report_tick
+        .test_run(ProgramInput { data_in: Some(&packet), ..Default::default() })
+        .unwrap()
+        .return_value
 }
 
 fn check_report_pressure(drain_after_failures: Option<usize>) {
@@ -55,7 +70,10 @@ fn check_report_pressure(drain_after_failures: Option<usize>) {
         events.take()
     };
 
-    let key = Nat6TimerKey { l4_protocol: 17, ..Default::default() };
+    let key = Nat6TimerKey {
+        local: Nat6MappingKey { l4_protocol: 17, ..Default::default() },
+        ..Default::default()
+    };
     let ct = &skel.maps.nat6_timer_map;
     let seed = |tag| {
         let value = Nat6TimerValue {
@@ -142,7 +160,10 @@ fn packets_only_arm_the_long_wait_and_stale_wakeups_preserve_its_deadline() {
     open.maps.rodata_data.as_deref_mut().unwrap().REPORT_INTERVAL = 100_000_000;
     let skel = open.load().unwrap();
     let ct = &skel.maps.nat6_timer_map;
-    let key = Nat6TimerKey { l4_protocol: 17, ..Default::default() };
+    let key = Nat6TimerKey {
+        local: Nat6MappingKey { l4_protocol: 17, ..Default::default() },
+        ..Default::default()
+    };
     let read = || {
         let raw = ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().expect("CT still present");
         Nat6TimerValue::read_from_bytes(&raw).unwrap()
@@ -173,4 +194,101 @@ fn packets_only_arm_the_long_wait_and_stale_wakeups_preserve_its_deadline() {
     assert!((1..300_000).contains(&remaining_ms));
     let waiting = read();
     assert_eq!((waiting.status, waiting.wait_deadline_ns), (WAIT_TIMEOUT, deadline));
+}
+
+#[test]
+fn shared_mapping_outlives_its_trigger_and_failed_ct_creation() {
+    let root = isolated_pin_root("nat6-mapping-release");
+    let mut builder = TestNat6V3SkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&root).unwrap();
+    let mut object = MaybeUninit::uninit();
+    let mut open = builder.open(&mut object).unwrap();
+    open.maps.nat6_timer_map.set_max_entries(2).unwrap();
+    let ro = open.maps.rodata_data.as_deref_mut().unwrap();
+    let wan: Ipv6Addr = "2001:db8:a::10".parse().unwrap();
+    ro.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan));
+    ro.REPORT_INTERVAL = 60_000_000_000; // Drive the production timer steps explicitly.
+    let skel = open.load().unwrap();
+    let lan: Ipv6Addr = "fd00:1::10".parse().unwrap();
+    let a: Ipv6Addr = "2001:db8:b::1".parse().unwrap();
+    let b: Ipv6Addr = "2001:db8:b::2".parse().unwrap();
+    let packet = |egress, peer: Ipv6Addr, port| {
+        let (src, dst, sport, dport, prog) = if egress {
+            (lan, peer, 12345, port, &skel.progs.handle_ipv6_egress)
+        } else {
+            (peer, wan, port, 12345, &skel.progs.handle_ipv6_ingress)
+        };
+        let mut frame = Vec::new();
+        etherparse::PacketBuilder::ethernet2([2; 6], [4; 6])
+            .ipv6(src.octets(), dst.octets(), 64)
+            .udp(sport, dport)
+            .write(&mut frame, &[])
+            .unwrap();
+        let mut ctx = TestSkb { mark: 0x8000, ..Default::default() };
+        prog.test_run(ProgramInput {
+            data_in: Some(&frame),
+            context_in: Some(ctx.as_mut_bytes()),
+            ..Default::default()
+        })
+        .unwrap()
+        .return_value as i32
+    };
+    let local = Nat6MappingKey {
+        client_suffix: lan.octets()[8..].try_into().unwrap(),
+        client_port: 12345u16.to_be(),
+        l4_protocol: 17,
+        ..Default::default()
+    };
+    let key = |peer: Ipv6Addr| Nat6TimerKey {
+        local,
+        remote_addr: peer.octets(),
+        remote_port: 53u16.to_be(),
+        _pad: 0,
+    };
+    let mapping = || {
+        skel.maps
+            .nat6_mapping_map
+            .lookup(local.as_bytes(), MapFlags::ANY)
+            .unwrap()
+            .map(|v| Nat6MappingValue::read_from_bytes(&v).unwrap())
+    };
+    let ct = &skel.maps.nat6_timer_map;
+    let expire = |key: &Nat6TimerKey| {
+        let raw = ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().unwrap();
+        let mut value = Nat6TimerValue::read_from_bytes(&raw).unwrap();
+        value.status = WAIT_TIMEOUT;
+        value.wait_deadline_ns = 1;
+        ct.update(key.as_bytes(), value.as_bytes(), MapFlags::EXIST).unwrap();
+        assert_eq!(tick_key(&skel, key), 0);
+        assert!(ct.lookup(key.as_bytes(), MapFlags::ANY).unwrap().is_none());
+    };
+    let events = RefCell::new(Vec::new());
+    let mut ring = RingBufferBuilder::new();
+    ring.add(&skel.maps.nat_metric_events, |raw| {
+        events.borrow_mut().push(ConnectMetric::try_from(raw).unwrap());
+        0
+    })
+    .unwrap();
+    let ring = ring.build().unwrap();
+    assert_eq!(packet(false, a, 53), 2); // Dynamic ingress requires an existing mapping.
+    assert_eq!(packet(true, a, 53), -1);
+    assert_eq!(packet(false, b, 53), -1);
+    assert_eq!(packet(true, b, 53), -1);
+    assert_eq!(packet(true, a, 54), 2); // CT table is full. Roll back the acquired reference.
+    assert_eq!(mapping().unwrap().refs, 2);
+    expire(&key(a));
+    let shared = mapping().unwrap();
+    assert_eq!((shared.refs, shared.trigger_addr), (1, a.octets()));
+    assert_eq!(packet(false, b, 53), -1);
+    expire(&key(b));
+    assert!(mapping().is_none());
+    assert_eq!(ct.keys().count(), 0);
+    ring.consume().unwrap();
+    let reports = events.take();
+    assert_eq!(reports.len(), 2);
+    for (event, (peer, ingress)) in reports.iter().zip([(a, 0), (b, 2)]) {
+        assert_eq!(event.status_type(), ConnectStatusType::Disabled);
+        assert_eq!((event.dst_addr, event.dst_port), (peer.octets(), 53));
+        assert_eq!((event.egress_packets, event.ingress_packets), (1, ingress));
+    }
 }

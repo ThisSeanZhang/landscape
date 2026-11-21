@@ -19,14 +19,14 @@ static __always_inline int nat6_metric_try_report(struct nat6_timer_key *timer_k
         return -1;
     }
 
-    __builtin_memcpy(event->src_addr.in6_u.u6_addr8, timer_value->client_prefix, 8);
-    __builtin_memcpy(event->src_addr.in6_u.u6_addr8 + 8, timer_key->client_suffix, 8);
-    COPY_ADDR_FROM(event->dst_addr.in6_u.u6_addr8, timer_value->trigger_addr.in6_u.u6_addr8);
+    __builtin_memcpy(event->src_addr.in6_u.u6_addr8, &timer_value->client_prefix, 8);
+    __builtin_memcpy(event->src_addr.in6_u.u6_addr8 + 8, timer_key->local.client_suffix, 8);
+    COPY_ADDR_FROM(event->dst_addr.in6_u.u6_addr8, timer_key->remote_addr.in6_u.u6_addr8);
 
-    event->src_port = timer_key->client_port;
-    event->dst_port = timer_value->trigger_port;
+    event->src_port = timer_key->local.client_port;
+    event->dst_port = timer_key->remote_port;
 
-    event->l4_proto = timer_key->l4_protocol;
+    event->l4_proto = timer_key->local.l4_protocol;
     event->l3_proto = LANDSCAPE_IPV6_TYPE;
     event->flow_id = timer_value->flow_id;
     event->trace_id = 0;
@@ -53,9 +53,9 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     u64 next_status = current_status;
     *next_timeout = REPORT_INTERVAL;
 
-    if (value->trigger_port == TEST_PORT) {
+    if (key->remote_port == TEST_PORT) {
         ld_timer_log("timer_clean_callback: %pI6, current_status: %llu",
-                     &value->trigger_addr.in6_u.u6_addr8, current_status);
+                     &key->remote_addr.in6_u.u6_addr8, current_status);
     }
 
     if (current_status == TIMER_WAIT_TIMEOUT) {
@@ -70,7 +70,7 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     }
 
     if (current_status == TIMER_CLEAN_START) {
-        if (value->trigger_port == TEST_PORT) {
+        if (key->remote_port == TEST_PORT) {
             ld_timer_log("release CONNECT");
         }
 
@@ -80,6 +80,11 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
             value->delete_report_failures = failures + 1;
             *next_timeout = NAT6_DELETE_REPORT_RETRY_NS << failures;
             return true;
+        }
+        if (!value->is_static) {
+            struct nat6_mapping_value *mapping =
+                bpf_map_lookup_elem(&nat6_mapping_map, &key->local);
+            if (mapping) nat6_mapping_put(&key->local, mapping);
         }
         bpf_map_delete_elem(&nat6_timer_map, key);
         return false;
@@ -91,18 +96,18 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
     if (current_status == TIMER_ACTIVE) {
         next_status = TIMER_IDLE_CHECK_1;
 
-        if (value->trigger_port == TEST_PORT) {
+        if (key->remote_port == TEST_PORT) {
             ld_timer_log("change next status TIMER_IDLE_CHECK_1");
         }
     } else if (current_status == TIMER_IDLE_CHECK_1) {
         next_status = TIMER_IDLE_CHECK_2;
 
-        if (value->trigger_port == TEST_PORT) {
+        if (key->remote_port == TEST_PORT) {
             ld_timer_log("change next status TIMER_IDLE_CHECK_2");
         }
     } else if (current_status == TIMER_IDLE_CHECK_2) {
         next_status = TIMER_WAIT_TIMEOUT;
-        if (key->l4_protocol == IPPROTO_TCP) {
+        if (key->local.l4_protocol == IPPROTO_TCP) {
             if (client_status == CT_SYN && server_status == CT_SYN) {
                 *next_timeout = TCP_TIMEOUT;
             } else {
@@ -112,7 +117,7 @@ static __always_inline bool nat6_timer_step(struct nat6_timer_key *key,
             *next_timeout = UDP_TIMEOUT;
         }
 
-        if (value->trigger_port == TEST_PORT) {
+        if (key->remote_port == TEST_PORT) {
             u64 show = *next_timeout / 1000000000ULL;
             ld_timer_log("change next status TIMER_WAIT_TIMEOUT, next_timeout: %d", show);
         }
@@ -170,6 +175,7 @@ static __always_inline struct nat6_timer_value *nat6_insert_timer(const struct n
 
     return value;
 delete_timer:
+    value->status = TIMER_CLEAN_START;
     ld_log("ct6 timer setup failed: %d", ret);
     bpf_map_delete_elem(&nat6_timer_map, key);
     return NULL;

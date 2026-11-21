@@ -8,7 +8,7 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput, ProgramMut, ProgramType,
     skel::{OpenSkel, SkelBuilder as _},
 };
-use zerocopy::FromBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 mod tap;
 
@@ -62,6 +62,7 @@ fn with_nat6_config(
     let mut builder = XdpNat6SkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&root).unwrap();
     let mut xdp = builder.open(&mut xdp_obj).unwrap();
+    xdp.maps.nat6_mapping_map.reuse_fd(tc.maps.nat6_mapping_map.as_fd()).unwrap();
     xdp.maps.nat6_timer_map.reuse_fd(tc.maps.nat6_timer_map.as_fd()).unwrap();
     xdp.maps.frag6_cache_lan.reuse_fd(tc.maps.frag6_cache_lan.as_fd()).unwrap();
     xdp.maps.frag6_cache_wan.reuse_fd(tc.maps.frag6_cache_wan.as_fd()).unwrap();
@@ -410,7 +411,7 @@ fn icmp6_error_matches_existing_dynamic_flow() {
                 let key = ct
                     .keys()
                     .find(|bytes| {
-                        Nat6TimerKey::read_from_bytes(bytes).unwrap().l4_protocol == proto.0
+                        Nat6TimerKey::read_from_bytes(bytes).unwrap().local.l4_protocol == proto.0
                     })
                     .expect("outbound traffic must create the flow");
                 let entry = || {
@@ -421,7 +422,7 @@ fn icmp6_error_matches_existing_dynamic_flow() {
                 };
                 let before = entry();
                 let flow_count = ct.keys().count();
-                assert_eq!((before.is_static, before.is_allow_reuse), (0, 0));
+                assert_eq!((before.is_static, before.allow_reuse), (0, 0));
                 let wire_ip = &wire[Ethernet2Header::LEN..];
                 let lan_ip = &lan[Ethernet2Header::LEN..];
                 for len in [Ipv6Header::LEN + 8, wire_ip.len().min(1232)] {
@@ -610,5 +611,76 @@ fn icmp6_short_tcp_quote() {
                 &extended(new_src, new_dst, &translated),
             );
         }
+    });
+}
+
+#[test]
+fn exact_ct_then_static_then_shared_dynamic_mapping_across_hooks() {
+    with_nat6(|tc, xdp| {
+        let frame = |src: Ipv6Addr, dst: Ipv6Addr, port, reverse| {
+            let (sport, dport) = if reverse { (port, 12345) } else { (12345, port) };
+            let mut out = Vec::new();
+            PacketBuilder::ethernet2([2; 6], [4; 6])
+                .ipv6(src.octets(), dst.octets(), 64)
+                .udp(sport, dport)
+                .write(&mut out, &[])
+                .unwrap();
+            out
+        };
+        let a = frame(LAN_CLIENT, REMOTE, 53, false);
+        let b = frame(LAN_CLIENT, ROUTER, 53, false);
+        let mut ctx = crate::tests::TestSkb { mark: 0x8000, ..Default::default() };
+        assert_eq!(
+            tc.progs
+                .tc_nat_wan_egress_v6
+                .test_run(ProgramInput {
+                    data_in: Some(&a),
+                    context_in: Some(ctx.as_mut_bytes()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .return_value as i32,
+            TC_ACT_UNSPEC
+        );
+        // A new remote arriving in XDP needs the dynamic mapping created by TC.
+        let response = frame(ROUTER, WAN_CLIENT, 53, true);
+        assert_eq!(
+            run(&xdp.progs.ingress_nat_v6, &response, XDP_PASS, 0),
+            frame(ROUTER, LAN_CLIENT, 53, true)
+        );
+        assert_eq!(
+            run(&tc.progs.tc_nat_wan_egress_v6, &b, TC_ACT_UNSPEC, 0),
+            frame(WAN_CLIENT, ROUTER, 53, false)
+        );
+
+        // Wildcard translates; the exact static rule passes the same local endpoint through.
+        add_static_nat6_mapping(
+            &tc.maps.nat6_static_map,
+            [
+                StaticNatMappingV6Item { port: 0, lan_ip: LAN_CLIENT, l4_protocol: 17 },
+                StaticNatMappingV6Item {
+                    port: 12345,
+                    lan_ip: "::100".parse().unwrap(),
+                    l4_protocol: 17,
+                },
+            ],
+        );
+        let c = frame(LAN_CLIENT, ROUTER, 54, false);
+        assert_eq!(run(&xdp.progs.egress_nat_v6, &c, XDP_PASS, 0), c);
+        assert_eq!(
+            run(&xdp.progs.egress_nat_v6, &b, XDP_PASS, 0),
+            frame(WAN_CLIENT, ROUTER, 53, false)
+        );
+        let incoming = frame(REMOTE, WAN_CLIENT, 55, true);
+        assert_eq!(run(&tc.progs.tc_nat_wan_ingress_v6, &incoming, TC_ACT_OK, 0), incoming);
+        assert_eq!(tc.maps.nat6_timer_map.keys().count(), 4);
+        let mappings = &tc.maps.nat6_mapping_map;
+        let keys: Vec<_> = mappings.keys().collect();
+        assert_eq!(keys.len(), 1);
+        let mapping = crate::maps::Nat6MappingValue::read_from_bytes(
+            &mappings.lookup(&keys[0], MapFlags::ANY).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(mapping.refs, 2);
     });
 }

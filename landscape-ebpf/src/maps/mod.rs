@@ -684,6 +684,7 @@ mod tests {
             Route4SlotKey,
             Route6SlotKey,
             StaticNat6MappingKey,
+            Nat6MappingKey,
             Nat6TimerKey,
         );
     }

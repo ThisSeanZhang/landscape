@@ -9,7 +9,7 @@ use zerocopy::IntoBytes;
 
 use crate::{
     maps::nat::StaticNatMappingV6Item,
-    maps::{Nat6TimerKey, Nat6TimerValue},
+    maps::{Nat6MappingKey, Nat6TimerKey, Nat6TimerValue},
     skel::tc_nat6::TcNat6SkelBuilder,
     tests::TestSkb,
 };
@@ -85,19 +85,21 @@ fn add_ct6_entry<T: MapCore>(
     need_prefix_replace: bool,
 ) {
     let key = Nat6TimerKey {
-        client_suffix,
-        client_port: client_port.to_be(),
-        id_byte,
-        l4_protocol: l4proto,
+        local: Nat6MappingKey {
+            client_suffix,
+            client_port: client_port.to_be(),
+            id_byte,
+            l4_protocol: l4proto,
+        },
+        remote_addr: trigger_addr.octets(),
+        remote_port: trigger_port.to_be(),
+        _pad: 0,
     };
     let value = Nat6TimerValue {
         server_status: 1,
         client_status: 1,
-        is_allow_reuse: 1,
         is_static: 1,
         need_prefix_replace: need_prefix_replace as u8,
-        trigger_addr: trigger_addr.octets(),
-        trigger_port: trigger_port.to_be(),
         client_prefix,
         ..Default::default()
     };

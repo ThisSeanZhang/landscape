@@ -64,23 +64,43 @@ struct nat4_timer_key {
     struct inet4_pair pair_ip;
 };
 
-//
-struct nat6_timer_key {
-    u8 client_suffix[8];
+struct nat6_mapping_key {
+    __be32 client_suffix[2];
     u16 client_port;
     u8 id_byte;
     u8 l4_protocol;
 };
 
-//
+struct nat6_timer_key {
+    struct nat6_mapping_key local;
+    __be16 remote_port;
+    u16 _pad;
+    struct in6_addr remote_addr;
+};
+
+/* Linux hash maps use jhash2 when key_size is a multiple of four. */
+_Static_assert(sizeof(struct nat6_mapping_key) == 12 && _Alignof(struct nat6_mapping_key) == 4,
+               "IPv6 mapping key layout");
+_Static_assert(sizeof(struct nat6_timer_key) == 32 && _Alignof(struct nat6_timer_key) == 4,
+               "IPv6 CT key layout");
+
+struct nat6_mapping_value {
+    u32 refs; /* Zero closes the entry until its last owner deletes it. */
+    struct bpf_spin_lock lock;
+    __be64 client_prefix;
+    struct in6_addr trigger_addr;
+    __be16 trigger_port;
+    u8 allow_reuse;
+};
+
 struct nat6_timer_value {
     struct bpf_timer timer;
     u64 server_status;
     u64 client_status;
     u64 status;
-    struct in6_addr trigger_addr;
-    u16 trigger_port;
-    u8 is_allow_reuse;
+    u8 is_trigger;
+    u8 allow_reuse; /* Last mark applied by the trigger CT. */
+    u8 _pad;
     u8 flow_id;
     u8 gress;
     u8 is_static;
@@ -94,7 +114,7 @@ struct nat6_timer_value {
     u64 egress_packets;
     u32 cpu_id;
     u32 ifindex;
-    u8 client_prefix[8];
+    __be64 client_prefix;
     u64 wait_deadline_ns; /* CLOCK_MONOTONIC, written by the timer on entry to WAIT_TIMEOUT. */
 };
 
@@ -117,13 +137,6 @@ enum timer_status {
 enum nat_op_result {
     NAT_OP_OK = 0,
     NAT_OP_ERR = -1,
-};
-
-// Result of an IPv6 static mapping lookup.
-enum nat6_static_result {
-    NAT6_STATIC_MISS = 0,     // no static mapping, fall back to dynamic path
-    NAT6_STATIC_REPLACE = 1,  // static mapping hit, client prefix must be replaced
-    NAT6_STATIC_PASS = 2,     // static mapping hit, no prefix replace needed
 };
 
 static __always_inline bool ct_try_set_status(u64 *status_in_value, u64 curr_state,

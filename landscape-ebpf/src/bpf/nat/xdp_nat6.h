@@ -8,9 +8,7 @@
 #include "base/ipv6.h"
 #include "base/tcp_phase.h"
 #include "nat/nat_common.h"
-#include "nat/nat6_map_ops.h"
-#include "nat/nat6_ct_timer.h"
-#include "nat/nat_rodata6.h"
+#include "nat/nat6_ct.h"
 #include "nat/xdp_csum_helpers.h"
 
 static __always_inline int xdp_nat6_update_quoted_checksum(struct xdp_md *ctx,
@@ -43,169 +41,19 @@ static __always_inline u16 xdp_nat6_icmp_error_l3_offset(const struct ip6_scan_o
     return off->icmp_error_l3_offset;
 }
 
-static __always_inline void xdp_nat6_metric_accumulate(void *data, void *data_end, bool ingress,
-                                                       struct nat6_timer_value *value) {
-    u64 bytes = (u64)(long)data_end - (u64)(long)data;
-    if (ingress) {
-        __sync_fetch_and_add(&value->ingress_bytes, bytes);
-        __sync_fetch_and_add(&value->ingress_packets, 1);
-    } else {
-        __sync_fetch_and_add(&value->egress_bytes, bytes);
-        __sync_fetch_and_add(&value->egress_packets, 1);
-    }
-}
-
-static __always_inline int xdp_update_ipv6_cache_value(u32 mark, const struct in6_addr *src_addr,
-                                                       const struct in6_addr *dst_addr,
-                                                       __be16 dport,
-                                                       struct nat6_timer_value *value) {
-    COPY_ADDR_FROM(value->client_prefix, src_addr->in6_u.u6_addr8);
-    if (!value->is_static) {
-        bool is_ancestor =
-            ip_addr_equal_x(dst_addr, &value->trigger_addr) && dport == value->trigger_port;
-        if (is_ancestor) {
-            bool allow_reuse_port = get_flow_allow_reuse_port(mark);
-            value->is_allow_reuse = allow_reuse_port ? 1 : 0;
-        }
-    }
-    value->flow_id = get_flow_id(mark);
-    return 0;
-}
-
-static __always_inline struct nat6_timer_value *
-xdp_lookup_ct6_ingress(const struct ip6_scan_offsets *off, const struct in6_addr *dst_addr,
-                       __be16 dport, u8 npt_id_mask) {
-    struct nat6_timer_key key = {0};
-    key.client_port = dport;
-    COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
-    key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = off->l4_protocol;
-
-    return bpf_map_lookup_elem(&nat6_timer_map, &key);
-}
-
-static __always_inline struct nat6_timer_value *
-xdp_create_ct6_ingress(u32 wan_if, u32 mark, const struct ip6_scan_offsets *off,
-                       const struct in6_addr *src_addr, const struct in6_addr *dst_addr,
-                       __be16 sport, __be16 dport, u8 npt_id_mask, const __be64 *client_prefix_hint,
-                       bool need_prefix_replace) {
-    struct nat6_timer_key key = {0};
-    key.client_port = dport;
-    COPY_ADDR_FROM(key.client_suffix, dst_addr->in6_u.u6_addr8 + 8);
-    key.id_byte = dst_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = off->l4_protocol;
-
-    struct nat6_timer_value new_value = {};
-    __builtin_memset(&new_value, 0, sizeof(new_value));
-    new_value.create_time = bpf_ktime_get_tai_ns();
-    new_value.flow_id = get_flow_id(mark);
-    new_value.gress = NAT_MAPPING_INGRESS;
-    new_value.cpu_id = bpf_get_smp_processor_id();
-    new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr8, src_addr->in6_u.u6_addr32);
-    new_value.trigger_port = sport;
-    COPY_ADDR_FROM(new_value.client_prefix, client_prefix_hint);
-    new_value.is_allow_reuse = 1;
-    new_value.is_static = 1;
-    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
-
-    return nat6_insert_timer(&key, &new_value);
-}
-
-static __always_inline struct nat6_timer_value *
-xdp_lookup_ct6_egress(u32 mark, const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
-                      const struct in6_addr *dst_addr, __be16 sport, __be16 dport, u8 npt_id_mask) {
-    struct nat6_timer_key key = {0};
-    key.client_port = sport;
-    COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
-    key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = off->l4_protocol;
-
-    struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
-    if (value) {
-        if (!xdp_nat6_is_icmp_error(off) &&
-            !nat6_is_same_prefix(value->client_prefix, src_addr, npt_id_mask)) {
-            xdp_update_ipv6_cache_value(mark, src_addr, dst_addr, dport, value);
-        }
-        return value;
-    }
-    return NULL;
-}
-
-static __always_inline struct nat6_timer_value *
-xdp_create_ct6_egress(u32 wan_if, u32 mark, const struct ip6_scan_offsets *off,
-                      const struct in6_addr *src_addr, const struct in6_addr *dst_addr,
-                      __be16 sport, __be16 dport, u8 npt_id_mask, u8 is_allow_reuse, bool is_static,
-                      bool need_prefix_replace) {
-    struct nat6_timer_key key = {0};
-    key.client_port = sport;
-    COPY_ADDR_FROM(key.client_suffix, src_addr->in6_u.u6_addr8 + 8);
-    key.id_byte = src_addr->in6_u.u6_addr8[7] & npt_id_mask;
-    key.l4_protocol = off->l4_protocol;
-
-    struct nat6_timer_value new_value = {};
-    __builtin_memset(&new_value, 0, sizeof(new_value));
-    new_value.create_time = bpf_ktime_get_tai_ns();
-    new_value.flow_id = get_flow_id(mark);
-    new_value.gress = NAT_MAPPING_EGRESS;
-    new_value.cpu_id = bpf_get_smp_processor_id();
-    new_value.ifindex = wan_if;
-    COPY_ADDR_FROM(new_value.client_prefix, src_addr->in6_u.u6_addr8);
-    new_value.is_allow_reuse = is_allow_reuse;
-    new_value.is_static = is_static ? 1 : 0;
-    new_value.need_prefix_replace = need_prefix_replace ? 1 : 0;
-    COPY_ADDR_FROM(new_value.trigger_addr.in6_u.u6_addr32, dst_addr->in6_u.u6_addr32);
-    new_value.trigger_port = dport;
-
-    return nat6_insert_timer(&key, &new_value);
-}
-
 static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
     struct xdp_md *ctx, void *data, void *data_end, u32 wan_if, u32 mark,
     const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport) {
     u32 l3_offset = off->l3_offset;
-    u8 ct_proto = off->l4_protocol;
     u8 outer_proto = xdp_nat6_outer_protocol(off);
 
-    if (wan_ro_prefix6.b[0] == 0) return -1;
-
-    u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
-
-    bool is_icmpx_error = xdp_nat6_is_icmp_error(off);
-
-    struct nat6_timer_value *ct_value =
-        xdp_lookup_ct6_egress(mark, off, src_addr, dst_addr, sport, dport, npt_id_mask);
-    if (ct_value) {
-        if (!is_icmpx_error) {
-            nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
-            xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
-        }
-        if (!ct_value->need_prefix_replace) return 0;
-        goto do_xdp_nptv6;
-    }
-
-    struct static_nat6_mapping_value *static_val =
-        nat6_check_egress_static(ct_proto, src_addr, sport);
-
-    bool allow_create = nat6_allows_create_pkt(ct_proto, off->tcp_phase, is_icmpx_error);
-
-    if (!allow_create) {
-        if (!static_val) return -1;
-        if (!nat6_static_needs_prefix_replace(static_val)) return 0;
-        goto do_xdp_nptv6;
-    }
-
-    bool need_prefix_replace = static_val ? nat6_static_needs_prefix_replace(static_val) : true;
-    u8 reuse = static_val ? 1 : (get_flow_allow_reuse_port(mark) ? 1 : 0);
-    ct_value = xdp_create_ct6_egress(wan_if, mark, off, src_addr, dst_addr, sport, dport,
-                                     npt_id_mask, reuse, static_val != NULL, need_prefix_replace);
-    if (!ct_value) return -1;
-    nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_EGRESS, ct_value);
-    xdp_nat6_metric_accumulate(data, data_end, false, ct_value);
-    if (!need_prefix_replace) return 0;
-
-do_xdp_nptv6:
+    struct nat6_translation trans = {};
+    if (!wan_ro_prefix6.b[0] || nat6_resolve(off, src_addr, sport, dst_addr, dport, true, mark,
+                                             wan_if, (u64)(long)data_end - (u64)(long)data, &trans))
+        return -1;
+    if (!trans.replace) return 0;
+    bool is_icmpx_error = off->icmp_inner_l4_offset != 0;
     if (is_icmpx_error) {
         u32 err_sender_off = l3_offset + offsetof(struct ipv6hdr, saddr);
         __be64 old_sender_prefix;
@@ -271,82 +119,18 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
     struct xdp_md *ctx, void *data, void *data_end, u32 wan_if, u32 mark,
     const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport, bool *out_is_static) {
-    __be64 local_client_prefix = {0};
-    u32 l3_offset = off->l3_offset;
-    u8 ct_proto = off->l4_protocol;
     u8 outer_proto = xdp_nat6_outer_protocol(off);
-
-    if (wan_ro_prefix6.b[0] == 0) return -1;
-
-    u8 npt_id_mask = (u8)(wan_ro_npt_mask >> 56);
-
+    u32 l3_offset = off->l3_offset;
+    struct nat6_translation trans = {};
+    if (!wan_ro_prefix6.b[0] || nat6_resolve(off, dst_addr, dport, src_addr, sport, false, mark,
+                                             wan_if, (u64)(long)data_end - (u64)(long)data, &trans))
+        return -1;
+    __be64 local_client_prefix = trans.client_prefix;
+    __be64 dst_prefix;
+    __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
+    *out_is_static = trans.is_static;
+    if (!trans.replace || dst_prefix == local_client_prefix) return trans.is_static ? 1 : 0;
     bool is_icmpx_error = xdp_nat6_is_icmp_error(off);
-    bool allow_create = nat6_allows_create_pkt(ct_proto, off->tcp_phase, is_icmpx_error);
-    bool need_prefix_replace = false;
-    int map_ret = 0;
-
-    struct nat6_timer_value *ct_value = xdp_lookup_ct6_ingress(off, dst_addr, dport, npt_id_mask);
-    if (ct_value) {
-        bool ct_is_static = ct_value->is_static != 0;
-        *out_is_static = ct_is_static;
-
-        if (!ct_is_static) {
-            if (ct_value->is_allow_reuse == 0 && ct_proto != NEXTHDR_ICMP) {
-                if (!ip_addr_equal_x(src_addr, &ct_value->trigger_addr) ||
-                    sport != ct_value->trigger_port) {
-                    return -1;
-                }
-            }
-        }
-
-        COPY_ADDR_FROM(&local_client_prefix, ct_value->client_prefix);
-        if (!is_icmpx_error) {
-            nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
-            xdp_nat6_metric_accumulate(data, data_end, true, ct_value);
-        }
-
-        __be64 dst_prefix;
-        __builtin_memcpy(&dst_prefix, dst_addr->in6_u.u6_addr32, 8);
-        if (!ct_value->need_prefix_replace || local_client_prefix == dst_prefix) {
-            return ct_is_static ? 1 : 0;
-        }
-        need_prefix_replace = true;
-        goto do_xdp_ingress_nptv6;
-    }
-
-    map_ret = nat6_check_ingress_static(ct_proto, dst_addr, dport, &local_client_prefix);
-    bool is_static = (map_ret != NAT6_STATIC_MISS);
-    need_prefix_replace = (map_ret == NAT6_STATIC_REPLACE);
-    *out_is_static = is_static;
-
-    __be64 client_prefix_hint = 0;
-    if (map_ret == NAT6_STATIC_REPLACE) {
-        client_prefix_hint = local_client_prefix;
-    } else if (map_ret == NAT6_STATIC_PASS) {
-        COPY_ADDR_FROM(&client_prefix_hint, dst_addr->in6_u.u6_addr8);
-    }
-
-    if (!allow_create) {
-        if (!is_static) return -1;
-        goto do_xdp_ingress_nptv6;
-    }
-
-    if (!is_static) return -1;
-
-    ct_value = xdp_create_ct6_ingress(wan_if, mark, off, src_addr, dst_addr, sport, dport,
-                                      npt_id_mask, &client_prefix_hint, need_prefix_replace);
-    if (ct_value) {
-        nat6_ct_advance_pkt(ct_proto, off->tcp_phase, NAT_MAPPING_INGRESS, ct_value);
-        xdp_nat6_metric_accumulate(data, data_end, true, ct_value);
-    }
-
-do_xdp_ingress_nptv6:
-    if (map_ret == NAT6_STATIC_PASS) {
-        return 1;
-    }
-
-    if (!need_prefix_replace) return 2;
-
     if (is_icmpx_error) {
         u32 inner_src_off = xdp_nat6_icmp_error_l3_offset(off) + offsetof(struct ipv6hdr, saddr);
         __be64 old_inner_ip_prefix;

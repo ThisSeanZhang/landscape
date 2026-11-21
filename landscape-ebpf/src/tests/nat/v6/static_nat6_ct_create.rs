@@ -9,7 +9,7 @@ use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     maps::nat::StaticNatMappingV6Item,
-    maps::{Nat6TimerKey, Nat6TimerValue},
+    maps::{Nat6MappingKey, Nat6TimerKey, Nat6TimerValue},
     skel::tc_nat6::TcNat6SkelBuilder,
     tests::TestSkb,
 };
@@ -41,27 +41,18 @@ fn npt_id_mask(prefix_len: u8) -> u8 {
     if prefix_len >= 64 { 0 } else { ((1u16 << (64 - prefix_len)) - 1) as u8 }
 }
 
-fn egress_ct6_key(src: Ipv6Addr, src_port: u16, l4proto: u8, prefix_len: u8) -> Nat6TimerKey {
-    let bytes = src.octets();
-    let mut suffix = [0u8; 8];
-    suffix.copy_from_slice(&bytes[8..]);
+fn ct_key(local: Ipv6Addr, port: u16, remote: Ipv6Addr, remote_port: u16) -> Nat6TimerKey {
+    let bytes = local.octets();
     Nat6TimerKey {
-        client_suffix: suffix,
-        client_port: src_port.to_be(),
-        id_byte: bytes[7] & npt_id_mask(prefix_len),
-        l4_protocol: l4proto,
-    }
-}
-
-fn ingress_ct6_key(dst: Ipv6Addr, dst_port: u16, l4proto: u8, prefix_len: u8) -> Nat6TimerKey {
-    let bytes = dst.octets();
-    let mut suffix = [0u8; 8];
-    suffix.copy_from_slice(&bytes[8..]);
-    Nat6TimerKey {
-        client_suffix: suffix,
-        client_port: dst_port.to_be(),
-        id_byte: bytes[7] & npt_id_mask(prefix_len),
-        l4_protocol: l4proto,
+        local: Nat6MappingKey {
+            client_suffix: bytes[8..].try_into().unwrap(),
+            client_port: port.to_be(),
+            id_byte: bytes[7] & npt_id_mask(60),
+            l4_protocol: 17,
+        },
+        remote_addr: remote.octets(),
+        remote_port: remote_port.to_be(),
+        _pad: 0,
     }
 }
 
@@ -146,7 +137,7 @@ mod tests {
         }
 
         // Verify CT was created with is_static=1
-        let ct_key = egress_ct6_key(lan_host(), 80, 17, 60);
+        let ct_key = ct_key(lan_host(), 80, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for egress");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for static-backed CT");
@@ -209,7 +200,7 @@ mod tests {
         }
 
         // Verify CT was created with is_static=1 (keyed by WAN destination)
-        let ct_key = ingress_ct6_key(wan_npt_ip, 80, 17, 60);
+        let ct_key = ct_key(wan_npt_ip, 80, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for ingress");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for static-backed ingress CT");
@@ -262,7 +253,7 @@ mod tests {
             panic!("expected IPv6 header in output");
         }
 
-        let ct_key = egress_ct6_key(lan_host(), 443, 17, 60);
+        let ct_key = ct_key(lan_host(), 443, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for egress with port=0 static");
         assert_eq!(ct_value.is_static, 1, "is_static should be 1 for port=0 static-backed CT");
@@ -317,7 +308,7 @@ mod tests {
             panic!("expected IPv6 header in output");
         }
 
-        let ct_key = ingress_ct6_key(wan_npt_ip, 443, 17, 60);
+        let ct_key = ct_key(wan_npt_ip, 443, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key)
             .expect("CT entry should have been created for ingress with port=0 static");
         assert_eq!(
@@ -369,7 +360,7 @@ mod tests {
             assert_eq!(Ipv6Addr::from(ipv6.source), local_wan_ip());
         }
 
-        let ct_key = egress_ct6_key(local_wan_ip(), 53, 17, 60);
+        let ct_key = ct_key(local_wan_ip(), 53, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key).expect("missing egress CT");
         assert_eq!(ct_value.is_static, 1);
         assert_eq!(ct_value.need_prefix_replace, 0);
@@ -417,7 +408,7 @@ mod tests {
             assert_eq!(Ipv6Addr::from(ipv6.destination), local_wan_ip());
         }
 
-        let ct_key = ingress_ct6_key(local_wan_ip(), 53, 17, 60);
+        let ct_key = ct_key(local_wan_ip(), 53, remote(), 9999);
         let ct_value = lookup_ct6(&skel.maps.nat6_timer_map, &ct_key).expect("missing ingress CT");
         assert_eq!(ct_value.is_static, 1);
         assert_eq!(ct_value.need_prefix_replace, 0);

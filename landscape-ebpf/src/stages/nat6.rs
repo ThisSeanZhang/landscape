@@ -6,7 +6,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
-// v6 NAT stage — TC (timer-map owner) + XDP (FD borrower)
+// v6 NAT stage — TC and XDP share the per-WAN mapping and CT maps
 // ========================================================================
 
 /// Bake value for the `wan_ro_prefix6` rodata field shared by the nat6
@@ -28,8 +28,8 @@ pub(crate) fn wan_ro_addr6(addr: Option<Ipv6Addr>) -> [u8; 16] {
     addr.map(|addr| addr.octets()).unwrap_or([0u8; 16])
 }
 
-/// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with a shared
-/// conntrack timer map.
+/// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with shared
+/// endpoint mapping and conntrack maps.
 pub struct Nat6Handle {
     pub tc: TcNat6Handle,
     pub xdp: XdpNat6Handle,
@@ -67,7 +67,7 @@ impl Drop for XdpNat6Handle {
 }
 
 // ========================================================================
-// v6 NAT (ingress + egress, TC owns the timer map, XDP borrows it)
+// v6 NAT (ingress + egress, TC owns the mapping and timer maps, XDP borrows both)
 // ========================================================================
 
 pub fn attach_nat6(
@@ -92,7 +92,7 @@ pub fn attach_nat6(
         None => 0,
     };
 
-    // ── 1. Load TC nat6 first (ingress + egress, for timer map sharing with XDP) ──
+    // ── 1. Load TC nat6 first (ingress + egress, to share its maps with XDP) ──
 
     let tc_builder = crate::skel::tc_nat6::TcNat6SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
@@ -119,7 +119,7 @@ pub fn attach_nat6(
 
     let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat6 skeleton")?;
 
-    // ── 2. Open XDP nat6, reuse TC's timer map FD ──
+    // ── 2. Open XDP nat6, reuse TC's mapping and timer map FDs ──
 
     let xdp_builder = crate::skel::xdp_nat6::XdpNat6SkelBuilder::default();
     let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
@@ -157,6 +157,10 @@ pub fn attach_nat6(
         "xdp_nat6 pin nat_metric_events"
     )?;
 
+    crate::bpf_ctx!(
+        xdp_open.maps.nat6_mapping_map.reuse_fd(tc_skel.maps.nat6_mapping_map.as_fd()),
+        "xdp_nat6 reuse nat6_mapping_map fd"
+    )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat6_timer_map.reuse_fd(tc_skel.maps.nat6_timer_map.as_fd()),
         "xdp_nat6 reuse nat6_timer_map fd"

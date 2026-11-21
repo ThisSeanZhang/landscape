@@ -16,7 +16,8 @@ const volatile u32 current_l3_offset = 14;
 /* Drive a disarmed CT through one production timer step. Return the delay in milliseconds. */
 SEC("tc")
 int nat6_report_tick(struct __sk_buff *skb) {
-    struct nat6_timer_key key = {.l4_protocol = IPPROTO_UDP};
+    struct nat6_timer_key key;
+    if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr), &key, sizeof(key))) return -1;
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
     if (!value) return -1;
 
@@ -26,12 +27,12 @@ int nat6_report_tick(struct __sk_buff *skb) {
 }
 
 static __always_inline struct nat6_timer_value *wake_test_ct(void) {
-    struct nat6_timer_key key = {.l4_protocol = IPPROTO_UDP};
+    struct nat6_timer_key key = {.local.l4_protocol = IPPROTO_UDP};
     struct nat6_timer_value *value = bpf_map_lookup_elem(&nat6_timer_map, &key);
     if (!value || bpf_timer_init(&value->timer, &nat6_timer_map, CLOCK_MONOTONIC) ||
         bpf_timer_set_callback(&value->timer, nat6_timer_clean_callback))
         return NULL;
-    if (nat6_ct_advance_pkt(key.l4_protocol, NAPT_TCP_PHASE_NONE, NAT_MAPPING_EGRESS, value))
+    if (nat6_ct_advance_pkt(key.local.l4_protocol, NAPT_TCP_PHASE_NONE, NAT_MAPPING_EGRESS, value))
         return NULL;
     return value;
 }
