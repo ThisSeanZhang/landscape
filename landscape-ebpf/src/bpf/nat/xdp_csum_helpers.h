@@ -39,6 +39,11 @@ static __always_inline __sum16 xdp_csum_apply(__sum16 old, __wsum delta) {
     return xdp_csum_fold(xdp_csum_add(delta, ~xdp_csum_unfold(old)));
 }
 
+static __always_inline __sum16 nat6_apply_l4_checksum(__sum16 old, __wsum delta, __u8 proto) {
+    __sum16 sum = xdp_csum_apply(old, delta);
+    return proto == IPPROTO_UDP && sum == 0 ? (__sum16)0xffff : sum;
+}
+
 /* IPv4 UDP uses zero to mean "checksum disabled". Preserve an existing zero,
  * but encode a computed zero as CSUM_MANGLED_0 on the wire.
  */

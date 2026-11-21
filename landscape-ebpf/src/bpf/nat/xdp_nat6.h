@@ -13,9 +13,22 @@
 #include "nat/nat_rodata6.h"
 #include "nat/xdp_csum_helpers.h"
 
-static __always_inline __sum16 xdp_nat6_apply_l4_checksum(__sum16 old, __wsum delta, u8 proto) {
-    __sum16 sum = xdp_csum_apply(old, delta);
-    return proto == IPPROTO_UDP && sum == 0 ? (__sum16)0xffff : sum;
+static __always_inline int xdp_nat6_update_quoted_checksum(struct xdp_md *ctx,
+                                                           const struct ip6_scan_offsets *off,
+                                                           __wsum addr_delta, __sum16 *outer_sum) {
+    u32 inner_csum_off = 0;
+    if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol, &inner_csum_off))
+        return -1;
+    if (inner_csum_off + sizeof(__sum16) > off->icmp_quote_end) return 0;
+
+    __sum16 old_sum;
+    if (bpf_xdp_load_bytes(ctx, inner_csum_off, &old_sum, sizeof(old_sum))) return -1;
+    __sum16 new_sum = nat6_apply_l4_checksum(old_sum, addr_delta, off->icmp_inner_l4_protocol);
+    if (bpf_xdp_store_bytes(ctx, inner_csum_off, &new_sum, sizeof(new_sum))) return -1;
+
+    __be32 from = old_sum, to = new_sum;
+    *outer_sum = xdp_csum_apply(*outer_sum, bpf_csum_diff(&from, 4, &to, 4, 0));
+    return 0;
 }
 
 static __always_inline u8 xdp_nat6_outer_protocol(const struct ip6_scan_offsets *off) {
@@ -200,10 +213,6 @@ do_xdp_nptv6:
             return -1;
 
         u32 inner_dst_off = xdp_nat6_icmp_error_l3_offset(off) + offsetof(struct ipv6hdr, daddr);
-        u32 inner_l4_csum_off = 0;
-        if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol,
-                             &inner_l4_csum_off))
-            return -1;
         u32 l4_csum_off = 0;
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
 
@@ -216,29 +225,16 @@ do_xdp_nptv6:
         __be64 new_sender_prefix =
             (old_sender_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
-        __be16 old_inner_l4_csum;
-        if (bpf_xdp_load_bytes(ctx, inner_l4_csum_off, &old_inner_l4_csum,
-                               sizeof(old_inner_l4_csum)))
-            return -1;
-
         __wsum addr_delta =
             bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&new_ip_prefix, 8, 0);
-        __be16 new_inner_l4_csum = xdp_csum_apply(old_inner_l4_csum, addr_delta);
 
         __be16 outer_csum;
         if (bpf_xdp_load_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
         outer_csum = xdp_csum_apply(outer_csum, addr_delta);
 
-        if (bpf_xdp_store_bytes(ctx, inner_l4_csum_off, &new_inner_l4_csum,
-                                sizeof(new_inner_l4_csum)))
-            return -1;
+        if (xdp_nat6_update_quoted_checksum(ctx, off, addr_delta, &outer_csum)) return -1;
         if (bpf_xdp_store_bytes(ctx, inner_dst_off, &new_ip_prefix, sizeof(new_ip_prefix)))
             return -1;
-
-        __be32 old_ic32 = (__be32)old_inner_l4_csum;
-        __be32 new_ic32 = (__be32)new_inner_l4_csum;
-        __wsum ic_delta = bpf_csum_diff(&old_ic32, 4, &new_ic32, 4, 0);
-        outer_csum = xdp_csum_apply(outer_csum, ic_delta);
 
         if (bpf_xdp_store_bytes(ctx, err_sender_off, &new_sender_prefix, sizeof(new_sender_prefix)))
             return -1;
@@ -265,7 +261,7 @@ do_xdp_nptv6:
         __be16 *csum_ptr = data + l4_csum_off;
         if ((void *)(csum_ptr + 1) > data_end) return -1;
         __wsum delta = bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&new_ip_prefix, 8, 0);
-        *csum_ptr = xdp_nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
+        *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
     return 0;
@@ -358,37 +354,20 @@ do_xdp_ingress_nptv6:
                                sizeof(old_inner_ip_prefix)))
             return -1;
 
-        u32 inner_l4_csum_off = 0;
         u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol,
-                             &inner_l4_csum_off))
-            return -1;
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
-
-        __be16 old_inner_l4_csum;
-        if (bpf_xdp_load_bytes(ctx, inner_l4_csum_off, &old_inner_l4_csum,
-                               sizeof(old_inner_l4_csum)))
-            return -1;
 
         __wsum addr_delta =
             bpf_csum_diff((__u32 *)&old_inner_ip_prefix, 8, (__u32 *)&local_client_prefix, 8, 0);
-        __be16 new_inner_l4_csum = xdp_csum_apply(old_inner_l4_csum, addr_delta);
 
         __be16 outer_csum;
         if (bpf_xdp_load_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
         outer_csum = xdp_csum_apply(outer_csum, addr_delta);
 
-        if (bpf_xdp_store_bytes(ctx, inner_l4_csum_off, &new_inner_l4_csum,
-                                sizeof(new_inner_l4_csum)))
-            return -1;
+        if (xdp_nat6_update_quoted_checksum(ctx, off, addr_delta, &outer_csum)) return -1;
         if (bpf_xdp_store_bytes(ctx, inner_src_off, &local_client_prefix,
                                 sizeof(local_client_prefix)))
             return -1;
-
-        __be32 old_ic32 = (__be32)old_inner_l4_csum;
-        __be32 new_ic32 = (__be32)new_inner_l4_csum;
-        __wsum ic_delta = bpf_csum_diff(&old_ic32, 4, &new_ic32, 4, 0);
-        outer_csum = xdp_csum_apply(outer_csum, ic_delta);
 
         u32 dst_ip_off = l3_offset + offsetof(struct ipv6hdr, daddr);
         if (bpf_xdp_store_bytes(ctx, dst_ip_off, &local_client_prefix, sizeof(local_client_prefix)))
@@ -413,7 +392,7 @@ do_xdp_ingress_nptv6:
         if ((void *)(csum_ptr + 1) > data_end) return -1;
         __wsum delta =
             bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&local_client_prefix, 8, 0);
-        *csum_ptr = xdp_nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
+        *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
     return 0;

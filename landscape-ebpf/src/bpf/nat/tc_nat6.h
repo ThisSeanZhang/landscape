@@ -8,6 +8,7 @@
 #include "nat/nat6_map_ops.h"
 #include "nat/nat6_ct_timer.h"
 #include "nat/nat_rodata6.h"
+#include "nat/xdp_csum_helpers.h"
 
 static __always_inline __u8 nat6_outer_protocol(const struct ip6_scan_offsets *off) {
     return off->icmp_inner_l4_offset ? NEXTHDR_ICMP : off->l4_protocol;
@@ -115,6 +116,26 @@ create_ct6_egress(struct __sk_buff *skb, const struct ip6_scan_offsets *off,
             return TC_ACT_SHOT;                                                                    \
         }                                                                                          \
     } while (0)
+
+static __always_inline int nat6_update_quoted_checksum(struct __sk_buff *skb,
+                                                       const struct ip6_scan_offsets *off,
+                                                       u32 outer_csum_off, __be64 old_prefix,
+                                                       __be64 new_prefix) {
+    u32 inner_csum_off = 0;
+    if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol, &inner_csum_off))
+        return TC_ACT_SHOT;
+    if (inner_csum_off + sizeof(__sum16) > off->icmp_quote_end) return TC_ACT_OK;
+
+    /* The quoted checksum is packet data even when the outer checksum is offloaded. */
+    __sum16 old_sum;
+    READ_SKB_U16(skb, inner_csum_off, old_sum);
+    __wsum delta = bpf_csum_diff((__be32 *)&old_prefix, 8, (__be32 *)&new_prefix, 8, 0);
+    __sum16 new_sum = nat6_apply_l4_checksum(old_sum, delta, off->icmp_inner_l4_protocol);
+    if (bpf_skb_store_bytes(skb, inner_csum_off, &new_sum, sizeof(new_sum), 0)) return TC_ACT_SHOT;
+    if (bpf_l4_csum_replace(skb, outer_csum_off, old_sum, new_sum, sizeof(new_sum)))
+        return TC_ACT_SHOT;
+    return TC_ACT_OK;
+}
 
 static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
                                                      const struct ip6_scan_offsets *off, u32 offset,
@@ -237,19 +258,10 @@ do_nptv6:
         new_sender_ip_prefix =
             (old_sender_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
-        u32 inner_l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol,
-                             &inner_l4_checksum_offset)) {
-            return TC_ACT_SHOT;
-        }
-
         u32 l4_checksum_offset = 0;
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
-
-        u16 old_inner_l4_checksum, new_inner_l4_checksum;
-        READ_SKB_U16(skb, inner_l4_checksum_offset, old_inner_l4_checksum);
 
         ret = bpf_skb_store_bytes(skb, inner_l3_ip_dst_offset, &new_ip_prefix, 8, 0);
         if (ret) {
@@ -257,21 +269,16 @@ do_nptv6:
             return TC_ACT_SHOT;
         }
 
-        L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_lan_log, skb, inner_l4_checksum_offset, old_ip_prefix,
-                                    new_ip_prefix, 0);
         L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_lan_log, skb, l4_checksum_offset, old_ip_prefix,
                                     new_ip_prefix, 0);
 
-        READ_SKB_U16(skb, inner_l4_checksum_offset, new_inner_l4_checksum);
-
-        ret = bpf_l4_csum_replace(skb, l4_checksum_offset, old_inner_l4_checksum,
-                                  new_inner_l4_checksum, 2);
-        if (ret) {
-            ld_from_lan_log("2 - bpf_l4_csum_replace err: %d", ret);
+        if (nat6_update_quoted_checksum(skb, off, l4_checksum_offset, old_ip_prefix, new_ip_prefix))
             return TC_ACT_SHOT;
-        }
 
-        bpf_skb_store_bytes(skb, error_sender_offset, &new_sender_ip_prefix, 8, 0);
+        /* Account for the outer IPv6 address in skb->csum as well as the ICMPv6 pseudo-header. */
+        if (bpf_skb_store_bytes(skb, error_sender_offset, &new_sender_ip_prefix, 8,
+                                BPF_F_RECOMPUTE_CSUM))
+            return TC_ACT_SHOT;
         L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_lan_log, skb, l4_checksum_offset, old_sender_ip_prefix,
                                     new_sender_ip_prefix, BPF_F_PSEUDO_HDR);
 
@@ -451,38 +458,26 @@ do_ingress_nptv6:
         old_inner_ip_prefix = *(__be64 *)p;
 #endif
 
-        u32 inner_l4_checksum_offset = 0;
         u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->icmp_inner_l4_offset, off->icmp_inner_l4_protocol,
-                             &inner_l4_checksum_offset)) {
-            return TC_ACT_SHOT;
-        }
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
             return TC_ACT_SHOT;
         }
-        u16 old_inner_l4_checksum, new_inner_l4_checksum;
-        READ_SKB_U16(skb, inner_l4_checksum_offset, old_inner_l4_checksum);
-
         ret = bpf_skb_store_bytes(skb, inner_l3_ip_src_offset, &local_client_prefix, 8, 0);
         if (ret) {
             ld_from_wan_log("bpf_skb_store_bytes err: %d", ret);
             return TC_ACT_SHOT;
         }
 
-        L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_wan_log, skb, inner_l4_checksum_offset,
-                                    old_inner_ip_prefix, local_client_prefix, 0);
         L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_wan_log, skb, l4_checksum_offset, old_inner_ip_prefix,
                                     local_client_prefix, 0);
-        READ_SKB_U16(skb, inner_l4_checksum_offset, new_inner_l4_checksum);
-        ret = bpf_l4_csum_replace(skb, l4_checksum_offset, old_inner_l4_checksum,
-                                  new_inner_l4_checksum, 2);
-        if (ret) {
-            ld_from_wan_log("2 - bpf_l4_csum_replace err: %d", ret);
+        if (nat6_update_quoted_checksum(skb, off, l4_checksum_offset, old_inner_ip_prefix,
+                                        local_client_prefix))
             return TC_ACT_SHOT;
-        }
 
         u32 ipv6_dst_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
-        bpf_skb_store_bytes(skb, ipv6_dst_offset, &local_client_prefix, 8, 0);
+        if (bpf_skb_store_bytes(skb, ipv6_dst_offset, &local_client_prefix, 8,
+                                BPF_F_RECOMPUTE_CSUM))
+            return TC_ACT_SHOT;
         L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_wan_log, skb, l4_checksum_offset, old_inner_ip_prefix,
                                     local_client_prefix, BPF_F_PSEUDO_HDR);
     } else {
