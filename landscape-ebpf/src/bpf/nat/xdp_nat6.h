@@ -13,6 +13,11 @@
 #include "nat/nat_rodata6.h"
 #include "nat/xdp_csum_helpers.h"
 
+static __always_inline __sum16 xdp_nat6_apply_l4_checksum(__sum16 old, __wsum delta, u8 proto) {
+    __sum16 sum = xdp_csum_apply(old, delta);
+    return proto == IPPROTO_UDP && sum == 0 ? (__sum16)0xffff : sum;
+}
+
 static __always_inline u8 xdp_nat6_outer_protocol(const struct ip6_scan_offsets *off) {
     return off->icmp_inner_l4_offset ? NEXTHDR_ICMP : off->l4_protocol;
 }
@@ -242,9 +247,6 @@ do_xdp_nptv6:
         outer_csum = xdp_csum_apply(outer_csum, sender_delta);
         if (bpf_xdp_store_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
     } else {
-        u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
-
         u32 ip_src_off = l3_offset + offsetof(struct ipv6hdr, saddr);
         void *src_ptr = data + ip_src_off;
         if (src_ptr + 8 > data_end) return -1;
@@ -256,11 +258,14 @@ do_xdp_nptv6:
             (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 
         __builtin_memcpy(src_ptr, &new_ip_prefix, 8);
+        if (off->frag_code == LAND_FRAG_NON_INITIAL) return 0;
 
+        u32 l4_csum_off = 0;
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
         __be16 *csum_ptr = data + l4_csum_off;
         if ((void *)(csum_ptr + 1) > data_end) return -1;
         __wsum delta = bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&new_ip_prefix, 8, 0);
-        *csum_ptr = xdp_csum_apply(*csum_ptr, delta);
+        *csum_ptr = xdp_nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
     return 0;
@@ -392,9 +397,6 @@ do_xdp_ingress_nptv6:
         outer_csum = xdp_csum_apply(outer_csum, addr_delta);
         if (bpf_xdp_store_bytes(ctx, l4_csum_off, &outer_csum, sizeof(outer_csum))) return -1;
     } else {
-        u32 l4_csum_off = 0;
-        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
-
         u32 dst_ip_off = l3_offset + offsetof(struct ipv6hdr, daddr);
         void *dst_ptr = data + dst_ip_off;
         if (dst_ptr + 8 > data_end) return -1;
@@ -403,12 +405,15 @@ do_xdp_ingress_nptv6:
         __builtin_memcpy(&old_ip_prefix, dst_addr->in6_u.u6_addr32, 8);
 
         __builtin_memcpy(dst_ptr, &local_client_prefix, 8);
+        if (off->frag_code == LAND_FRAG_NON_INITIAL) return 0;
 
+        u32 l4_csum_off = 0;
+        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
         __be16 *csum_ptr = data + l4_csum_off;
         if ((void *)(csum_ptr + 1) > data_end) return -1;
         __wsum delta =
             bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&local_client_prefix, 8, 0);
-        *csum_ptr = xdp_csum_apply(*csum_ptr, delta);
+        *csum_ptr = xdp_nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
     return 0;

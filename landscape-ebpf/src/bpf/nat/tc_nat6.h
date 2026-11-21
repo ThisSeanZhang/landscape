@@ -116,6 +116,35 @@ create_ct6_egress(struct __sk_buff *skb, const struct ip6_scan_offsets *off,
         }                                                                                          \
     } while (0)
 
+static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
+                                                     const struct ip6_scan_offsets *off, u32 offset,
+                                                     __be64 old_prefix, __be64 new_prefix) {
+    /* tc_nat_read6 has already pulled the outer IPv6 header into the linear part of the skb. */
+    char *addr = ip6_skb_data(skb) + offset;
+    barrier_var(addr);
+    if (addr + sizeof(new_prefix) > ip6_skb_data_end(skb)) return TC_ACT_SHOT;
+    __builtin_memcpy(addr, &new_prefix, sizeof(new_prefix));
+
+    /* Both address offsets are even, so the native-order delta needs no byte rotation. */
+    u64 delta = (~old_prefix >> 32) + (u32)~old_prefix + (new_prefix >> 32) + (u32)new_prefix;
+    delta = (delta >> 32) + (u32)delta;
+    __wsum prefix_diff = (delta >> 32) + (u32)delta;
+    /* -ENOTSUPP is expected for skb checksum modes other than CHECKSUM_COMPLETE. */
+    bpf_csum_update(skb, prefix_diff);
+    if (off->frag_code == LAND_FRAG_NON_INITIAL) return TC_ACT_UNSPEC;
+
+    u32 l4_checksum_offset = 0;
+    if (nat6_l4_checksum(off->l4_offset, off->l4_protocol, &l4_checksum_offset)) return TC_ACT_SHOT;
+    u64 flags = BPF_F_PSEUDO_HDR;
+    if (off->l4_protocol == IPPROTO_UDP) flags |= BPF_F_MARK_MANGLED_0 | BPF_F_MARK_ENFORCE;
+    int ret = bpf_l4_csum_replace(skb, l4_checksum_offset, 0, prefix_diff, flags);
+    if (ret) {
+        ld_log("l4_csum_replace for IPv6 prefix failed: %d", ret);
+        return TC_ACT_SHOT;
+    }
+    return TC_ACT_UNSPEC;
+}
+
 static __always_inline int ipv6_egress_prefix_check_and_replace(
     struct __sk_buff *skb, const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport, u32 ifindex) {
@@ -247,19 +276,12 @@ do_nptv6:
                                     new_sender_ip_prefix, BPF_F_PSEUDO_HDR);
 
     } else {
-        u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
-            return TC_ACT_SHOT;
-        }
-
         u32 ip_src_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
 
         __be64 old_ip_prefix, new_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, src_addr->in6_u.u6_addr32);
         new_ip_prefix = (old_ip_prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
-        bpf_skb_store_bytes(skb, ip_src_offset, &new_ip_prefix, 8, 0);
-        L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_lan_log, skb, l4_checksum_offset, old_ip_prefix,
-                                    new_ip_prefix, BPF_F_PSEUDO_HDR);
+        return nat6_replace_outer_prefix(skb, off, ip_src_offset, old_ip_prefix, new_ip_prefix);
     }
 
     return TC_ACT_UNSPEC;
@@ -464,19 +486,12 @@ do_ingress_nptv6:
         L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_wan_log, skb, l4_checksum_offset, old_inner_ip_prefix,
                                     local_client_prefix, BPF_F_PSEUDO_HDR);
     } else {
-        u32 l4_checksum_offset = 0;
-        if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_checksum_offset)) {
-            return TC_ACT_SHOT;
-        }
-
         u32 dst_ip_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
 
         __be64 old_ip_prefix;
         COPY_ADDR_FROM(&old_ip_prefix, dst_addr->in6_u.u6_addr32);
-        bpf_skb_store_bytes(skb, dst_ip_offset, &local_client_prefix, 8, 0);
-
-        L4_CSUM_REPLACE_U64_OR_SHOT(ld_from_wan_log, skb, l4_checksum_offset, old_ip_prefix,
-                                    local_client_prefix, BPF_F_PSEUDO_HDR);
+        return nat6_replace_outer_prefix(skb, off, dst_ip_offset, old_ip_prefix,
+                                         local_client_prefix);
     }
 
     return TC_ACT_UNSPEC;

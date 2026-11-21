@@ -82,7 +82,7 @@ fn packet_destination(packet: &[u8]) -> Ipv6Addr {
 /// metadata area into data_out as a prefix of the returned packet
 /// (test_run.c: size = data_end - data_meta), and the ingress static
 /// path allocates it via bpf_xdp_adjust_meta.
-const XDP_PIPE_META_LEN: usize = 12;
+pub(super) const XDP_PIPE_META_LEN: usize = 12;
 
 fn packet_data(output: &[u8]) -> &[u8] {
     if output.get(12..14) == Some(&[0x86, 0xdd]) { output } else { &output[XDP_PIPE_META_LEN..] }
