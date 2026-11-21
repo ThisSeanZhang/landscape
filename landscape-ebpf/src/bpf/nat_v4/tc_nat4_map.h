@@ -98,6 +98,7 @@ struct napt_ct_value {
     __u8 gress;
     __u8 flow_id;
     __u16 pad1;
+    __u32 cleanup_retry_ns;
 };
 
 _Static_assert(sizeof(struct napt_port_slot) == 8, "napt_port_slot must be 8 bytes");
@@ -194,12 +195,12 @@ static __always_inline int napt_wan_publish(__u8 proto, __be16 external_port,
 }
 
 /* Array slots cannot be deleted; FREE is a zeroed value. */
-static __always_inline void napt_wan_clear(__u8 proto, __be16 external_port) {
+static __always_inline int napt_wan_clear(__u8 proto, __be16 external_port) {
     __u32 index;
     struct napt_from_wan_value free_value = {};
 
-    if (!napt_wan_index(proto, external_port, &index)) return;
-    bpf_map_update_elem(&napt_from_wan, &index, &free_value, BPF_ANY);
+    if (!napt_wan_index(proto, external_port, &index)) return -1;
+    return bpf_map_update_elem(&napt_from_wan, &index, &free_value, BPF_ANY);
 }
 
 static __always_inline int napt_wan_can_create_ct(const struct napt_from_wan_value *value) {

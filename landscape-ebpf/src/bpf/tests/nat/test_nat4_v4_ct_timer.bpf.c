@@ -69,6 +69,17 @@ static __always_inline struct napt_ct_timer_test_result *napt_test_result(void) 
 }
 
 SEC("tc")
+int napt_ct_start_timer_test(struct __sk_buff *skb) {
+    (void)skb;
+    __u32 index = 0;
+    struct napt_ct_timer_test_input *input = bpf_map_lookup_elem(&napt_ct_timer_test_input, &index);
+    if (!input) return TC_ACT_SHOT;
+    struct napt_ct_value *ct = bpf_map_lookup_elem(&napt_ct, &input->key);
+    if (!ct || napt_ct_timer_init(ct) != 0) return TC_ACT_SHOT;
+    return napt_ct_timer_start(ct, 0) ? TC_ACT_OK : TC_ACT_SHOT;
+}
+
+SEC("tc")
 int napt_ct_timer_step_test(struct __sk_buff *skb) {
     (void)skb;
     __u32 index = 0;

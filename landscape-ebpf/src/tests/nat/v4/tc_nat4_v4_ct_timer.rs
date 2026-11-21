@@ -39,8 +39,8 @@ const REPORT_INTERVAL: u64 = 5_000_000_000;
 const TCP_SYN_TIMEOUT: u64 = 6_000_000_000;
 const TCP_TIMEOUT: u64 = 600_000_000_000;
 const UDP_TIMEOUT: u64 = 300_000_000_000;
-const DELETE_RETRY_INTERVAL: u64 = 100_000_000;
-const QUEUE_RETRY_INTERVAL: u64 = 500_000_000;
+const CLEAN_STEP_NS: u64 = 1_000;
+const CLEAN_RETRY_MAX_NS: u64 = 100_000_000;
 
 const LAN_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 100);
 const REMOTE_IP: Ipv4Addr = Ipv4Addr::new(50, 18, 88, 205);
@@ -342,7 +342,7 @@ mod tests {
             let result = run_step(skel, PROTO_UDP, false);
             assert_eq!(result.action, STEP_RESTART);
             assert_eq!(result.status, CT_DELETE_EGRESS);
-            assert_eq!(result.next_timeout, DELETE_RETRY_INTERVAL);
+            assert_eq!(result.next_timeout, CLEAN_STEP_NS);
             assert_dynamic_mapping(skel, STATE_CLOSED, 1);
         });
     }
@@ -455,13 +455,17 @@ mod tests {
                 PROTO_UDP,
                 &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_CLOSED, 1)),
             );
-            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_DELETE_INGRESS, GENERATION, 0));
+            let mut ct = ct_value(CT_DELETE_INGRESS, GENERATION, 0);
+            ct.cleanup_retry_ns = CLEAN_RETRY_MAX_NS as u32;
+            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct);
 
             let result = run_step(skel, PROTO_UDP, false);
             assert_eq!(result.action, STEP_RESTART);
             assert_eq!(result.status, CT_PUSH_QUEUE);
+            assert_eq!(result.next_timeout, CLEAN_STEP_NS);
             assert_eq!(result.wan_exists, 1);
             assert_eq!(result.kind, KIND_FREE);
+            assert_eq!(run_step(skel, PROTO_UDP, true).next_timeout, CLEAN_STEP_NS);
         });
     }
 
@@ -489,17 +493,84 @@ mod tests {
         with_skel(|skel| {
             put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_PUSH_QUEUE, GENERATION, 0));
 
-            let retry = run_step(skel, PROTO_UDP, true);
-            assert_eq!(retry.action, STEP_RESTART);
-            assert_eq!(retry.queue_push_ret, -1);
-            assert_eq!(retry.status, CT_PUSH_QUEUE);
-            assert_eq!(retry.next_timeout, QUEUE_RETRY_INTERVAL);
+            let mut delay = CLEAN_STEP_NS;
+            for _ in 0..20 {
+                let retry = run_step(skel, PROTO_UDP, true);
+                assert_eq!(retry.action, STEP_RESTART);
+                assert_eq!(retry.queue_push_ret, -1);
+                assert_eq!(retry.status, CT_PUSH_QUEUE);
+                assert_eq!(retry.next_timeout, delay);
+                delay = (delay * 2).min(CLEAN_RETRY_MAX_NS);
+            }
+
+            let lookup = run_resolve(skel, PROTO_UDP, GENERATION + 1, KIND_DYNAMIC);
+            assert_eq!((lookup.action, lookup.timer_exists), (0, 1));
 
             let done = run_step(skel, PROTO_UDP, false);
             assert_eq!(done.action, STEP_DELETE_CT);
             assert_eq!(done.queue_push_ret, 0);
             assert_eq!(done.timer_exists, 0);
         });
+    }
+
+    #[test]
+    fn kernel_timer_returns_port_after_full_queue_drains() {
+        use crate::tests::helper::net::wait_for;
+        use std::time::Duration;
+
+        let mut object = MaybeUninit::uninit();
+        let mut open = TestNat4V4CtTimerSkelBuilder::default().open(&mut object).unwrap();
+        open.maps.napt_udp_ports.set_max_entries(2).unwrap();
+        let skel = open.load().unwrap();
+        let ports = &skel.maps.napt_udp_ports;
+        let occupied = [NAT_PORT + 1, NAT_PORT + 2];
+        for port in occupied {
+            super::super::common::queue_push(ports, port, 0);
+        }
+        put_lan(&skel.maps.napt_from_lan, PROTO_UDP, &lan_value(KIND_DYNAMIC, GENERATION));
+        put_wan(
+            &skel.maps.napt_from_wan,
+            PROTO_UDP,
+            &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_ACTIVE, 1)),
+        );
+        put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_RELEASE, GENERATION, 0));
+
+        // Arm the production callback once. Only kernel timers advance this CT.
+        let key = ct_key(PROTO_UDP);
+        let input = types::napt_ct_timer_test_input { key, ..Default::default() };
+        skel.maps
+            .napt_ct_timer_test_input
+            .update(&0u32.to_ne_bytes(), as_bytes(&input), MapFlags::ANY)
+            .unwrap();
+        let packet = [0u8; 64];
+        let run = ProgramInput { data_in: Some(&packet), ..Default::default() };
+        assert_eq!(skel.progs.napt_ct_start_timer_test.test_run(run).unwrap().return_value, 0);
+
+        let lookup_ct = || skel.maps.napt_ct.lookup(as_bytes(&key), MapFlags::ANY).unwrap();
+        let timeout = Duration::from_secs(3);
+        wait_for("timer to retry the full port queue twice", timeout, || {
+            let bytes = lookup_ct().expect("CT must own the port while the queue is full");
+            let ct = read_unaligned::<types::napt_ct_value>(&bytes);
+            ct.status == CT_PUSH_QUEUE && u64::from(ct.cleanup_retry_ns) >= 4 * CLEAN_STEP_NS
+        });
+        assert!(
+            skel.maps
+                .napt_from_lan
+                .lookup(as_bytes(&lan_key(PROTO_UDP)), MapFlags::ANY)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(lookup_wan(&skel.maps.napt_from_wan, PROTO_UDP).unwrap().kind, KIND_FREE);
+        for port in occupied {
+            let bytes = ports.lookup_and_delete(&[]).unwrap().expect("original queue entry");
+            assert_eq!(u16::from_be(read_unaligned::<types::napt_port_slot>(&bytes).port), port);
+        }
+
+        wait_for("timer to finish returning the port", timeout, || lookup_ct().is_none());
+        let bytes = ports.lookup_and_delete(&[]).unwrap().expect("recycled port");
+        let slot = read_unaligned::<types::napt_port_slot>(&bytes);
+        assert_eq!((u16::from_be(slot.port), slot.generation), (NAT_PORT, GENERATION + 1));
+        assert!(ports.lookup_and_delete(&[]).unwrap().is_none());
     }
 
     #[test]
@@ -515,19 +586,27 @@ mod tests {
 
             let release = run_step(skel, PROTO_UDP, false);
             assert_eq!(release.status, CT_DELETE_EGRESS);
+            assert_eq!(release.next_timeout, CLEAN_STEP_NS);
 
             let delete_egress = run_step(skel, PROTO_UDP, false);
             assert_eq!(delete_egress.status, CT_DELETE_INGRESS);
+            assert_eq!(delete_egress.next_timeout, CLEAN_STEP_NS);
             assert_eq!(delete_egress.lan_exists, 0);
 
             let delete_ingress = run_step(skel, PROTO_UDP, false);
             assert_eq!(delete_ingress.status, CT_PUSH_QUEUE);
+            assert_eq!(delete_ingress.next_timeout, CLEAN_STEP_NS);
             assert_eq!(delete_ingress.kind, KIND_FREE);
 
             let finish = run_step(skel, PROTO_UDP, false);
             assert_eq!(finish.action, STEP_DELETE_CT);
             assert_eq!(finish.queue_push_ret, 0);
             assert_eq!(finish.timer_exists, 0);
+            let ports = &skel.maps.napt_udp_ports;
+            let bytes = ports.lookup_and_delete(&[]).unwrap().expect("recycled port");
+            let slot = read_unaligned::<types::napt_port_slot>(&bytes);
+            assert_eq!((u16::from_be(slot.port), slot.generation), (NAT_PORT, GENERATION + 1));
+            assert!(ports.lookup_and_delete(&[]).unwrap().is_none());
         });
     }
 
