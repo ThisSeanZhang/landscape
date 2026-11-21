@@ -97,7 +97,7 @@ struct napt_ct_value {
     __u32 ifindex;
     __u8 gress;
     __u8 flow_id;
-    __u16 pad1;
+    __u16 delete_report_failures;
     __u32 cleanup_retry_ns;
 };
 

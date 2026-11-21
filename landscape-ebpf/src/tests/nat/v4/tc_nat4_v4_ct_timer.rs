@@ -32,11 +32,12 @@ const CT_RELEASE_REF: u64 = 49;
 const CT_DELETE_LAN_MAPPING: u64 = 50;
 const CT_CLEAR_WAN_SLOT: u64 = 51;
 const CT_RETURN_PORT: u64 = 52;
+const CT_RETRY_DELETE_REPORT: u64 = 53;
 
 const STEP_DELETE_CT: u32 = 1;
 const STEP_RESTART: u32 = 2;
 
-const REPORT_INTERVAL: u64 = 5_000_000_000;
+const REPORT_INTERVAL: u64 = 1_000_000_000;
 const TCP_SYN_TIMEOUT: u64 = 6_000_000_000;
 const TCP_TIMEOUT: u64 = 600_000_000_000;
 const UDP_TIMEOUT: u64 = 300_000_000_000;
@@ -279,6 +280,209 @@ fn assert_dynamic_mapping(skel: &TestNat4V4CtTimerSkel<'_>, state: u64, refs: u6
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::metric::connect::{ConnectMetric, ConnectStatusType};
+    use libbpf_rs::RingBufferBuilder;
+    use std::cell::RefCell;
+
+    fn fill_metric_ring(skel: &TestNat4V4CtTimerSkel<'_>) {
+        let max_reports =
+            skel.maps.nat_metric_events.max_entries() as usize / size_of::<ConnectMetric>();
+        for _ in 0..=max_reports {
+            put_ct(&skel.maps.napt_ct, PROTO_TCP, &ct_value(CT_ACTIVE, GENERATION, 0));
+            run_step(skel, PROTO_TCP, false);
+        }
+    }
+
+    fn with_full_metric_ring(
+        test: impl FnOnce(&TestNat4V4CtTimerSkel<'_>, &dyn Fn() -> Vec<ConnectMetric>),
+    ) {
+        let mut object = MaybeUninit::uninit();
+        let mut open = TestNat4V4CtTimerSkelBuilder::default().open(&mut object).unwrap();
+        open.maps.nat_metric_events.set_max_entries(4096).unwrap();
+        let skel = open.load().unwrap();
+        let metrics = &skel.maps.nat_metric_events;
+        let reports = RefCell::new(Vec::new());
+        let mut builder = RingBufferBuilder::new();
+        builder
+            .add(metrics, |data| {
+                let Ok(event) = ConnectMetric::try_from(data) else { return -libc::EINVAL };
+                reports.borrow_mut().push(event);
+                0
+            })
+            .unwrap();
+        let ring = builder.build().unwrap();
+        fill_metric_ring(&skel);
+        test(&skel, &|| {
+            ring.consume().unwrap();
+            reports.take()
+        });
+    }
+
+    #[test]
+    fn full_metric_ring_does_not_delay_ct_aging() {
+        with_full_metric_ring(|skel, drain| {
+            let ticks = [
+                (CT_IDLE_CHECK_1, REPORT_INTERVAL),
+                (CT_IDLE_CHECK_2, REPORT_INTERVAL),
+                (CT_WAIT_TIMEOUT, UDP_TIMEOUT),
+            ];
+            let age_ct = || {
+                put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_ACTIVE, GENERATION, 0));
+                for (status, delay) in ticks {
+                    let step = run_step(skel, PROTO_UDP, false);
+                    assert_eq!(
+                        (step.action, step.status, step.next_timeout),
+                        (STEP_RESTART, status, delay)
+                    );
+                }
+            };
+
+            age_ct();
+            let reports = drain();
+            assert!(!reports.is_empty() && reports.iter().all(|e| e.l4_proto == PROTO_TCP));
+
+            age_ct();
+            assert_eq!(drain().len(), ticks.len());
+        });
+    }
+
+    #[test]
+    fn full_metric_ring_drops_delete_after_three_attempts() {
+        with_full_metric_ring(|skel, drain| {
+            // Shared, static and stale CTs release only their own resources before retrying.
+            for (kind, generation, refs, remaining_refs) in [
+                (KIND_DYNAMIC, GENERATION, 2, 1),
+                (KIND_STATIC, GENERATION, 0, 0),
+                (KIND_DYNAMIC, GENERATION + 1, 1, 1),
+            ] {
+                put_lan(&skel.maps.napt_from_lan, PROTO_UDP, &lan_value(kind, generation));
+                put_wan(
+                    &skel.maps.napt_from_wan,
+                    PROTO_UDP,
+                    &wan_value(kind, generation, state_ref(STATE_ACTIVE, refs)),
+                );
+                put_ct(
+                    &skel.maps.napt_ct,
+                    PROTO_UDP,
+                    &ct_value(CT_WAIT_TIMEOUT, GENERATION, u8::from(kind == KIND_STATIC)),
+                );
+                for delay in [10_000_000, 20_000_000] {
+                    let step = run_step(skel, PROTO_UDP, false);
+                    assert_eq!(
+                        (step.action, step.status, step.next_timeout),
+                        (STEP_RESTART, CT_RETRY_DELETE_REPORT, delay)
+                    );
+                    assert_eq!(
+                        (step.kind, step.r#gen, step.state_ref),
+                        (kind, generation, state_ref(STATE_ACTIVE, remaining_refs))
+                    );
+                }
+                let done = run_step(skel, PROTO_UDP, false);
+                assert_eq!(
+                    (done.action, done.timer_exists, done.lan_exists),
+                    (STEP_DELETE_CT, 0, 1)
+                );
+                assert_eq!(
+                    (done.kind, done.r#gen, done.state_ref),
+                    (kind, generation, state_ref(STATE_ACTIVE, remaining_refs))
+                );
+                assert!(skel.maps.napt_udp_ports.lookup_and_delete(&[]).unwrap().is_none());
+            }
+            let reports = drain();
+            assert!(
+                !reports.is_empty()
+                    && reports.iter().all(|e| e.status_type() == ConnectStatusType::Active)
+            );
+        });
+    }
+
+    #[test]
+    fn delete_report_stops_after_first_successful_retry() {
+        with_full_metric_ring(|skel, drain| {
+            put_ct(&skel.maps.napt_ct, PROTO_UDP, &ct_value(CT_WAIT_TIMEOUT, GENERATION, 1));
+            let pending = run_step(skel, PROTO_UDP, false);
+            assert_eq!(
+                (pending.status, pending.next_timeout),
+                (CT_RETRY_DELETE_REPORT, 10_000_000)
+            );
+            assert!(!drain().is_empty());
+
+            let done = run_step(skel, PROTO_UDP, false);
+            assert_eq!((done.action, done.timer_exists), (STEP_DELETE_CT, 0));
+            let reports = drain();
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].status_type(), ConnectStatusType::Disabled);
+        });
+    }
+
+    #[test]
+    fn delete_report_retry_succeeds_after_another_flow_reuses_the_port() {
+        use super::super::common::{WAN_IP, parse_udp, run, udp_pkt};
+        use crate::tests::tc_nat4_v4_skel::TcNat4V4SkelBuilder;
+        use std::os::fd::AsFd;
+
+        with_full_metric_ring(|skel, drain| {
+            let mut object = MaybeUninit::uninit();
+            let mut open = TcNat4V4SkelBuilder::default().open(&mut object).unwrap();
+            let config = open.maps.rodata_data.as_deref_mut().unwrap();
+            config.current_l3_offset = 14;
+            config.land_nat_external_addr = be32(WAN_IP);
+            open.maps.napt_ct.reuse_fd(skel.maps.napt_ct.as_fd()).unwrap();
+            open.maps.napt_from_lan.reuse_fd(skel.maps.napt_from_lan.as_fd()).unwrap();
+            open.maps.napt_from_wan.reuse_fd(skel.maps.napt_from_wan.as_fd()).unwrap();
+            open.maps.napt_udp_ports.reuse_fd(skel.maps.napt_udp_ports.as_fd()).unwrap();
+            let tc = open.load().unwrap();
+
+            put_lan(&skel.maps.napt_from_lan, PROTO_UDP, &lan_value(KIND_DYNAMIC, GENERATION));
+            put_wan(
+                &skel.maps.napt_from_wan,
+                PROTO_UDP,
+                &wan_value(KIND_DYNAMIC, GENERATION, state_ref(STATE_ACTIVE, 1)),
+            );
+            let mut old = ct_value(CT_WAIT_TIMEOUT, GENERATION, 0);
+            old.create_time = 12345;
+            old.ingress_bytes = 456;
+            put_ct(&skel.maps.napt_ct, PROTO_UDP, &old);
+            for status in [CT_DELETE_LAN_MAPPING, CT_CLEAR_WAN_SLOT, CT_RETURN_PORT] {
+                let step = run_step(skel, PROTO_UDP, false);
+                assert_eq!((step.status, step.next_timeout), (status, CLEAN_STEP_NS));
+            }
+            let blocked = run_step(skel, PROTO_UDP, true);
+            assert_eq!((blocked.status, blocked.queue_push_ret), (CT_RETURN_PORT, -1));
+            let pending = run_step(skel, PROTO_UDP, false);
+            assert_eq!(
+                (pending.status, pending.queue_push_ret, pending.next_timeout),
+                (CT_RETRY_DELETE_REPORT, 0, 10_000_000)
+            );
+
+            let packet = udp_pkt(LAN_IP, REMOTE_IP, LAN_PORT, REMOTE_PORT + 1);
+            let (action, out) = run(&tc.progs.tc_v4_from_lan, &packet);
+            assert_eq!(action, -1); // TC_ACT_UNSPEC
+            let out = parse_udp(&out);
+            assert_eq!((out.src, out.sport), (WAN_IP, NAT_PORT));
+            let lookup = run_resolve(skel, PROTO_UDP, GENERATION + 1, KIND_DYNAMIC);
+            assert_eq!((lookup.action, lookup.timer_exists), (0, 1));
+
+            let retry = run_step(skel, PROTO_UDP, false);
+            assert_eq!((retry.status, retry.next_timeout), (CT_RETRY_DELETE_REPORT, 20_000_000));
+            assert!(drain().iter().all(|e| e.status_type() == ConnectStatusType::Active));
+            let done = run_step(skel, PROTO_UDP, false);
+            assert_eq!((done.action, done.timer_exists, done.lan_exists), (STEP_DELETE_CT, 0, 1));
+            assert_eq!(
+                (done.kind, done.r#gen, done.state_ref),
+                (KIND_DYNAMIC, GENERATION + 1, state_ref(STATE_ACTIVE, 1))
+            );
+            assert!(skel.maps.napt_udp_ports.lookup_and_delete(&[]).unwrap().is_none());
+            let reports = drain();
+            assert_eq!(reports.len(), 1);
+            let report = &reports[0];
+            assert_eq!(report.status_type(), ConnectStatusType::Disabled);
+            assert_eq!(
+                (report.dst_port, report.create_time, report.ingress_bytes),
+                (REMOTE_PORT, old.create_time, old.ingress_bytes)
+            );
+        });
+    }
 
     #[test]
     fn active_transitions_to_idle_check_1() {
@@ -541,14 +745,16 @@ mod tests {
     }
 
     #[test]
-    fn kernel_timer_returns_port_after_full_queue_drains() {
+    fn kernel_timer_returns_port_after_full_queue_drains_with_metric_ring_full() {
         use crate::tests::helper::net::wait_for;
         use std::time::Duration;
 
         let mut object = MaybeUninit::uninit();
         let mut open = TestNat4V4CtTimerSkelBuilder::default().open(&mut object).unwrap();
         open.maps.napt_udp_ports.set_max_entries(2).unwrap();
+        open.maps.nat_metric_events.set_max_entries(4096).unwrap();
         let skel = open.load().unwrap();
+        fill_metric_ring(&skel);
         let ports = &skel.maps.napt_udp_ports;
         let occupied = [NAT_PORT + 1, NAT_PORT + 2];
         for port in occupied {
