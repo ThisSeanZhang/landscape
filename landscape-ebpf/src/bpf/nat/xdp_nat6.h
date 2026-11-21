@@ -108,7 +108,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
         __be16 *csum_ptr = data + l4_csum_off;
         if ((void *)(csum_ptr + 1) > data_end) return -1;
-        __wsum delta = bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&new_ip_prefix, 8, 0);
+        __wsum delta = nat6_prefix_diff(old_ip_prefix, new_ip_prefix);
         *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
@@ -174,8 +174,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
         if (nat6_l4_checksum(off->l4_offset, outer_proto, &l4_csum_off)) return -1;
         __be16 *csum_ptr = data + l4_csum_off;
         if ((void *)(csum_ptr + 1) > data_end) return -1;
-        __wsum delta =
-            bpf_csum_diff((__u32 *)&old_ip_prefix, 8, (__u32 *)&local_client_prefix, 8, 0);
+        __wsum delta = nat6_prefix_diff(old_ip_prefix, local_client_prefix);
         *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 

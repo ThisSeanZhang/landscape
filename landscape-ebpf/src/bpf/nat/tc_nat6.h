@@ -16,13 +16,6 @@ static __always_inline bool nat6_is_icmp_error(const struct ip6_scan_offsets *of
     return off->icmp_inner_l4_offset != 0;
 }
 
-static __always_inline __wsum nat6_prefix_diff(__be64 old_prefix, __be64 new_prefix) {
-    /* IPv6 address fields start at even offsets in both supported L2 layouts. */
-    u64 delta = (~old_prefix >> 32) + (u32)~old_prefix + (new_prefix >> 32) + (u32)new_prefix;
-    delta = (delta >> 32) + (u32)delta;
-    return (delta >> 32) + (u32)delta;
-}
-
 static __always_inline __be64 nat6_wan_prefix(__be64 prefix) {
     return (prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 }
