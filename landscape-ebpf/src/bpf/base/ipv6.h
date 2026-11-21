@@ -78,6 +78,11 @@ static __always_inline char *ip6_skb_data_end(const struct __sk_buff *skb) {
     return (char *)(long)v;
 }
 
+static __always_inline int ip6_skb_may_pull(struct __sk_buff *skb, __u32 end) {
+    if (ip6_skb_data(skb) + end <= ip6_skb_data_end(skb)) return 0;
+    return bpf_skb_pull_data(skb, end);
+}
+
 struct ip6_scan_offsets {
     __u8 l3_offset;
     __u16 l4_offset;
@@ -327,7 +332,7 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     if (packet_end > skb->len || packet_end - l4_offset > ICMP6_ERROR_MAX_TOTAL_LEN) return -1;
 
     __u32 need = l4_offset + sizeof(struct icmp6hdr) + sizeof(struct ipv6hdr);
-    if (bpf_skb_pull_data(skb, need) != 0) return -1;
+    if (ip6_skb_may_pull(skb, need) != 0) return -1;
 
     char *data = ip6_skb_data(skb);
     char *data_end = ip6_skb_data_end(skb);
@@ -361,7 +366,7 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
 
     if (inner.frag_code == LAND_FRAG_NON_INITIAL) return -1;
     if (inner.l4_offset + 8U > quote_end) return -1;
-    if (bpf_skb_pull_data(skb, inner.l4_offset + 8U) != 0) return -1;
+    if (ip6_skb_may_pull(skb, inner.l4_offset + 8U) != 0) return -1;
 
     data = ip6_skb_data(skb);
     data_end = ip6_skb_data_end(skb);

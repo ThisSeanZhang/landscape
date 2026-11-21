@@ -109,7 +109,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
 
     if (pull_len > packet_end) pull_len = packet_end;
     if (pull_len > skb->len) pull_len = skb->len;
-    if (bpf_skb_pull_data(skb, pull_len) != 0) return 0;
+    if (ip6_skb_may_pull(skb, pull_len) != 0) return 0;
 
     data = ip6_skb_data(skb);
     data_end = ip6_skb_data_end(skb);

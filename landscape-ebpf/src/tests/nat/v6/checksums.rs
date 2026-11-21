@@ -10,6 +10,8 @@ use libbpf_rs::{
 };
 use zerocopy::FromBytes;
 
+mod tap;
+
 use super::static_nat_xdp::XDP_PIPE_META_LEN;
 use crate::{
     maps::{
