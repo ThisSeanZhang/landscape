@@ -24,6 +24,7 @@ use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
 
 use super::WanLinkDataplane;
+use super::from_lan::WanEgressBinding;
 
 use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
 use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
@@ -43,9 +44,8 @@ pub(super) struct IngressRoot {
 }
 
 pub(super) struct EgressRoot {
-    _skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
+    pub(super) skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
     _backing: OwnedOpenObject,
-    next_stage_fd: i32,
 }
 
 // Family-indexed link_chain_id slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.
@@ -79,7 +79,15 @@ impl WanLinkDataplane {
                 TC_SLOT_V6,
             ),
             TcChainDir::WanEgress => relink_family_stages(
-                state.egress_root.as_ref().unwrap().next_stage_fd,
+                state
+                    .egress_root
+                    .as_ref()
+                    .unwrap()
+                    .skel
+                    .maps
+                    .wan_egress_root_next_stage
+                    .as_fd()
+                    .as_raw_fd(),
                 &state.egress_stages,
                 TC_SLOT_V4,
                 TC_SLOT_V6,
@@ -131,20 +139,33 @@ impl WanLinkDataplane {
         })
     }
 
-    pub(super) fn create_egress_root(
+    pub(super) fn build_egress_root(
         backbone: &RouteBackbone,
-        link_chain_id: u16,
-        l3_offset: u32,
+        binding: &WanEgressBinding,
+        previous: Option<&EgressRoot>,
     ) -> LdEbpfResult<EgressRoot> {
         let egress_builder = TcWanEgressRootSkelBuilder::default();
         let (egress_back, egress_obj) = OwnedOpenObject::new();
         let mut egress_open_skel =
             bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
 
-        // chain cb hard limit: l3 lives in 8 bits.
-        assert!(l3_offset <= u8::MAX as u32, "l3 offset {l3_offset} exceeds cb slot");
-
-        egress_open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = l3_offset;
+        let rodata = egress_open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.current_l3_offset = if binding.has_l2 { 14 } else { 0 };
+        rodata.egress_binding = crate::skel::tc_wan_egress_root::types::wan_egress_binding {
+            ifindex: binding.ifindex,
+            wan_ip4: binding.wan_ip4,
+            wan_mask4: binding.wan_mask4,
+            gateway_ip4: binding.gateway_ip4,
+            source_mac: binding.source_mac,
+            has_ipv4: u8::from(binding.has_ipv4),
+            has_l2: u8::from(binding.has_l2),
+        };
+        if let Some(old) = previous {
+            egress_open_skel
+                .maps
+                .wan_egress_root_next_stage
+                .reuse_fd(old.skel.maps.wan_egress_root_next_stage.as_fd())?;
+        }
 
         pin_and_reuse_map(
             &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
@@ -153,21 +174,7 @@ impl WanLinkDataplane {
         // See create_ingress_root: frag caches are initialized once by maps::init_path.
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 
-        let egress_root_fd = egress_skel.progs.tc_wan_egress_root.as_fd().as_raw_fd();
-        let eg_next_fd = egress_skel.maps.wan_egress_root_next_stage.as_fd().as_raw_fd();
-
-        let slot_key = (link_chain_id as u32).to_ne_bytes();
-        pinned_map(&backbone.paths().tc_wan_egress_roots_path())?.update(
-            &slot_key,
-            &egress_root_fd.to_ne_bytes(),
-            MapFlags::ANY,
-        )?;
-
-        Ok(EgressRoot {
-            _skel: egress_skel,
-            _backing: egress_back,
-            next_stage_fd: eg_next_fd,
-        })
+        Ok(EgressRoot { skel: egress_skel, _backing: egress_back })
     }
 }
 

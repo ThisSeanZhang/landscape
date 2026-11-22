@@ -3,11 +3,14 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
+#include "chain/from_lan_root.h"
 
 #include "chain/tc_wan_exit_maps.h"
 #include "chain/tc_cb.h"
 
 char LICENSE[] SEC("license") = "GPL";
+
+const volatile struct wan_egress_binding egress_binding = {};
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);

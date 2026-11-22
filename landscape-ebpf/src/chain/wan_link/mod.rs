@@ -13,6 +13,7 @@
 //! hook planes' stage plumbing (state, root loaders, relinks,
 //! loader-facing views) lives in the [`xdp`] and [`tc`] submodules.
 
+mod from_lan;
 mod tc;
 mod xdp;
 
@@ -29,12 +30,12 @@ use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use libbpf_rs::MapCore;
 
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::stage::StageTable;
 use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
 
+use from_lan::WanEgressBinding;
 use tc::TcChainState;
 use tc::TcChainView;
 use xdp::XdpChainState;
@@ -62,11 +63,8 @@ fn to_bpf_tmpl(tmpl: &PppoeEgressTmpl) -> BpfPppoeTmpl {
     }
 }
 
-/// One recorded WAN address binding: the map key it was written under.
-/// The full payload is kept (not just the ifindex) because Phase 2
-/// bakes these values into the NAT stage's rodata at reload time.
+/// WAN address binding used for root configuration and dispatch-trie publication.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct AddrBind {
     ifindex: u32,
     addr: IpAddr,
@@ -82,6 +80,7 @@ struct Inner {
     v4: Option<AddrBind>,
     v6: Option<AddrBind>,
     closed: bool,
+    published_egress_binding: Option<WanEgressBinding>,
     xdp: XdpChainState,
     tc: TcChainState,
 }
@@ -106,32 +105,16 @@ impl WanLinkDataplane {
         ifindex: Option<u32>,
         has_eth_header: bool,
     ) -> LdEbpfResult<Arc<Self>> {
-        let wan_root = Self::create_wan_root(&backbone, id)?;
-        let lan_root = Self::create_lan_side_root(&backbone, id)?;
-        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
-        let ingress_root = Self::create_ingress_root(&backbone, id, l3_offset)?;
-        let egress_root = Self::create_egress_root(&backbone, id, l3_offset)?;
-
-        let inner = Inner {
-            ifindex,
-            has_eth_header,
-            v4: None,
-            v6: None,
-            closed: false,
-            xdp: XdpChainState {
-                wan_root: Some(wan_root),
-                lan_root: Some(lan_root),
-                lan_stages: StageTable::default(),
-                wan_stages: StageTable::default(),
-            },
-            tc: TcChainState {
-                ingress_root: Some(ingress_root),
-                egress_root: Some(egress_root),
-                ingress_stages: StageTable::default(),
-                egress_stages: StageTable::default(),
-            },
-        };
-        Ok(Arc::new(Self { backbone, id, inner: Mutex::new(inner) }))
+        let inner = Inner { ifindex, has_eth_header, ..Inner::default() };
+        let dp = Arc::new(Self { backbone, id, inner: Mutex::new(inner) });
+        {
+            let mut inner = dp.inner.lock().unwrap();
+            inner.xdp.wan_root = Some(Self::create_wan_root(&dp.backbone, id)?);
+            let l3_offset = if has_eth_header { 14 } else { 0 };
+            inner.tc.ingress_root = Some(Self::create_ingress_root(&dp.backbone, id, l3_offset)?);
+            dp.refresh_from_lan_roots(&mut inner)?;
+        }
+        Ok(dp)
     }
 
     /// This link's chain id.
@@ -148,26 +131,23 @@ impl WanLinkDataplane {
     /// entry point refreshes the pairing instead of validating it.
     pub fn observe(&self, ifindex: u32, has_eth_header: bool) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        self.observe_interface(&mut inner, ifindex, has_eth_header);
+        self.sync_from_lan_roots(&mut inner);
+    }
+
+    fn observe_interface(&self, inner: &mut Inner, ifindex: u32, has_eth_header: bool) {
         if has_eth_header != inner.has_eth_header
             && inner.tc.ingress_stages.is_empty()
             && inner.tc.egress_stages.is_empty()
         {
-            // No stages attached yet: rebuild the TC roots with the
-            // corrected L3 offset (hotplug case — the link object was
-            // constructed before its interface appeared).
-            let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
-            match (
-                Self::create_ingress_root(&self.backbone, self.id, l3_offset),
-                Self::create_egress_root(&self.backbone, self.id, l3_offset),
-            ) {
-                (Ok(i), Ok(e)) => {
-                    inner.tc.ingress_root = Some(i);
-                    inner.tc.egress_root = Some(e);
-                }
-                (Err(err), _) | (_, Err(err)) => tracing::warn!(
-                    chain = self.id,
-                    error = %err,
-                    "rebuild tc roots after has_eth flip failed"
+            let l3_offset = if has_eth_header { 14 } else { 0 };
+            match Self::create_ingress_root(&self.backbone, self.id, l3_offset) {
+                Ok(root) => inner.tc.ingress_root = Some(root),
+                Err(err) => tracing::warn!(
+                    chain = self.id, error = %err, "rebuilding TC ingress root after link change failed"
                 ),
             }
         }
@@ -179,18 +159,12 @@ impl WanLinkDataplane {
                     ifindex,
                     "wan link rebound to a new ifindex"
                 );
-                inner.ifindex = Some(ifindex);
-                inner.has_eth_header = has_eth_header;
             }
-            Some(_) => {
-                inner.has_eth_header = has_eth_header;
-            }
-            None => {
-                tracing::debug!(chain = self.id, ifindex, "wan link bound to ifindex");
-                inner.ifindex = Some(ifindex);
-                inner.has_eth_header = has_eth_header;
-            }
+            None => tracing::debug!(chain = self.id, ifindex, "wan link bound to ifindex"),
+            _ => {}
         }
+        inner.ifindex = Some(ifindex);
+        inner.has_eth_header = has_eth_header;
     }
 
     // ── stage attach entry points ──
@@ -292,7 +266,11 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        self.observe(ifindex, mac.is_some());
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        self.observe_interface(&mut inner, ifindex, mac.is_some());
         maps::wan::add_ipv4_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
         let bind = AddrBind {
             ifindex,
@@ -302,16 +280,22 @@ impl WanLinkDataplane {
             mac,
         };
         self.publish_bind(&bind);
-        self.inner.lock().unwrap().v4 = Some(bind);
+        inner.v4 = Some(bind);
+        self.sync_from_lan_roots(&mut inner);
     }
 
     pub fn unbind_wan_ipv4(&self) {
-        if let Some(bind) = self.inner.lock().unwrap().v4.take() {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        if let Some(bind) = inner.v4.take() {
             maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv4 without a recorded binding");
         }
+        self.sync_from_lan_roots(&mut inner);
     }
 
     pub fn bind_wan_ipv6(
@@ -322,7 +306,11 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        self.observe(ifindex, mac.is_some());
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        self.observe_interface(&mut inner, ifindex, mac.is_some());
         maps::wan::add_ipv6_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
         let bind = AddrBind {
             ifindex,
@@ -332,7 +320,8 @@ impl WanLinkDataplane {
             mac,
         };
         self.publish_bind(&bind);
-        self.inner.lock().unwrap().v6 = Some(bind);
+        inner.v6 = Some(bind);
+        self.sync_from_lan_roots(&mut inner);
     }
 
     pub fn unbind_wan_ipv6(&self) {

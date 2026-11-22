@@ -5,6 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "base/landscape.h"
+#include "chain/from_lan_root.h"
 #include "reader/xdp_l3.h"
 #include "chain/xdp_meta.h"
 #include "chain/xdp_cb.h"
@@ -13,6 +14,8 @@
 #include "chain/xdp_lan_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
+
+const volatile struct wan_egress_binding egress_binding = {};
 
 /* Chain id of the owning WAN link; stamped into the packet metadata
  * alongside the mark/target_ifindex written by xdp_lan_route. */
