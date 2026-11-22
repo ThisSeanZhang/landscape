@@ -1,213 +1,94 @@
 <script setup lang="ts">
-import {
-  get_geo_site_cache_detail,
-  get_geo_site_configs,
-  search_geo_site_cache,
-} from "@/api/geo/site";
-import { renderGeoSelectLabel, sortGeoKeys } from "@/lib/geo_utils";
-import type {
-  GeoFileCacheKey,
-  GeoSiteSourceConfig,
-} from "@landscape-router/types/api/schemas";
-import { computed, onMounted, ref } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { getGeoSiteAttributes } from "@landscape-router/types/api/geo-sites/geo-sites";
+import GeoRuleKeySelect from "@/components/geo/GeoRuleKeySelect.vue";
 
-const key = defineModel<string | null>("geo_key", {
-  required: true,
-  default: null,
-});
-const name = defineModel<string | null>("geo_name", {
-  required: true,
-  default: null,
-});
-const inverse = defineModel<boolean>("geo_inverse", {
-  default: false,
-});
-
-const attribute_key = defineModel<string | null>("attr_key");
-
-const emit = defineEmits(["refresh"]);
+const key = defineModel<string | null>("geo_key", { required: true });
+const name = defineModel<string | null>("geo_name", { required: true });
+const inverse = defineModel<boolean>("geo_inverse", { default: false });
+const attribute = defineModel<string | null>("attr_key");
 const { t } = useI18n();
 
-const loading_name = ref(false);
-const loading_key = ref(false);
-const loading_attrs = ref(false);
+const attributesOpen = ref(false);
+const loading = ref(false);
+const failed = ref(false);
+const options = ref<{ label: string; value: string }[]>([]);
+watch(
+  [attributesOpen, name, key],
+  async ([open, source, entry], _, onCleanup) => {
+    options.value = [];
+    failed.value = false;
+    loading.value = false;
+    if (!open || !source || !entry) return;
 
-onMounted(async () => {
-  await typing_name_key("");
-  await typing_key("");
-  if (name.value && key.value) {
-    await typing_attribute(name.value, key.value);
-  }
-});
-
-const configs = ref<GeoSiteSourceConfig[]>();
-async function typing_name_key(query?: string) {
-  try {
-    loading_name.value = true;
-    configs.value = await get_geo_site_configs(query);
-  } finally {
-    loading_name.value = false;
-  }
-}
-const geo_name_options = computed(() => {
-  let result = [];
-  if (configs.value) {
-    for (const config of configs.value) {
-      result.push({
-        label: config.name,
-        value: config.name,
-      });
-    }
-  }
-  return result;
-});
-
-let searchTimer: ReturnType<typeof setTimeout> | null = null;
-function handleSearch(query: string) {
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    typing_key(query);
-  }, 300);
-}
-
-async function typing_key(query: string) {
-  try {
-    loading_key.value = true;
-    const result = await search_geo_site_cache({
-      name: name.value,
-      key: query,
-    });
-
-    keys.value = sortGeoKeys(result, query);
-  } finally {
-    loading_key.value = false;
-  }
-}
-
-const keys = ref<GeoFileCacheKey[]>();
-
-// Composite value logic
-const compositeValue = computed({
-  get() {
-    if (name.value && key.value) {
-      return `${name.value}###${key.value}`;
-    }
-    return null;
-  },
-  set(val: string | null) {
-    if (val) {
-      const [n, k] = val.split("###");
-      name.value = n;
-      key.value = k;
-      // Also reset attribute when key changes
-      attribute_key.value = null;
-    } else {
-      name.value = ""; // Assuming empty string as per defineModel type might be string
-      key.value = "";
-      attribute_key.value = null;
+    const controller = new AbortController();
+    const { signal } = controller;
+    onCleanup(() => controller.abort());
+    loading.value = true;
+    try {
+      const names = await getGeoSiteAttributes(
+        { name: source, key: entry },
+        { signal, silent: true },
+      );
+      if (!signal.aborted)
+        options.value = names.map((value) => ({ label: value, value }));
+    } catch {
+      if (!signal.aborted) failed.value = true;
+    } finally {
+      if (!signal.aborted) loading.value = false;
     }
   },
-});
-
-const geo_key_options = computed(() => {
-  let result = [];
-  if (keys.value) {
-    for (const each_key of keys.value) {
-      result.push({
-        label: each_key.key,
-        value: `${each_key.name}###${each_key.key}`,
-        data: each_key,
-      });
-    }
-  }
-  return result;
-});
-
-async function handleKeySelect() {
-  // name and key are already set by compositeValue
-  if (name.value && key.value) {
-    await typing_attribute(name.value, key.value);
-  }
-}
-
-const attributes = ref<Set<string> | null>(null);
-async function typing_attribute(n: string, k: string) {
-  if (!(n && k)) {
-    return;
-  }
-
-  try {
-    loading_attrs.value = true;
-    let config = await get_geo_site_cache_detail({
-      name: n,
-      key: k,
-    });
-    attributes.value = new Set(
-      config.values.flatMap((value) => value.attributes),
-    );
-  } finally {
-    loading_attrs.value = false;
-  }
-}
-
-const attribute_options = computed(() => {
-  let result = [];
-  if (attributes.value) {
-    for (const each_key of attributes.value) {
-      result.push({
-        label: each_key,
-        value: each_key,
-      });
-    }
-  }
-  return result;
-});
+);
 </script>
+
 <template>
-  <n-flex :size="[10, 0]" :wrap="false" align="center">
+  <n-flex class="geo-fields" :size="8" :wrap="false" align="center">
     <n-popover trigger="hover">
       <template #trigger>
-        <n-checkbox v-model:checked="inverse"> </n-checkbox>
+        <n-checkbox
+          v-model:checked="inverse"
+          :aria-label="t('common.inverse')"
+        />
       </template>
-      <span>{{ t("common.inverse") }} </span>
+      {{ t("common.inverse") }}
     </n-popover>
     <n-input-group>
-      <n-select
-        :style="{ width: '33%' }"
-        v-model:value="name"
-        filterable
-        :placeholder="t('common.select_geo_name')"
-        :options="geo_name_options"
-        :loading="loading_name"
-        clearable
-        remote
-        @update:value="emit('refresh')"
-        @search="typing_name_key"
+      <GeoRuleKeySelect
+        kind="site"
+        v-model:geo_key="key"
+        v-model:geo_name="name"
+        @change="attribute = null"
       />
       <n-select
-        v-model:value="compositeValue"
+        class="geo-attribute"
+        v-model:value="attribute"
+        v-model:show="attributesOpen"
         filterable
-        :placeholder="t('common.filter_key')"
-        :options="geo_key_options"
-        :loading="loading_key"
         clearable
-        remote
-        :render-label="renderGeoSelectLabel"
-        @update:value="handleKeySelect"
-        @search="handleSearch"
-        @focus="() => typing_key('')"
-      />
-
-      <n-select
-        :style="{ width: '120px' }"
-        v-model:value="attribute_key"
-        filterable
+        :disabled="!name || !key"
         :placeholder="t('common.filter_attr')"
-        :options="attribute_options"
-        :loading="loading_attrs"
-        clearable
-      />
+        :options="options"
+        :loading="loading"
+      >
+        <template v-if="failed" #empty>{{
+          t("geo.common.search_failed")
+        }}</template>
+      </n-select>
     </n-input-group>
   </n-flex>
 </template>
+
+<style scoped>
+.geo-fields {
+  flex: 1;
+  min-width: 0;
+}
+.geo-fields :deep(.n-input-group) {
+  flex: 1;
+  min-width: 0;
+}
+.geo-attribute {
+  width: clamp(72px, 25%, 120px);
+}
+</style>

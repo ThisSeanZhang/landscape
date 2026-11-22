@@ -6,6 +6,7 @@ import { ChangeCatalog } from "@vicons/carbon";
 
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import FlowMarkEdit from "@/components/flow/FlowMarkEdit.vue";
+import GeoRuleKeySelect from "@/components/geo/GeoRuleKeySelect.vue";
 import IpEdit from "@/components/IpEdit.vue";
 import type {
   WanIPRuleSource,
@@ -221,12 +222,12 @@ async function append_import_rules() {
                   <ChangeCatalog />
                 </n-icon>
               </n-button>
-              <GeoIpKeySelect
+              <GeoRuleKeySelect
+                kind="ip"
                 v-model:geo_key="value.key"
                 v-model:geo_name="value.name"
                 v-if="value.t === 'geo_key'"
-              >
-              </GeoIpKeySelect>
+              />
               <!-- <n-input
                 v-model:value="value.key"
                 placeholder="geo key"

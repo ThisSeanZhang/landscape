@@ -1,5 +1,8 @@
 export default {
   common: {
+    search_key: "输入来源或关键词",
+    refine_search: "最多显示 {count} 项，可继续输入以缩小范围",
+    search_failed: "查询失败，重新打开可重试",
     source_type: "来源类型",
     source_url: "下载 URL",
     source_url_mode: "URL 下载",

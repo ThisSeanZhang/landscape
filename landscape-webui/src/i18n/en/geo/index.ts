@@ -1,5 +1,9 @@
 export default {
   common: {
+    search_key: "Search by source or key",
+    refine_search:
+      "Showing up to {count} matches. Type more to narrow the search.",
+    search_failed: "Search failed. Reopen to retry.",
     source_type: "Source Type",
     source_url: "Download URL",
     source_url_mode: "Download from URL",
