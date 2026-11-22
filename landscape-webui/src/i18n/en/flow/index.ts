@@ -138,9 +138,14 @@ export default {
     container_placeholder: "Container name",
     weight_placeholder: "Weight",
   },
+  rule_card: {
+    traffic_routing: "Traffic routing",
+    enabled: "Enabled",
+    match_rules: "Match rules ({count} total)",
+  },
   wan_rule_card: {
-    match_rules: "Match rules",
-    no_match_rules: "No match rules. No effect.",
+    stored_geo_options: "Stored options:",
+    no_match_rules: "This rule has no effect until a match condition is added.",
   },
   config_card: {
     no_ingress_rules: "No ingress rules",

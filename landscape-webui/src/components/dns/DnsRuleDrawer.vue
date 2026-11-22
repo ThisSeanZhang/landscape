@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import type { DNSRuleConfig } from "@landscape-router/types/api/schemas";
 import DnsRuleCard from "@/components/dns/DnsRuleCard.vue";
 import {
   getFlowDnsRules,
@@ -23,7 +24,7 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const show = defineModel<boolean>("show", { required: true });
-const rules = ref<any>([]);
+const rules = ref<DNSRuleConfig[]>([]);
 
 async function read_rules() {
   rule_loading_spin.value = true;
@@ -121,12 +122,15 @@ const rule_loading_spin = ref(false);
               </template>
             </n-button>
           </n-flex>
-          <n-scrollbar>
+          <n-scrollbar
+            class="drawer-scroll-gutter"
+            content-class="drawer-scroll-content"
+          >
             <n-flex vertical>
               <DnsRuleCard
                 @refresh="read_rules()"
                 v-for="rule in rules"
-                :key="rule.index"
+                :key="rule.id ?? rule.index"
                 :rule="rule"
               >
               </DnsRuleCard>

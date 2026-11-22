@@ -4,7 +4,6 @@ export default {
     priority: "Priority",
     remark: "Remark",
     filter_result: "Filter result",
-    flow_action: "Flow action",
     upstream_select: "DNS upstream",
     source_rules_title:
       "Domain match rules (empty means match all, rule order is ignored)",
@@ -120,10 +119,10 @@ export default {
     confirm_delete: "Confirm deletion?",
   },
   rule_card: {
-    traffic_action: "Traffic Action",
-    upstream_config: "DNS Upstream Config",
+    answer_filter: "Answer filter",
+    upstream_config: "Upstream",
     match_rules: "Match Rules",
-    no_match_rules: "No match rules. All domains will match.",
+    no_match_rules: "Matches all domains",
   },
   rule_drawer: {
     title_default: "Edit Default DNS Rules",

@@ -4,7 +4,6 @@ export default {
     priority: "优先级",
     remark: "备注",
     filter_result: "是否过滤结果",
-    flow_action: "流量动作",
     upstream_select: "DNS 上游选择",
     source_rules_title: "处理域名匹配规则 (无规则将全部匹配, 规则不分先后)",
     copy: "复制",
@@ -116,10 +115,10 @@ export default {
     confirm_delete: "确定删除吗",
   },
   rule_card: {
-    traffic_action: "流量动作",
-    upstream_config: "DNS 上游配置",
+    answer_filter: "应答过滤",
+    upstream_config: "上游",
     match_rules: "匹配规则",
-    no_match_rules: "无匹配规则, 将会匹配所有域名",
+    no_match_rules: "匹配所有域名",
   },
   rule_drawer: {
     title_default: "编辑默认 DNS 规则",

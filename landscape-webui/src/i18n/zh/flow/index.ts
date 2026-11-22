@@ -133,9 +133,14 @@ export default {
     container_placeholder: "容器名称",
     weight_placeholder: "权重",
   },
+  rule_card: {
+    traffic_routing: "流量去向",
+    enabled: "已启用",
+    match_rules: "匹配规则（共 {count} 条）",
+  },
   wan_rule_card: {
-    match_rules: "匹配规则",
-    no_match_rules: "无匹配规则, 没有任何作用",
+    stored_geo_options: "已保存的选项：",
+    no_match_rules: "未设置匹配条件，此规则不会生效",
   },
   config_card: {
     no_ingress_rules: "没有入口规则",

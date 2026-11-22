@@ -213,7 +213,7 @@ function add_by_quick_btn(match_type: DomainMatchType | undefined) {
           <n-input v-model:value="rule.name" type="text" />
         </n-form-item-gi>
 
-        <n-form-item-gi :span="5" :label="t('dns.rule_edit.flow_action')">
+        <n-form-item-gi :span="5" :label="t('flow.rule_card.traffic_routing')">
           <FlowMarkEdit v-model:mark="rule.mark"></FlowMarkEdit>
         </n-form-item-gi>
 
