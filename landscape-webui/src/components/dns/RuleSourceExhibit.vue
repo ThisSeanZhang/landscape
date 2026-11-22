@@ -1,9 +1,10 @@
 <script lang="ts" setup>
 import type { RuleSource } from "@landscape-router/types/api/schemas";
+import { ArrowUpRight } from "@vicons/carbon";
 import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 
-defineProps<{ source: RuleSource }>();
+defineProps<{ source: RuleSource; showGeoDetails?: boolean }>();
 const { t } = useI18n();
 const frontend = useFrontEndStore();
 </script>
@@ -21,6 +22,25 @@ const frontend = useFrontEndStore();
           : t(`dns.rule_edit.source_style_${source.match_type}`)
       }}
     </n-tag>
+    <RouterLink
+      v-if="
+        showGeoDetails && source.t === 'geo_key' && source.name && source.key
+      "
+      class="geo-details"
+      :to="{
+        name: 'routes.geo-domain',
+        query: { name: source.name, key: source.key, detail: '1' },
+      }"
+      :aria-label="
+        t('geo.geo_site.view_key', {
+          name: frontend.MASK_INFO(source.name),
+          key: frontend.MASK_INFO(source.key),
+        })
+      "
+      :title="t('common.show_details')"
+    >
+      <n-icon aria-hidden="true"><ArrowUpRight /></n-icon>
+    </RouterLink>
     <code v-if="source.t === 'config'">{{
       frontend.MASK_INFO(source.value)
     }}</code>
@@ -54,5 +74,19 @@ const frontend = useFrontEndStore();
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+.geo-details {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: 4px;
+  color: var(--accent);
+}
+.geo-details:hover,
+.geo-details:focus-visible {
+  background-color: color-mix(in srgb, currentColor 12%, transparent);
 }
 </style>

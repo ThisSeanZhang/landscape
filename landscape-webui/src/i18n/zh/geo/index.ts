@@ -26,6 +26,7 @@ export default {
     add_ip: "添加 IP",
   },
   geo_site: {
+    view_key: "查看 {name}/{key} 的 GeoSite 详情",
     title: "编辑 Geo Site",
     domain_list: "域名列表",
     domain_placeholder: "域名",

@@ -61,7 +61,7 @@ async function deleteRule() {
     </dl>
 
     <template #source="{ source }">
-      <RuleSourceExhibit :source="source" />
+      <RuleSourceExhibit :source="source" show-geo-details />
     </template>
     <template #empty>
       <n-text>{{ t("dns.rule_card.no_match_rules") }}</n-text>

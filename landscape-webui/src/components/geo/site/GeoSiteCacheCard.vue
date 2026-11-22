@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { GeoDomainConfig } from "@landscape-router/types/api/schemas";
-import { ref } from "vue";
+import type { GeoFileCacheKey } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { mask_string } from "@/lib/common";
@@ -8,13 +7,12 @@ import { mask_string } from "@/lib/common";
 const { t } = useI18n();
 
 const frontEndStore = useFrontEndStore();
-const emit = defineEmits(["refresh"]);
+const emit = defineEmits<{ details: [entry: GeoFileCacheKey] }>();
 
 interface Prop {
-  geo_site: GeoDomainConfig;
+  geo_site: GeoFileCacheKey;
 }
-const props = defineProps<Prop>();
-const show_detail_modal = ref(false);
+defineProps<Prop>();
 </script>
 <template>
   <n-card class="box" size="small" style="margin: 5px 0px">
@@ -43,15 +41,10 @@ const show_detail_modal = ref(false);
           size="small"
           type="warning"
           secondary
-          @click="show_detail_modal = true"
+          @click="emit('details', geo_site)"
         >
           {{ t("common.details") }}
         </n-button>
-        <GeoSiteDetailDrawer
-          :geo_key="geo_site"
-          v-model:show="show_detail_modal"
-        >
-        </GeoSiteDetailDrawer>
       </n-flex>
     </n-flex>
   </n-card>

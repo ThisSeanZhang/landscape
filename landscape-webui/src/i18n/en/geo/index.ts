@@ -28,6 +28,7 @@ export default {
     add_ip: "Add IP",
   },
   geo_site: {
+    view_key: "View GeoSite details for {name}/{key}",
     title: "Edit Geo Site Source",
     domain_list: "Domain List",
     domain_placeholder: "Domain",
