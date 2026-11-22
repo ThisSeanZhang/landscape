@@ -10,6 +10,7 @@ import { useI18n } from "vue-i18n";
 import { add_controller } from "@/api/network";
 import FlowHeaderExtra from "@/components/topology/FlowHeaderExtra.vue";
 import FlowNode from "@/components/topology/FlowNode.vue";
+import TopologyDetailDrawer from "./TopologyDetailDrawer.vue";
 import TopologyDetailPanel from "@/components/topology/TopologyDetailPanel.vue";
 import { NetDev } from "@/lib/network/dev";
 import { getBridgeAttachIssue } from "@/lib/network/topology";
@@ -102,7 +103,6 @@ const flowEdges = computed(() => {
         : "normal-edge",
   }));
 });
-const detailOpen = computed(() => selectedIface.value !== undefined);
 const miniMapMaskColor = computed(() =>
   changeColor(themeVars.value.primaryColor, { alpha: 0.08 }),
 );
@@ -433,25 +433,13 @@ onPaneClick(() => {
         </aside>
       </transition>
 
-      <n-drawer
+      <TopologyDetailDrawer
         v-if="isDrawerMode"
-        :show="detailOpen"
-        placement="bottom"
-        height="78%"
+        :node="selectedIface"
         :trap-focus="false"
         :block-scroll="false"
-        @update:show="(show: boolean) => !show && closePanel()"
-      >
-        <n-drawer-content :closable="false" body-content-style="padding: 0;">
-          <div class="topology-drawer-panel nopan nowheel">
-            <TopologyDetailPanel
-              v-if="selectedIface"
-              :node="selectedIface"
-              @close="closePanel"
-            />
-          </div>
-        </n-drawer-content>
-      </n-drawer>
+        @close="closePanel"
+      />
     </VueFlow>
   </div>
 </template>
@@ -535,10 +523,6 @@ onPaneClick(() => {
   bottom: 16px;
   width: 468px;
   overflow: visible;
-}
-
-.topology-drawer-panel {
-  height: 100%;
 }
 
 .topology-panel-enter-active,

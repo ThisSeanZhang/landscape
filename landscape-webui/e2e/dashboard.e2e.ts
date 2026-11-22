@@ -87,6 +87,12 @@ test("mobile interface list opens a bridge member and allows switching to the to
   await member.click();
   await expect(page.getByRole("heading", { name: /eth1/ })).toBeVisible();
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /br0.*LAN.*Bridge/ }).click();
+  const actions = page.getByRole("button", { name: "Actions", exact: true });
+  await actions.click();
+  await expect(page.getByText("Change zone", { exact: true })).toBeVisible();
+  await actions.click();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Map", exact: true }).click();
   await expect(page.locator(".vue-flow")).toBeVisible();
   await page.getByRole("button", { name: "List", exact: true }).click();

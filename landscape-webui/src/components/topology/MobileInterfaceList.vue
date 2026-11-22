@@ -11,7 +11,7 @@ import {
 } from "@vicons/carbon";
 import { get_visible_devices, useIfaceNodeStore } from "@/stores/iface_node";
 import type { NetDev } from "@/lib/network/dev";
-import TopologyDetailPanel from "./TopologyDetailPanel.vue";
+import TopologyDetailDrawer from "./TopologyDetailDrawer.vue";
 import PPPDCreateConfigModal from "@/components/pppd/CreatePPPDConfigModal.vue";
 
 const { t } = useI18n();
@@ -118,20 +118,10 @@ function status(dev: NetDev) {
       <n-icon class="open-icon" :component="ChevronRight" />
     </button>
   </section>
-  <n-drawer
-    placement="bottom"
-    height="80%"
-    :show="!!selected && !selected.virtual"
-    @update:show="!$event && close()"
-  >
-    <n-drawer-content body-content-style="padding: 0">
-      <TopologyDetailPanel
-        v-if="selected && !selected.virtual"
-        :node="selected"
-        @close="close"
-      />
-    </n-drawer-content>
-  </n-drawer>
+  <TopologyDetailDrawer
+    :node="selected?.virtual ? undefined : selected"
+    @close="close"
+  />
   <PPPDCreateConfigModal
     v-if="virtualLink"
     :show="true"

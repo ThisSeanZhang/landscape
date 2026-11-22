@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Close } from "@vicons/carbon";
 import IfaceChangeZone from "@/components/iface/IfaceChangeZone.vue";
 import IfaceCpuSoftBalance from "@/components/iface/IfaceCpuSoftBalance.vue";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
@@ -39,6 +40,7 @@ import { useI18n } from "vue-i18n";
 
 const props = defineProps<{
   node: NetDev;
+  inDrawer?: boolean;
 }>();
 
 const emit = defineEmits(["close"]);
@@ -324,12 +326,18 @@ const action_sections = computed(() => {
   const sections: Array<{
     key: string;
     short_label: string;
+    menuLabel: string;
     label: string;
   }> = [];
 
   if (can_manage_device_state.value) {
     sections.push({
       key: "toggle_device",
+      menuLabel: t(
+        props.node.dev_status.t === "up"
+          ? "topology.panel.disable_iface"
+          : "topology.panel.enable_iface",
+      ),
       short_label: props.node.dev_status.t === "up" ? "OFF" : "ON",
       label:
         props.node.dev_status.t === "up"
@@ -339,6 +347,11 @@ const action_sections = computed(() => {
 
     sections.push({
       key: "boot",
+      menuLabel: t(
+        props.node.enable_in_boot
+          ? "topology.panel.disable_boot"
+          : "topology.panel.enable_boot",
+      ),
       short_label: "BOOT",
       label: props.node.enable_in_boot
         ? t("topology.panel.action_boot_disable", { name: props.node.name })
@@ -349,6 +362,7 @@ const action_sections = computed(() => {
   if (show_switch.value.zone_type) {
     sections.push({
       key: "change_zone",
+      menuLabel: t("topology.panel.change_zone"),
       short_label: "ZONE",
       label: t("topology.panel.action_zone", {
         name: props.node.name,
@@ -358,6 +372,7 @@ const action_sections = computed(() => {
   }
   sections.push({
     key: "cpu_balance",
+    menuLabel: t("topology.node.cpu_balance"),
     short_label: "CPU",
     label: t("topology.panel.action_cpu", { name: props.node.name }),
   });
@@ -365,6 +380,7 @@ const action_sections = computed(() => {
   if (props.node.dev_kind === "bridge" && props.node.name !== "docker0") {
     sections.push({
       key: "delete_bridge",
+      menuLabel: t("topology.panel.delete_bridge"),
       short_label: "DEL",
       label: t("topology.panel.action_del_bridge", { name: props.node.name }),
     });
@@ -643,10 +659,14 @@ async function handleDeleteBridge() {
 <template>
   <div
     class="topology-detail-shell nopan nowheel"
+    :class="{ 'in-drawer': inDrawer }"
     :data-testid="`topology-detail-${node.index}`"
     :style="panelStyle"
   >
-    <div v-if="action_sections.length" class="topology-detail__rail-shell">
+    <div
+      v-if="!inDrawer && action_sections.length"
+      class="topology-detail__rail-shell"
+    >
       <div class="topology-detail__rail">
         <n-tooltip
           v-for="section in action_sections"
@@ -662,6 +682,7 @@ async function handleDeleteBridge() {
                 { 'is-active': isActiveAction(section.key) },
                 zoneActionClass(section.key),
               ]"
+              :aria-label="section.label"
               :data-testid="`topology-detail-${node.index}-action-${section.key}`"
               @click="openQuickAction(section.key)"
             >
@@ -697,8 +718,30 @@ async function handleDeleteBridge() {
                     : node.zone_type.toUpperCase()
                 }}
               </n-tag>
-              <n-button quaternary circle size="small" @click="closePanel">
-                ×
+              <n-dropdown
+                v-if="inDrawer"
+                trigger="click"
+                placement="bottom-end"
+                :options="
+                  action_sections.map((section) => ({
+                    key: section.key,
+                    label: section.menuLabel,
+                  }))
+                "
+                @select="openQuickAction"
+              >
+                <n-button size="small" secondary>{{
+                  t("topology.panel.actions")
+                }}</n-button>
+              </n-dropdown>
+              <n-button
+                quaternary
+                circle
+                size="small"
+                :aria-label="t('common.close')"
+                @click="closePanel"
+              >
+                <template #icon><n-icon :component="Close" /></template>
               </n-button>
             </div>
           </div>
@@ -723,7 +766,7 @@ async function handleDeleteBridge() {
               }}
             </n-tag>
             <n-tag size="small" :type="statusTagType(node.dev_status.t)" round>
-              {{ node.dev_status.t }}
+              {{ t("topology.link_state." + node.dev_status.t) }}
             </n-tag>
             <n-tag
               size="small"
@@ -744,7 +787,20 @@ async function handleDeleteBridge() {
             <n-tag v-if="node.wifi_info" size="small" tertiary round>
               {{ node.wifi_info.wifi_type.t }}
             </n-tag>
-            <n-tooltip trigger="hover" placement="bottom-start">
+            <template v-if="inDrawer">
+              <n-tag v-if="node.mac" size="small" tertiary round>{{
+                maskValue(node.mac)
+              }}</n-tag>
+              <n-tag
+                v-if="node.perm_mac && node.perm_mac !== node.mac"
+                size="small"
+                tertiary
+                round
+                >{{ t("topology.node.perm_mac") }} ·
+                {{ maskValue(node.perm_mac) }}</n-tag
+              >
+            </template>
+            <n-tooltip v-else trigger="hover" placement="bottom-start">
               <template #trigger>
                 <n-tag size="small" tertiary round>
                   {{ maskValue(node.mac) }}
@@ -1143,28 +1199,46 @@ async function handleDeleteBridge() {
   padding-top: 4px;
 }
 
-@media (max-width: 960px) {
-  .topology-detail-shell {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .topology-detail {
-    border-radius: 20px 20px 0 0;
-  }
-
-  .topology-detail__rail-shell {
-    width: 100%;
-    height: auto;
-    padding-top: 0;
-  }
-
-  .topology-detail__rail {
-    width: 100%;
-    flex-direction: row;
-    justify-content: flex-start;
-    overflow-x: auto;
-    padding: 0 2px;
-  }
+.in-drawer {
+  align-items: stretch;
+  box-sizing: border-box;
+}
+.in-drawer .topology-detail {
+  border: 0;
+  border-radius: 0;
+  background: var(--topology-panel-bg);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.in-drawer .topology-detail__header {
+  padding: 12px 16px;
+}
+.in-drawer .topology-detail__header-main {
+  gap: 6px;
+}
+.in-drawer .topology-detail__title {
+  font-size: 18px;
+}
+.in-drawer .topology-detail__content {
+  min-height: 0;
+}
+.in-drawer .topology-detail__content-inner {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.in-drawer .topology-detail__runtime-row {
+  flex-wrap: wrap;
+}
+.in-drawer .topology-detail__runtime-value {
+  max-width: 100%;
+}
+.in-drawer .topology-detail__runtime-detail,
+.in-drawer .topology-detail__runtime-tag {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.in-drawer .topology-detail__runtime-tag {
+  height: auto;
+  min-height: 22px;
+  max-width: 100%;
 }
 </style>

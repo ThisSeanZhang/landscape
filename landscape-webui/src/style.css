@@ -41,7 +41,8 @@ body {
 }
 
 @media (max-width: 768px) {
-  .n-drawer {
+  .n-drawer--left-placement,
+  .n-drawer--right-placement {
     width: 90vw !important;
   }
 }
