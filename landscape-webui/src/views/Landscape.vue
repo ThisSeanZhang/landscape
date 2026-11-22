@@ -84,8 +84,7 @@ const compact = computed(() => mobile.value && !showDetails.value);
   container-type: inline-size;
 }
 .dashboard > .overview,
-.dashboard > .section-heading,
-.dashboard > .interface-list {
+.dashboard > .section-heading {
   flex-shrink: 0;
 }
 .overview {

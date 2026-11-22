@@ -144,6 +144,7 @@ function status(dev: NetDev) {
 
 <style scoped>
 .interface-list {
+  flex-shrink: 0;
   border: 1px solid v-bind("theme.dividerColor");
   border-radius: 12px;
   background: v-bind("theme.cardColor");

@@ -1,9 +1,14 @@
 import { expect, test } from "./fixtures";
 
+test.use({
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+});
+
 test("mobile dashboard distinguishes failed samples from zero and retains the last DNS reading", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
   let failed = true;
   await page.route("**/api/v1/system/info/interval", (route) =>
     failed
@@ -46,7 +51,6 @@ test("mobile dashboard distinguishes failed samples from zero and retains the la
 test("mobile interface list opens a bridge member and allows switching to the topology", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/api/v1/interfaces/all_old", (route) =>
     route.fulfill({
       json: {
@@ -87,4 +91,58 @@ test("mobile interface list opens a bridge member and allows switching to the to
   await expect(page.locator(".vue-flow")).toBeVisible();
   await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(member).toBeVisible();
+});
+
+test("mobile dashboard can scroll to the last interface and back to the overview", async ({
+  page,
+}) => {
+  const interfaces = Array.from({ length: 12 }, (_, index) => ({
+    name: "eth" + index,
+    index: index + 1,
+    dev_type: "ether",
+    dev_status: { t: "up" },
+    zone_type: "lan",
+    carrier: true,
+    enable_in_boot: true,
+  }));
+  await page.route("**/api/v1/interfaces/all_old", (route) =>
+    route.fulfill({ json: { data: interfaces } }),
+  );
+  await page.goto("/");
+  const rows = page
+    .getByRole("region", { name: "Network interfaces" })
+    .getByRole("button");
+  await expect(rows).toHaveCount(interfaces.length);
+  const last = rows.last();
+  const overview = page.getByRole("button", { name: "Show details" });
+  await expect(overview).toBeInViewport();
+  await expect(last).not.toBeInViewport();
+
+  const touch = await page.context().newCDPSession(page);
+  async function swipe(fromY: number, toY: number) {
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: 180, y: fromY }],
+    });
+    for (let step = 1; step <= 6; step++) {
+      const y = fromY + ((toY - fromY) * step) / 6;
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: 180, y }],
+      });
+    }
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+  }
+  await swipe(710, 180);
+  await expect(last).toBeInViewport({ ratio: 0.99 });
+  await expect(overview).not.toBeInViewport();
+  await swipe(180, 710);
+  await expect(overview).toBeInViewport({ ratio: 0.99 });
+  await overview.click();
+  await expect(last).not.toBeInViewport();
+  for (let i = 0; i < 3; i++) await swipe(710, 180);
+  await expect(last).toBeInViewport({ ratio: 0.99 });
 });
