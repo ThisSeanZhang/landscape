@@ -15,6 +15,7 @@ pub(super) struct WanEgressBinding {
     pub ifindex: u32,
     pub has_l2: bool,
     pub has_ipv4: bool,
+    pub is_pppoe: bool,
     pub wan_ip4: u32,
     pub wan_mask4: u32,
     pub gateway_ip4: u32,
@@ -34,6 +35,7 @@ impl WanEgressBinding {
             && let IpAddr::V4(ip) = bind.addr
         {
             binding.has_ipv4 = true;
+            binding.is_pppoe = bind.is_pppoe;
             binding.wan_ip4 = ip.to_bits().to_be();
             let prefix = bind.mask.min(32);
             let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) };

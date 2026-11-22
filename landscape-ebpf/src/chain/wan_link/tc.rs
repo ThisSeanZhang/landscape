@@ -159,7 +159,9 @@ impl WanLinkDataplane {
             source_mac: binding.source_mac,
             has_ipv4: u8::from(binding.has_ipv4),
             has_l2: u8::from(binding.has_l2),
+            is_pppoe: u8::from(binding.is_pppoe),
         };
+        pin_and_reuse_map(&mut egress_open_skel.maps.ip_mac_v4, &backbone.paths().ip_mac_v4)?;
         if let Some(old) = previous {
             egress_open_skel
                 .maps

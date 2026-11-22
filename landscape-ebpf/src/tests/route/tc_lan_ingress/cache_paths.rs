@@ -99,9 +99,10 @@ fn lan_ingress_lan_cache_same_ifindex_entry_hands_to_stack() {
 }
 
 #[test]
-fn lan_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
-    // route4_redirect_by_cached_target has_mac branch: dst mac comes from
-    // ip_mac_v4[gate_addr], src mac from the cached entry.
+fn lan_ingress_lan_cache_has_mac_entry_defers_rewrite_to_root() {
+    // The cached target is a WAN link.  Even with cached gateway data and a
+    // resolvable ip_mac_v4 entry, LAN ingress must only hand the packet to
+    // that link's root, which owns the single Ethernet rewrite.
     load_skel!("tc-lan-flow-cache-gwmac", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     let entry_mac = [0x02, 0x44, 0x55, 0x66, 0x77, 0x88];
@@ -122,17 +123,16 @@ fn lan_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
     insert_ip_mac_v4(&skel.maps.ip_mac_v4, wan_gateway(), gw_mac, gw_dev, TARGET_IFINDEX);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gw_mac.octets(), "dst = ip_mac[gate_addr].mac");
-    assert_eq!(&out[6..12], &entry_mac, "src = cached entry mac");
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "LAN ingress must not rewrite Ethernet on a WAN cache hit");
+    assert_eq!(forwarded, 1, "the target link root owns the rewrite");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
-fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_falls_to_neigh() {
+fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_defers_to_root() {
     load_skel!("tc-lan-flow-cache-gwmiss", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     put_rt4_cache_full(
@@ -147,13 +147,14 @@ fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_falls_to_neigh() {
         wan_gateway(),
         [0x02, 0x44, 0x55, 0x66, 0x77, 0x88],
     );
-    // no ip_mac_v4 entries at all → bpf_redirect_neigh(gate_addr) fallback
+    // Leave the neighbour map empty to exercise the handoff on a miss.
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, out, _mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened: the neigh lookup resolves later");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "no rewrite happens at LAN ingress");
+    assert_eq!(forwarded, 1, "the target link root owns lookup and fallback");
 }
 
 #[test]
@@ -316,7 +317,32 @@ fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
+fn wan_cache_raw_ipv4_prepends_a_unicast_header_for_neighbour_fallback() {
+    load_skel!("tc-lan-cache-raw4", skel, 0);
+    seed_wan_cache(&skel);
+    let frame = simple_ipv4_tcp(client_addr(), remote_wan_addr());
+    let ip = &frame[14..];
+    let mut ctx = lan_ctx();
+    let mut out = vec![0; frame.len()];
+    let result = skel
+        .progs
+        .tc_route4_lan_ingress
+        .test_run(ProgramInput {
+            data_in: Some(ip),
+            data_out: Some(&mut out),
+            context_in: Some(ctx.as_mut_bytes()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(result.return_value as i32, RET_REDIRECT);
+    let packet = result.data.unwrap();
+    assert_eq!(packet[0] & 1, 0);
+    assert_eq!(packet[12..14], [8, 0]);
+    assert_eq!(&packet[14..], ip);
+}
+
+#[test]
+fn lan_ingress_wan_cache_hit_defers_header_rewrite_to_link_root() {
     load_skel!("tc-lan-flow-wan-cache", skel);
     seed_wan_cache(&skel);
 
@@ -328,11 +354,9 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    // The WAN-cache path stores the full 14-byte ip_mac value: dst mac, dev
-    // mac, then the proto field as ethertype.
-    assert_eq!(&out[0..6], &next_hop.octets());
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    // LAN ingress only selects the target link.  The target link's from-LAN
+    // root owns the Ethernet rewrite using its own source MAC.
+    assert_eq!(out, pkt, "LAN ingress must not rewrite the Ethernet header");
     assert_eq!(
         mark,
         normal_mark(FlowMarkAction::KeepGoing, 0, false),
@@ -342,7 +366,7 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
+fn lan_ingress_wan_cache_hit_does_not_resolve_gateway_mac() {
     load_skel!("tc-lan-flow-wan-cache-gw", skel);
     seed_wan_cache(&skel);
 
@@ -354,23 +378,20 @@ fn lan_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
     let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gateway_mac.octets(), "must fall back to the wan gateway mac");
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "gateway MAC resolution belongs to the target link root");
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_without_any_ip_mac_falls_to_neigh() {
-    // has_mac WAN-cache entry with neither the remote nor the gateway in
-    // ip_mac_v4 → bpf_redirect_neigh(gateway) fallback, no rewrite.
+fn lan_ingress_wan_cache_hit_without_any_ip_mac_defers_to_root() {
+    // The reverse cache still selects a WAN when its neighbour is unknown.
     load_skel!("tc-lan-flow-wan-cache-neigh", skel);
     seed_wan_cache(&skel);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
     let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened: the neigh lookup resolves later");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "no rewrite happened at LAN ingress");
 }
 
 #[test]

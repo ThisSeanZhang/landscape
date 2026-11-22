@@ -12,18 +12,25 @@
  * skb->cb control block (5 x u32):
  *
  *   cb[0]  b0       forwarded (routing entered another chain)
+ *          b1       IPv4 rerouted from another egress, skb can carry the old dst
  *   cb[1]  b0-b7    l3 offset (stamped by the chain root)
  *          b16-b31   chain id
  *
- * cb[2..4] are unused: every stage re-reads the packet instead of caching a
- * parse result in skb->cb.
+ *   cb[2]  IPv4 neighbour resolution state for the current egress traversal
+ *   cb[3]  selected IPv4 next hop (network byte order; zero for kernel route lookup)
+ *   cb[4]  egress interface for neighbour resolution
  */
+
+#define TC_CB_REROUTED (1U << 1)
+#define TC_CB_NEIGH4_PENDING 0x4e483450U
+#define TC_CB_NEIGH4_REDIRECT 0x4e483452U
 
 static __always_inline bool tc_cb_forwarded(const struct __sk_buff *skb) { return skb->cb[0] & 1; }
 
 static __always_inline void tc_cb_mark_forwarded(struct __sk_buff *skb, u32 chain_id) {
     u32 cb1 = skb->cb[1];
     skb->cb[0] = 1;
+    skb->cb[2] = 0;
     skb->cb[1] = (cb1 & 0xFFFFu) | (chain_id << 16);
 }
 

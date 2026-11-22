@@ -71,6 +71,7 @@ struct AddrBind {
     gateway: Option<IpAddr>,
     mask: u8,
     mac: Option<MacAddr>,
+    is_pppoe: bool,
 }
 
 #[derive(Default)]
@@ -266,6 +267,23 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
+        self.bind_ipv4(ifindex, addr, gateway, mask, mac, false);
+    }
+
+    /// Native PPPoE has an Ethernet header, but its session supplies the peer MAC.
+    pub fn bind_pppoe_ipv4(&self, ifindex: u32, addr: Ipv4Addr, peer: Ipv4Addr, mac: MacAddr) {
+        self.bind_ipv4(ifindex, addr, Some(peer), 32, Some(mac), true);
+    }
+
+    fn bind_ipv4(
+        &self,
+        ifindex: u32,
+        addr: Ipv4Addr,
+        gateway: Option<Ipv4Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+        is_pppoe: bool,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
             return;
@@ -278,6 +296,7 @@ impl WanLinkDataplane {
             gateway: gateway.map(IpAddr::V4),
             mask,
             mac,
+            is_pppoe,
         };
         self.publish_bind(&bind);
         inner.v4 = Some(bind);
@@ -318,6 +337,7 @@ impl WanLinkDataplane {
             gateway: gateway.map(IpAddr::V6),
             mask,
             mac,
+            is_pppoe: false,
         };
         self.publish_bind(&bind);
         inner.v6 = Some(bind);
@@ -467,6 +487,7 @@ mod tests {
             gateway: None,
             mask: 32,
             mac: None,
+            is_pppoe: false,
         }
     }
 
@@ -494,6 +515,7 @@ mod tests {
                 gateway: None,
                 mask: 64,
                 mac: None,
+                is_pppoe: false,
             }),
             ..Default::default()
         };

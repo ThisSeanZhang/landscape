@@ -12,6 +12,7 @@ struct wan_egress_binding {
     __u8 source_mac[6];
     __u8 has_ipv4;
     __u8 has_l2;
+    __u8 is_pppoe;
 };
 
 #endif

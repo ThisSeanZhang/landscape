@@ -60,8 +60,11 @@ struct ipv4_mark_action {
     __u32 mark;
 };
 
-static int prepend_dummy_mac(struct __sk_buff *skb) {
+static int prepend_dummy_mac(struct __sk_buff *skb, bool is_docker) {
     u8 mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x08, 0x00};
+    // The WAN root may call bpf_redirect_neigh, which rejects a multicast
+    // destination before replacing L2. Docker consumes the original VLAN frame.
+    if (!is_docker) mac[0] = 0x02;
 
     if (bpf_skb_change_head(skb, 14, 0)) return -1;
 

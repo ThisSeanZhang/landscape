@@ -419,7 +419,7 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
     tc_cb_mark_forwarded(skb, target_info->link_chain_id);
 
     if (current_l3_offset == 0 && target_info->has_mac) {
-        if (prepend_dummy_mac(skb) != 0) {
+        if (prepend_dummy_mac(skb, target_info->is_docker) != 0) {
             ld_from_lan_log("add dummy_mac fail");
             return TC_ACT_SHOT;
         }
@@ -437,32 +437,9 @@ static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff 
         return ret;
     }
 
-    bool target_has_mac = target_info->has_mac;
-
-    if (!target_has_mac) {
-        return bpf_redirect(target_info->ifindex, 0);
-    } else {
-        struct mac_value_v4 *mac_value = bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
-        if (mac_value) {
-            ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
-            if (!ret) {
-                return bpf_redirect(target_info->ifindex, 0);
-            }
-        }
-    }
-
-    // ld_from_lan_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
-    // ld_from_lan_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET;
-
-    param.ipv6_nh[0] = target_info->gate_addr;
-    ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (ret != 7) {
-        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
-    }
-    return ret;
+    // The target WAN link's from-LAN root owns the Ethernet rewrite and
+    // neighbour fallback.  This legacy pick_wan path only selects the link.
+    return bpf_redirect(target_info->ifindex, 0);
 }
 
 static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
@@ -497,7 +474,7 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
     tc_cb_mark_forwarded(skb, target->link_chain_id);
 
     if (current_l3_offset == 0 && target->has_mac) {
-        if (prepend_dummy_mac(skb) != 0) {
+        if (prepend_dummy_mac(skb, target->is_docker) != 0) {
             return TC_ACT_SHOT;
         }
     }
@@ -511,34 +488,17 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
         return ret;
     }
 
-    if (!target->has_mac) {
-        return bpf_redirect(target->ifindex, 0);
-    } else {
-        struct mac_value_v4 *mac_value = bpf_map_lookup_elem(&ip_mac_v4, &target->gate_addr);
-        if (mac_value) {
-            int ret = store_mac_v4(skb, mac_value->mac, target->mac);
-            if (!ret) {
-                return bpf_redirect(target->ifindex, 0);
-            }
-        }
-    }
-
-    ld_from_lan_log("CACHED-TGT neigh fallback: if %u gate %pI4", target->ifindex,
-                    &target->gate_addr);
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET;
-    param.ipv6_nh[0] = target->gate_addr;
-    return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
+    // The target WAN link's from-LAN root owns the Ethernet rewrite and
+    // neighbour fallback; this cache fast path only selects the link.
+    return bpf_redirect(target->ifindex, 0);
 }
 
 static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route4_context *context,
                                                       u32 *flow_mark) {
-    int ret = 0;
     u32 key = WAN_CACHE;
     struct route4_cache_key search_key = {0};
-    struct mac_value_v4 *mac_value = NULL;
     search_key.local_addr = context->saddr;
     search_key.remote_addr = context->daddr;
 
@@ -554,39 +514,11 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
             struct wan_ip_info_value *wan_ip_info =
                 bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
             if (wan_ip_info != NULL) {
-                bool target_has_mac = target->has_mac;
+                if (current_l3_offset == 0 && target->has_mac &&
+                    prepend_dummy_mac(skb, target->is_docker))
+                    return TC_ACT_SHOT;
                 tc_cb_mark_forwarded(skb, target->link_chain_id);
-
-                if (!target_has_mac) {
-                    return bpf_redirect(target->ifindex, 0);
-                } else {
-                    mac_value = bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
-                    if (mac_value) {
-                        // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
-                        //            &search_key.remote_addr, target->ifindex);
-                        if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                            return bpf_redirect(target->ifindex, 0);
-                        }
-                    } else {
-                        mac_value = bpf_map_lookup_elem(&ip_mac_v4,
-                                                        &wan_ip_info->gateway.in6_u.u6_addr32[0]);
-                        if (mac_value) {
-                            // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
-                            //            &wan_ip_info->gateway.in6_u.u6_addr32[0],
-                            //            target->ifindex);
-                            if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                                return bpf_redirect(target->ifindex, 0);
-                            }
-                        }
-                    }
-                }
-
-                struct bpf_redir_neigh param;
-                param.nh_family = AF_INET;
-
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
-                ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
-                return ret;
+                return bpf_redirect(target->ifindex, 0);
             }
         }
     }

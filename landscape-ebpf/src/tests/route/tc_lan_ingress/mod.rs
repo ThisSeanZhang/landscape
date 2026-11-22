@@ -18,8 +18,9 @@
 //!   * a cache hit with ifindex != 0 redirects without learning but still
 //!     stamps the cb forwarded flag (route4_redirect_by_cached_target);
 //!     a cache hit with ifindex == 0 goes through pick_wan (cb set there too);
-//!   * a WAN-cache hit rewrites the full 14-byte header from the ip_mac value
-//!     (dst mac, dev mac, proto) and does NOT update the flow mark value.
+//!   * a WAN-cache hit only stamps the target chain and redirects; the WAN
+//!     link's from-LAN root owns the Ethernet rewrite and neigh fallback.  The
+//!     cache path does NOT update the flow mark value.
 //!
 //! PROG_TEST_RUN verdict mapping (verified empirically, see
 //! test_lan_redirect_check.rs): OK=0, UNSPEC=-1, SHOT=2, REDIRECT=7.

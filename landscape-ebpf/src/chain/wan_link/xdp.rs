@@ -157,6 +157,7 @@ impl WanLinkDataplane {
             source_mac: binding.source_mac,
             has_ipv4: u8::from(binding.has_ipv4),
             has_l2: u8::from(binding.has_l2),
+            is_pppoe: u8::from(binding.is_pppoe),
         };
         if let Some(old) = previous {
             open_skel.maps.root_next_stage.reuse_fd(old.skel.maps.root_next_stage.as_fd())?;

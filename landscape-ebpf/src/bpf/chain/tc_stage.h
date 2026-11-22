@@ -88,7 +88,8 @@ struct {
  *  WAN EGRESS CHAIN
  *  ─────────────────────────────────────────────────────────────────────────
  *
- *    tc_wan_egress_route  (Route logic, three entry paths)
+ *    tc_wan_egress_route
+ *      ├─ neighbour redirect re-entering the same device → finish L2, skip chain
  *      ├─ CB_FORWARDED → bpf_tail_call(&tc_wan_egress_roots,
  *      │    tc_cb_chain(skb))  (forwarded; routed by a
  *      │    landscape pick_wan earlier, its target chain id rides in cb)
@@ -109,6 +110,7 @@ struct {
  *                └─ cross WAN → sets FORWARDED + chain id in cb + bpf_redirect(target, 0)
  *
  *    tc_wan_egress_root (per-WAN-interface, in tc_wan_egress_root.bpf.c)
+ *      ├─ forwarded Ethernet IPv4: select on-link host or gateway, write L2 or record miss
  *      ├─ L3 protocol fork: slot0 (v4) / slot1 (v6)
  *      │    └─ MSS_{v4,v6}
  *      │         └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → FW_{v4,v6}
@@ -117,7 +119,7 @@ struct {
  *      │                        └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → (next stage)
  *      │
  *      └─ bpf_tail_call(skb, &tc_pipe_exits_wan_egress, 0)
- *           └─ tc_wan_egress_exit_redirect → TC_ACT_OK
+ *           └─ tc_wan_egress_exit_redirect → bpf_redirect_neigh on pending IPv4 miss, else UNSPEC
  *
  *    Each stage (MSS / FW / NAT / PPPoE) shares the same exit map:
  *      tc_pipe_exits_wan_egress[0] = tc_wan_egress_exit_redirect
@@ -136,7 +138,7 @@ struct {
  *                                                          cb chain id)
  *      └─ tc_wan_egress_root
  *           ├─ MSS → FW → NAT  (WAN egress chain)
- *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect → TC_ACT_OK
+ *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect
  *
  *    LAN ingress no longer injects stages; all egress processing happens
  *    on the WAN egress side after the redirect.

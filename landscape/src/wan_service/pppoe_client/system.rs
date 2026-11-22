@@ -124,7 +124,7 @@ pub(crate) async fn create_session(
         lcp.session_id
     );
 
-    dataplane.bind_wan_ipv4(index, client_ip, Some(server_ip), 32, Some(iface_mac));
+    dataplane.bind_pppoe_ipv4(index, client_ip, server_ip, iface_mac);
 
     if let Err(e) = std::process::Command::new("ip")
         .args(["link", "set", "dev", iface_name, "mtu", &format!("{}", mru)])

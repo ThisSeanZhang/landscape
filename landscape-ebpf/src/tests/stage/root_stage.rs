@@ -35,6 +35,8 @@ const V6_DST: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
 
 // ── roots ──
 
+mod from_lan_ipv4;
+
 struct IngressRoot {
     skel: crate::skel::tc_wan_ingress_root::TcWanIngressRootSkel<'static>,
     _backing: OwnedOpenObject,
@@ -56,11 +58,19 @@ struct EgressRoot {
 }
 
 fn load_egress_root() -> EgressRoot {
+    load_egress_root_with(Default::default())
+}
+
+fn load_egress_root_with(
+    binding: crate::skel::tc_wan_egress_root::types::wan_egress_binding,
+) -> EgressRoot {
     let (backing, object) = OwnedOpenObject::new();
     let mut open = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default()
         .open(object)
         .unwrap();
-    open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = L3;
+    let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+    rodata.current_l3_offset = L3;
+    rodata.egress_binding = binding;
     EgressRoot { skel: open.load().unwrap(), _backing: backing }
 }
 
@@ -72,7 +82,14 @@ fn wire_stage(map: &impl MapCore, slot: u32, prog: &ProgramMut<'_>) {
 // ── runners ──
 
 fn run_prog(prog: &ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>, [u32; 5]) {
-    let mut ctx = TestSkb::default();
+    run_prog_with_ctx(prog, pkt, TestSkb::default())
+}
+
+fn run_prog_with_ctx(
+    prog: &ProgramMut<'_>,
+    pkt: &[u8],
+    mut ctx: TestSkb,
+) -> (i32, Vec<u8>, [u32; 5]) {
     let mut ctx_out = TestSkb::default();
     let mut out = vec![0_u8; pkt.len()];
     let ret = prog

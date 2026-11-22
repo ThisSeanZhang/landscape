@@ -108,6 +108,33 @@ fn renewal_keeps_roots_and_prefix_change_preserves_stage_slots() {
 }
 
 #[test]
+fn switching_between_pppoe_and_ethernet_republishes_identical_addresses() {
+    let (_pins, dp) = dataplane();
+    dp.bind_pppoe_ipv4(IFINDEX, IP, GATEWAY, MAC);
+    let pppoe = root_ids(&dp);
+    let is_pppoe = || {
+        let inner = dp.inner.lock().unwrap();
+        inner
+            .tc
+            .egress_root
+            .as_ref()
+            .unwrap()
+            .skel
+            .maps
+            .rodata_data
+            .as_ref()
+            .unwrap()
+            .egress_binding
+            .is_pppoe
+    };
+    assert_eq!(is_pppoe(), 1);
+    bind(&dp, 32);
+    assert_ne!(root_ids(&dp), pppoe);
+    assert_eq!(is_pppoe(), 0);
+    dp.close();
+}
+
+#[test]
 fn second_publish_failure_restores_live_roots_and_renewal_retries() {
     let (_pins, dp) = dataplane();
     bind(&dp, 24);
