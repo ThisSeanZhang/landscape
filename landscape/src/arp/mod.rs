@@ -1,27 +1,28 @@
-use std::{mem, net::Ipv4Addr};
+use std::{io, mem, net::Ipv4Addr};
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
 use libc::{ETH_P_ARP, sockaddr_ll};
-use socket2::{Domain, Protocol, Type};
+use socket2::{Domain, Socket, Type};
 use std::os::fd::AsRawFd;
 use tokio::{io::unix::AsyncFd, sync::mpsc};
 
+mod gateway;
 pub mod scan;
 
-pub async fn create_arp_listen(
-    ifindex: u32,
-) -> std::io::Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)> {
-    // 创建 AF_PACKET 原始 socket
-    let socket =
-        socket2::Socket::new(Domain::PACKET, Type::RAW, Some(Protocol::from(ETH_P_ARP.to_be())))?;
+pub use gateway::probe_gateway_mac;
+
+fn open_arp_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
+    // Enable reception at bind time so only frames from this interface are queued.
+    let socket = Socket::new(Domain::PACKET, Type::RAW, None)?;
     socket.set_nonblocking(true)?; // 必须设置为非阻塞
 
     // 填写 sockaddr_ll
     let saddr = sockaddr_ll {
         sll_family: libc::AF_PACKET as u16,
         sll_protocol: (ETH_P_ARP as u16).to_be(),
-        sll_ifindex: ifindex as i32,
+        sll_ifindex: i32::try_from(ifindex)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid interface index"))?,
         sll_hatype: 1,
         sll_pkttype: 0,
         sll_halen: 6,
@@ -36,8 +37,13 @@ pub async fn create_arp_listen(
         return Err(std::io::Error::last_os_error());
     }
 
-    let async_fd = AsyncFd::new(socket)?;
+    AsyncFd::new(socket)
+}
 
+pub async fn create_arp_listen(
+    ifindex: u32,
+) -> std::io::Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)> {
+    let async_fd = open_arp_socket(ifindex)?;
     let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(1024);
     let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(1024);
 
@@ -205,17 +211,7 @@ pub fn build_arp_request_packet(
 ///
 /// `Some((MacAddr, Ipv4Addr))` if the frame is a valid ARP reply, otherwise `None`.
 pub fn parse_arp_reply(frame: &[u8]) -> Option<(MacAddr, Ipv4Addr)> {
-    if frame.len() < 42 {
-        return None;
-    }
-
-    // EtherType should be ARP (0x0806)
-    if frame[12] != 0x08 || frame[13] != 0x06 {
-        return None;
-    }
-
-    // Opcode should be reply (0x0002)
-    if frame[20] != 0x00 || frame[21] != 0x02 {
+    if !is_valid_arp_packet(frame) || frame[20..22] != [0, 2] {
         return None;
     }
 
