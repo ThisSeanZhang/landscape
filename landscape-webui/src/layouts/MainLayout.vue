@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import RouteTabs from "@/components/layout/header/RouteTabs.vue";
 
@@ -47,10 +47,6 @@ function logout() {
   frontEndStore.INSERT_USERNAME("");
   router.push("/login");
 }
-
-const dockOffset = computed(() =>
-  ptyStore.viewMode === "dock" && ptyStore.isOpen ? ptyStore.dockSize + 8 : 0,
-);
 </script>
 
 <template>
@@ -110,23 +106,20 @@ const dockOffset = computed(() =>
           </n-flex>
         </n-layout-header>
 
-        <GlobalTerminal />
-
-        <n-layout
-          :native-scrollbar="false"
-          position="absolute"
-          class="layout-content"
-          :style="{
-            bottom:
-              ptyStore.dockPosition === 'bottom' ? dockOffset + 'px' : '0px',
-            right:
-              ptyStore.dockPosition === 'right' ? dockOffset + 'px' : '0px',
-          }"
-          content-style="flex:1; display: flex; height: 100%;"
-          content-class="main-body"
+        <div
+          class="workspace"
+          :class="{ 'dock-bottom': ptyStore.dockPosition === 'bottom' }"
         >
-          <RouterView :key="route.name" />
-        </n-layout>
+          <GlobalTerminal />
+          <n-layout
+            :native-scrollbar="false"
+            class="layout-content"
+            content-style="flex:1; display: flex; height: 100%;"
+            content-class="main-body"
+          >
+            <RouterView :key="route.name" />
+          </n-layout>
+        </div>
       </n-layout>
     </n-layout>
   </div>
@@ -138,21 +131,32 @@ const dockOffset = computed(() =>
   padding: 0 10px;
   display: flex;
 }
+.workspace {
+  position: absolute;
+  inset: 40px 0 0 25px;
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 8px;
+}
+.workspace.dock-bottom {
+  flex-direction: column-reverse;
+}
 .layout-content {
-  top: 40px;
-  left: 25px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   padding-right: 15px;
-  transition: all 0.3s ease;
 }
 @media (max-width: 768px) {
   .app-header {
     height: 44px;
     padding: 0 8px;
   }
+  .workspace {
+    inset: 54px 0 0 12px;
+  }
   .layout-content {
-    top: 54px;
-    left: 12px;
     padding-right: 12px;
   }
 }

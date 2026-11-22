@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, watch } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { Terminal } from "@xterm/xterm";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { FitAddon } from "@xterm/addon-fit";
@@ -12,13 +12,13 @@ import "@xterm/xterm/css/xterm.css";
 
 export const usePtyStore = defineStore("pty", () => {
   // The "Master" terminal holds the state but never renders to DOM
-  const masterTerminal = ref<Terminal | null>(null);
-  const masterSerializeAddon = ref<SerializeAddon | null>(null);
+  const masterTerminal = shallowRef<Terminal | null>(null);
+  const masterSerializeAddon = shallowRef<SerializeAddon | null>(null);
   const decoder = new TextDecoder("utf-8"); // Decoder for incoming UTF-8 bytes
 
   // The "Active" terminal is the one currently visible (if any)
-  const activeTerminal = ref<Terminal | null>(null);
-  const activeFitAddon = ref<FitAddon | null>(null);
+  const activeTerminal = shallowRef<Terminal | null>(null);
+  const activeFitAddon = shallowRef<FitAddon | null>(null);
 
   const socket = ref<WebSocket | null>(null);
   const isConnected = ref(false);
@@ -47,8 +47,35 @@ export const usePtyStore = defineStore("pty", () => {
 
   const dockPosition = ref<"bottom" | "right">(getSmartDockPosition());
 
-  const savedDockSize = localStorage.getItem("landscape-pty-dock-size");
-  const dockSize = ref(savedDockSize ? parseInt(savedDockSize) : 400);
+  const dockSizeKey = "landscape-pty-dock-size";
+  function validDockSize(raw: string | null) {
+    const size = Number(raw);
+    return Number.isFinite(size) && size > 0
+      ? Math.min(1200, Math.max(200, Math.round(size)))
+      : 400;
+  }
+
+  // Older layouts stored one size for the last docked edge.
+  const legacy = localStorage.getItem(dockSizeKey);
+  const lastEdgeKey = dockSizeKey + "-" + dockPosition.value;
+  if (legacy !== null) {
+    if (localStorage.getItem(lastEdgeKey) === null) {
+      localStorage.setItem(lastEdgeKey, String(validDockSize(legacy)));
+    }
+    localStorage.removeItem(dockSizeKey);
+  }
+  const dockSizes = ref({
+    bottom: validDockSize(localStorage.getItem(dockSizeKey + "-bottom")),
+    right: validDockSize(localStorage.getItem(dockSizeKey + "-right")),
+  });
+  const dockSize = computed({
+    get: () => dockSizes.value[dockPosition.value],
+    set(size: number) {
+      const edge = dockPosition.value;
+      dockSizes.value[edge] = size;
+      localStorage.setItem(dockSizeKey + "-" + edge, String(size));
+    },
+  });
 
   // Persistence Watchers
   watch(viewMode, (val) =>
@@ -56,9 +83,6 @@ export const usePtyStore = defineStore("pty", () => {
   );
   watch(dockPosition, (val) =>
     localStorage.setItem("landscape-pty-dock-position", val),
-  );
-  watch(dockSize, (val) =>
-    localStorage.setItem("landscape-pty-dock-size", val.toString()),
   );
 
   const config = ref<LandscapePtyConfig>({
@@ -124,24 +148,20 @@ export const usePtyStore = defineStore("pty", () => {
     });
 
     // 3. Setup resize forwarding
-    term.onResize((size) => {
-      // Update master size too
-      masterTerminal.value?.resize(size.cols, size.rows);
-
-      if (!socket.value || socket.value.readyState !== WebSocket.OPEN) return;
-      socket.value.send(
-        JSON.stringify({
-          t: "size",
-          size: { ...size, pixel_width: 0, pixel_height: 0 },
-        }),
-      );
+    term.onResize(({ cols, rows }) => {
+      masterTerminal.value?.resize(cols, rows);
+      if (socket.value?.readyState === WebSocket.OPEN)
+        sendSize(socket.value, cols, rows);
     });
+  }
 
-    // Initial fit
-    setTimeout(() => {
-      fit.fit();
-      term.focus();
-    }, 50);
+  function sendSize(ws: WebSocket, cols: number, rows: number) {
+    ws.send(
+      JSON.stringify({
+        t: "size",
+        size: { cols, rows, pixel_width: 0, pixel_height: 0 },
+      }),
+    );
   }
 
   function detachTerminal(term: Terminal) {
@@ -153,8 +173,8 @@ export const usePtyStore = defineStore("pty", () => {
 
   function connect() {
     if (
-      isConnected.value ||
-      (socket.value && socket.value.readyState === WebSocket.OPEN)
+      socket.value?.readyState === WebSocket.CONNECTING ||
+      socket.value?.readyState === WebSocket.OPEN
     )
       return;
 
@@ -165,6 +185,8 @@ export const usePtyStore = defineStore("pty", () => {
 
     ws.onopen = () => {
       isConnected.value = true;
+      const term = activeTerminal.value;
+      if (term) sendSize(ws, term.cols, term.rows);
       // Prevent accidental page refresh
       window.addEventListener("beforeunload", preventUnload);
     };
@@ -198,6 +220,7 @@ export const usePtyStore = defineStore("pty", () => {
     };
 
     ws.onclose = () => {
+      if (socket.value !== ws) return;
       isConnected.value = false;
       socket.value = null;
       window.removeEventListener("beforeunload", preventUnload);

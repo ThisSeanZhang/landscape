@@ -42,7 +42,7 @@ body {
 
 @media (max-width: 768px) {
   .n-drawer--left-placement,
-  .n-drawer--right-placement {
+  .n-drawer--right-placement:not(.terminal-drawer) {
     width: 90vw !important;
   }
 }
