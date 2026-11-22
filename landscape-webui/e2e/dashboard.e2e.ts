@@ -79,6 +79,9 @@ test("mobile interface list opens a bridge member and allows switching to the to
       },
     }),
   );
+  await page.route("**/api/v1/services/dhcp_v4/status", (route) =>
+    route.fulfill({ json: { data: { br0: { t: "running" } } } }),
+  );
   await page.goto("/");
   const member = page.getByRole("button", {
     name: /eth1.*Bridge member.*br0.*Down/,
@@ -86,8 +89,16 @@ test("mobile interface list opens a bridge member and allows switching to the to
   await expect(member).toBeInViewport();
   await member.click();
   await expect(page.getByRole("heading", { name: /eth1/ })).toBeVisible();
+  const services = page.getByRole("region", { name: "Service entries" });
+  await expect(services).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /br0.*LAN.*Bridge/ }).click();
+  await expect(
+    services.getByRole("button", { name: /DHCPv4.*Running/ }),
+  ).toBeVisible();
+  await expect(services.getByRole("button", { name: /Firewall/ })).toHaveCount(
+    0,
+  );
   const actions = page.getByRole("button", { name: "Actions", exact: true });
   await actions.click();
   await expect(page.getByText("Change zone", { exact: true })).toBeVisible();
@@ -97,6 +108,97 @@ test("mobile interface list opens a bridge member and allows switching to the to
   await expect(page.locator(".vue-flow")).toBeVisible();
   await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(member).toBeVisible();
+});
+
+test("a phone can edit a WAN service from interface details and reopen it from the map", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 670 });
+  await page.route("**/api/v1/interfaces/all_old", (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            name: "eth-wan",
+            index: 4,
+            dev_type: "ether",
+            zone_type: "wan",
+            dev_status: { t: "up" },
+            carrier: true,
+            enable_in_boot: true,
+          },
+        ],
+      },
+    }),
+  );
+  const endpoint = "**/api/v1/services/wan-links";
+  const link = {
+    id: "aaa",
+    attach_iface_name: "eth-wan",
+    kind: { t: "ethernet" },
+    firewall: { enable: false },
+    update_at: 1,
+  };
+  let writes = 0;
+  await page.route(endpoint, (route) =>
+    route.fulfill({ json: { data: [link] } }),
+  );
+  await page.route(endpoint + "/status", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          aaa: {
+            firewall: { t: link.firewall.enable ? "running" : "disabled" },
+          },
+        },
+      },
+    }),
+  );
+  await page.route(endpoint + "/aaa", (route) => {
+    expect(route.request().method()).toBe("PUT");
+    const payload = route.request().postDataJSON();
+    expect(payload.attach_iface_name).toBe(link.attach_iface_name);
+    link.firewall.enable = payload.firewall.enable;
+    writes++;
+    return route.fulfill({ json: { data: link } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: /eth-wan.*WAN/ }).click();
+  const panel = page.getByTestId("topology-detail-4");
+  const services = panel.getByRole("region", { name: "Service entries" });
+  const firewall = services.getByRole("button", { name: /Firewall/ });
+  await expect(firewall).toContainText("Disabled");
+  await expect.poll(() => panel.evaluate((el) => el.clientWidth)).toBe(320);
+  await expect(services.getByRole("button", { name: /DHCPv4/ })).toHaveCount(0);
+  const editor = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("switch") });
+  const toggle = editor.getByRole("switch", { name: "Enable", exact: true });
+  await firewall.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(editor).toBeInViewport({ ratio: 0.99 });
+  await toggle.click();
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await expect(firewall).toContainText("Disabled");
+  expect(writes).toBe(0);
+  await firewall.click();
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await editor.getByRole("button", { name: "Update" }).click();
+  await expect(firewall).toContainText("Running");
+  expect(writes).toBe(1);
+  await panel.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Map", exact: true }).click();
+  await page.getByTestId("topology-node-4-service-firewall").click();
+  await expect(toggle).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await page
+    .getByTestId("topology-node-4")
+    .getByText("eth-wan", { exact: true })
+    .click();
+  await expect(firewall).toContainText("Running");
 });
 
 test("mobile dashboard can scroll to the last interface and back to the overview", async ({

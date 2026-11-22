@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Close } from "@vicons/carbon";
+import InterfaceServices from "./InterfaceServices.vue";
 import IfaceChangeZone from "@/components/iface/IfaceChangeZone.vue";
 import IfaceCpuSoftBalance from "@/components/iface/IfaceCpuSoftBalance.vue";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
@@ -815,6 +816,13 @@ async function handleDeleteBridge() {
       <n-scrollbar class="topology-detail__content nowheel">
         <div class="topology-detail__content-inner">
           <n-flex vertical size="large">
+            <InterfaceServices
+              v-if="inDrawer"
+              :key="node.name"
+              :node="node"
+              list
+              @refresh="refreshGraph"
+            />
             <n-card
               v-if="node_link !== undefined"
               size="small"

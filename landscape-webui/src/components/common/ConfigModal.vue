@@ -27,6 +27,7 @@ const { t } = useI18n();
 
 const cardStyle = computed<CSSProperties>(() => {
   const style: CSSProperties = {
+    maxWidth: "calc(100% - 24px)",
     width: typeof props.width === "number" ? `${props.width}px` : props.width,
   };
 
@@ -71,7 +72,11 @@ function closeModal() {
       <template #header>
         <div :style="headerStyle">
           <span>{{ title }}</span>
-          <n-switch v-model:value="enabled" :disabled="switchDisabled">
+          <n-switch
+            v-model:value="enabled"
+            :disabled="switchDisabled"
+            :aria-label="t('common.enable')"
+          >
             <template #checked>{{ t("common.enable") }}</template>
             <template #unchecked>{{ t("common.disable") }}</template>
           </n-switch>
