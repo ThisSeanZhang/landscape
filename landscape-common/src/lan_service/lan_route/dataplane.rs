@@ -5,7 +5,7 @@ use crate::ebpf::DataplaneGuard;
 
 /// eBPF capability for the LAN route service.
 pub trait LanRouteDataplane: Send + Sync {
-    /// Attach the XDP LAN intro program (native with SKB fallback).
+    /// Attach the XDP LAN intro program in native mode.
     /// Dropping the returned guard detaches it.
     fn install_xdp_intro(
         &self,

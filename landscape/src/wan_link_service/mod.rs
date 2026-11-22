@@ -183,7 +183,6 @@ impl ServiceStarterTrait for WanLinkService {
         let (link_state, state_rx) = LinkStateHandle::new(carrier);
         let dataplane = match WanLinkDataplane::new(
             self.ebpf_rt.backbone().clone(),
-            self.ebpf_rt.xdp_attach().clone(),
             config.link_chain_id,
             dp_ifindex,
             dp_has_eth,

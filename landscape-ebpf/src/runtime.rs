@@ -61,7 +61,7 @@ pub struct EbpfRuntime {
     /// prog-array shells) consumed by the LAN/WAN route services and
     /// every WAN link chain.
     pub(crate) backbone: Arc<RouteBackbone>,
-    /// Per-iface XDP slot arbitration (native vs SKB fallback).
+    /// Native XDP attachment policy.
     pub(crate) xdp_attach: Arc<XdpAttach>,
     pub(crate) try_native_xdp: Option<Vec<i32>>,
     static_nat4_tx: broadcast::Sender<()>,
@@ -107,7 +107,7 @@ impl EbpfRuntime {
         &self.backbone
     }
 
-    /// The per-iface XDP slot coordinator.
+    /// The native XDP attachment policy.
     pub fn xdp_attach(&self) -> &Arc<XdpAttach> {
         &self.xdp_attach
     }

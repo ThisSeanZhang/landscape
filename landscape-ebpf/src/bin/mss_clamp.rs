@@ -13,7 +13,6 @@ pub async fn main() {
     println!("Starting mss clamp on ifindex: {:?}", ifindex);
     let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
         rt.backbone().clone(),
-        rt.xdp_attach().clone(),
         1,
         Some(ifindex),
         true,

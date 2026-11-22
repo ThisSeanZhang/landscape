@@ -89,8 +89,7 @@ impl SessionHandle {
             .args(["link", "set", "dev", &self.iface_name, "mtu", "1500"])
             .output();
 
-        // Dropping the guard detaches the TC/XDP dataplane and recycles
-        // the SKB fallback state automatically.
+        // Withdraw the session key and detach the per-link stages.
         drop(self._session_guard);
 
         tracing::info!(

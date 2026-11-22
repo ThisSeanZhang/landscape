@@ -6,8 +6,6 @@ pub(crate) mod test_route {
 mod packet;
 
 #[cfg(test)]
-mod pppoe_skb_fallback;
-#[cfg(test)]
 mod tc_lan_ingress;
 #[cfg(test)]
 mod tc_lan_ingress_v6;

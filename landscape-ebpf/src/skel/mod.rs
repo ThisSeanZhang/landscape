@@ -17,9 +17,6 @@ pub mod neigh_update;
 #[path = "../bpf_rs/pppoe_client.skel.rs"]
 pub mod pppoe_client;
 #[rustfmt::skip]
-#[path = "../bpf_rs/pppoe_skb_fallback.skel.rs"]
-pub mod pppoe_skb_fallback;
-#[rustfmt::skip]
 #[path = "../bpf_rs/sk_dns_dispatcher.skel.rs"]
 pub mod sk_dns_dispatcher;
 #[rustfmt::skip]

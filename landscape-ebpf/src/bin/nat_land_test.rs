@@ -22,7 +22,6 @@ async fn main() {
     // The test drives the stage directly; stand the link chain up first.
     let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
         rt.backbone().clone(),
-        rt.xdp_attach().clone(),
         link_chain_id,
         Some(ifindex),
         true,

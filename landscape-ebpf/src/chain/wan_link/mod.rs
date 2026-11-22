@@ -9,8 +9,7 @@
 //!
 //! The shared, link-independent substrate (trie, intro seed, exit
 //! skeletons, root-array shells) lives in
-//! [`crate::route_backbone::RouteBackbone`]; per-iface XDP slot
-//! arbitration lives in [`crate::xdp_attach::XdpAttach`].  The two
+//! [`crate::route_backbone::RouteBackbone`]. The two
 //! hook planes' stage plumbing (state, root loaders, relinks,
 //! loader-facing views) lives in the [`xdp`] and [`tc`] submodules.
 
@@ -35,7 +34,6 @@ use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
-use crate::xdp_attach::XdpAttach;
 
 use tc::TcChainState;
 use tc::TcChainView;
@@ -94,7 +92,6 @@ struct Inner {
 /// teardown unless [`close`](WanLinkDataplane::close) already ran.
 pub struct WanLinkDataplane {
     backbone: Arc<RouteBackbone>,
-    attach: Arc<XdpAttach>,
     id: u16,
     inner: Mutex<Inner>,
 }
@@ -105,7 +102,6 @@ impl WanLinkDataplane {
     /// the pairing state (both are refreshed by later `observe` calls).
     pub fn new(
         backbone: Arc<RouteBackbone>,
-        attach: Arc<XdpAttach>,
         id: u16,
         ifindex: Option<u32>,
         has_eth_header: bool,
@@ -135,7 +131,7 @@ impl WanLinkDataplane {
                 egress_stages: StageTable::default(),
             },
         };
-        Ok(Arc::new(Self { backbone, attach, id, inner: Mutex::new(inner) }))
+        Ok(Arc::new(Self { backbone, id, inner: Mutex::new(inner) }))
     }
 
     /// This link's chain id.
@@ -145,10 +141,6 @@ impl WanLinkDataplane {
 
     pub(crate) fn backbone(&self) -> &Arc<RouteBackbone> {
         &self.backbone
-    }
-
-    pub(crate) fn attach(&self) -> &Arc<XdpAttach> {
-        &self.attach
     }
 
     /// Refresh the chain ↔ ifindex pairing, tolerating re-dial churn:
