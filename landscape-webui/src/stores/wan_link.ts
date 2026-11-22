@@ -9,7 +9,7 @@ import type {
   WanLinkStatus,
 } from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
-import { computed, ComputedRef, ref } from "vue";
+import { computed, ComputedRef, ref, toRaw } from "vue";
 
 /**
  * The WAN link set + per-link per-section runtime status. The topology stays
@@ -94,6 +94,11 @@ export const useWanLinkStore = defineStore("wan_link", () => {
     );
   }
 
+  function DRAFT_NODE_LINK(name: string): WanLink | undefined {
+    const link = RESOLVE_NODE_LINK(name).value;
+    return link && new WanLink(structuredClone(toRaw(link)));
+  }
+
   function GET_STATUS_BY_ID(
     id: string | undefined,
   ): ComputedRef<WanLinkStatus | undefined> {
@@ -119,6 +124,7 @@ export const useWanLinkStore = defineStore("wan_link", () => {
     GET_LINK_BY_IFACE,
     GET_PPPD_LINK_BY_IFACE,
     RESOLVE_NODE_LINK,
+    DRAFT_NODE_LINK,
     GET_STATUS_BY_ID,
     GET_HEALTH_BY_ID,
   };

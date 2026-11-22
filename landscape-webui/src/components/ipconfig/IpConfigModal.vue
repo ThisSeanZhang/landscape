@@ -63,7 +63,7 @@ async function on_modal_enter() {
 async function update_mode() {
   try {
     const link =
-      wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+      wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name) ??
       default_ethernet_link(iface_info.iface_name);
     apply_ip_form(link, iface_data.value);
     if (link.is_new()) {

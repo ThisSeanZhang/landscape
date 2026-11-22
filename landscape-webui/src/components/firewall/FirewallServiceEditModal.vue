@@ -22,7 +22,7 @@ const link = ref<WanLink>(default_ethernet_link(iface_info.iface_name));
 async function on_modal_enter() {
   await wanLinkStore.UPDATE_INFO();
   link.value =
-    wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+    wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name) ??
     default_ethernet_link(iface_info.iface_name);
 }
 

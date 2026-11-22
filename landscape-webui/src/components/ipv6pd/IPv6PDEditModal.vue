@@ -32,15 +32,14 @@ const link = ref<WanLink>(default_link());
 
 async function on_modal_enter() {
   await wanLinkStore.UPDATE_INFO();
-  const resolved = wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value;
+  const resolved = wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name);
   if (resolved === undefined) {
     link.value = default_link();
   } else {
-    const next = new WanLink(resolved);
-    if (!next.pd.mac || next.pd.mac === "00:00:00:00:00:00") {
-      next.pd.mac = iface_info.mac ?? generateValidMAC();
+    if (!resolved.pd.mac || resolved.pd.mac === "00:00:00:00:00:00") {
+      resolved.pd.mac = iface_info.mac ?? generateValidMAC();
     }
-    link.value = next;
+    link.value = resolved;
   }
 }
 
