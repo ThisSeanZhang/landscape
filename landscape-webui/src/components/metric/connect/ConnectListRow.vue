@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRouter } from "vue-router";
+import GeoRuleLink from "@/components/geo/GeoRuleLink.vue";
 import { useThemeVars } from "naive-ui";
 import {
   ArrowLeft,
@@ -246,6 +247,9 @@ function switchView() {
         <small>{{ entry.packets }}</small>
       </div>
       <div :role="mobile ? undefined : 'cell'" class="actions">
+        <GeoRuleLink :target="{ ip: item.dst_ip }">
+          <span v-if="mobile">GeoIP</span>
+        </GeoRuleLink>
         <a
           :href="`https://edge-geo.y8955.workers.dev/${item.dst_ip}`"
           target="_blank"
@@ -392,7 +396,7 @@ function switchView() {
 .connection-card .actions {
   grid-column: 1/-1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   border-top: 1px solid v-bind("theme.dividerColor");
   padding-top: 7px;

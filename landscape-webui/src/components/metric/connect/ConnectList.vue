@@ -295,7 +295,7 @@ function openChart(item: T) {
   display: grid;
   grid-template-columns:
     100px 86px minmax(132px, 1fr) minmax(132px, 1fr)
-    minmax(100px, 0.45fr) 100px 100px 104px;
+    minmax(100px, 0.45fr) 100px 100px 130px;
   align-items: center;
   gap: 10px;
   box-sizing: border-box;
@@ -348,7 +348,7 @@ function openChart(item: T) {
   .connection-table :deep(.connection-line) {
     grid-template-columns:
       minmax(152px, 1fr) minmax(152px, 1fr)
-      100px 86px 100px 100px 100px 104px;
+      100px 86px 100px 100px 100px 130px;
   }
   .connection-table :deep(.row-fields > :nth-child(3)),
   .connection-table :deep(.row-fields > :nth-child(4)),

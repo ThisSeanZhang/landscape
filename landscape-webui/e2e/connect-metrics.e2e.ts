@@ -93,7 +93,83 @@ test("live and history connection rows label protocol 58 as ICMPv6", async ({
   for (const view of ["live", "history"]) {
     await page.goto("/metrics/conn/" + view);
     await expect(page.getByRole("cell", { name: /\bICMPv6\b/ })).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: "Find GeoIP matches for " + record.dst_ip,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", {
+        name: "Find GeoIP matches for " + record.src_ip,
+      }),
+    ).toHaveCount(0);
   }
+});
+
+test("only destination IP statistics link to GeoIP address matches", async ({
+  page,
+}) => {
+  const ip = "192.0.2.42";
+  await page.route("**/api/v1/system/info/capabilities", (route) =>
+    route.fulfill({ json: { data: ["metric_persistent"] } }),
+  );
+  await page.route(
+    /\/connections\/(history\/)?(src|dst)_ip_stats(?:\?|$)/,
+    (route) => {
+      const row = route.request().url().includes("/history/")
+        ? {
+            ip,
+            flow_id: 0,
+            connect_count: 1,
+            total_egress_bytes: 100,
+            total_ingress_bytes: 200,
+            total_egress_pkts: 1,
+            total_ingress_pkts: 2,
+          }
+        : {
+            ip,
+            stats: {
+              active_conns: 1,
+              ingress_bps: 0,
+              egress_bps: 0,
+              ingress_pps: 0,
+              egress_pps: 0,
+            },
+          };
+      return route.fulfill({ json: { data: [row] } });
+    },
+  );
+  const lookup = page.getByRole("link", {
+    name: "Find GeoIP matches for " + ip,
+  });
+  for (const view of ["src", "history-src", "dst", "history-dst"]) {
+    await page.goto("/metrics/conn/" + view);
+    await expect(page.getByText(ip, { exact: true })).toBeVisible();
+    if (view.endsWith("src")) {
+      await expect(lookup).toHaveCount(0);
+    } else {
+      await expect(lookup).toHaveAttribute("href", "/geo/ip?ip=" + ip);
+    }
+  }
+  await page.route("**/geo/ips/cache/lookup?*", (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            key: { name: "AAA", key: "BBB" },
+            values: [{ ip: "192.0.2.0", prefix: 24 }],
+          },
+        ],
+      },
+    }),
+  );
+  await lookup.click();
+  await expect(page.getByRole("textbox", { name: "Lookup IP" })).toHaveValue(
+    ip,
+  );
+  await expect(
+    page.getByRole("button", { name: "View GeoIP details for AAA/BBB" }),
+  ).toBeVisible();
 });
 
 test("connection navigation keeps the IP view and URL filters across live and history", async ({
