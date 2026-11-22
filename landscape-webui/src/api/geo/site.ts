@@ -80,8 +80,9 @@ export async function search_geo_site_cache(
 
 export async function get_geo_site_cache_detail(
   key: GeoFileCacheKey,
+  signal?: AbortSignal,
 ): Promise<GeoDomainConfig> {
-  return getGeoSiteCacheDetail(key);
+  return getGeoSiteCacheDetail({ name: key.name, key: key.key }, { signal });
 }
 
 export async function update_geo_site_by_upload(

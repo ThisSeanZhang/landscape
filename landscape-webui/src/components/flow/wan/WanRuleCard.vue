@@ -6,6 +6,7 @@ import type { WanIpRuleConfig } from "@landscape-router/types/api/schemas";
 import { delete_dst_ip_rules_rule } from "@/api/dst_ip_rule";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
+import GeoRuleLink from "@/components/geo/GeoRuleLink.vue";
 import RoutingRuleCard from "@/components/flow/RoutingRuleCard.vue";
 import WanRuleEditModal from "./WanRuleEditModal.vue";
 
@@ -41,13 +42,19 @@ async function deleteRule() {
     </template>
     <template #source="{ source }">
       <div class="ip-source">
-        <n-tag
-          size="small"
-          :type="source.t === 'config' ? 'info' : 'success'"
-          :bordered="false"
-        >
-          {{ source.t === "config" ? "CIDR" : "GeoIP" }}
-        </n-tag>
+        <span class="source-kind">
+          <n-tag
+            size="small"
+            :type="source.t === 'config' ? 'info' : 'success'"
+            :bordered="false"
+          >
+            {{ source.t === "config" ? "CIDR" : "GeoIP" }}
+          </n-tag>
+          <GeoRuleLink
+            v-if="source.t === 'geo_key' && source.name && source.key"
+            :target="{ kind: 'ip', entry: source }"
+          />
+        </span>
         <div>
           <code v-if="source.t === 'config'"
             >{{ frontend.MASK_INFO(source.ip) }}/{{ source.prefix }}</code
@@ -126,8 +133,10 @@ async function deleteRule() {
   align-items: baseline;
   column-gap: 4px;
 }
-.ip-source .n-tag {
-  justify-self: start;
+.source-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 .ip-source code {
   font-family: var(--font-mono);

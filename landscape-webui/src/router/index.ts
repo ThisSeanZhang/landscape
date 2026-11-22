@@ -5,8 +5,7 @@ import MainLayout from "@/layouts/MainLayout.vue";
 import Flow from "@/views/Flow.vue";
 import Docker from "@/views/Docker.vue";
 import Firewall from "@/views/firewall/Firewall.vue";
-import GeoDomain from "@/views/geo/GeoDomain.vue";
-import GeoIp from "@/views/geo/GeoIp.vue";
+import GeoDatabase from "@/views/geo/GeoDatabase.vue";
 import Config from "@/views/Config.vue";
 import About from "@/views/About.vue";
 
@@ -77,12 +76,14 @@ const inner_zone: Array<RouteRecordRaw> = [
   {
     path: "/geo/domain",
     name: "routes.geo-domain",
-    component: GeoDomain,
+    component: GeoDatabase,
+    props: { kind: "site" },
   },
   {
     path: "/geo/ip",
     name: "routes.geo-ip",
-    component: GeoIp,
+    component: GeoDatabase,
+    props: { kind: "ip" },
   },
   {
     path: "/config",

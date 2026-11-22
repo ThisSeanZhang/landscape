@@ -84,8 +84,9 @@ export async function search_geo_ip_cache(
 
 export async function get_geo_ip_cache_detail(
   key: GeoFileCacheKey,
+  signal?: AbortSignal,
 ): Promise<GeoIpConfig> {
-  return getGeoIpCacheDetail(key);
+  return getGeoIpCacheDetail({ name: key.name, key: key.key }, { signal });
 }
 
 export async function update_geo_ip_by_upload(
