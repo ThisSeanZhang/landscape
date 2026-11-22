@@ -243,3 +243,55 @@ for (const [name, capabilities, store] of [
     }
   });
 }
+
+test("a DNS history domain opens its GeoSite matches on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const domain = "aaa.example";
+  const mock = (path: string, data: unknown) =>
+    page.route("**/api/v1/" + path, (route) =>
+      route.fulfill({ json: { data } }),
+    );
+  await mock("system/info/capabilities", ["metric_persistent"]);
+  await mock("system/config/metric", { dns: { store: {} } });
+  await mock("flow/rules", []);
+  await mock("metrics/dns/history?*", {
+    items: [
+      {
+        domain,
+        flow_id: 0,
+        report_time: Date.now(),
+        src_ip: "192.0.2.1",
+        status: "normal",
+        query_type: "A",
+        response_code: "NOERROR",
+        duration_ms: 1,
+        answers: [],
+      },
+    ],
+    total: 1,
+  });
+  await mock("geo/sites/cache/lookup?domain=" + domain, [
+    {
+      key: { name: "AAA", key: "BBB" },
+      values: [{ match_type: "domain", value: "aaa.example", attributes: [] }],
+    },
+  ]);
+  await page.goto("/metrics/dns");
+  await page.getByRole("radio", { name: "History", exact: true }).check();
+  await page
+    .getByRole("link", { name: "Find GeoSites for aaa.example" })
+    .click();
+  await expect(page).toHaveURL(/\/geo\/domain\?domain=aaa\.example$/);
+  await expect(
+    page.getByRole("textbox", { name: "Lookup Domain" }),
+  ).toHaveValue(domain);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "View GeoSite details for AAA/BBB" })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText(domain);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});

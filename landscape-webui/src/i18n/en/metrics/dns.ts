@@ -93,6 +93,7 @@ export default {
       "Hit rate is based on effective queries (excluding blocks, filters, and errors).",
   },
   tip: {
+    lookup_geosite: "Find GeoSites for {domain}",
     default_flow: "Default Flow",
     search_domain: "Search this domain",
     check_domain: "Test domain query result",

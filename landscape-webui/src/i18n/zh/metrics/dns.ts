@@ -90,6 +90,7 @@ export default {
     cache_hit_tip: "命中率基于有效查询（排除拦截、过滤及错误）。",
   },
   tip: {
+    lookup_geosite: "查看 {domain} 的 GeoSite 归属",
     default_flow: "默认 Flow",
     search_domain: "搜索此域名",
     check_domain: "测试域名查询日志",

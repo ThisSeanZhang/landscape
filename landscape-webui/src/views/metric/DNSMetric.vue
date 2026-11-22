@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, shallowRef, reactive, onMounted, h, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import type { LandscapeDnsRecordType } from "@landscape-router/types/api/schemas";
 import { get_dns_history } from "@/api/metric";
 import {
@@ -32,6 +33,7 @@ import {
   HelpCircleOutline,
   TimeOutline,
   Search,
+  GlobeOutline,
 } from "@vicons/ionicons5";
 import { useDebounceFn } from "@vueuse/core";
 import DNSDashboard from "@/components/metric/dns/DNSDashboard.vue";
@@ -225,6 +227,26 @@ const columns = computed<DataTableColumns<DnsLogEntry>>(() => [
                     },
                   ),
                 default: () => t("metric.dns.tip.check_domain"),
+              },
+            ),
+            h(
+              RouterLink,
+              {
+                class: "domain-action geosite-link",
+                to: {
+                  name: "routes.geo-domain",
+                  query: { domain: row.domain },
+                },
+                title: t("metric.dns.tip.lookup_geosite", {
+                  domain: row.domain,
+                }),
+                "aria-label": t("metric.dns.tip.lookup_geosite", {
+                  domain: row.domain,
+                }),
+              },
+              {
+                default: () =>
+                  h(NIcon, { component: GlobeOutline, "aria-hidden": true }),
               },
             ),
           ],
@@ -810,6 +832,20 @@ defineExpose({ refresh: () => loadData(), failed });
 }
 .dns-history-table :deep(.response-error) {
   color: v-bind("theme.errorColor");
+}
+.dns-history-table :deep(.geosite-link) {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: inherit;
+}
+.dns-history-table :deep(.geosite-link:hover),
+.dns-history-table :deep(.geosite-link:focus-visible) {
+  background: v-bind("theme.hoverColor");
+  color: v-bind("theme.primaryColor");
 }
 @media (hover: hover) {
   .dns-history-table :deep(tr:not(:hover):not(:focus-within) .domain-action) {
