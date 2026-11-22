@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DnsRecordList from "@/components/dns/DnsRecordList.vue";
 import { CopyOutline } from "@vicons/ionicons5";
 import { useMessage, useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -23,15 +24,7 @@ const prefs = usePreferenceStore();
     width="min(460px, 100%)"
     :aria-label="t('metric.dns.answer_details')"
   >
-    <n-drawer-content
-      closable
-      :title="t('metric.dns.answer_details')"
-      :style="{
-        '--answer-muted': theme.textColor3,
-        '--answer-divider': theme.dividerColor,
-        '--answer-font': theme.fontFamilyMono,
-      }"
-    >
+    <n-drawer-content closable :title="t('metric.dns.answer_details')">
       <h2>{{ frontend.MASK_INFO(query.domain) }}</h2>
       <div class="query-meta">
         <n-tag size="small" :bordered="false">{{ query.query_type }}</n-tag>
@@ -45,21 +38,7 @@ const prefs = usePreferenceStore();
       <h3>
         {{ t("metric.dns.answer_count", { count: query.records.length }) }}
       </h3>
-      <ol class="records">
-        <li v-for="(record, index) in query.records" :key="index">
-          <div v-if="record.type" class="record-meta">
-            <n-tag size="small" :bordered="false" type="info">{{
-              record.type
-            }}</n-tag>
-            <span>{{ record.dnsClass }}</span>
-            <span class="ttl">TTL {{ record.ttl }} s</span>
-          </div>
-          <span v-if="record.name" class="record-name">{{
-            frontend.MASK_INFO(record.name)
-          }}</span>
-          <code>{{ frontend.MASK_INFO(record.value) }}</code>
-        </li>
-      </ol>
+      <DnsRecordList :records="query.records" />
       <template v-if="!frontend.presentation_mode" #footer>
         <n-button
           size="small"
@@ -84,36 +63,12 @@ h3 {
   margin: 24px 0 6px;
   font-size: 13px;
 }
-.query-meta,
-.record-meta {
+.query-meta {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  color: var(--answer-muted);
+  color: v-bind("theme.textColor3");
   font-size: 12px;
-}
-.records {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.records li {
-  display: grid;
-  gap: 6px;
-  padding: 14px 0;
-  border-top: 1px solid var(--answer-divider);
-  overflow-wrap: anywhere;
-}
-.ttl {
-  margin-inline-start: auto;
-}
-.record-name {
-  color: var(--answer-muted);
-  font-size: 13px;
-}
-.records code {
-  font-family: var(--answer-font);
-  white-space: pre-wrap;
 }
 </style>

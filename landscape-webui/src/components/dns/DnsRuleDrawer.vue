@@ -114,7 +114,10 @@ const rule_loading_spin = ref(false);
               </template>
               {{ t("dns.rule_drawer.confirm_import") }}
             </n-popconfirm>
-            <n-button @click="show_query_modal = true">
+            <n-button
+              :aria-label="t('dns.check_domain.run_query')"
+              @click="show_query_modal = true"
+            >
               <template #icon>
                 <n-icon>
                   <SearchLocate />
@@ -147,6 +150,7 @@ const rule_loading_spin = ref(false);
       <CheckDomainDrawer
         v-model:show="show_query_modal"
         :flow_id="flow_id"
+        @rules-changed="read_rules"
       ></CheckDomainDrawer>
     </n-drawer-content>
   </n-drawer>

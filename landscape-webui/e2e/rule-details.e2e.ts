@@ -1,3 +1,4 @@
+import type { CheckChainDnsResult } from "@landscape-router/types/api/schemas";
 import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
@@ -156,6 +157,215 @@ test("DNS rule cards show settings and scroll long match lists on mobile", async
   await expectShortMatchesToShareRow(card);
   await card.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByText("Confirm deletion?")).toBeVisible();
+});
+
+test("quick DNS queries fit on one row in narrow and wide drawers", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/flow/rules", (route) =>
+    route.fulfill({ json: { data: [] } }),
+  );
+  await page.route("**/api/v1/dns/rules/flow/0", (route) =>
+    route.fulfill({ json: { data: [] } }),
+  );
+  await page.goto("/flow");
+  await page.getByRole("button", { name: "DNS", exact: true }).click();
+  await page.getByRole("button", { name: "Run DNS query" }).click();
+  const buttons = page.getByRole("button", {
+    name: /^(IPv[46] (Baidu|USTC)|HTTPS Cloudflare)$/,
+  });
+  await expect(buttons).toHaveCount(5);
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const button of await buttons.all()) {
+      await expect(button).toBeInViewport({ ratio: 1 });
+    }
+    const tops = await buttons.evaluateAll((buttons) =>
+      buttons.map((button) => Math.round(button.getBoundingClientRect().top)),
+    );
+    expect(new Set(tops).size).toBe(1);
+  }
+});
+
+test("DNS diagnostics display upstream, cached and redirected records", async ({
+  page,
+}) => {
+  const record = {
+    name: "edge.example.",
+    rr_type: "A",
+    ttl: 0,
+    data: "192.0.2.42",
+  };
+  const cached = { ...record, ttl: 60, data: "192.0.2.10" };
+  let result: CheckChainDnsResult = {
+    rule_id: "test-rule",
+    records: [record],
+    cache_records: [cached],
+  };
+  await page.route("**/api/v1/flow/rules", (route) =>
+    route.fulfill({ json: { data: [] } }),
+  );
+  await page.route("**/api/v1/dns/rules/flow/0", (route) =>
+    route.fulfill({ json: { data: [] } }),
+  );
+  await page.route("**/api/v1/dns/rules/test-rule", (route) =>
+    route.fulfill({
+      json: { data: { name: "Test rule", upstream_id: "test-upstream" } },
+    }),
+  );
+  await page.route("**/api/v1/dns/redirects/test-redirect", (route) =>
+    route.fulfill({
+      json: {
+        data: {
+          id: "test-redirect",
+          name: "Office redirect",
+          enable: true,
+          answer_mode: "static_ips",
+          apply_flows: [],
+          result_info: [record.data],
+          match_rules: [],
+        },
+      },
+    }),
+  );
+  await page.route("**/api/v1/dns/service/check?*", (route) =>
+    route.fulfill({ json: { data: result } }),
+  );
+  await page.route("**/api/v1/dns/service/cache?*", (route) =>
+    route.fulfill({ json: { data: { ...result, cache_records: null } } }),
+  );
+  await page.route("**/api/v1/dns/service/cache/refresh?*", (route) =>
+    route.fulfill({ json: { data: { ...result, cache_records: [record] } } }),
+  );
+
+  await page.goto("/flow");
+  await page.getByRole("button", { name: "DNS", exact: true }).click();
+  await page.getByRole("button", { name: "Run DNS query" }).click();
+  const query = page.getByRole("button", { name: "IPv4 Baidu" });
+  const refresh = page.getByRole("button", { name: "Force refresh cache" });
+  const remove = page.getByRole("button", { name: "Delete Cache" });
+  await expect(refresh).toHaveCount(0);
+  await expect(remove).toHaveCount(0);
+  await query.click();
+
+  const matchedCard = page.getByRole("article", { name: "Test rule" });
+  await expect(
+    page.getByRole("heading", { name: "Matched DNS rule" }),
+  ).toBeVisible();
+  await expect(matchedCard.getByRole("button", { name: "Edit" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "DNS Upstream Query Results" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "DNS Internal Cache Results" }),
+  ).toBeVisible();
+  await expect(page.locator("li code")).toHaveText([record.data, cached.data]);
+  await expect(page.getByText("TTL 0 s", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 320, height: 740 });
+  for (const data of [record.data, cached.data]) {
+    const row = page.getByRole("button", { name: data });
+    await expect(row).toHaveAttribute("aria-expanded", "false");
+    const bounds = await row
+      .locator(":scope > *")
+      .evaluateAll((fields) =>
+        fields.map((field) => field.getBoundingClientRect().toJSON()),
+      );
+    expect(Math.max(...bounds.map((field) => field.top))).toBeLessThan(
+      Math.min(...bounds.map((field) => field.bottom)),
+    );
+    expect(bounds[bounds.length - 1].right).toBeLessThanOrEqual(320);
+  }
+  for (const [heading, button] of [
+    ["DNS Upstream Query Results", refresh],
+    ["DNS Internal Cache Results", remove],
+  ] as const) {
+    await button.scrollIntoViewIfNeeded();
+    const title = (await page
+      .getByRole("heading", { name: heading })
+      .boundingBox())!;
+    const action = (await button.boundingBox())!;
+    expect(action.x).toBeGreaterThanOrEqual(title.x + title.width);
+    expect(action.y + action.height / 2).toBeCloseTo(
+      title.y + title.height / 2,
+      0,
+    );
+    expect(action.x + action.width).toBeLessThanOrEqual(320);
+  }
+  const input = page.getByPlaceholder(/Enter a domain/);
+  await input.fill("draft.example");
+  for (const [button, method, path] of [
+    [remove, "DELETE", "/api/v1/dns/service/cache"],
+    [refresh, "POST", "/api/v1/dns/service/cache/refresh"],
+  ] as const) {
+    await button.click();
+    const [request] = await Promise.all([
+      page.waitForRequest(
+        (req) =>
+          req.method() === method && new URL(req.url()).pathname === path,
+      ),
+      page.getByRole("button", { name: "Confirm", exact: true }).click(),
+    ]);
+    const params = new URL(request.url()).searchParams;
+    expect(params.get("domain")).toBe("www.baidu.com");
+    expect(params.get("record_type")).toBe("A");
+    expect(params.get("flow_id")).toBe("0");
+    await expect(input).toHaveValue("draft.example");
+    if (method === "DELETE") {
+      await expect(page.getByText("No cache entry")).toBeVisible();
+    } else {
+      await expect(page.locator("li code")).toHaveText([
+        record.data,
+        record.data,
+      ]);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  result = { rule_id: "test-rule", records: [] };
+  await query.click();
+  await expect(page.getByText("No records returned")).toBeVisible();
+  await expect(page.getByText("No cache entry")).toBeVisible();
+
+  result = { redirect_id: "test-redirect", records: [record] };
+  await query.click();
+  const redirectHeading = page.getByRole("heading", {
+    name: "Matched redirect rule",
+  });
+  await expect(redirectHeading).toBeVisible();
+  await expect(refresh).toHaveCount(0);
+  await expect(remove).toHaveCount(0);
+  await expect(
+    page.getByText("Office redirect", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Static IP list", { exact: true })).toBeVisible();
+  await expect(matchedCard).toHaveCount(0);
+
+  const longValue = "1 . ech=" + "a".repeat(256);
+  result = {
+    dynamic_redirect_source: "test",
+    records: [{ ...record, rr_type: "HTTPS", data: longValue }],
+  };
+  await query.click();
+  await expect(redirectHeading).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Domain Redirect Results" }),
+  ).toBeVisible();
+  const value = page.locator("li code");
+  await expect(value).toHaveText(longValue);
+  const recordButton = page.getByRole("button", { name: longValue });
+  expect(await value.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  await recordButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(recordButton).toHaveAttribute("aria-expanded", "true");
+  expect(
+    await value.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+  ).toBe(true);
+  const bounds = await value.boundingBox();
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await recordButton.click();
+  await expect(recordButton).toHaveAttribute("aria-expanded", "false");
 });
 
 test("destination rules show routing, scrollable matches and masked IPs", async ({

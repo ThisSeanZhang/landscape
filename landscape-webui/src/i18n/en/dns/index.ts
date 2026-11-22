@@ -133,6 +133,14 @@ export default {
     confirm_import: "Confirm import from clipboard?",
   },
   check_domain: {
+    matched_rule: "Matched DNS rule",
+    matched_redirect: "Matched redirect rule",
+    baidu: "Baidu",
+    ustc: "USTC",
+    run_query: "Run DNS query",
+    query_result: "DNS Query Results",
+    no_records: "No records returned",
+    cache_miss: "No cache entry",
     enter_domain: "Enter domain to query",
     test_flow_query: "Test flow: {flow_id} domain query (results not cached)",
     query_instruction:
@@ -140,11 +148,10 @@ export default {
     diagnostic_hint:
       "Regular query is diagnostic only and does not write runtime cache",
     delete_cache: "Delete Cache",
-    refresh_cache: "Refresh Cache",
-    confirm_delete_cache:
-      "Delete the current cache entry for this domain and record type?",
+    refresh_cache: "Force refresh cache",
+    confirm_delete_cache: "Delete the cache entry for this query result?",
     confirm_refresh_cache:
-      "Refresh this domain and record type from upstream and overwrite runtime cache?",
+      "Query upstream again and overwrite the cache entry for this result?",
     delete_cache_success: "DNS cache entry deleted",
     refresh_cache_success: "DNS cache refreshed from upstream",
     query_filtered_hint:

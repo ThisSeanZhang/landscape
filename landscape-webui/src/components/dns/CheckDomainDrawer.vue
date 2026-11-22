@@ -7,7 +7,7 @@ import type {
   LandscapeDnsRecordType,
 } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
-import { useMessage } from "naive-ui";
+import { useMessage, useThemeVars } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { SearchLocate } from "@vicons/carbon";
 
@@ -16,10 +16,12 @@ import {
   invalidate_domain_cache,
   refresh_domain_cache,
 } from "@/api/dns_service";
+import DnsQueryRecords from "./DnsQueryRecords.vue";
 import { createDnsRule } from "@/lib/dns";
 import { getDnsRule } from "@landscape-router/types/api/dns-rules/dns-rules";
 import { get_dns_redirect } from "@/api/dns_rule/redirect";
 const message = useMessage();
+const theme = useThemeVars();
 const { t } = useI18n();
 
 interface Props {
@@ -33,6 +35,7 @@ const props = withDefaults(defineProps<Props>(), {
   initialDomain: "",
   initialType: "A",
 });
+const emit = defineEmits<{ rulesChanged: [] }>();
 
 const show = defineModel<boolean>("show", { required: true });
 const req = ref<CheckDomainParams>({
@@ -40,19 +43,23 @@ const req = ref<CheckDomainParams>({
   domain: "",
   record_type: "A",
 });
-function createEmptyResult(): CheckChainDnsResult {
-  return {
-    redirect_id: undefined,
-    dynamic_redirect_source: undefined,
-    rule_id: undefined,
-    rule_filter: undefined,
-    query_filtered: false,
-    records: undefined,
-    cache_records: undefined,
-  };
-}
-
-const result = ref<CheckChainDnsResult>(createEmptyResult());
+const result = ref<CheckChainDnsResult>();
+let lastRequest: CheckDomainParams | undefined;
+const isUpstreamResult = computed(() =>
+  Boolean(
+    result.value?.rule_id &&
+    !result.value.redirect_id &&
+    !result.value.dynamic_redirect_source,
+  ),
+);
+const answerTitle = computed(() => {
+  if (result.value?.redirect_id || result.value?.dynamic_redirect_source) {
+    return t("dns.check_domain.redirect_result");
+  }
+  return isUpstreamResult.value
+    ? t("dns.check_domain.upstream_result")
+    : t("dns.check_domain.query_result");
+});
 
 async function init_req(isEnter = false) {
   req.value = {
@@ -60,7 +67,8 @@ async function init_req(isEnter = false) {
     domain: props.initialDomain || "",
     record_type: props.initialType || "A",
   };
-  result.value = createEmptyResult();
+  result.value = undefined;
+  lastRequest = undefined;
   config_rule.value = undefined;
   redirect_rule.value = undefined;
   if (isEnter && req.value.domain) {
@@ -81,6 +89,38 @@ const options = [
     value: "HTTPS",
   },
 ];
+
+const quickQueryButtonTypes = {
+  A: "info",
+  AAAA: "success",
+  HTTPS: "warning",
+} as const;
+
+const quickQueries = computed(
+  () =>
+    [
+      {
+        name: t("dns.check_domain.baidu"),
+        queries: [
+          { label: "IPv4", type: "A", domain: "www.baidu.com" },
+          { label: "IPv6", type: "AAAA", domain: "www.baidu.com" },
+        ],
+      },
+      {
+        name: "Cloudflare",
+        queries: [
+          { label: "HTTPS", type: "HTTPS", domain: "crypto.cloudflare.com" },
+        ],
+      },
+      {
+        name: t("dns.check_domain.ustc"),
+        queries: [
+          { label: "IPv4", type: "A", domain: "test.ustc.edu.cn" },
+          { label: "IPv6", type: "AAAA", domain: "test6.ustc.edu.cn" },
+        ],
+      },
+    ] as const,
+);
 
 function extractDomain(input: string): string {
   let s = input.trim();
@@ -105,14 +145,15 @@ const redirect_rule = ref<DNSRedirectRule>();
 const busy = computed(
   () => loading.value || deleteCacheLoading.value || refreshCacheLoading.value,
 );
-const canDeleteCache = computed(() => req.value.domain.trim() !== "");
-const canRefreshCache = computed(
-  () =>
-    req.value.domain.trim() !== "" &&
-    !!result.value.rule_id &&
-    !redirect_rule.value,
-);
 
+function onRuleChanged() {
+  emit("rulesChanged");
+  return refreshMatch();
+}
+
+function refreshMatch() {
+  if (lastRequest) return runQuery(lastRequest);
+}
 function getNormalizedReq(): CheckDomainParams | undefined {
   const domain = extractDomain(req.value.domain);
   if (domain === "") {
@@ -140,34 +181,39 @@ async function syncRuleDetails(nextResult: CheckChainDnsResult) {
   }
 }
 
-async function applyResult(nextResult: CheckChainDnsResult) {
+async function applyResult(
+  nextResult: CheckChainDnsResult,
+  request: CheckDomainParams,
+) {
+  lastRequest = request;
   result.value = nextResult;
   await syncRuleDetails(nextResult);
 }
 
 async function query() {
+  if (busy.value) return;
   const nextReq = getNormalizedReq();
-  if (!nextReq) {
-    return;
-  }
+  if (nextReq) await runQuery(nextReq);
+}
 
+async function runQuery(nextReq: CheckDomainParams) {
   loading.value = true;
   try {
-    await applyResult(await check_domain(nextReq));
+    await applyResult(await check_domain(nextReq), nextReq);
   } finally {
     loading.value = false;
   }
 }
 
 async function deleteCache() {
-  const nextReq = getNormalizedReq();
-  if (!nextReq) {
+  const nextReq = lastRequest;
+  if (!nextReq || busy.value) {
     return;
   }
 
   deleteCacheLoading.value = true;
   try {
-    await applyResult(await invalidate_domain_cache(nextReq));
+    await applyResult(await invalidate_domain_cache(nextReq), nextReq);
     message.success(t("dns.check_domain.delete_cache_success"));
   } finally {
     deleteCacheLoading.value = false;
@@ -175,14 +221,14 @@ async function deleteCache() {
 }
 
 async function refreshCache() {
-  const nextReq = getNormalizedReq();
-  if (!nextReq) {
+  const nextReq = lastRequest;
+  if (!nextReq || busy.value || !isUpstreamResult.value) {
     return;
   }
 
   refreshCacheLoading.value = true;
   try {
-    await applyResult(await refresh_domain_cache(nextReq));
+    await applyResult(await refresh_domain_cache(nextReq), nextReq);
     message.success(t("dns.check_domain.refresh_cache_success"));
   } finally {
     refreshCacheLoading.value = false;
@@ -210,53 +256,29 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
       closable
     >
       <n-flex style="height: 100%" vertical>
-        <n-flex :wrap="false" justify="space-between">
-          <n-button
-            size="small"
-            :loading="busy"
-            type="info"
-            ghost
-            @click="quick_btn('A', 'www.baidu.com')"
+        <div class="quick-queries" :style="{ '--label-ink': theme.textColor1 }">
+          <div
+            v-for="target in quickQueries"
+            :key="target.name"
+            class="quick-target"
           >
-            IPv4 Baidu
-          </n-button>
-          <n-button
-            size="small"
-            ghost
-            :loading="busy"
-            type="success"
-            @click="quick_btn('AAAA', 'www.baidu.com')"
-          >
-            IPv6 Baidu
-          </n-button>
-          <n-button
-            size="small"
-            :loading="busy"
-            type="info"
-            ghost
-            @click="quick_btn('HTTPS', 'crypto.cloudflare.com')"
-          >
-            HTTPS CF
-          </n-button>
-          <n-button
-            size="small"
-            :loading="busy"
-            type="info"
-            ghost
-            @click="quick_btn('A', 'test.ustc.edu.cn')"
-          >
-            IPv4 USTC
-          </n-button>
-          <n-button
-            size="small"
-            ghost
-            :loading="busy"
-            type="success"
-            @click="quick_btn('AAAA', 'test6.ustc.edu.cn')"
-          >
-            IPv6 USTC
-          </n-button>
-        </n-flex>
+            <n-text depth="2" class="target-name">{{ target.name }}</n-text>
+            <n-button-group size="small" :aria-label="target.name">
+              <n-button
+                v-for="preset in target.queries"
+                :key="preset.type"
+                class="quick-query"
+                secondary
+                :type="quickQueryButtonTypes[preset.type]"
+                :disabled="busy"
+                :aria-label="`${preset.label} ${target.name}`"
+                @click="quick_btn(preset.type, preset.domain)"
+              >
+                <span class="query-label">{{ preset.label }}</span>
+              </n-button>
+            </n-button-group>
+          </div>
+        </div>
         <n-spin :show="loading">
           <n-input-group>
             <n-select
@@ -270,7 +292,11 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               v-model:value="req.domain"
             />
 
-            <n-button @click="query">
+            <n-button
+              :aria-label="t('dns.check_domain.run_query')"
+              :disabled="busy"
+              @click="query"
+            >
               <template #icon>
                 <n-icon>
                   <SearchLocate />
@@ -278,45 +304,11 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
               </template>
             </n-button>
           </n-input-group>
-          <n-flex
-            justify="space-between"
-            align="center"
-            style="margin-top: 10px"
-          >
-            <n-text depth="3">
-              {{ t("dns.check_domain.diagnostic_hint") }}
-            </n-text>
-            <n-flex>
-              <n-popconfirm
-                :positive-button-props="{ loading: deleteCacheLoading }"
-                @positive-click="deleteCache"
-              >
-                <template #trigger>
-                  <n-button size="small" :disabled="!canDeleteCache">
-                    {{ t("dns.check_domain.delete_cache") }}
-                  </n-button>
-                </template>
-                {{ t("dns.check_domain.confirm_delete_cache") }}
-              </n-popconfirm>
-              <n-popconfirm
-                :positive-button-props="{ loading: refreshCacheLoading }"
-                @positive-click="refreshCache"
-              >
-                <template #trigger>
-                  <n-button
-                    size="small"
-                    type="warning"
-                    :disabled="!canRefreshCache"
-                  >
-                    {{ t("dns.check_domain.refresh_cache") }}
-                  </n-button>
-                </template>
-                {{ t("dns.check_domain.confirm_refresh_cache") }}
-              </n-popconfirm>
-            </n-flex>
-          </n-flex>
+          <n-text depth="3" class="diagnostic-hint">
+            {{ t("dns.check_domain.diagnostic_hint") }}
+          </n-text>
           <n-alert
-            v-if="result.query_filtered"
+            v-if="result?.query_filtered"
             type="warning"
             :show-icon="false"
             style="margin-top: 10px"
@@ -325,41 +317,116 @@ async function quick_btn(record_type: LandscapeDnsRecordType, domain: string) {
           </n-alert>
         </n-spin>
 
-        <n-scrollbar>
-          <n-flex v-if="config_rule" vertical>
-            <DnsRuleCard :rule="config_rule"> </DnsRuleCard>
+        <n-scrollbar
+          class="drawer-scroll-gutter"
+          content-class="drawer-scroll-content"
+        >
+          <div v-if="result">
+            <template v-if="config_rule">
+              <h3>{{ t("dns.check_domain.matched_rule") }}</h3>
+              <DnsRuleCard :rule="config_rule" @refresh="onRuleChanged" />
+            </template>
+            <template v-if="redirect_rule">
+              <h3>{{ t("dns.check_domain.matched_redirect") }}</h3>
+              <DnsRedirectCard :rule="redirect_rule" @refresh="refreshMatch" />
+            </template>
 
-            <n-divider title-placement="left">
-              {{ t("dns.check_domain.upstream_result") }}
-            </n-divider>
-            <n-flex v-if="result.records">
-              <n-flex v-for="each in result.records">
-                {{ each }}
-              </n-flex>
-            </n-flex>
-            <n-divider title-placement="left">
-              {{ t("dns.check_domain.cache_result") }}
-            </n-divider>
-            <n-flex v-if="result.cache_records">
-              <n-flex v-for="each in result.cache_records">
-                {{ each }}
-              </n-flex>
-            </n-flex>
-          </n-flex>
+            <div class="result-heading">
+              <h3>{{ answerTitle }}</h3>
+              <n-popconfirm
+                v-if="isUpstreamResult"
+                :positive-button-props="{ loading: refreshCacheLoading }"
+                @positive-click="refreshCache"
+              >
+                <template #trigger>
+                  <n-button size="small" type="warning" :disabled="busy">
+                    {{ t("dns.check_domain.refresh_cache") }}
+                  </n-button>
+                </template>
+                {{ t("dns.check_domain.confirm_refresh_cache") }}
+              </n-popconfirm>
+            </div>
+            <DnsQueryRecords
+              v-if="result.records?.length"
+              :records="result.records"
+            />
+            <n-text v-else depth="3">{{
+              t("dns.check_domain.no_records")
+            }}</n-text>
 
-          <n-flex v-if="redirect_rule" vertical>
-            <DnsRedirectCard :rule="redirect_rule"></DnsRedirectCard>
-            <n-divider title-placement="left">
-              {{ t("dns.check_domain.redirect_result") }}
-            </n-divider>
-            <n-flex v-if="result.records">
-              <n-flex v-for="each in result.records">
-                {{ each }}
-              </n-flex>
-            </n-flex>
-          </n-flex>
+            <template v-if="result.rule_id || result.cache_records != null">
+              <div class="result-heading">
+                <h3>{{ t("dns.check_domain.cache_result") }}</h3>
+                <n-popconfirm
+                  :positive-button-props="{ loading: deleteCacheLoading }"
+                  @positive-click="deleteCache"
+                >
+                  <template #trigger>
+                    <n-button size="small" :disabled="busy">
+                      {{ t("dns.check_domain.delete_cache") }}
+                    </n-button>
+                  </template>
+                  {{ t("dns.check_domain.confirm_delete_cache") }}
+                </n-popconfirm>
+              </div>
+              <DnsQueryRecords
+                v-if="result.cache_records?.length"
+                :records="result.cache_records"
+              />
+              <n-text v-else depth="3">{{
+                result.cache_records == null
+                  ? t("dns.check_domain.cache_miss")
+                  : t("dns.check_domain.no_records")
+              }}</n-text>
+            </template>
+          </div>
         </n-scrollbar>
       </n-flex>
     </n-drawer-content>
   </n-drawer>
 </template>
+
+<style scoped>
+.quick-queries {
+  display: flex;
+  gap: 8px;
+}
+
+.quick-target {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+}
+
+.target-name {
+  font-size: 12px;
+}
+
+.quick-query {
+  flex: 1;
+  padding-inline: 4px;
+}
+
+.query-label {
+  color: color-mix(in srgb, currentColor 45%, var(--label-ink));
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+}
+.diagnostic-hint {
+  display: block;
+  margin-top: 10px;
+}
+.result-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 6px;
+}
+.result-heading h3 {
+  min-width: 0;
+  margin: 0;
+}
+</style>
