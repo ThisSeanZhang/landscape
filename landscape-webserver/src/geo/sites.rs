@@ -34,6 +34,7 @@ pub fn get_geo_site_config_paths() -> OpenApiRouter<LandscapeApp> {
         .routes(routes!(search_geo_site_cache))
         .routes(routes!(lookup_geo_site_domain))
         .routes(routes!(get_geo_site_cache_detail))
+        .routes(routes!(get_geo_site_attributes))
         .routes(routes!(get_geo_site_tasks, cancel_geo_site_task))
         .merge(upload_router)
 }
@@ -110,11 +111,30 @@ async fn get_geo_site_cache_detail(
 
 #[utoipa::path(
     get,
+    path = "/sites/cache/attributes",
+    tag = "Geo Sites",
+    params(
+        ("name" = String, Query, description = "Geo file name"),
+        ("key" = String, Query, description = "Geo cache key")
+    ),
+    responses((status = 200, description = "Distinct attribute names", body = CommonApiResp<Vec<String>>))
+)]
+async fn get_geo_site_attributes(
+    State(state): State<LandscapeApp>,
+    Query(key): Query<GeoFileCacheKey>,
+) -> LandscapeApiResult<Vec<String>> {
+    LandscapeApiResp::success(state.managed.geo_site_service.list_attributes(&key).await?)
+}
+
+#[utoipa::path(
+    get,
     path = "/sites/cache/search",
     tag = "Geo Sites",
     params(
         ("name" = Option<String>, Query, description = "Filter by name"),
-        ("key" = Option<String>, Query, description = "Filter by key")
+        ("key" = Option<String>, Query, description = "Filter by key"),
+        ("q" = Option<String>, Query, description = "Search source name or key, with exact key matches first"),
+        ("limit" = Option<u32>, Query, description = "Maximum number of results")
     ),
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
@@ -122,23 +142,7 @@ async fn search_geo_site_cache(
     State(state): State<LandscapeApp>,
     Query(query): Query<QueryGeoKey>,
 ) -> LandscapeApiResult<Vec<GeoFileCacheKey>> {
-    tracing::debug!("query: {:?}", query);
-    let key = query.key.map(|k| k.to_ascii_uppercase());
-    let name = query.name;
-    tracing::debug!("name: {name:?}");
-    tracing::debug!("key: {key:?}");
-    let result: Vec<GeoFileCacheKey> = state
-        .managed
-        .geo_site_service
-        .list_all_keys()
-        .await
-        .into_iter()
-        .filter(|e| key.as_ref().is_none_or(|key| e.key.contains(key)))
-        .filter(|e| name.as_ref().is_none_or(|name| &e.name == name))
-        .collect();
-
-    tracing::debug!("keys len: {}", result.len());
-    LandscapeApiResp::success(result)
+    LandscapeApiResp::success(state.managed.geo_site_service.search_keys(&query).await?)
 }
 
 #[utoipa::path(

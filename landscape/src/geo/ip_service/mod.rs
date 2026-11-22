@@ -2,7 +2,7 @@ use landscape_common::{
     concurrency::task_label,
     config_service::geo::{
         GeoError, GeoFileCacheKey, GeoIpConfig, GeoIpLookupResult, GeoIpSource, GeoIpSourceConfig,
-        GeoSourceKind, GeoTaskPhase, GeoTaskProgress, RawDatState,
+        GeoSourceKind, GeoTaskPhase, GeoTaskProgress, QueryGeoKey, RawDatState,
     },
     database::store::{Change, ConfigStore},
     flow::ip_mark::{IpMarkInfo, WanIPRuleSource, WanIpRuleConfig},
@@ -416,6 +416,10 @@ fn finalize_runtime_rules(mut result: Vec<IpMarkInfo>) -> Vec<IpMarkInfo> {
 }
 
 impl GeoIpService {
+    pub async fn search_keys(&self, query: &QueryGeoKey) -> Result<Vec<GeoFileCacheKey>, GeoError> {
+        Ok(self.cache.search_keys(query).await?)
+    }
+
     pub async fn list_all_keys(&self) -> Vec<GeoFileCacheKey> {
         self.cache.list_keys().await.unwrap_or_default()
     }

@@ -77,6 +77,8 @@ export async function search_geo_ip_cache(
   return searchGeoIpCache({
     name: query.name ?? undefined,
     key: query.key ?? undefined,
+    q: query.q ?? undefined,
+    limit: query.limit ?? undefined,
   });
 }
 

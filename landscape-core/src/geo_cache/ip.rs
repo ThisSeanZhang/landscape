@@ -5,7 +5,7 @@ use std::{
 
 use futures_util::TryStreamExt;
 use landscape_common::{
-    config_service::geo::{GeoFileCacheKey, GeoIpConfig},
+    config_service::geo::{GeoFileCacheKey, GeoIpConfig, QueryGeoKey},
     database::error::DbError,
     flow::ip_mark::IpConfig,
     utils::time::get_f64_timestamp,
@@ -368,6 +368,10 @@ impl IpCacheRepository {
                 .await
                 .map_err(db_err)?;
         Ok(rows.into_iter().map(|(name, key)| GeoFileCacheKey { name, key }).collect())
+    }
+
+    pub async fn search_keys(&self, query: &QueryGeoKey) -> Result<Vec<GeoFileCacheKey>, DbError> {
+        super::search_keys(&self.pool, query).await
     }
 
     pub async fn list_keys(&self) -> Result<Vec<GeoFileCacheKey>, DbError> {

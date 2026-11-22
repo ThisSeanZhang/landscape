@@ -111,7 +111,9 @@ async fn get_geo_ip_cache_detail(
     tag = "Geo IPs",
     params(
         ("name" = Option<String>, Query, description = "Filter by name"),
-        ("key" = Option<String>, Query, description = "Filter by key")
+        ("key" = Option<String>, Query, description = "Filter by key"),
+        ("q" = Option<String>, Query, description = "Search source name or key, with exact key matches first"),
+        ("limit" = Option<u32>, Query, description = "Maximum number of results")
     ),
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<GeoFileCacheKey>>))
 )]
@@ -119,23 +121,7 @@ async fn search_geo_ip_cache(
     State(state): State<LandscapeApp>,
     Query(query): Query<QueryGeoKey>,
 ) -> LandscapeApiResult<Vec<GeoFileCacheKey>> {
-    tracing::debug!("query: {:?}", query);
-    let key = query.key.map(|k| k.to_ascii_uppercase());
-    let name = query.name;
-    tracing::debug!("name: {name:?}");
-    tracing::debug!("key: {key:?}");
-    let result: Vec<GeoFileCacheKey> = state
-        .managed
-        .geo_ip_service
-        .list_all_keys()
-        .await
-        .into_iter()
-        .filter(|e| key.as_ref().is_none_or(|key| e.key.contains(key)))
-        .filter(|e| name.as_ref().is_none_or(|name| &e.name == name))
-        .collect();
-
-    tracing::debug!("keys len: {}", result.len());
-    LandscapeApiResp::success(result)
+    LandscapeApiResp::success(state.managed.geo_ip_service.search_keys(&query).await?)
 }
 
 #[utoipa::path(

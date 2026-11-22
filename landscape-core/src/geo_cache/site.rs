@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use landscape_common::{
     config_service::geo::{
-        GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig, site_attributes_from_json,
-        site_attributes_to_json, site_pattern_is_valid,
+        GeoDomainConfig, GeoFileCacheKey, GeoSiteFileConfig, QueryGeoKey,
+        site_attributes_from_json, site_attributes_to_json, site_pattern_is_valid,
     },
     database::error::DbError,
     dns::rule::DomainMatchType,
@@ -372,6 +372,21 @@ impl SiteCacheRepository {
         Ok(self.load_entry_with_hash(name, geo_key).await?.map(|(config, _)| config))
     }
 
+    pub async fn list_attributes(&self, key: &GeoFileCacheKey) -> Result<Vec<String>, DbError> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT attr.value FROM geo_cache_entries AS e
+             JOIN geo_site_rules AS r ON r.entry_id = e.id
+             JOIN json_each(CASE WHEN json_valid(r.attributes) THEN r.attributes END) AS attr
+             WHERE e.name = ? AND e.geo_key = ? AND attr.type = 'text'
+             ORDER BY attr.value",
+        )
+        .bind(&key.name)
+        .bind(key.key.to_ascii_uppercase())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)
+    }
+
     pub async fn keys_for_name(&self, name: &str) -> Result<Vec<GeoFileCacheKey>, DbError> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT name, geo_key FROM geo_cache_entries WHERE name = ?")
@@ -380,6 +395,10 @@ impl SiteCacheRepository {
                 .await
                 .map_err(db_err)?;
         Ok(rows.into_iter().map(|(name, key)| GeoFileCacheKey { name, key }).collect())
+    }
+
+    pub async fn search_keys(&self, query: &QueryGeoKey) -> Result<Vec<GeoFileCacheKey>, DbError> {
+        super::search_keys(&self.pool, query).await
     }
 
     pub async fn list_keys(&self) -> Result<Vec<GeoFileCacheKey>, DbError> {

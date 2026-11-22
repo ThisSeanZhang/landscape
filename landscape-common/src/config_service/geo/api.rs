@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct QueryGeoKey {
     pub name: Option<String>,
     pub key: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]

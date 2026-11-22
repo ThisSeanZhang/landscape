@@ -73,6 +73,8 @@ export async function search_geo_site_cache(
   return searchGeoSiteCache({
     name: query.name ?? undefined,
     key: query.key ?? undefined,
+    q: query.q ?? undefined,
+    limit: query.limit ?? undefined,
   });
 }
 

@@ -2,7 +2,7 @@ use landscape_common::{
     concurrency::task_label,
     config_service::geo::{
         GeoDomainConfig, GeoError, GeoFileCacheKey, GeoSiteFileConfig, GeoSiteLookupResult,
-        GeoSiteSource, GeoSourceKind, GeoTaskPhase, GeoTaskProgress, RawDatState,
+        GeoSiteSource, GeoSourceKind, GeoTaskPhase, GeoTaskProgress, QueryGeoKey, RawDatState,
     },
     database::store::{Change, ConfigStore},
     dns::domain::normalize_domain_name,
@@ -419,6 +419,14 @@ impl GeoSiteService {
     /// builder) fetch ready `Arc<DomainMatcher>`s from it per rule.
     pub fn matcher_registry(&self) -> Arc<SiteMatcherRegistry> {
         self.matcher_registry.clone()
+    }
+
+    pub async fn search_keys(&self, query: &QueryGeoKey) -> Result<Vec<GeoFileCacheKey>, GeoError> {
+        Ok(self.cache.search_keys(query).await?)
+    }
+
+    pub async fn list_attributes(&self, key: &GeoFileCacheKey) -> Result<Vec<String>, GeoError> {
+        Ok(self.cache.list_attributes(key).await?)
     }
 
     pub async fn list_all_keys(&self) -> Vec<GeoFileCacheKey> {
