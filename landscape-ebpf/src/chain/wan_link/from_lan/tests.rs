@@ -272,6 +272,44 @@ fn switching_to_ppp_keeps_stage_slots() {
 }
 
 #[test]
+fn a_restarted_link_reuses_its_chain_id_with_fresh_roots_and_stages() {
+    let (_pins, old) = dataplane();
+    let backbone = old.backbone.clone();
+    let id = old.id();
+    let paths = backbone.paths();
+    let root_slots = [
+        paths.xdp_pipe_root_progs_path(),
+        paths.xdp_lan_pipe_root_progs_path(),
+        paths.tc_pipe_root_progs_path(),
+        paths.tc_wan_egress_roots_path(),
+    ]
+    .map(|path| pinned_map(&path).unwrap());
+    let slot = u32::from(id);
+    bind(&old, 24);
+    let mss = old.attach_mss(IFINDEX, 1450, true).unwrap();
+    let roots = root_slots.each_ref().map(|map| program_id(map, slot));
+    let stages = stage_ids(&old);
+    drop(mss);
+    drop(old);
+    for map in &root_slots {
+        assert!(map.lookup(&slot.to_ne_bytes(), MapFlags::ANY).unwrap().is_none());
+    }
+
+    let ppp = WanLinkDataplane::new(backbone, id, Some(IFINDEX), false).unwrap();
+    ppp.bind_ppp_ipv4(IFINDEX, IP, GATEWAY, 32);
+    let mss = ppp.attach_mss(IFINDEX, 1450, false).unwrap();
+    for (old_id, map) in roots.into_iter().zip(&root_slots) {
+        assert_ne!(old_id, program_id(map, slot));
+    }
+    for (old_id, new_id) in stages.into_iter().flatten().zip(stage_ids(&ppp).into_iter().flatten())
+    {
+        assert_ne!(old_id, new_id);
+    }
+    drop(mss);
+    drop(ppp);
+}
+
+#[test]
 fn second_publish_failure_restores_live_roots_and_renewal_retries() {
     let (_pins, dp) = dataplane();
     bind(&dp, 24);

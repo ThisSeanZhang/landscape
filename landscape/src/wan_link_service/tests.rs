@@ -2,16 +2,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
 
 use arc_swap::ArcSwap;
+use landscape_common::service::manager::{ServiceManager, ServiceStarterTrait};
 use landscape_common::service::{ServiceHandle, ServiceStatus};
 use landscape_common::wan_link::{
-    HealthCheckRuntime, LinkStateHandle, SectionKind, SessionIface, WanLinkConfig,
+    HealthCheckRuntime, LinkStateHandle, SectionKind, SessionIface, WanLinkConfig, WanLinkKind,
     WanLinkStatusHandle, WanV4Lease,
 };
 
+use super::config_updates::LinkConfigUpdates;
 use super::{SectionRunner, SectionScope, SectionTag, config_change_tags, run_dependent_section};
 
 fn link_config(nat_enable: bool) -> WanLinkConfig {
@@ -21,6 +23,225 @@ fn link_config(nat_enable: bool) -> WanLinkConfig {
         "nat": { "enable": nat_enable }
     }))
     .unwrap()
+}
+
+fn pppd_kind(password: &str) -> WanLinkKind {
+    WanLinkKind::Pppd {
+        ppp_iface_name: "ppp0".into(),
+        peer_id: "user".into(),
+        password: password.into(),
+        ac: None,
+        plugin: Default::default(),
+    }
+}
+
+#[test]
+fn live_config_compares_kind_variants_and_retries_a_failed_instance() {
+    let updates = LinkConfigUpdates::new(Arc::default());
+    let mut cfg = link_config(false);
+    let mut rx = updates.start(cfg.clone()).1.subscribe();
+    let native: WanLinkKind = serde_json::from_value(serde_json::json!({
+        "t": "pppoe_native", "requested_mru": 1492
+    }))
+    .unwrap();
+    for kind in [pppd_kind("one"), native, WanLinkKind::Ethernet] {
+        cfg.kind = kind;
+        cfg.update_at += 1.0;
+        assert!(updates.queue(&cfg));
+        assert!(rx.has_changed().is_err());
+        let (started, next_rx) = updates.start(cfg.clone());
+        assert_eq!(started, cfg);
+        rx = next_rx.subscribe();
+        drop(next_rx);
+    }
+    drop(rx);
+    cfg.update_at += 1.0;
+    assert!(updates.queue(&cfg));
+}
+
+#[derive(Debug)]
+struct RunningLink {
+    initial: WanLinkConfig,
+    updates: watch::Receiver<WanLinkConfig>,
+    status: ServiceHandle,
+    finish_cleanup: oneshot::Sender<()>,
+}
+
+#[derive(Clone)]
+struct TestLinkStarter {
+    updates: Arc<LinkConfigUpdates>,
+    starts: mpsc::UnboundedSender<RunningLink>,
+}
+
+#[async_trait::async_trait]
+impl ServiceStarterTrait for TestLinkStarter {
+    type Config = WanLinkConfig;
+
+    async fn start(&self, config: WanLinkConfig) -> ServiceHandle {
+        let (initial, config_tx) = self.updates.start(config);
+        let updates = config_tx.subscribe();
+        let status = ServiceHandle::new();
+        status.just_change_status(ServiceStatus::Staring);
+        let worker = status.clone();
+        let (finish_cleanup, cleanup) = oneshot::channel();
+        status.spawn_task("wan.link.test", async move {
+            worker.stop_token().cancelled().await;
+            let _ = cleanup.await;
+            worker.just_change_status(ServiceStatus::Stop);
+        });
+        status.just_change_status(ServiceStatus::Running);
+        self.starts
+            .send(RunningLink {
+                initial,
+                updates,
+                status: status.clone(),
+                finish_cleanup,
+            })
+            .unwrap();
+        status
+    }
+}
+
+#[tokio::test]
+async fn kind_restart_drains_the_old_run_and_starts_with_the_latest_save() {
+    let timeout = Duration::from_secs(3);
+    let updates = Arc::new(LinkConfigUpdates::new(Arc::default()));
+    let (starts, mut started) = mpsc::unbounded_channel();
+    let first = link_config(false);
+    let starter = TestLinkStarter { updates: updates.clone(), starts };
+    let manager = ServiceManager::init(vec![first.clone()], starter).await;
+    let old = tokio::time::timeout(timeout, started.recv()).await.unwrap().unwrap();
+
+    let mut next = first.clone();
+    next.kind = pppd_kind("one");
+    next.update_at += 1.0;
+    updates.deliver(&manager, &next, timeout).await;
+    tokio::time::timeout(timeout, old.status.stop_token().cancelled()).await.unwrap();
+
+    let mut latest = next.clone();
+    latest.kind = pppd_kind("two");
+    latest.update_at += 1.0;
+    updates.deliver(&manager, &latest, timeout).await;
+    updates.deliver(&manager, &next, timeout).await; // A delayed notification for the older write.
+    assert_eq!(*old.updates.borrow(), first);
+    assert!(started.try_recv().is_err());
+    old.finish_cleanup.send(()).unwrap();
+
+    let mut new = tokio::time::timeout(timeout, started.recv()).await.unwrap().unwrap();
+    assert_eq!(old.status.current(), ServiceStatus::Stop);
+    assert_eq!(new.initial, latest);
+    latest.kind = pppd_kind("three");
+    latest.update_at += 1.0;
+    assert!(!updates.queue(&latest));
+    assert!(new.updates.has_changed().unwrap());
+    assert_eq!(*new.updates.borrow_and_update(), latest);
+    assert!(!updates.queue(&next));
+    assert!(!new.updates.has_changed().unwrap());
+    new.finish_cleanup.send(()).unwrap();
+    manager.stop_all().await;
+}
+
+#[tokio::test]
+async fn deleting_a_draining_link_withdraws_its_queued_restart() {
+    let timeout = Duration::from_secs(3);
+    let updates = Arc::new(LinkConfigUpdates::new(Arc::default()));
+    let (starts, mut started) = mpsc::unbounded_channel();
+    let mut cfg = link_config(false);
+    let starter = TestLinkStarter { updates: updates.clone(), starts };
+    let manager = ServiceManager::init(vec![cfg.clone()], starter).await;
+    let old = tokio::time::timeout(timeout, started.recv()).await.unwrap().unwrap();
+
+    cfg.kind = pppd_kind("one");
+    cfg.update_at += 1.0;
+    updates.deliver(&manager, &cfg, timeout).await;
+    tokio::time::timeout(timeout, old.status.stop_token().cancelled()).await.unwrap();
+    {
+        let stop = manager.stop_service(cfg.id.to_string());
+        tokio::pin!(stop);
+        assert!(futures::poll!(stop.as_mut()).is_pending());
+        old.finish_cleanup.send(()).unwrap();
+        assert_eq!(stop.await, Some(ServiceStatus::Stop));
+    }
+    updates.remove(cfg.id);
+    drop(manager);
+    assert!(tokio::time::timeout(timeout, started.recv()).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn saves_during_failed_setup_start_the_latest_config() {
+    #[derive(Clone)]
+    struct FailingSetup {
+        updates: Arc<LinkConfigUpdates>,
+        attempts: mpsc::UnboundedSender<(WanLinkConfig, oneshot::Sender<()>)>,
+    }
+
+    #[async_trait::async_trait]
+    impl ServiceStarterTrait for FailingSetup {
+        type Config = WanLinkConfig;
+
+        async fn start(&self, config: WanLinkConfig) -> ServiceHandle {
+            let status = ServiceHandle::new();
+            status.just_change_status(ServiceStatus::Staring);
+            let (config, _tx) = self.updates.start(config);
+            let (finish, setup) = oneshot::channel();
+            self.attempts.send((config, finish)).unwrap();
+            setup.await.unwrap();
+            status.just_change_status(ServiceStatus::Failed);
+            status
+        }
+    }
+
+    let timeout = Duration::from_secs(3);
+    let updates = Arc::new(LinkConfigUpdates::new(Arc::default()));
+    let (attempts, mut started) = mpsc::unbounded_channel();
+    let mut config = link_config(false);
+    let manager = ServiceManager::init(
+        vec![config.clone()],
+        FailingSetup { updates: updates.clone(), attempts },
+    )
+    .await;
+    let (_, fail) = tokio::time::timeout(timeout, started.recv()).await.unwrap().unwrap();
+    config.update_at += 1.0;
+    config.nat.enable = true;
+    updates.deliver(&manager, &config, timeout).await;
+    config.update_at += 1.0;
+    config.mss.enable = true;
+    updates.deliver(&manager, &config, timeout).await;
+    fail.send(()).unwrap();
+
+    let (retry, finish) = tokio::time::timeout(timeout, started.recv()).await.unwrap().unwrap();
+    assert_eq!(retry, config);
+    finish.send(()).unwrap();
+    tokio::time::timeout(timeout, manager.stop_all()).await.unwrap();
+    assert!(started.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn failed_dataplane_replaces_both_wan_status_views() {
+    use landscape_common::wan_link::{
+        WanLinkRuntimeStatusStore, WanLinkState, WanLinkStatus, WanLinkStatusStore,
+    };
+
+    let id = Uuid::new_v4();
+    let statuses: WanLinkStatusStore = Arc::default();
+    statuses.write().await.insert(
+        id,
+        WanLinkStatus {
+            state: WanLinkState::Running,
+            session: ServiceStatus::Running,
+            nat4: ServiceStatus::Running,
+            ..Default::default()
+        },
+    );
+    let runtime = WanLinkRuntimeStatusStore::default();
+    runtime.install(id, Arc::default());
+
+    super::record_dataplane_failure(id, &statuses, &runtime).await;
+    let statuses = statuses.read().await;
+    assert_eq!(statuses[&id].state, WanLinkState::Failed);
+    assert_eq!(statuses[&id].session, ServiceStatus::Failed);
+    assert_eq!(statuses[&id].nat4, ServiceStatus::Stop);
+    assert!(runtime.get(&id).is_none());
 }
 
 #[test]

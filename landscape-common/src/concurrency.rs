@@ -179,6 +179,8 @@ pub mod task_label {
         pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
         /// WAN link service listener reacting to attach-iface events.
         pub const WAN_LINK_OBSERVER: &str = "wan.link.observer";
+        /// Persists WAN link changes and completes their runtime handoff.
+        pub const WAN_LINK_CONFIG: &str = "wan.link.config";
         /// WAN link environment supervisor (carrier + config fan-in).
         pub const WAN_LINK_ENV: &str = "wan.link.env";
         /// Resolves the current Ethernet WAN gateway for one link.

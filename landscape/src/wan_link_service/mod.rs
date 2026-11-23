@@ -1,3 +1,4 @@
+mod config_updates;
 mod firewall;
 mod gateway_arp;
 mod health_check;
@@ -19,7 +20,7 @@ use tokio::sync::{broadcast, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use landscape_common::concurrency::{spawn_task, task_label};
+use landscape_common::concurrency::{spawn_task, spawn_task_with_resource, task_label};
 use landscape_common::database::error::DbError;
 use landscape_common::database::store::ConfigStore;
 use landscape_common::event::hub::iface::IfaceObserverAction;
@@ -48,6 +49,7 @@ use landscape_ebpf::runtime::EbpfRuntime;
 use crate::get_iface_by_name;
 use crate::sys_service::route::IpRouteService;
 
+use self::config_updates::LinkConfigUpdates;
 use self::probe::WanHealthProbe;
 
 /// Backoff before re-spawning a run that ended on its own.
@@ -117,7 +119,7 @@ pub struct WanLinkService {
     prefix_sender: IAPrefixEventSender,
     shared_wan_iid: Arc<u64>,
     iface_events: broadcast::Sender<IfaceObserverAction>,
-    config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
+    config_updates: Arc<LinkConfigUpdates>,
     status_store: WanLinkStatusStore,
     runtime_status_store: WanLinkRuntimeStatusStore,
     static_nat4_store: StaticNatMappingV4Repository,
@@ -146,7 +148,7 @@ impl WanLinkService {
             prefix_sender,
             shared_wan_iid,
             iface_events,
-            config_channels,
+            config_updates: Arc::new(LinkConfigUpdates::new(config_channels)),
             status_store,
             runtime_status_store,
             static_nat4_store,
@@ -159,6 +161,7 @@ impl ServiceStarterTrait for WanLinkService {
     type Config = WanLinkConfig;
 
     async fn start(&self, config: WanLinkConfig) -> ServiceHandle {
+        let (config, config_tx) = self.config_updates.start(config);
         let link_status = ServiceHandle::new();
         link_status.just_change_status(ServiceStatus::Staring);
 
@@ -195,21 +198,19 @@ impl ServiceStarterTrait for WanLinkService {
                     error = %e,
                     "failed to stand up the wan link dataplane"
                 );
+                record_dataplane_failure(config.id, &self.status_store, &self.runtime_status_store)
+                    .await;
                 link_status.just_change_status(ServiceStatus::Failed);
                 return link_status;
             }
         };
 
+        let cfg_rx = config_tx.subscribe();
         let sections = Arc::new(WanLinkSectionsStatus::default());
         sections.set_v4(V4Runtime::Idle);
         self.runtime_status_store.install(config.id, sections.clone());
         let v4_runtime = sections.v4_slot();
         let pd_runtime = sections.pd_slot();
-
-        // Per-link config watch, so `handle_service_config` can deliver updates
-        // without a full link restart.
-        let (cfg_tx, cfg_rx) = watch::channel(config.clone());
-        self.config_channels.lock().unwrap().insert(config.id, cfg_tx.clone());
 
         let (reconfig_tx, _reconfig_rx) = broadcast::channel(32);
 
@@ -519,6 +520,23 @@ impl ServiceStarterTrait for WanLinkService {
 
         link_status
     }
+}
+
+async fn record_dataplane_failure(
+    id: Uuid,
+    statuses: &WanLinkStatusStore,
+    runtime: &WanLinkRuntimeStatusStore,
+) {
+    let mut statuses = statuses.write().await;
+    runtime.remove(&id);
+    statuses.insert(
+        id,
+        WanLinkStatus {
+            state: landscape_common::wan_link::WanLinkState::Failed,
+            session: ServiceStatus::Failed,
+            ..Default::default()
+        },
+    );
 }
 
 /// Health check needs something to probe: explicit targets or the gateway.
@@ -1004,10 +1022,13 @@ async fn run_dependent_section(
 
 #[derive(Clone)]
 pub struct WanLinkServiceManagerService {
+    // Deleting a row frees its chain ID. Hold off saves until the old roots
+    // and status have been removed; independent saves can proceed together.
+    config_gate: Arc<tokio::sync::RwLock<()>>,
     store: WanLinkRepository,
     service: ServiceManager<WanLinkService>,
     prefix_map: IAPrefixMap,
-    config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>>,
+    config_updates: Arc<LinkConfigUpdates>,
     status_store: WanLinkStatusStore,
     runtime_status_store: WanLinkRuntimeStatusStore,
 }
@@ -1031,40 +1052,40 @@ impl ConfigStoreServiceController for WanLinkServiceManagerService {
         &self.service
     }
 
-    /// A running link receives the new config over its per-link watch (partial
-    /// reconfigure); a link that is not running is started via bounded delivery.
+    /// A kind change rebuilds the whole link. Same-kind edits use its section watches.
     async fn handle_service_config(&self, config: Self::Config) -> Result<Self::Config, DbError> {
-        let change = self.get_store().upsert_preserving_chain_id(config).await?;
-        self.notify_changed(vec![change.clone()]).await;
-        let saved = change.new;
-
-        let delivered = {
-            let guard = self.config_channels.lock().unwrap();
-            guard.get(&saved.id).map(|tx| tx.send(saved.clone()).is_ok()).unwrap_or(false)
-        };
-
-        if !delivered {
-            self.get_service().deliver_bounded(saved.clone(), self.deliver_timeout()).await;
-        }
-
-        Ok(saved)
+        let service = self.clone();
+        spawn_task_with_resource(task_label::task::WAN_LINK_CONFIG, config.id, async move {
+            let _save = service.config_gate.read().await;
+            let change = service.get_store().upsert_preserving_chain_id(config).await?;
+            service.notify_changed(vec![change.clone()]).await;
+            service
+                .config_updates
+                .deliver(service.get_service(), &change.new, service.deliver_timeout())
+                .await;
+            Ok(change.new)
+        })
+        .await
+        .map_err(|err| DbError::Internal(err.to_string()))?
     }
 
     async fn delete_and_stop_service(
         &self,
         id: Self::Id,
     ) -> Result<Option<ServiceStatus>, DbError> {
-        let old = self.get_store().delete_and_get(id).await?;
-        let Some(old) = old else { return Ok(None) };
-        let status = self.get_service().stop_service(id.to_string()).await;
-        // The whole link is gone: stopping the service above reaps its
-        // tasks, dropping the per-link dataplane (which unpublishes the
-        // link's trie entries and removes its chain roots on drop).
-        self.status_store.write().await.remove(&id);
-        self.runtime_status_store.remove(&id);
-        self.config_channels.lock().unwrap().remove(&id);
-        self.notify_deleted(old).await;
-        Ok(status)
+        let service = self.clone();
+        spawn_task_with_resource(task_label::task::WAN_LINK_CONFIG, id, async move {
+            let _delete = service.config_gate.write().await;
+            let Some(old) = service.get_store().delete_and_get(id).await? else { return Ok(None) };
+            let status = service.get_service().stop_service(id.to_string()).await;
+            service.status_store.write().await.remove(&id);
+            service.runtime_status_store.remove(&id);
+            service.config_updates.remove(id);
+            service.notify_deleted(old).await;
+            Ok(status)
+        })
+        .await
+        .map_err(|err| DbError::Internal(err.to_string()))?
     }
 }
 
@@ -1084,8 +1105,6 @@ impl WanLinkServiceManagerService {
         let static_nat4_store = store_service.static_nat_mapping_v4_store();
 
         let (iface_events, _) = broadcast::channel(128);
-        let config_channels: Arc<Mutex<HashMap<Uuid, watch::Sender<WanLinkConfig>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
         let status_store: WanLinkStatusStore = Arc::default();
         let runtime_status_store: WanLinkRuntimeStatusStore = Default::default();
 
@@ -1097,12 +1116,17 @@ impl WanLinkServiceManagerService {
             prefix_sender,
             shared_wan_iid,
             iface_events.clone(),
-            config_channels.clone(),
+            Arc::default(),
             status_store.clone(),
             runtime_status_store.clone(),
             static_nat4_store,
         );
-        let service = ServiceManager::init(store.list().await.unwrap(), starter).await;
+        let config_updates = starter.config_updates.clone();
+        let configs = store.list().await.unwrap();
+        for config in &configs {
+            config_updates.queue(config);
+        }
+        let service = ServiceManager::init(configs, starter).await;
 
         let forward_tx = iface_events.clone();
         spawn_task(task_label::task::WAN_LINK_OBSERVER, async move {
@@ -1118,10 +1142,11 @@ impl WanLinkServiceManagerService {
         });
 
         Self {
+            config_gate: Arc::default(),
             service,
             store,
             prefix_map,
-            config_channels,
+            config_updates,
             status_store,
             runtime_status_store,
         }
