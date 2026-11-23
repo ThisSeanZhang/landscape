@@ -39,7 +39,7 @@ fn root_ids(dp: &WanLinkDataplane) -> [u32; 2] {
 fn stage_ids(dp: &WanLinkDataplane) -> [[u32; 2]; 2] {
     let inner = dp.inner.lock().unwrap();
     let xdp = &inner.xdp.lan_root.as_ref().unwrap().skel.maps.root_next_stage;
-    let tc = &inner.tc.egress_root.as_ref().unwrap().skel.maps.wan_egress_root_next_stage;
+    let tc = inner.tc.egress_root.as_ref().unwrap().next_stage_map();
     [[program_id(xdp, 0), program_id(xdp, 1)], [program_id(tc, 0), program_id(tc, 1)]]
 }
 
@@ -49,8 +49,8 @@ fn bind(dp: &WanLinkDataplane, prefix: u8) {
 
 fn assert_root_gateway_mac(dp: &WanLinkDataplane, expected: MacAddr) {
     let inner = dp.inner.lock().unwrap();
-    let maps = &inner.tc.egress_root.as_ref().unwrap().skel.maps;
-    let bytes = maps.bss_data.as_ref().unwrap().confirmed_gateway_mac.to_ne_bytes();
+    let skel = inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root");
+    let bytes = skel.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac.to_ne_bytes();
     assert_eq!(bytes[..6], expected.octets());
     assert_eq!(bytes[6..], [0, 0]);
 }
@@ -116,7 +116,7 @@ fn gateway_arp_skips_ppp_and_forgets_explicitly_closed_bindings() {
     let targets = dp.subscribe_gateway_arp();
     dp.bind_pppoe_ipv4(IFINDEX, IP, GATEWAY, MAC);
     assert!(targets.borrow().is_none());
-    dp.bind_wan_ipv4(IFINDEX, IP, Some(GATEWAY), 32, None);
+    dp.bind_ppp_ipv4(IFINDEX, IP, GATEWAY, 32);
     assert!(targets.borrow().is_none());
     dp.bind_wan_ipv4(IFINDEX, IP, None, 24, Some(MAC));
     assert!(targets.borrow().is_none());
@@ -145,7 +145,7 @@ fn assert_ipv4_config(dp: &WanLinkDataplane, expected: Option<(Ipv4Addr, [u8; 4]
     let (xdp, tc) = {
         let inner = dp.inner.lock().unwrap();
         let xdp = &inner.xdp.lan_root.as_ref().unwrap().skel.maps;
-        let tc = &inner.tc.egress_root.as_ref().unwrap().skel.maps;
+        let tc = &inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root").maps;
         (
             xdp.rodata_data.as_ref().unwrap().egress_binding,
             tc.rodata_data.as_ref().unwrap().egress_binding,
@@ -214,7 +214,8 @@ fn switching_between_pppoe_and_ethernet_republishes_identical_addresses() {
             .egress_root
             .as_ref()
             .unwrap()
-            .skel
+            .l2_skel()
+            .expect("L2 egress root")
             .maps
             .rodata_data
             .as_ref()
@@ -226,6 +227,47 @@ fn switching_between_pppoe_and_ethernet_republishes_identical_addresses() {
     bind(&dp, 32);
     assert_ne!(root_ids(&dp), pppoe);
     assert_eq!(is_pppoe(), 0);
+    dp.close();
+}
+
+#[test]
+fn ppp_binding_selects_the_l3_egress_root_and_survives_unbind() {
+    let (_pins, dp) = dataplane();
+    let l2 = root_ids(&dp);
+    assert!(dp.inner.lock().unwrap().tc.egress_root.as_ref().unwrap().l2_skel().is_some());
+
+    dp.bind_ppp_ipv4(IFINDEX, IP, GATEWAY, 32);
+    {
+        let inner = dp.inner.lock().unwrap();
+        let root = inner.tc.egress_root.as_ref().unwrap();
+        assert!(root.ppp_skel().is_some());
+        assert!(root.l2_skel().is_none());
+    }
+    let ppp = root_ids(&dp);
+    assert_ne!(ppp[1], l2[1]);
+
+    // A redial briefly unbinds IPv4; the link stays a pppd L3 link.
+    dp.unbind_wan_ipv4();
+    assert!(dp.inner.lock().unwrap().tc.egress_root.as_ref().unwrap().ppp_skel().is_some());
+
+    bind(&dp, 24);
+    assert!(dp.inner.lock().unwrap().tc.egress_root.as_ref().unwrap().l2_skel().is_some());
+    dp.close();
+}
+
+#[test]
+fn switching_to_ppp_keeps_stage_slots() {
+    let (_pins, dp) = dataplane();
+    bind(&dp, 24);
+    let mss = dp.attach_mss(IFINDEX, 1450, true).unwrap();
+    let stages = stage_ids(&dp);
+    let l2 = root_ids(&dp);
+    dp.bind_ppp_ipv4(IFINDEX, IP, GATEWAY, 32);
+    let ppp = root_ids(&dp);
+    assert_ne!(ppp[0], l2[0]);
+    assert_ne!(ppp[1], l2[1]);
+    assert_eq!(stage_ids(&dp), stages);
+    drop(mss);
     dp.close();
 }
 

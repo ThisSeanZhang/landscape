@@ -16,6 +16,7 @@ pub(super) struct WanEgressBinding {
     pub has_l2: bool,
     pub has_ipv4: bool,
     pub is_pppoe: bool,
+    pub is_p2p: bool,
     pub wan_ip4: u32,
     pub wan_mask4: u32,
     pub gateway_ip4: u32,
@@ -27,6 +28,7 @@ impl WanEgressBinding {
         let mut binding = Self {
             ifindex: inner.ifindex.unwrap_or_default(),
             has_l2: inner.has_eth_header,
+            is_p2p: inner.is_ppp,
             ..Self::default()
         };
         // A hotplug observation can precede the new interface's address bind.
@@ -66,7 +68,7 @@ impl WanLinkDataplane {
 
         let tc_slots = pinned_map(&self.backbone.paths().tc_wan_egress_roots_path())?;
         let slot = u32::from(self.id).to_ne_bytes();
-        let tc_fd = tc.skel.progs.tc_wan_egress_root.as_fd().as_raw_fd().to_ne_bytes();
+        let tc_fd = tc.prog_fd().to_ne_bytes();
         self.backbone
             .register_xdp_lan_root(self.id, xdp.skel.progs.xdp_lan_root.as_fd().as_raw_fd())?;
         if let Err(err) = tc_slots.update(&slot, &tc_fd, MapFlags::ANY) {

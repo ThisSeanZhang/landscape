@@ -28,6 +28,7 @@ use super::WanLinkDataplane;
 use super::from_lan::WanEgressBinding;
 use super::gateway_arp::GatewayArpState;
 
+use crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkelBuilder;
 use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
 use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
 
@@ -45,16 +46,39 @@ pub(super) struct IngressRoot {
     next_stage_fd: i32,
 }
 
-pub(super) struct EgressRoot {
-    pub(super) skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
-    _backing: OwnedOpenObject,
+pub(super) enum EgressRoot {
+    L2 {
+        skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
+        _backing: OwnedOpenObject,
+    },
+    Ppp {
+        skel: crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkel<'static>,
+        _backing: OwnedOpenObject,
+    },
 }
 
 impl EgressRoot {
+    pub(super) fn prog_fd(&self) -> i32 {
+        match self {
+            Self::L2 { skel, .. } => skel.progs.tc_wan_egress_root.as_fd().as_raw_fd(),
+            Self::Ppp { skel, .. } => skel.progs.tc_wan_egress_ppp_root.as_fd().as_raw_fd(),
+        }
+    }
+
+    pub(super) fn next_stage_map(&self) -> &libbpf_rs::MapMut<'static> {
+        match self {
+            Self::L2 { skel, .. } => &skel.maps.wan_egress_root_next_stage,
+            Self::Ppp { skel, .. } => &skel.maps.wan_egress_root_next_stage,
+        }
+    }
+
     pub(super) fn sync_gateway_mac(&mut self, arp: &GatewayArpState) {
+        let Self::L2 { skel, .. } = self else {
+            return;
+        };
         // A failed binding rebuild can leave the previous root installed.
         // Pair the MAC with this root's actual interface and next hop.
-        let binding = &self.skel.maps.rodata_data.as_ref().unwrap().egress_binding;
+        let binding = &skel.maps.rodata_data.as_ref().unwrap().egress_binding;
         let mut bytes = [0u8; 8];
         if let Some((target, mac)) = arp.active_confirmation()
             && binding.has_l2 != 0
@@ -64,11 +88,32 @@ impl EgressRoot {
         {
             bytes[..6].copy_from_slice(&mac.octets());
         }
-        let bss = self.skel.maps.bss_data.as_deref_mut().expect("TC egress root .bss");
+        let bss = skel.maps.bss_data.as_deref_mut().expect("TC egress root .bss");
         // The mmap lives with the skeleton. The BPF global is aligned to eight bytes
         // and each packet reads it in one load, so it cannot see a partial MAC.
         unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac) }
             .store(u64::from_ne_bytes(bytes), Ordering::Relaxed);
+    }
+}
+
+#[cfg(all(test, feature = "test-chain"))]
+impl EgressRoot {
+    pub(super) fn l2_skel(
+        &self,
+    ) -> Option<&crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>> {
+        match self {
+            Self::L2 { skel, .. } => Some(skel),
+            Self::Ppp { .. } => None,
+        }
+    }
+
+    pub(super) fn ppp_skel(
+        &self,
+    ) -> Option<&crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkel<'static>> {
+        match self {
+            Self::Ppp { skel, .. } => Some(skel),
+            Self::L2 { .. } => None,
+        }
     }
 }
 
@@ -103,15 +148,7 @@ impl WanLinkDataplane {
                 TC_SLOT_V6,
             ),
             TcChainDir::WanEgress => relink_family_stages(
-                state
-                    .egress_root
-                    .as_ref()
-                    .unwrap()
-                    .skel
-                    .maps
-                    .wan_egress_root_next_stage
-                    .as_fd()
-                    .as_raw_fd(),
+                state.egress_root.as_ref().unwrap().next_stage_map().as_fd().as_raw_fd(),
                 &state.egress_stages,
                 TC_SLOT_V4,
                 TC_SLOT_V6,
@@ -168,6 +205,18 @@ impl WanLinkDataplane {
         binding: &WanEgressBinding,
         previous: Option<&EgressRoot>,
     ) -> LdEbpfResult<EgressRoot> {
+        if binding.is_p2p && !binding.has_l2 {
+            Self::build_ppp_egress_root(previous)
+        } else {
+            Self::build_l2_egress_root(backbone, binding, previous)
+        }
+    }
+
+    fn build_l2_egress_root(
+        backbone: &RouteBackbone,
+        binding: &WanEgressBinding,
+        previous: Option<&EgressRoot>,
+    ) -> LdEbpfResult<EgressRoot> {
         let egress_builder = TcWanEgressRootSkelBuilder::default();
         let (egress_back, egress_obj) = OwnedOpenObject::new();
         let mut egress_open_skel =
@@ -190,7 +239,7 @@ impl WanLinkDataplane {
             egress_open_skel
                 .maps
                 .wan_egress_root_next_stage
-                .reuse_fd(old.skel.maps.wan_egress_root_next_stage.as_fd())?;
+                .reuse_fd(old.next_stage_map().as_fd())?;
         }
 
         pin_and_reuse_map(
@@ -200,7 +249,25 @@ impl WanLinkDataplane {
         // See create_ingress_root: frag caches are initialized once by maps::init_path.
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 
-        Ok(EgressRoot { skel: egress_skel, _backing: egress_back })
+        Ok(EgressRoot::L2 { skel: egress_skel, _backing: egress_back })
+    }
+
+    fn build_ppp_egress_root(previous: Option<&EgressRoot>) -> LdEbpfResult<EgressRoot> {
+        let egress_builder = TcWanEgressPppRootSkelBuilder::default();
+        let (egress_back, egress_obj) = OwnedOpenObject::new();
+        let mut egress_open_skel =
+            bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_ppp_root")?;
+
+        if let Some(old) = previous {
+            egress_open_skel
+                .maps
+                .wan_egress_root_next_stage
+                .reuse_fd(old.next_stage_map().as_fd())?;
+        }
+
+        let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_ppp_root")?;
+
+        Ok(EgressRoot::Ppp { skel: egress_skel, _backing: egress_back })
     }
 }
 

@@ -74,6 +74,19 @@ fn load_egress_root_with(
     EgressRoot { skel: open.load().unwrap(), _backing: backing }
 }
 
+struct PppEgressRoot {
+    skel: crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+fn load_ppp_egress_root() -> PppEgressRoot {
+    let (backing, object) = OwnedOpenObject::new();
+    let open = crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkelBuilder::default()
+        .open(object)
+        .unwrap();
+    PppEgressRoot { skel: open.load().unwrap(), _backing: backing }
+}
+
 fn wire_stage(map: &impl MapCore, slot: u32, prog: &ProgramMut<'_>) {
     let fd = prog.as_fd().as_raw_fd();
     map.update(&slot.to_ne_bytes(), &fd.to_ne_bytes(), MapFlags::ANY).unwrap();
@@ -354,6 +367,46 @@ mod tests {
         let first = v6_frag_tcp(1460, 0, true);
         let (_, out) = run_root(root_prog, &first);
         assert_eq!(out, first, "v6 LAND_FRAG_FIRST is not clamped");
+    }
+
+    #[test]
+    fn ppp_root_forks_l3_and_skips_l2_work() {
+        let root = load_ppp_egress_root();
+        let mss = mss_skel();
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &mss.progs.tc_mss_wan_egress_v4,
+        );
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V6,
+            &mss.progs.tc_mss_wan_egress_v6,
+        );
+        let prog = &root.skel.progs.tc_wan_egress_ppp_root;
+
+        // PROG_TEST_RUN rebuilds skb->protocol from the Ethernet header and
+        // keeps the header in the data window, so the stage uses the L2 offset.
+        let syn = ipv4_tcp_syn_mss(1460);
+        let ctx = TestSkb {
+            cb: [0, 0, 0x4e48_3450, 7, 8],
+            ..Default::default()
+        };
+        let (_, out, cb) = run_prog_with_ctx(prog, &syn, ctx);
+        let mss_v4 = L3 as usize + 20 + 20 + 2;
+        assert_eq!(u16::from_be_bytes([out[mss_v4], out[mss_v4 + 1]]), 1492 - 20 - 20);
+        assert_eq!(cb[2], 0, "ppp root clears the neighbour-pending state");
+
+        let syn6 = v6_tcp_syn_mss(1460);
+        let (_, out, cb) = run_prog_with_ctx(prog, &syn6, TestSkb::default());
+        let mss_v6 = L3 as usize + 40 + 20 + 2;
+        assert_eq!(u16::from_be_bytes([out[mss_v6], out[mss_v6 + 1]]), 1492 - 40 - 20);
+        assert_eq!(cb[2], 0);
+
+        let non_ip = [0_u8; 64];
+        let (ret, out, _) = run_prog(prog, &non_ip);
+        assert_eq!(ret, -1);
+        assert_eq!(out, non_ip, "non-IP packets are left untouched");
     }
 
     #[test]

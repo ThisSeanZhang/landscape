@@ -76,10 +76,18 @@ struct AddrBind {
     is_pppoe: bool,
 }
 
+#[derive(Clone, Copy)]
+enum BindKind {
+    L2,
+    NativePppoe,
+    Ppp,
+}
+
 #[derive(Default)]
 struct Inner {
     ifindex: Option<u32>,
     has_eth_header: bool,
+    is_ppp: bool,
     v4: Option<AddrBind>,
     v6: Option<AddrBind>,
     closed: bool,
@@ -277,12 +285,18 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        self.bind_ipv4(ifindex, addr, gateway, mask, mac, false);
+        self.bind_ipv4(ifindex, addr, gateway, mask, mac, BindKind::L2);
+    }
+
+    /// A pppd-owned `pppX` is a point-to-point L3 link: no Ethernet header
+    /// and no gateway MAC to resolve.
+    pub fn bind_ppp_ipv4(&self, ifindex: u32, addr: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
+        self.bind_ipv4(ifindex, addr, Some(peer), mask, None, BindKind::Ppp);
     }
 
     /// Native PPPoE has an Ethernet header, but its session supplies the peer MAC.
     pub fn bind_pppoe_ipv4(&self, ifindex: u32, addr: Ipv4Addr, peer: Ipv4Addr, mac: MacAddr) {
-        self.bind_ipv4(ifindex, addr, Some(peer), 32, Some(mac), true);
+        self.bind_ipv4(ifindex, addr, Some(peer), 32, Some(mac), BindKind::NativePppoe);
     }
 
     fn bind_ipv4(
@@ -292,12 +306,13 @@ impl WanLinkDataplane {
         gateway: Option<Ipv4Addr>,
         mask: u8,
         mac: Option<MacAddr>,
-        is_pppoe: bool,
+        kind: BindKind,
     ) {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
             return;
         }
+        inner.is_ppp = matches!(kind, BindKind::Ppp);
         self.observe_interface(&mut inner, ifindex, mac.is_some());
         maps::wan::add_ipv4_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
         let bind = AddrBind {
@@ -306,7 +321,7 @@ impl WanLinkDataplane {
             gateway: gateway.map(IpAddr::V4),
             mask,
             mac,
-            is_pppoe,
+            is_pppoe: matches!(kind, BindKind::NativePppoe),
         };
         self.publish_bind(&bind);
         inner.v4 = Some(bind);

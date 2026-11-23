@@ -44,6 +44,9 @@ pub mod tc_pppoe;
 #[path = "../bpf_rs/tc_wan_egress_exit.skel.rs"]
 pub mod tc_wan_egress_exit;
 #[rustfmt::skip]
+#[path = "../bpf_rs/tc_wan_egress_ppp_root.skel.rs"]
+pub mod tc_wan_egress_ppp_root;
+#[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_egress_root.skel.rs"]
 pub mod tc_wan_egress_root;
 #[rustfmt::skip]
