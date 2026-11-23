@@ -14,6 +14,7 @@
 //! loader-facing views) lives in the [`xdp`] and [`tc`] submodules.
 
 mod from_lan;
+mod gateway_arp;
 mod tc;
 mod xdp;
 
@@ -36,6 +37,7 @@ use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
 
 use from_lan::WanEgressBinding;
+use gateway_arp::GatewayArpState;
 use tc::TcChainState;
 use tc::TcChainView;
 use xdp::XdpChainState;
@@ -82,6 +84,7 @@ struct Inner {
     v6: Option<AddrBind>,
     closed: bool,
     published_egress_binding: Option<WanEgressBinding>,
+    gateway_arp: GatewayArpState,
     xdp: XdpChainState,
     tc: TcChainState,
 }
@@ -127,6 +130,13 @@ impl WanLinkDataplane {
         &self.backbone
     }
 
+    fn sync_wan_binding(&self, inner: &mut Inner) {
+        inner.sync_gateway_arp_target();
+        if let Err(err) = self.refresh_from_lan_roots(inner) {
+            tracing::warn!(chain = self.id, error = %err, "refreshing from-LAN roots failed");
+        }
+    }
+
     /// Refresh the chain ↔ ifindex pairing, tolerating re-dial churn:
     /// sections restart in unspecified order after a re-dial, so every
     /// entry point refreshes the pairing instead of validating it.
@@ -136,7 +146,7 @@ impl WanLinkDataplane {
             return;
         }
         self.observe_interface(&mut inner, ifindex, has_eth_header);
-        self.sync_from_lan_roots(&mut inner);
+        self.sync_wan_binding(&mut inner);
     }
 
     fn observe_interface(&self, inner: &mut Inner, ifindex: u32, has_eth_header: bool) {
@@ -300,7 +310,7 @@ impl WanLinkDataplane {
         };
         self.publish_bind(&bind);
         inner.v4 = Some(bind);
-        self.sync_from_lan_roots(&mut inner);
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn unbind_wan_ipv4(&self) {
@@ -314,7 +324,7 @@ impl WanLinkDataplane {
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv4 without a recorded binding");
         }
-        self.sync_from_lan_roots(&mut inner);
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn bind_wan_ipv6(
@@ -341,7 +351,7 @@ impl WanLinkDataplane {
         };
         self.publish_bind(&bind);
         inner.v6 = Some(bind);
-        self.sync_from_lan_roots(&mut inner);
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn unbind_wan_ipv6(&self) {
@@ -394,6 +404,8 @@ impl WanLinkDataplane {
         if inner.closed {
             return;
         }
+        inner.clear_gateway_arp();
+        inner.gateway_arp = GatewayArpState::default();
         if let Some(bind) = inner.v4.take() {
             maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);

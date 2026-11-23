@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use landscape_common::net::MacAddr;
+use landscape_common::wan_link::GatewayArpTarget;
 use tokio::io::Interest;
 use tokio::time::{Instant, timeout_at};
 
@@ -18,20 +19,7 @@ pub async fn probe_gateway_mac(
     gateway_ip: Ipv4Addr,
     timeout: Duration,
 ) -> io::Result<Option<MacAddr>> {
-    if ifindex == 0 || local_mac.is_zero() || local_mac.is_multicast() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "expected a WAN interface and unicast MAC",
-        ));
-    }
-    for ip in [local_ip, gateway_ip] {
-        if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() || ip.is_broadcast() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "expected unicast WAN and gateway IPv4 addresses",
-            ));
-        }
-    }
+    GatewayArpTarget { ifindex, local_mac, local_ip, gateway_ip }.validate()?;
 
     let socket = open_arp_socket(ifindex)?;
     let request = build_arp_request_packet(gateway_ip, local_mac, local_ip);

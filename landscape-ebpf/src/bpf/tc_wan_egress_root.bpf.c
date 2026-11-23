@@ -12,6 +12,9 @@
 char LICENSE[] SEC("license") = "GPL";
 
 const volatile struct wan_egress_binding egress_binding = {};
+/* Updated in place by this WAN's ARP worker. The first six bytes in memory
+ * are the MAC in wire order. Zero means the gateway is unresolved. */
+volatile __u64 confirmed_gateway_mac;
 
 struct {
     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
@@ -22,9 +25,12 @@ struct {
 
 const volatile u32 current_l3_offset = 14;
 
-static __always_inline __be32 wan_ipv4_next_hop(__be32 dst) {
+static __always_inline __be32 wan_ipv4_next_hop(__be32 dst, __u64 *gateway_mac) {
     __be32 mask = egress_binding.wan_mask4;
-    if ((dst & mask) != (egress_binding.wan_ip4 & mask)) return egress_binding.gateway_ip4;
+    if ((dst & mask) != (egress_binding.wan_ip4 & mask)) {
+        *gateway_mac = confirmed_gateway_mac;
+        return egress_binding.gateway_ip4;
+    }
     // Delegate a directed broadcast to the kernel. Both /31 endpoints are hosts.
     if (bpf_ntohl(mask) < 0xfffffffe && (dst | mask) == 0xffffffff) return 0;
     return dst;
@@ -52,23 +58,29 @@ static __always_inline int prepare_forwarded_ipv4(struct __sk_buff *skb) {
     if (is_broadcast_ip4(dst)) return TC_ACT_OK;
 
     __be32 next_hop = 0;
+    __u64 gateway_mac = 0;
     if (egress_binding.has_ipv4 && egress_binding.ifindex == skb->ifindex)
-        next_hop = wan_ipv4_next_hop(dst);
+        next_hop = wan_ipv4_next_hop(dst, &gateway_mac);
     if (next_hop) {
-        struct mac_key_v4 key = {.addr = next_hop};
-        struct mac_value_v4 *entry = bpf_map_lookup_elem(&ip_mac_v4, &key);
-        if (entry && entry->ifindex == skb->ifindex && !(entry->mac[0] & 1) &&
-            !is_zero_mac(entry->mac)) {
-            u8 src[6];
+        const u8 *dmac = (const u8 *)&gateway_mac;
+        if (!gateway_mac) {
+            struct mac_key_v4 key = {.addr = next_hop};
+            struct mac_value_v4 *entry = bpf_map_lookup_elem(&ip_mac_v4, &key);
+            if (!entry || entry->ifindex != skb->ifindex || (entry->mac[0] & 1) ||
+                is_zero_mac(entry->mac))
+                goto pending;
+            dmac = entry->mac;
+        }
+        u8 src[6];
 #pragma unroll
-            for (int i = 0; i < 6; i++) src[i] = egress_binding.source_mac[i];
-            if (!is_zero_mac(src)) {
-                __builtin_memcpy(eth->h_dest, entry->mac, sizeof(eth->h_dest));
-                __builtin_memcpy(eth->h_source, src, sizeof(eth->h_source));
-                return TC_ACT_OK;
-            }
+        for (int i = 0; i < 6; i++) src[i] = egress_binding.source_mac[i];
+        if (!is_zero_mac(src)) {
+            __builtin_memcpy(eth->h_dest, dmac, sizeof(eth->h_dest));
+            __builtin_memcpy(eth->h_source, src, sizeof(eth->h_source));
+            return TC_ACT_OK;
         }
     }
+pending:
     skb->cb[2] = TC_CB_NEIGH4_PENDING;
     skb->cb[3] = next_hop;
     skb->cb[4] = skb->ifindex;

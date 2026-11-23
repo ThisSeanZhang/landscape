@@ -60,7 +60,9 @@ impl WanLinkDataplane {
         // both family chains wired even for packets already running in an old root.
         let old_xdp = inner.xdp.lan_root.as_ref();
         let xdp = Self::build_lan_root(&self.backbone, self.id, &binding, old_xdp)?;
-        let tc = Self::build_egress_root(&self.backbone, &binding, inner.tc.egress_root.as_ref())?;
+        let mut tc =
+            Self::build_egress_root(&self.backbone, &binding, inner.tc.egress_root.as_ref())?;
+        tc.sync_gateway_mac(&inner.gateway_arp);
 
         let tc_slots = pinned_map(&self.backbone.paths().tc_wan_egress_roots_path())?;
         let slot = u32::from(self.id).to_ne_bytes();
@@ -84,12 +86,6 @@ impl WanLinkDataplane {
         inner.tc.egress_root = Some(tc);
         inner.published_egress_binding = Some(binding);
         Ok(())
-    }
-
-    pub(super) fn sync_from_lan_roots(&self, inner: &mut Inner) {
-        if let Err(err) = self.refresh_from_lan_roots(inner) {
-            tracing::warn!(chain = self.id, error = %err, "refreshing from-LAN roots failed");
-        }
     }
 }
 

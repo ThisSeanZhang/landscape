@@ -181,6 +181,8 @@ pub mod task_label {
         pub const WAN_LINK_OBSERVER: &str = "wan.link.observer";
         /// WAN link environment supervisor (carrier + config fan-in).
         pub const WAN_LINK_ENV: &str = "wan.link.env";
+        /// Resolves the current Ethernet WAN gateway for one link.
+        pub const WAN_LINK_GATEWAY_ARP: &str = "wan.link.gateway_arp";
         /// WAN link config watch deregistration on link exit.
         pub const WAN_LINK_CLEANUP: &str = "wan.link.cleanup";
         /// WAN link v4 acquisition supervisor (per-run restart driver).

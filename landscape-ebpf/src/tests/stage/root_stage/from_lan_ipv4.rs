@@ -61,6 +61,39 @@ fn on_link_uses_host_and_off_link_uses_gateway_only_on_the_target_interface() {
 }
 
 #[test]
+fn off_link_uses_the_live_gateway_mac_and_on_link_keeps_its_neighbour() {
+    let mut root = load_egress_root_with(binding());
+    let prog = &root.skel.progs.tc_wan_egress_root;
+    let neighbours = &root.skel.maps.ip_mac_v4;
+    let cached = MacAddr(2, 1, 2, 3, 4, 5);
+    let replacement = MacAddr(2, 5, 4, 3, 2, 1);
+    insert_ip_mac_v4(neighbours, PEER, PEER_MAC, SRC, IFINDEX);
+    let word = &mut root.skel.maps.bss_data.as_deref_mut().unwrap().confirmed_gateway_mac;
+    for mac in [cached, replacement] {
+        let mut bytes = [0; 8];
+        bytes[..6].copy_from_slice(&mac.octets());
+        *word = u64::from_ne_bytes(bytes);
+        for (dst, expected) in [(REMOTE, mac), (PEER, PEER_MAC)] {
+            let pkt = simple_ipv4_tcp(LAN_HOST, dst);
+            let (_, out, cb) = run_prog_with_ctx(prog, &pkt, forwarded());
+            assert_eq!(&out[..6], &expected.octets());
+            assert_eq!(&out[6..12], &SRC.octets());
+            assert_eq!(out[12..], pkt[12..]);
+            assert_eq!(cb[2], 0);
+        }
+        // The second confirmation must also take priority over a stale neighbour.
+        insert_ip_mac_v4(neighbours, GATEWAY, GW_MAC, SRC, IFINDEX);
+        let packet_to_gateway = simple_ipv4_tcp(LAN_HOST, GATEWAY);
+        let (_, out, _) = run_prog_with_ctx(prog, &packet_to_gateway, forwarded());
+        assert_eq!(&out[..6], &GW_MAC.octets());
+    }
+    *word = 0;
+    let (_, out, cb) = run_prog_with_ctx(prog, &simple_ipv4_tcp(LAN_HOST, REMOTE), forwarded());
+    assert_eq!(&out[..6], &GW_MAC.octets());
+    assert_eq!(cb[2], 0);
+}
+
+#[test]
 fn prefix_boundaries_and_missing_gateway_reach_the_exit_with_the_selected_next_hop() {
     let (_backing, obj) = OwnedOpenObject::new();
     let exit = TcWanEgressExitSkelBuilder::default().open(obj).unwrap().load().unwrap();

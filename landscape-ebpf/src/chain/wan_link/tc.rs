@@ -4,6 +4,7 @@
 
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use libbpf_rs::MapCore;
 use libbpf_rs::MapFlags;
@@ -25,6 +26,7 @@ use crate::route_backbone::pinned_map;
 
 use super::WanLinkDataplane;
 use super::from_lan::WanEgressBinding;
+use super::gateway_arp::GatewayArpState;
 
 use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
 use crate::skel::tc_wan_ingress_root::TcWanIngressRootSkelBuilder;
@@ -46,6 +48,28 @@ pub(super) struct IngressRoot {
 pub(super) struct EgressRoot {
     pub(super) skel: crate::skel::tc_wan_egress_root::TcWanEgressRootSkel<'static>,
     _backing: OwnedOpenObject,
+}
+
+impl EgressRoot {
+    pub(super) fn sync_gateway_mac(&mut self, arp: &GatewayArpState) {
+        // A failed binding rebuild can leave the previous root installed.
+        // Pair the MAC with this root's actual interface and next hop.
+        let binding = &self.skel.maps.rodata_data.as_ref().unwrap().egress_binding;
+        let mut bytes = [0u8; 8];
+        if let Some((target, mac)) = arp.active_confirmation()
+            && binding.has_l2 != 0
+            && binding.is_pppoe == 0
+            && binding.ifindex == target.ifindex
+            && binding.gateway_ip4 == u32::from_ne_bytes(target.gateway_ip.octets())
+        {
+            bytes[..6].copy_from_slice(&mac.octets());
+        }
+        let bss = self.skel.maps.bss_data.as_deref_mut().expect("TC egress root .bss");
+        // The mmap lives with the skeleton. The BPF global is aligned to eight bytes
+        // and each packet reads it in one load, so it cannot see a partial MAC.
+        unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac) }
+            .store(u64::from_ne_bytes(bytes), Ordering::Relaxed);
+    }
 }
 
 // Family-indexed link_chain_id slots; must match TC_SLOT_V4/TC_SLOT_V6 in tc_cb.h.

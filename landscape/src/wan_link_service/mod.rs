@@ -1,4 +1,5 @@
 mod firewall;
+mod gateway_arp;
 mod health_check;
 mod mss;
 mod nat4;
@@ -222,6 +223,12 @@ impl ServiceStarterTrait for WanLinkService {
         board.set_section(SectionKind::Firewall, ServiceStatus::Stop).await;
         board.set_section(SectionKind::Mss, ServiceStatus::Stop).await;
         board.set_section(SectionKind::HealthCheck, ServiceStatus::Stop).await;
+
+        link_status.spawn_task_with_resource(
+            task_label::task::WAN_LINK_GATEWAY_ARP,
+            &config.attach_iface_name,
+            gateway_arp::run(dataplane.clone(), link_status.stop_token()),
+        );
 
         {
             let status = link_status.clone();
@@ -774,6 +781,9 @@ async fn run_v4_supervisor(
 
     loop {
         let cfg = cfg_rx.borrow_and_update().clone();
+        if !cfg.v4.enable {
+            chain_dataplane.clear_gateway_arp();
+        }
         if !cfg.active() {
             board.set_session(ServiceStatus::Disabled).await;
             tokio::select! {
@@ -787,8 +797,13 @@ async fn run_v4_supervisor(
             continue;
         }
 
-        if !wait_carrier_up(&mut state_rx, &stop).await {
-            return;
+        tokio::select! {
+            biased;
+            changed = cfg_rx.changed() => {
+                if changed.is_err() { return; }
+                continue;
+            }
+            ready = wait_carrier_up(&mut state_rx, &stop) => if !ready { return; },
         }
         let Some(iface) = state_rx.borrow_and_update().carrier.clone() else {
             continue;
