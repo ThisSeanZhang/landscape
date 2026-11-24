@@ -39,6 +39,16 @@ pub(crate) mod bench_nat4_v4 {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/bench_nat4_v4.skel.rs"));
 }
 
+pub(crate) mod bench_nat6 {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/bench_nat6.skel.rs"));
+}
+
+pub(crate) mod bench_route {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/bench_route.skel.rs"));
+}
+
 mod nat4_lookup;
 mod nat4_v4;
+mod nat6;
+mod route;
 mod wan_dispatch;
