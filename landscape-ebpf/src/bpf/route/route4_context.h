@@ -27,14 +27,14 @@ static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,
     __u32 l3_offset = view->l3_offset;
     if ((u64)l3_offset + sizeof(struct iphdr) > MAX_OFFSET) return TC_ACT_SHOT;
 
-    char *data = (char *)(long)skb->data;
-    char *data_end = (char *)(long)skb->data_end;
+    char *data = (char *)skb_data(skb);
+    char *data_end = (char *)skb_data_end(skb);
     struct iphdr *iph = (struct iphdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) {
         __u32 need = l3_offset + sizeof(struct iphdr);
         if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
-        data = (char *)(long)skb->data;
-        data_end = (char *)(long)skb->data_end;
+        data = (char *)skb_data(skb);
+        data_end = (char *)skb_data_end(skb);
         iph = (struct iphdr *)(data + l3_offset);
         if ((char *)(iph + 1) > data_end) return TC_ACT_SHOT;
     }

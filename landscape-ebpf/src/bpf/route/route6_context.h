@@ -27,14 +27,14 @@ static __always_inline int route6_read_context_from_scan(struct __sk_buff *skb,
     __u32 l3_offset = view->l3_offset;
     if ((u64)l3_offset + sizeof(struct ipv6hdr) > MAX_OFFSET) return TC_ACT_SHOT;
 
-    char *data = (char *)(long)skb->data;
-    char *data_end = (char *)(long)skb->data_end;
+    char *data = (char *)skb_data(skb);
+    char *data_end = (char *)skb_data_end(skb);
     struct ipv6hdr *ip6h = (struct ipv6hdr *)(data + l3_offset);
     if ((char *)(ip6h + 1) > data_end) {
         __u32 need = l3_offset + sizeof(struct ipv6hdr);
         if (need > skb->len || bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
-        data = (char *)(long)skb->data;
-        data_end = (char *)(long)skb->data_end;
+        data = (char *)skb_data(skb);
+        data_end = (char *)skb_data_end(skb);
         ip6h = (struct ipv6hdr *)(data + l3_offset);
         if ((char *)(ip6h + 1) > data_end) return TC_ACT_SHOT;
     }
