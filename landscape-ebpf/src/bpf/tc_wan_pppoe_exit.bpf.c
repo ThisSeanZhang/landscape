@@ -1,13 +1,12 @@
-#include <vmlinux.h>
+#include "vmlinux.h"
 
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
 #include "base/pppoe_def.h"
-#include "chain/tc_cb.h"
-#include "chain/tc_stage.h"
-#include "chain/tc_from_lan_exit_maps.h"
+
+#include "chain/tc_exit_redirect.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -24,10 +23,14 @@ struct pppoe_egress_tmpl {
 
 const volatile struct pppoe_egress_tmpl pppoe_tmpl = {};
 
-// Family-agnostic PPPoE encap: the per-family entry program passes the
-// family flag (the chain root already forked on the L3 protocol), and
-// the hop slot likewise comes from the entry.
-static __always_inline void tc_pppoe_encap(struct __sk_buff *skb, bool is_v6) {
+// Native PPPoE terminal: the dedicated exit encapsulates with the
+// per-link session template before the shared neighbour finish.
+static __always_inline void tc_pppoe_encap(struct __sk_buff *skb) {
+    u8 l3_protocol = 0;
+    if (current_l3_protocol(skb, 14, &l3_protocol) != TC_ACT_OK) return;
+
+    bool is_v6 = l3_protocol == LANDSCAPE_IPV6_TYPE;
+
     void *data_end = (void *)(long)skb->data_end;
     void *data = (void *)(long)skb->data;
     struct ethhdr *eth = data;
@@ -46,22 +49,8 @@ static __always_inline void tc_pppoe_encap(struct __sk_buff *skb, bool is_v6) {
     bpf_skb_store_bytes(skb, 0, &hdr, sizeof(hdr), 0);
 }
 
-// Terminal per-link egress stage: encapsulates only the packets that
-// traversed this link's chain, with this link's session template.
 SEC("tc/egress")
-int tc_pppoe_wan_egress_v4(struct __sk_buff *skb) {
-    tc_pppoe_encap(skb, false);
-
-    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
-    TC_FROM_LAN_CHAIN_EXIT(skb);
-    return TC_ACT_UNSPEC;
-}
-
-SEC("tc/egress")
-int tc_pppoe_wan_egress_v6(struct __sk_buff *skb) {
-    tc_pppoe_encap(skb, true);
-
-    TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
-    TC_FROM_LAN_CHAIN_EXIT(skb);
-    return TC_ACT_UNSPEC;
+int tc_wan_pppoe_exit_redirect(struct __sk_buff *skb) {
+    tc_pppoe_encap(skb);
+    return tc_exit_neigh4(skb);
 }

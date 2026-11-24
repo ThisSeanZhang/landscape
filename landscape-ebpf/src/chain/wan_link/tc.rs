@@ -5,6 +5,7 @@
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use libbpf_rs::MapCore;
@@ -13,6 +14,7 @@ use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;
 
 use crate::bpf_ctx;
+use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
 use crate::chain::stage::FamilyProg;
 use crate::chain::stage::FromLanStageType;
@@ -26,6 +28,7 @@ use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::create_prog_array_map;
 use crate::route_backbone::pinned_map;
 
+use super::BpfPppoeTmpl;
 use super::WanLinkDataplane;
 use super::from_lan::WanEgressBinding;
 use super::gateway_arp::GatewayArpState;
@@ -142,27 +145,124 @@ pub(super) struct TcChainState {
     pub(super) egress_root: Option<EgressRoot>,
     pub(super) ingress_stages: StageTable<FromWanStageType>,
     pub(super) egress_stages: StageTable<FromLanStageType>,
+    pub(super) plain_exit: Option<TcPlainExit>,
+    pub(super) exit_generation: u64,
+}
+
+/// The chain's default exit, kept loaded for the chain lifetime so a
+/// PPPoE session can switch back to it without reloading the program.
+pub(super) struct TcPlainExit {
+    skel: crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+impl TcPlainExit {
+    fn prog_fd(&self) -> i32 {
+        self.skel.progs.tc_wan_egress_exit_redirect.as_fd().as_raw_fd()
+    }
+}
+
+/// Restores the plain chain exit when the PPPoE session that installed
+/// the encap terminal is dropped.
+pub(crate) struct TcPppoeExitGuard {
+    dp: Arc<WanLinkDataplane>,
+    generation: u64,
+    _skel: crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+impl Drop for TcPppoeExitGuard {
+    fn drop(&mut self) {
+        self.dp.restore_tc_wan_egress_exit(self.generation);
+    }
 }
 
 impl WanLinkDataplane {
-    /// Load this chain's from-LAN TC exit program into an unpinned exit map.
-    /// The PROG_ARRAY slot keeps the program alive after the skeleton drops.
-    pub(super) fn create_tc_wan_egress_exit_map() -> LdEbpfResult<libbpf_rs::MapHandle> {
+    /// Create the chain's from-LAN exit slot and load its plain terminal.
+    /// The skeleton is returned (and held by the chain) so a later PPPoE
+    /// session can switch back to this exact program.
+    pub(super) fn create_tc_wan_egress_exit() -> LdEbpfResult<(libbpf_rs::MapHandle, TcPlainExit)> {
+        let map = create_prog_array_map("tc_from_lan_exit_map", 1)?;
+        let plain = Self::load_plain_tc_exit()?;
+        map.update(&0u32.to_ne_bytes(), &plain.prog_fd().to_ne_bytes(), MapFlags::ANY)?;
+        Ok((map, plain))
+    }
+
+    fn load_plain_tc_exit() -> LdEbpfResult<TcPlainExit> {
         let builder = crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;
         let skel = bpf_ctx!(open_skel.load(), "load tc_wan_egress_exit skeleton")?;
+        Ok(TcPlainExit { skel, _backing: backing })
+    }
 
-        let map = create_prog_array_map("tc_from_lan_exit_map", 1)?;
-        map.update(
+    fn load_pppoe_tc_exit(
+        tmpl: &BpfPppoeTmpl,
+    ) -> LdEbpfResult<(crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkel<'static>, OwnedOpenObject)>
+    {
+        let builder = crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_pppoe_exit skeleton")?;
+        open_skel.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = *tmpl;
+        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_pppoe_exit skeleton")?;
+        Ok((skel, backing))
+    }
+
+    /// Install the native-PPPoE terminal into this chain's exit. The
+    /// returned guard restores the held plain exit when that exact
+    /// session goes away (a newer session's guard wins).
+    pub(crate) fn install_tc_pppoe_exit(
+        self: &Arc<Self>,
+        tmpl: &BpfPppoeTmpl,
+    ) -> LdEbpfResult<TcPppoeExitGuard> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return Err(LandscapeEbpfError::Context {
+                context: "install PPPoE exit on closed wan link dataplane".to_string(),
+                source: libbpf_rs::Error::from_raw_os_error(-libc::EINVAL),
+            });
+        }
+        if inner.tc.plain_exit.is_none() {
+            return Err(LandscapeEbpfError::Context {
+                context: "install PPPoE exit without a plain chain exit".to_string(),
+                source: libbpf_rs::Error::from_raw_os_error(-libc::EINVAL),
+            });
+        }
+
+        let (skel, backing) = Self::load_pppoe_tc_exit(tmpl)?;
+        let prog_fd = skel.progs.tc_wan_pppoe_exit_redirect.as_fd().as_raw_fd();
+        self.tc_wan_egress_exit_map.update(
             &0u32.to_ne_bytes(),
-            &skel.progs.tc_wan_egress_exit_redirect.as_fd().as_raw_fd().to_ne_bytes(),
+            &prog_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
+        inner.tc.exit_generation = inner.tc.exit_generation.wrapping_add(1);
+        Ok(TcPppoeExitGuard {
+            dp: self.clone(),
+            generation: inner.tc.exit_generation,
+            _skel: skel,
+            _backing: backing,
+        })
+    }
 
-        drop(skel);
-        drop(backing);
-        Ok(map)
+    fn restore_tc_wan_egress_exit(&self, generation: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed || inner.tc.exit_generation != generation {
+            return;
+        }
+        let Some(plain) = inner.tc.plain_exit.as_ref() else {
+            tracing::warn!(chain = self.id, "restoring TC egress exit without a plain exit");
+            return;
+        };
+        if let Err(err) = self.tc_wan_egress_exit_map.update(
+            &0u32.to_ne_bytes(),
+            &plain.prog_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        ) {
+            tracing::warn!(chain = self.id, error = %err, "restoring plain TC egress exit failed");
+            return;
+        }
+        inner.tc.exit_generation = inner.tc.exit_generation.wrapping_add(1);
     }
 
     fn relink_tc(&self, dir: TcChainDir) -> LdEbpfResult<()> {

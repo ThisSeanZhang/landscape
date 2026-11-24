@@ -46,8 +46,10 @@ use tc::TcChainView;
 use xdp::XdpChainState;
 use xdp::XdpChainView;
 
+pub(crate) use tc::TcPppoeExitGuard;
+
 /// The skeleton-side template type generated from the BPF C header.
-type BpfPppoeTmpl = crate::pppoe::pppoe_handle::PppoeEgressTmpl;
+pub(crate) type BpfPppoeTmpl = crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 /// The common and BPF-side templates must stay layout-identical; the
 /// field-by-field conversion below relies on it.
@@ -124,8 +126,9 @@ impl WanLinkDataplane {
         has_eth_header: bool,
     ) -> LdEbpfResult<Arc<Self>> {
         let xdp_lan_exit_map = Self::create_xdp_lan_exit_map()?;
-        let tc_wan_egress_exit_map = Self::create_tc_wan_egress_exit_map()?;
-        let inner = Inner { ifindex, has_eth_header, ..Inner::default() };
+        let (tc_wan_egress_exit_map, tc_plain_exit) = Self::create_tc_wan_egress_exit()?;
+        let mut inner = Inner { ifindex, has_eth_header, ..Inner::default() };
+        inner.tc.plain_exit = Some(tc_plain_exit);
         let dp = Arc::new(Self {
             backbone,
             id,

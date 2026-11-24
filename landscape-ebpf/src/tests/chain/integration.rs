@@ -22,8 +22,8 @@ use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 
 use crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
 
-use crate::skel::tc_pppoe::TcPppoeSkelBuilder;
-use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
+use crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkelBuilder;
+use crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 /// Common two-veth-pair environment: an ingress pair crossing into a peer
 /// netns, plus an out pair kept entirely in the test netns (redirect target).
@@ -444,11 +444,11 @@ fn tc_wan_root_neighbour_miss_delivers_via_selected_next_hop() {
     link.close();
 }
 
-// ── 4: tc_pppoe_wan_egress encapsulation on a real veth ──
+// ── 4: tc_wan_pppoe_exit encapsulation on a real veth ──
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
-fn tc_pppoe_wan_egress_encap() {
+fn tc_wan_pppoe_exit_encap() {
     let env = TcEnv::two_pairs("tcppp");
     {
         let _e = env.test_ns.enter();
@@ -471,7 +471,7 @@ fn tc_pppoe_wan_egress_encap() {
     }
     let pin_root = crate::tests::isolated_pin_root("tc-pppoe");
 
-    let mut b = TcPppoeSkelBuilder::default();
+    let mut b = TcWanPppoeExitSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = MaybeUninit::uninit();
     let mut open = b.open(&mut obj).unwrap();
@@ -487,7 +487,7 @@ fn tc_pppoe_wan_egress_encap() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _attach = TCAttach::attach_egress(&skel.progs.tc_pppoe_wan_egress_v4, env.h_i as i32);
+        _attach = TCAttach::attach_egress(&skel.progs.tc_wan_pppoe_exit_redirect, env.h_i as i32);
     }
     {
         let _e = env.peer_ns.enter();

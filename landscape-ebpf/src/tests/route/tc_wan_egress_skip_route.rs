@@ -3,12 +3,13 @@
 //! a direct chain assignment. They enter `tc_wan_egress_roots[chain]`
 //! directly. SkipRouteAndStage also self-skips every policy stage
 //! (mss/firewall/nat) — e.g. a native PPPoE link's DHCPv6-PD socket — so
-//! the packet rides the chain's PPPoE terminal and exits; SkipRoute keeps
-//! the policy stages for WAN-link probing.
+//! the packet rides the chain's PPPoE exit; SkipRoute keeps the policy
+//! stages for WAN-link probing.
 //!
-//! Witness: the real chain terminal (the `tc_pppoe` v6 stage) is registered
-//! as the egress root, so a handed-off packet is proven by its +8-byte
-//! PPPoE header.  Unmarked multicast keeps the historic pass-through.
+//! Witness: the real chain terminal (a PPPoE-configured
+//! `tc_wan_pppoe_exit_redirect`) is registered as the egress root, so a
+//! handed-off packet is proven by its +8-byte PPPoE header.  Unmarked
+//! multicast keeps the historic pass-through.
 
 use std::{
     mem::MaybeUninit,
@@ -26,7 +27,7 @@ use zerocopy::IntoBytes;
 use crate::tests::TestSkb;
 use crate::tests::helper::map::{skip_all_mark, skip_route_and_stage_mark};
 
-use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
+use crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 /// Synthetic example session identity: the link-local composed from the
 /// IPv6CP interface-id `aa:bb:cc:ff:fe:dd:ee:ff` of the synthetic
@@ -79,7 +80,7 @@ fn build_ipv4_broadcast() -> Vec<u8> {
 
 struct Fixture {
     entry: crate::skel::tc_wan_egress_route::TcWanEgressRouteSkel<'static>,
-    _stage: crate::skel::tc_pppoe::TcPppoeSkel<'static>,
+    _exit: crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkel<'static>,
 }
 
 fn load(pin: &str) -> Fixture {
@@ -96,22 +97,22 @@ fn load(pin: &str) -> Fixture {
     entry_open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = 14;
     let entry = entry_open.load().unwrap();
 
-    let stage_object = Box::leak(Box::new(MaybeUninit::uninit()));
-    let stage_builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
-    let mut stage_open = stage_builder.open(stage_object).unwrap();
-    stage_open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(0xbeef);
-    let stage = stage_open.load().unwrap();
+    let exit_object = Box::leak(Box::new(MaybeUninit::uninit()));
+    let exit_builder = crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkelBuilder::default();
+    let mut exit_open = exit_builder.open(exit_object).unwrap();
+    exit_open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(0xbeef);
+    let exit = exit_open.load().unwrap();
 
     // Wire the chain terminal as the egress root of `CHAIN`, like the
     // chain's tc relink would.
-    let stage_v6_fd = stage.progs.tc_pppoe_wan_egress_v6.as_fd().as_raw_fd();
+    let exit_fd = exit.progs.tc_wan_pppoe_exit_redirect.as_fd().as_raw_fd();
     entry
         .maps
         .tc_wan_egress_roots
-        .update(&CHAIN.to_ne_bytes(), &stage_v6_fd.to_ne_bytes(), MapFlags::ANY)
+        .update(&CHAIN.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    Fixture { entry, _stage: stage }
+    Fixture { entry, _exit: exit }
 }
 
 /// Runs the entry classifier; returns (ret, data_out).
@@ -140,8 +141,8 @@ fn run_entry(f: &Fixture, pkt: &[u8], mark: u32) -> (i32, Vec<u8>) {
 }
 
 /// SkipRouteAndStage-marked DHCPv6-PD enters the chain and leaves with the
-/// PPPoE session frame (bytes, not verdict: the stage's exit falls back
-/// to TC_ACT_UNSPEC either way).
+/// PPPoE session frame (bytes, not verdict: the exit falls back to
+/// TC_ACT_UNSPEC either way).
 #[test]
 fn skip_route_and_stage_marked_pd_enters_chain_and_is_encapped() {
     let f = load("skip-route-hit");

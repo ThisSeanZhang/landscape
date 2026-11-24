@@ -345,6 +345,40 @@ fn switching_between_pppoe_and_ethernet_republishes_identical_addresses() {
 }
 
 #[test]
+fn pppoe_exit_swap_restores_only_the_latest_session() {
+    use super::super::BpfPppoeTmpl;
+
+    let (_pins, dp) = dataplane();
+    let plain = tc_egress_exit_id(&dp);
+    let tmpl = BpfPppoeTmpl {
+        dmac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55],
+        smac: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+        eth_proto: 0x8864u16.to_be(),
+        ver_type: 0x11,
+        code: 0x00,
+        session_id: 0x2233u16.to_be(),
+        ..Default::default()
+    };
+
+    let first = dp.install_tc_pppoe_exit(&tmpl).unwrap();
+    let first_id = tc_egress_exit_id(&dp);
+    assert_ne!(first_id, plain);
+    assert_eq!(root_egress_exit_id(&dp), first_id);
+
+    let second = dp.install_tc_pppoe_exit(&tmpl).unwrap();
+    let second_id = tc_egress_exit_id(&dp);
+    assert_ne!(second_id, first_id);
+    drop(first);
+    assert_eq!(tc_egress_exit_id(&dp), second_id, "stale guard must not restore");
+
+    drop(second);
+    let restored = tc_egress_exit_id(&dp);
+    assert_eq!(restored, plain, "the held plain exit must be restored, not reloaded");
+    assert_eq!(root_egress_exit_id(&dp), restored);
+    dp.close();
+}
+
+#[test]
 fn ppp_binding_selects_the_l3_egress_root_and_survives_unbind() {
     let (_pins, dp) = dataplane();
     let l2 = root_ids(&dp);

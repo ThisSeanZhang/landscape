@@ -7,7 +7,9 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
+use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel;
+use crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkel;
+use crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 const SESSION_ID: u16 = 0x2233;
 
@@ -21,6 +23,25 @@ fn default_tmpl(session_id: u16) -> pppoe_egress_tmpl {
         session_id: session_id.to_be(),
         ..Default::default()
     }
+}
+
+fn load_pppoe_exit(tmpl: pppoe_egress_tmpl) -> TcWanPppoeExitSkel<'static> {
+    // The open object must outlive the loaded skeleton; leak it for the
+    // test's lifetime.
+    let object = Box::leak(Box::new(MaybeUninit::uninit()));
+    let mut open =
+        crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkelBuilder::default().open(object).unwrap();
+    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = tmpl;
+    open.load().unwrap()
+}
+
+fn load_plain_exit() -> TcWanEgressExitSkel<'static> {
+    let object = Box::leak(Box::new(MaybeUninit::uninit()));
+    crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder::default()
+        .open(object)
+        .unwrap()
+        .load()
+        .unwrap()
 }
 
 fn build_ipv4_packet() -> Vec<u8> {
@@ -55,26 +76,28 @@ fn build_ipv6_packet() -> Vec<u8> {
     packet
 }
 
-#[test]
-fn pppoe_egress_ipv4_adds_pppoe_header() {
-    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
-    let mut open_object = MaybeUninit::uninit();
-    let mut open = builder.open(&mut open_object).unwrap();
-    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
-    let skel = open.load().unwrap();
-
-    let plain_pkt = build_ipv4_packet();
-    let mut output = vec![0u8; plain_pkt.len() + 8];
-
-    skel.progs
-        .tc_pppoe_wan_egress_v4
+fn run_prog(prog: &libbpf_rs::ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>) {
+    // Room for the +8 encap when PPPoE is enabled.
+    let mut out = vec![0u8; pkt.len() + 8];
+    let ret = prog
         .test_run(ProgramInput {
-            data_in: Some(&plain_pkt),
-            data_out: Some(&mut output),
+            data_in: Some(pkt),
+            data_out: Some(&mut out),
             ..Default::default()
         })
-        .expect("test_run tc_pppoe_wan_egress_v4 ipv4");
+        .expect("test_run TC chain exit")
+        .return_value as i32;
+    (ret, out)
+}
 
+#[test]
+fn pppoe_egress_ipv4_adds_pppoe_header() {
+    let exit = load_pppoe_exit(default_tmpl(SESSION_ID));
+    let plain_pkt = build_ipv4_packet();
+
+    let (ret, output) = run_prog(&exit.progs.tc_wan_pppoe_exit_redirect, &plain_pkt);
+
+    assert_eq!(ret, -1);
     assert_eq!(output[12], 0x88);
     assert_eq!(output[13], 0x64);
     assert_eq!(output[14], 0x11);
@@ -88,24 +111,12 @@ fn pppoe_egress_ipv4_adds_pppoe_header() {
 
 #[test]
 fn pppoe_egress_ipv6_adds_pppoe_header() {
-    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
-    let mut open_object = MaybeUninit::uninit();
-    let mut open = builder.open(&mut open_object).unwrap();
-    open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
-    let skel = open.load().unwrap();
-
+    let exit = load_pppoe_exit(default_tmpl(SESSION_ID));
     let plain_pkt = build_ipv6_packet();
-    let mut output = vec![0u8; plain_pkt.len() + 8];
 
-    skel.progs
-        .tc_pppoe_wan_egress_v6
-        .test_run(ProgramInput {
-            data_in: Some(&plain_pkt),
-            data_out: Some(&mut output),
-            ..Default::default()
-        })
-        .expect("test_run tc_pppoe_wan_egress_v6 ipv6");
+    let (ret, output) = run_prog(&exit.progs.tc_wan_pppoe_exit_redirect, &plain_pkt);
 
+    assert_eq!(ret, -1);
     assert_eq!(output[12], 0x88);
     assert_eq!(output[13], 0x64);
     assert_eq!(output[14], 0x11);
@@ -117,27 +128,46 @@ fn pppoe_egress_ipv6_adds_pppoe_header() {
     assert_eq!(&output[22..plain_pkt.len() + 8], &plain_pkt[14..]);
 }
 
-// The non-IP guard moved from the stage up to the chain root: the root
-// forks once on the L3 protocol and non-IP packets take no tail call,
-// so stage entries only ever see their own family and trust their slot
-// (see tc_wan_egress_root.bpf.c / tc_stage.h).
 #[test]
-fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
-    let stage_builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
-    let mut stage_object = MaybeUninit::uninit();
-    let mut stage_open = stage_builder.open(&mut stage_object).unwrap();
-    stage_open.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = default_tmpl(SESSION_ID);
-    let stage = stage_open.load().unwrap();
+fn pppoe_exit_does_not_encapsulate_non_ip() {
+    let exit = load_pppoe_exit(default_tmpl(SESSION_ID));
+    let arp_pkt = [
+        0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x08, 0x06, 0x00,
+        0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0xC0, 0xA8,
+        0x01, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0xA8, 0x01, 0x02,
+    ];
+
+    let (ret, output) = run_prog(&exit.progs.tc_wan_pppoe_exit_redirect, &arp_pkt);
+
+    assert_eq!(ret, -1);
+    assert_eq!(&output[..arp_pkt.len()], &arp_pkt[..]);
+}
+
+#[test]
+fn plain_exit_leaves_packets_untouched() {
+    let exit = load_plain_exit();
+    let pkt = build_ipv4_packet();
+
+    let (ret, output) = run_prog(&exit.progs.tc_wan_egress_exit_redirect, &pkt);
+
+    assert_eq!(ret, -1);
+    assert_eq!(&output[..pkt.len()], &pkt[..]);
+}
+
+#[test]
+fn chain_root_bypasses_non_ip_and_encapsulates_ip_on_the_exit() {
+    let exit = load_pppoe_exit(default_tmpl(SESSION_ID));
 
     let root_builder = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default();
     let mut root_object = MaybeUninit::uninit();
     let root = root_builder.open(&mut root_object).unwrap().load().unwrap();
 
-    // Wire the root's v4 fork slot to the stage, like the chain's tc relink.
-    let stage_v4_fd = stage.progs.tc_pppoe_wan_egress_v4.as_fd().as_raw_fd();
+    // Wire the root's v4 fork slot to the configured exit, like the chain's
+    // tc relink does.
+    let exit_v4_fd = exit.progs.tc_wan_pppoe_exit_redirect.as_fd().as_raw_fd();
     root.maps
-        .wan_egress_root_next_stage
-        .update(&0u32.to_ne_bytes(), &stage_v4_fd.to_ne_bytes(), MapFlags::ANY)
+        .tc_from_lan_exit_map
+        .update(&0u32.to_ne_bytes(), &exit_v4_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     // Non-IP (ARP): the root must not enter the chain, packet unchanged.
@@ -145,26 +175,21 @@ fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
         0xFFu8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0x08, 0x06, 0x00,
         0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, 0xC0, 0xA8,
         0x01, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0xA8, 0x01, 0x02,
-    ]
-    .to_vec();
-    let original = arp_pkt.clone();
-    let mut output = vec![0u8; arp_pkt.len() + 8];
-
+    ];
+    let mut arp_out = vec![0u8; arp_pkt.len() + 8];
     root.progs
         .tc_wan_egress_root
         .test_run(ProgramInput {
             data_in: Some(&arp_pkt),
-            data_out: Some(&mut output),
+            data_out: Some(&mut arp_out),
             ..Default::default()
         })
         .expect("test_run tc_wan_egress_root non-ip");
+    assert_eq!(&arp_out[..arp_pkt.len()], &arp_pkt[..], "non-IP must bypass the chain");
 
-    assert_eq!(&output[..original.len()], &original[..], "non-IP must bypass the chain");
-
-    // IPv4: the root forks into slot 0 and the stage encapsulates.
+    // IPv4: the root forks into slot 0 and the terminal encapsulates.
     let ip_pkt = build_ipv4_packet();
     let mut enc_out = vec![0u8; ip_pkt.len() + 8];
-
     root.progs
         .tc_wan_egress_root
         .test_run(ProgramInput {
@@ -177,29 +202,4 @@ fn pppoe_stage_non_ip_is_filtered_by_chain_root() {
     assert_eq!(enc_out[12], 0x88, "encapsulated ethertype 0x8864");
     assert_eq!(enc_out[13], 0x64);
     assert_eq!(&enc_out[22..ip_pkt.len() + 8], &ip_pkt[14..], "payload preserved");
-}
-
-#[test]
-fn pppoe_session_id_is_set_in_rodata() {
-    let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
-    let mut open_object = MaybeUninit::uninit();
-    let mut open = builder.open(&mut open_object).unwrap();
-    let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
-    rodata.pppoe_tmpl = default_tmpl(SESSION_ID);
-    assert_eq!(rodata.pppoe_tmpl.session_id, SESSION_ID.to_be());
-    let skel = open.load().unwrap();
-
-    // Verify program loaded: simple test_run on empty data should work.
-    // The v4 entry trusts its family slot and encapsulates unconditionally,
-    // so leave room for the 8-byte PPPoE header.
-    let empty = vec![0u8; 64];
-    let mut out = vec![0u8; 64 + 8];
-    skel.progs
-        .tc_pppoe_wan_egress_v4
-        .test_run(ProgramInput {
-            data_in: Some(&empty),
-            data_out: Some(&mut out),
-            ..Default::default()
-        })
-        .expect("tc_pppoe_wan_egress_v4 test_run");
 }

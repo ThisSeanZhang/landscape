@@ -52,9 +52,10 @@ struct {
  *  Every stage object carries a v4 and a v6 entry program for each chain
  *  direction; each entry tails into the family slot it belongs to, so the
  *  two families traverse independent program lineups within one chain.
- *  PPPoE encap (native mode) is an egress-only per-link terminal stage
- *  with the same family-dual entries, its session template baked into
- *  rodata per link (see PppoeHandle::attach_tc_pppoe).
+ *  PPPoE encap (native mode) is folded into the chain's per-link exit
+ *  instead of being a stage: a dedicated PPPoE exit carries the session
+ *  template and encapsulates only packets that traversed that link's
+ *  chain, while the chain holds its plain exit for the non-PPPoE case.
  *
  *  Both ingress and egress roots are always instantiated (TcChainManager::
  *  ensure_roots), with tc_wan_egress_route attached to TC egress for
@@ -116,14 +117,17 @@ struct {
  *      │    └─ MSS_{v4,v6}
  *      │         └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → FW_{v4,v6}
  *      │              └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → NAT_{v4,v6}
- *      │                   └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → PPPoE_{v4,v6}
- *      │                        └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → (next stage)
+ *      │                   └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → (next stage)
  *      │
  *      └─ bpf_tail_call(skb, &tc_from_lan_exit_map, 0)
- *           └─ tc_wan_egress_exit_redirect → bpf_redirect_neigh on pending IPv4 miss, else UNSPEC
+ *           └─ tc_wan_egress_exit_redirect (plain) or
+ *              tc_wan_pppoe_exit_redirect (native PPPoE encap), then
+ *              bpf_redirect_neigh on pending IPv4 miss, else UNSPEC
  *
  *    Each stage falls back to its chain's from-LAN exit map:
- *      <chain>.tc_from_lan_exit_map[0] = tc_wan_egress_exit_redirect
+ *      <chain>.tc_from_lan_exit_map[0] = plain | PPPoE exit
+ *    A native-PPPoE session switches that slot to the dedicated PPPoE
+ *    exit; dropping the session restores the held plain exit.
  *
  *  ─────────────────────────────────────────────────────────────────────────
  *  LAN INGRESS CHAIN
@@ -170,20 +174,19 @@ struct {
  *      ...
  *      nat.  wan_ingress_next_stage[*] = (empty; fallback to exit)
  *
- *    Example — WAN egress chain:  MSS → FW → NAT → [PPPoE] → Exit
+ *    Example — WAN egress chain:  MSS → FW → NAT → Exit (exit may PPPoE-encap)
  *      root -> wan_egress_root_next_stage[TC_SLOT_V4] = mss_egress_v4_fd
  *      root -> wan_egress_root_next_stage[TC_SLOT_V6] = mss_egress_v6_fd
  *      mss.  wan_egress_next_stage[TC_SLOT_V4] = firewall_egress_v4_fd
  *      mss.  wan_egress_next_stage[TC_SLOT_V6] = firewall_egress_v6_fd
  *      ... (each stage links both family slots to the successor)
- *      nat.  wan_egress_next_stage[*] = pppoe_egress_{v4,v6}_fd   (native PPPoE)
- *      pppoe.wan_egress_next_stage[*] = (empty; fallback to exit)
+ *      nat.  wan_egress_next_stage[*] = (empty; fallback to exit)
  *
- *    PPPoE (native mode) is egress-only and per-link: each link injects
- *    its own terminal stage with its session template in rodata
- *    (see PppoeHandle::attach_tc_pppoe).  Rust-side it only registers
- *    from-LAN (egress) rows: the from-WAN stage enum has no Pppoe
- *    variant, so it can never join the WAN ingress chain.
+ *    PPPoE (native mode) is egress-only and per-link: the link loads a
+ *    dedicated exit with the session template in rodata and swaps the
+ *    chain exit slot (see WanLinkDataplane::install_tc_pppoe_exit).
+ *    Rust-side it registers no from-LAN stage row, so it can never join
+ *    the WAN ingress chain.
  *
  *    Example — LAN ingress chain:  tc_lan_ingress_route → bpf_redirect (bypass)
  *      intro → route → pick_wan → FORWARDED + bpf_redirect(target_wan, 0)
@@ -209,7 +212,8 @@ struct {
  *
  *  Fallback exit maps:
  *    chain/tc_from_wan_exit_maps.h — tc_pipe_exits_wan_ingress (shared)
- *    chain/tc_from_lan_exit_maps.h — tc_from_lan_exit_map (per-chain)
+ *    chain/tc_from_lan_exit_maps.h — tc_from_lan_exit_map (per-chain;
+ *      optional native-PPPoE encap + neighbour redirect)
  *
  *  Multi-entry prog arrays (declared in tc_wan_egress_route.bpf.c):
  *    tc_wan_egress_roots — per-WAN-link egress chain roots, keyed by the

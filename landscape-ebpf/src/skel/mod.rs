@@ -38,9 +38,6 @@ pub mod tc_nat4_v4;
 #[path = "../bpf_rs/tc_nat6.skel.rs"]
 pub mod tc_nat6;
 #[rustfmt::skip]
-#[path = "../bpf_rs/tc_pppoe.skel.rs"]
-pub mod tc_pppoe;
-#[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_egress_exit.skel.rs"]
 pub mod tc_wan_egress_exit;
 #[rustfmt::skip]
@@ -61,6 +58,9 @@ pub mod tc_wan_ingress_root;
 #[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_ingress_route.skel.rs"]
 pub mod tc_wan_ingress_route;
+#[rustfmt::skip]
+#[path = "../bpf_rs/tc_wan_pppoe_exit.skel.rs"]
+pub mod tc_wan_pppoe_exit;
 #[rustfmt::skip]
 #[path = "../bpf_rs/tproxy.skel.rs"]
 pub mod tproxy;
