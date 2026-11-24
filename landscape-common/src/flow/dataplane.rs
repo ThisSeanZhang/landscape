@@ -2,7 +2,7 @@
 //! marks into the eBPF maps and invalidate the verdict cache.
 
 use crate::flow::RuntimeFlowConfig;
-use crate::flow::ip_mark::IpMarkInfo;
+use crate::flow::ip_mark::{IpMarkInfo, PortMarkInfo};
 
 /// eBPF capability for the flow rule services.
 pub trait FlowRuleDataplane: Send + Sync {
@@ -13,6 +13,12 @@ pub trait FlowRuleDataplane: Send + Sync {
     /// Create or update the per-flow destination-IP LPM marks of
     /// `flow_id`.
     fn set_dst_ip_marks(&self, flow_id: u32, ips: Vec<IpMarkInfo>);
+
+    /// Create or update the per-flow destination L4 protocol/port-range
+    /// marks of `flow_id`.
+    fn set_dst_port_marks(&self, flow_id: u32, ports: Vec<PortMarkInfo>) {
+        let _ = (flow_id, ports);
+    }
 
     /// Recreate the LAN verdict-cache inner maps (invalidate all cached
     /// verdicts).

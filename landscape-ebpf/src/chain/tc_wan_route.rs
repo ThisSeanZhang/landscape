@@ -120,6 +120,14 @@ pub fn init_tc_wan_route(
         "tc_wan_egress pin flow6_ip_map"
     )?;
     crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.flow_l4_rule_map, &paths.flow_l4_rule_map),
+        "tc_wan_egress pin flow_l4_rule_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut open_skel.maps.flow_l4_meta_map, &paths.flow_l4_meta_map),
+        "tc_wan_egress pin flow_l4_meta_map"
+    )?;
+    crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),
         "tc_wan_egress pin rt4_cache_map"
     )?;

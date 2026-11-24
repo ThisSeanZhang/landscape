@@ -259,6 +259,8 @@ impl RouteBackbone {
         pin_and_reuse_map(&mut open_skel.maps.flow6_dns_map, &paths.flow6_dns_map)?;
         pin_and_reuse_map(&mut open_skel.maps.flow4_ip_map, &paths.flow4_ip_map)?;
         pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow_l4_rule_map, &paths.flow_l4_rule_map)?;
+        pin_and_reuse_map(&mut open_skel.maps.flow_l4_meta_map, &paths.flow_l4_meta_map)?;
         pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map)?;
         pin_and_reuse_map(&mut open_skel.maps.rt6_cache_map, &paths.rt6_cache_map)?;
         pin_and_reuse_map(&mut open_skel.maps.rt4_conn_map, &paths.rt4_conn_map)?;
@@ -331,6 +333,14 @@ impl RouteBackbone {
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow6_ip_map, &paths.flow6_ip_map),
             "tc_wan_ingress_route pin flow6_ip_map"
+        )?;
+        crate::bpf_ctx!(
+            pin_and_reuse_map(&mut open_skel.maps.flow_l4_rule_map, &paths.flow_l4_rule_map),
+            "tc_wan_ingress_route pin flow_l4_rule_map"
+        )?;
+        crate::bpf_ctx!(
+            pin_and_reuse_map(&mut open_skel.maps.flow_l4_meta_map, &paths.flow_l4_meta_map),
+            "tc_wan_ingress_route pin flow_l4_meta_map"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),

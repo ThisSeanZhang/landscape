@@ -12,7 +12,6 @@
 #define L4_VERDICT_CACHE 1
 
 #define ROUTE_CONN_FLAG_DROP (1U << 0)
-#define ROUTE_CONN_FLAG_DIRECT (1U << 1)
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);

@@ -569,6 +569,10 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
     flow_dns::init_flow6_dns_map(&paths.flow6_dns_map).expect("init flow6_dns_map failed");
     flow_wanip::init_flow4_ip_map(&paths.flow4_ip_map).expect("init flow4_ip_map failed");
     flow_wanip::init_flow6_ip_map(&paths.flow6_ip_map).expect("init flow6_ip_map failed");
+    flow_wanip::init_flow_l4_rule_map(&paths.flow_l4_rule_map)
+        .expect("init flow_l4_rule_map failed");
+    flow_wanip::init_flow_l4_meta_map(&paths.flow_l4_meta_map)
+        .expect("init flow_l4_meta_map failed");
 
     // 每次启动重建 cache 外层 map（含内层 map），避免结构体变更后大小不匹配。
     route::init_rt4_cache_map(&paths.rt4_cache_map, &paths.rt6_cache_map)
@@ -622,6 +626,8 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     flow_dns::init_flow6_dns_map(&paths.flow6_dns_map).expect("test init flow6_dns_map");
     flow_wanip::init_flow4_ip_map(&paths.flow4_ip_map).expect("test init flow4_ip_map");
     flow_wanip::init_flow6_ip_map(&paths.flow6_ip_map).expect("test init flow6_ip_map");
+    flow_wanip::init_flow_l4_rule_map(&paths.flow_l4_rule_map).expect("test init flow_l4_rule_map");
+    flow_wanip::init_flow_l4_meta_map(&paths.flow_l4_meta_map).expect("test init flow_l4_meta_map");
 
     route::init_rt4_cache_map(&paths.rt4_cache_map, &paths.rt6_cache_map)
         .expect("test init rt4/6 cache maps");
@@ -1141,6 +1147,8 @@ mod tests {
                 flow_wanip::FLOW4_IP_MAP_PIN,
                 flow_dns::FLOW6_DNS_MAP_PIN,
                 flow_wanip::FLOW6_IP_MAP_PIN,
+                flow_wanip::FLOW_L4_RULE_MAP_PIN,
+                flow_wanip::FLOW_L4_META_MAP_PIN,
                 route::RT4_CACHE_MAP_PIN,
                 route::RT6_CACHE_MAP_PIN,
                 route::RT4_CONN_MAP_PIN,

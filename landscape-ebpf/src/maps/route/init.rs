@@ -35,7 +35,7 @@ const ROUTE_CACHE_MAX_ENTRIES: u32 = 65536;
 /// Outer ARRAY_OF_MAPS capacity (indexed by cache type WAN/LAN).
 const ROUTE_CACHE_OUTER_ENTRIES: u32 = 2;
 /// Outer ARRAY_OF_MAPS capacity for `rt4/6_conn_map`:
-/// slot 0 = `CONN_PIN_CACHE`, slot 1 = `L4_VERDICT_CACHE`.
+/// slot 0 (`CONN_PIN_CACHE`) + slot 1 (`L4_VERDICT_CACHE`).
 const ROUTE_CONN_OUTER_ENTRIES: u32 = 2;
 
 /// Pin 文件名 = C map 符号名（见 `route4_lan.h` / `route4_slot.h` 等）。
@@ -316,7 +316,8 @@ pub fn init_route_lan_cache_inner_map(rt4_cache_path: &Path, rt6_cache_path: &Pa
     );
 }
 
-/// Startup population of the 5-tuple connection-pinning inner maps at slot 0.
+/// Startup population of the 5-tuple connection-pinning (`CONN_PIN_CACHE`, slot 0)
+/// and L4 verdict (`L4_VERDICT_CACHE`, slot 1) inner maps.
 pub fn init_route_conn_inner_map(rt4_conn_path: &Path, rt6_conn_path: &Path) {
     cache::create_inner_map_generic::<_, Route4ConnKey, RouteConnValue>(
         rt4_conn_path,
@@ -327,6 +328,16 @@ pub fn init_route_conn_inner_map(rt4_conn_path: &Path, rt6_conn_path: &Path) {
         rt6_conn_path,
         "rt6_conn_lru".into(),
         cache::CONN_PIN_CACHE,
+    );
+    cache::create_inner_map_generic::<_, Route4ConnKey, RouteConnValue>(
+        rt4_conn_path,
+        "rt4_l4_verdict".into(),
+        cache::L4_VERDICT_CACHE,
+    );
+    cache::create_inner_map_generic::<_, Route6ConnKey, RouteConnValue>(
+        rt6_conn_path,
+        "rt6_l4_verdict".into(),
+        cache::L4_VERDICT_CACHE,
     );
 }
 

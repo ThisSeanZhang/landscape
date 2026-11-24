@@ -293,6 +293,35 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum L4ProtoMatch {
+    #[default]
+    Any,
+    Tcp,
+    Udp,
+}
+
+impl L4ProtoMatch {
+    pub const fn to_ipproto(self) -> u8 {
+        match self {
+            Self::Any => 0,
+            Self::Tcp => 6,
+            Self::Udp => 17,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct PortRuleConfig {
+    #[serde(default)]
+    pub protocol: L4ProtoMatch,
+    pub start_port: u16,
+    pub end_port: u16,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
@@ -300,6 +329,7 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
 pub enum WanIPRuleSource {
     GeoKey(GeoConfigKey),
     Config(IpConfig),
+    Port(PortRuleConfig),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -311,7 +341,23 @@ pub struct IpConfig {
     // pub reverse_match: String,
 }
 
-crate::impl_trivial_validatable!(WanIpRuleConfig);
+impl crate::database::validator::ValidatableConfig for WanIpRuleConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
+        for src in &self.source {
+            if let WanIPRuleSource::Port(p) = src
+                && (p.start_port == 0 || p.start_port > p.end_port)
+            {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "port rule range {}..={} is invalid (require 1 <= start_port <= end_port)",
+                        p.start_port, p.end_port
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -486,5 +532,66 @@ mod tests {
         .validate();
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn port_rule_serde_and_validation() {
+        let src: WanIPRuleSource = serde_json::from_value(serde_json::json!({
+            "t": "port",
+            "protocol": "tcp",
+            "start_port": 65499,
+            "end_port": 65499
+        }))
+        .unwrap();
+        match &src {
+            WanIPRuleSource::Port(p) => {
+                assert_eq!(p.protocol, L4ProtoMatch::Tcp);
+                assert_eq!(p.start_port, 65499);
+                assert_eq!(p.end_port, 65499);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let default_proto: WanIPRuleSource = serde_json::from_value(serde_json::json!({
+            "t": "port",
+            "start_port": 3478,
+            "end_port": 3480
+        }))
+        .unwrap();
+        match &default_proto {
+            WanIPRuleSource::Port(p) => assert_eq!(p.protocol, L4ProtoMatch::Any),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let make_rule = |start_port: u16, end_port: u16| WanIpRuleConfig {
+            id: Uuid::nil(),
+            name: None,
+            index: 10,
+            enable: true,
+            mark: FlowMark::default(),
+            source: vec![WanIPRuleSource::Port(PortRuleConfig {
+                protocol: L4ProtoMatch::Tcp,
+                start_port,
+                end_port,
+            })],
+            remark: String::new(),
+            flow_id: 0,
+            override_dns: false,
+            update_at: 0.0,
+        };
+
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(65499, 65499))
+                .is_ok()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(1, 65535)).is_ok()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(0, 443)).is_err()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(500, 400)).is_err()
+        );
     }
 }

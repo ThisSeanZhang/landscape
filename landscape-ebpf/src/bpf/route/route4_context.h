@@ -20,7 +20,8 @@ struct route4_context {
     u8 smac[6];
     u8 has_ports;
     u8 l4_parsed;
-    u8 _pad[2];
+    u8 skip_2tuple_cache;
+    u8 _pad;
 };
 
 static __always_inline int route4_read_context_from_scan(struct __sk_buff *skb,

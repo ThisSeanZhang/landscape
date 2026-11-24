@@ -134,6 +134,7 @@ impl FlowRuleService {
             let _ =
                 self.dns_events_tx.send(DnsEvent::RulesChanged { flow_id: Some(flow_id) }).await;
             self.dataplane.set_dst_ip_marks(flow_id, vec![]);
+            self.dataplane.set_dst_port_marks(flow_id, vec![]);
             self.dataplane.invalidate_lan_cache();
         }
         Ok(old)

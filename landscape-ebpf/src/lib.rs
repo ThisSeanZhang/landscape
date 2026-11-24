@@ -61,6 +61,8 @@ pub struct LandscapeMapPath {
     pub rt4_flow_targets: PathBuf,
     pub flow4_dns_map: PathBuf,
     pub flow4_ip_map: PathBuf,
+    pub flow_l4_rule_map: PathBuf,
+    pub flow_l4_meta_map: PathBuf,
 
     pub rt6_lan_map: PathBuf,
     pub rt6_slot_map: PathBuf,
@@ -123,6 +125,8 @@ impl LandscapeMapPath {
             rt4_flow_targets: root.join(route::RT4_FLOW_TARGETS_PIN),
             flow4_dns_map: root.join(flow_dns::FLOW4_DNS_MAP_PIN),
             flow4_ip_map: root.join(flow_wanip::FLOW4_IP_MAP_PIN),
+            flow_l4_rule_map: root.join(flow_wanip::FLOW_L4_RULE_MAP_PIN),
+            flow_l4_meta_map: root.join(flow_wanip::FLOW_L4_META_MAP_PIN),
 
             rt6_lan_map: root.join(route::RT6_LAN_MAP_PIN),
             rt6_slot_map: root.join(route::RT6_SLOT_MAP_PIN),
