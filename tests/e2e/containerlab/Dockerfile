@@ -39,6 +39,13 @@ RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
     && rm -rf /var/lib/apt/lists/*
 COPY landscape-webserver /usr/local/bin/
 
+FROM capture-tools AS wan-ns
+RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
+    apt-get update -o APT::Update::Error-Mode=any \
+    && apt-get install -y --no-install-recommends bpftool python3-scapy \
+    && rm -rf /var/lib/apt/lists/*
+COPY landscape-webserver /usr/local/bin/
+
 FROM capture-tools AS pppoe
 RUN --mount=type=secret,id=resolver,target=/etc/resolv.conf,mode=0444 \
     apt-get update -o APT::Update::Error-Mode=any \

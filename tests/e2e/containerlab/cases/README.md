@@ -10,6 +10,7 @@
 | [lan/dhcp-acquire](lan/dhcp-acquire/README.md) | LAN 客户端首次获租，应用网关和 DNS 配置，随后访问 WAN |
 | [lan/dhcp-renew](lan/dhcp-renew/README.md) | 同一客户端续租后地址保持一致、租约延长、WAN 仍可达 |
 | [wan/gateway-arp](wan/gateway-arp/README.md) | 抓包验证 IPv4 下一跳、网关 MAC 刷新、探测超时和显式关闭后的清理 |
+| [wan/gateway-ns](wan/gateway-ns/README.md) | 通过 scapy PD 应答器分配前缀，抓包验证 IPv6 网关 NS 探测、转发 MAC、超时和关闭清理 |
 | [dns/negative-cache](dns/negative-cache/README.md) | LAN 查询 CNAME 指向的空答案，核对负缓存命中及到期后的 A 记录 |
 | [pppoe/redial-udp](pppoe/redial-udp/README.md) | 接入端强制断开会话，重拨换址后已有 UDP 流恢复 |
 | [acme/dns-01](acme/dns-01/README.md) | 通过实验 DNS 提供商向本地 Pebble 申请普通域名和通配符证书，并核对 TXT 清理 |

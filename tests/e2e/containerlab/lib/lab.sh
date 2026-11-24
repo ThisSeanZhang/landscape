@@ -32,6 +32,10 @@ cleanup() {
         if (( status != 0 )); then
             diagnostics >&2 || true
         fi
+        if [[ ${E2E_KEEP_LAB:-0} == 1 ]]; then
+            echo "E2E_KEEP_LAB=1: keeping lab $LANDSCAPE_LAB_NAME (destroy with: containerlab destroy -t $topology --cleanup)" >&2
+            exit "$status"
+        fi
         if ! containerlab destroy -t "$topology" --cleanup; then
             echo "Cleanup failed. Retry with LANDSCAPE_LAB_NAME=$LANDSCAPE_LAB_NAME containerlab destroy -t $topology --cleanup" >&2
             exit 1
