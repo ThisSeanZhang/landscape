@@ -195,13 +195,13 @@ fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
 }
 
 #[test]
-fn v6_rewrite_requires_a_forwarded_frame_and_a_confirmed_mac() {
+fn v6_unconfirmed_gateway_drops_forwarded_frame() {
     let pkt = simple_ipv6_tcp_syn(V6_SRC, REMOTE6);
     let multicast = simple_ipv6_tcp_syn(V6_SRC, Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1));
-    // No confirmed MAC: the mirror/route stage result is kept.
     let unresolved = load_egress_root_with(binding6());
-    let (_, out, cb) =
+    let (ret, out, cb) =
         run_prog_with_ctx(&unresolved.skel.progs.tc_wan_egress_root, &pkt, forwarded());
+    assert_eq!(ret, 2, "unconfirmed gateway must drop the forwarded frame");
     assert_eq!(out, pkt);
     assert_eq!(cb[2], 0);
     for (cfg, packet, ctx) in [

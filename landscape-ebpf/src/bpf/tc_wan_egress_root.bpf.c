@@ -119,7 +119,7 @@ static __always_inline int prepare_forwarded_ipv6(struct __sk_buff *skb) {
     if (unlikely(!offlink)) return TC_ACT_OK;
 
     __u64 mac = confirmed_gateway_mac6;
-    if (unlikely(!mac)) return TC_ACT_OK;
+    if (unlikely(!mac)) return TC_ACT_SHOT;
     __builtin_memcpy(eth->h_dest, &mac, sizeof(eth->h_dest));
     // Byte loads keep clang from folding the const volatile source.
 #pragma unroll

@@ -115,7 +115,6 @@ static __always_inline bool is_skip_route_only(u32 original) {
     return get_mark_type(original) == MARK_TYPE_SKIP_ROUTE;
 }
 
-
 // chain_id of the SkipRoute layouts (bits 0-15)
 static __always_inline u16 get_skip_route_chain_id(u32 original) {
     return (u16)(original & 0xFFFF);
