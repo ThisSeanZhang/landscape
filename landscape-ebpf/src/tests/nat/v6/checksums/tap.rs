@@ -98,7 +98,7 @@ fn tc_packet_too_big_tap() {
             translated[checksum] = wan[checksum];
         }
         let ptb = Icmpv6Type::PacketTooBig { mtu: 1280 };
-        let input = icmp6_error(ROUTER, WAN_CLIENT, ptb.clone(), &wan[..end]);
+        let input = icmp6_error(ROUTER, WAN_CLIENT, ptb, &wan[..end]);
         let expected = icmp6_error(ROUTER, LAN_CLIENT, ptb, &translated);
         let (head, tail) = input.split_at(tcp_offset + linear);
         let iov = [IoSlice::new(head), IoSlice::new(tail)];

@@ -466,6 +466,7 @@ pub(crate) fn seed_dynamic(
         .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn seed_dynamic_ct(
     skel: &TcNat4V4Skel<'_>,
     proto: u8,

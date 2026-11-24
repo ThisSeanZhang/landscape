@@ -325,12 +325,12 @@ fn packet_too_big_quotes_echo_with_destination_options() {
             frame[Ethernet2Header::LEN - l3_offset..].to_vec()
         };
         let echo = Icmpv6Type::EchoRequest(IcmpEchoHeader { id: 0, seq: 7 });
-        let lan = packet(LAN_CLIENT, REMOTE, echo.clone(), &[0x5a; 1461]);
+        let lan = packet(LAN_CLIENT, REMOTE, echo, &[0x5a; 1461]);
         let wan = packet(WAN_CLIENT, REMOTE, echo, &[0x5a; 1461]);
         // Include the options header, the Echo header and one payload byte.
         let quote = l3_offset..l3_offset + Ipv6Header::LEN + 8 + 9;
         let ptb = Icmpv6Type::PacketTooBig { mtu: 1492 };
-        let expected = packet(ROUTER, LAN_CLIENT, ptb.clone(), &lan[quote.clone()]);
+        let expected = packet(ROUTER, LAN_CLIENT, ptb, &lan[quote.clone()]);
         with_nat6_config(60, l3_offset, |tc, xdp| {
             for (egress, out, ingress, back) in [
                 (
@@ -343,7 +343,7 @@ fn packet_too_big_quotes_echo_with_destination_options() {
             ] {
                 let translated = run(egress, &lan, out, 0);
                 assert_eq!(translated, wan);
-                let error = packet(ROUTER, WAN_CLIENT, ptb.clone(), &translated[quote.clone()]);
+                let error = packet(ROUTER, WAN_CLIENT, ptb, &translated[quote.clone()]);
                 for &flag in checksum_test_flags(ingress) {
                     assert_eq!(run(ingress, &error, back, flag), expected);
                 }
@@ -426,8 +426,8 @@ fn icmp6_error_matches_existing_dynamic_flow() {
                 let wire_ip = &wire[Ethernet2Header::LEN..];
                 let lan_ip = &lan[Ethernet2Header::LEN..];
                 for len in [Ipv6Header::LEN + 8, wire_ip.len().min(1232)] {
-                    let input = icmp6_error(ROUTER, WAN_CLIENT, error.clone(), &wire_ip[..len]);
-                    let expected = icmp6_error(ROUTER, LAN_CLIENT, error.clone(), &lan_ip[..len]);
+                    let input = icmp6_error(ROUTER, WAN_CLIENT, error, &wire_ip[..len]);
+                    let expected = icmp6_error(ROUTER, LAN_CLIENT, error, &lan_ip[..len]);
                     for (ingress, verdict) in [
                         (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK),
                         (&xdp.progs.ingress_nat_v6, XDP_PASS),
@@ -589,7 +589,7 @@ fn icmp6_short_tcp_quote() {
                 if tcp_bytes < 18 {
                     quote[Ipv6Header::LEN..].copy_from_slice(&original[Ipv6Header::LEN..end]);
                 }
-                let mut input = icmp6_error(outer_src, outer_dst, kind.clone(), &original[..end]);
+                let mut input = icmp6_error(outer_src, outer_dst, kind, &original[..end]);
                 let mut expected = icmp6_error(new_src, new_dst, kind, &quote);
                 input.resize(input.len() + link_padding, 0xa5);
                 expected.resize(expected.len() + link_padding, 0xa5);

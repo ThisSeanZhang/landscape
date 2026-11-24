@@ -12,14 +12,14 @@
 //! 1. **Live veth end-to-end (`#[ignore]`, run with `--include-ignored`)**:
 //!    Runs the full production chain on real veth pairs with zero simulated
 //!    metadata or `skb->cb`:
-//!      `xdp_lan_route` (XDP_PASS + real `data_meta`)
-//!      -> `tc_lan_ingress_route` (`xdp_handoff_enabled = true`, `ls_lan_ingress_tails`
-//!         cleared so missing metadata cannot fall back to normal TC routing)
-//!      -> `tc_wan_egress_route` (`ls_wan_e_tails` cleared so only `tc_cb_forwarded`
-//!         + matching `CHAIN` can enter `tc_wan_egress_roots[CHAIN]`)
-//!      -> `tc_wan_egress_root` (reuses `ip_mac_v4` with conflicting `NEIGH_MAC`,
-//!         configured with `CONFIRMED_MAC` + `WAN_MAC`)
-//!      -> raw `AF_PACKET` capture bound strictly to the WAN peer veth.
+//!    `xdp_lan_route` (XDP_PASS + real `data_meta`)
+//!    -> `tc_lan_ingress_route` (`xdp_handoff_enabled = true`, `ls_lan_ingress_tails`
+//!    cleared so missing metadata cannot fall back to normal TC routing)
+//!    -> `tc_wan_egress_route` (`ls_wan_e_tails` cleared so only `tc_cb_forwarded`
+//!    and matching `CHAIN` can enter `tc_wan_egress_roots[CHAIN]`)
+//!    -> `tc_wan_egress_root` (reuses `ip_mac_v4` with conflicting `NEIGH_MAC`,
+//!    configured with `CONFIRMED_MAC` + `WAN_MAC`)
+//!    -> raw `AF_PACKET` capture bound strictly to the WAN peer veth.
 //!
 //! 2. **Two-stage `BPF_PROG_TEST_RUN` (runs by default)**:
 //!    - **Measured (Stage 1)**: real `xdp_lan_route` via `BPF_PROG_TEST_RUN` (with
