@@ -103,8 +103,8 @@ struct {
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
  *           │    ├─ SkipRoute mark (SO_MARK, chain id in bits 0-15):
  *           │    │    host control plane → chain root directly;
- *           │    │    SkipRouteAndStage also self-skips the policy
- *           │    │    stages, SkipRoute keeps them
+ *           │    │    the root sends SkipRouteAndStage straight to the
+ *           │    │    exit, SkipRoute keeps the policy stages
  *           │    └─ broadcast/multicast MAC: pass-through
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
  *           └─ tc_route4/6_pick_wan_in_wan_egress:

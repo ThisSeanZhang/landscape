@@ -18,6 +18,9 @@ SEC("tc/egress")
 int tc_wan_egress_ppp_root(struct __sk_buff *skb) {
     skb->cb[2] = 0;
 
+    // Legacy HostDirect lanes ride the ppp terminal without policy stages.
+    if (is_skip_route_and_stage(skb_mark(skb))) return TC_ACT_UNSPEC;
+
     u32 proto = skb->protocol;
     if (proto == ETH_IPV4) {
         bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_SLOT_V4);

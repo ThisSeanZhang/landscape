@@ -6,10 +6,15 @@ use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
+use zerocopy::IntoBytes;
 
+use crate::skel::tc_firewall::TcFirewallSkelBuilder;
 use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel;
+use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
 use crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkel;
 use crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
+use crate::tests::TestSkb;
+use crate::tests::helper::map::{skip_route_and_stage_mark, skip_route_mark};
 
 const SESSION_ID: u16 = 0x2233;
 
@@ -44,18 +49,22 @@ fn load_plain_exit() -> TcWanEgressExitSkel<'static> {
         .unwrap()
 }
 
-fn build_ipv4_packet() -> Vec<u8> {
+fn build_ipv4_packet_to(dst: [u8; 4]) -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(
         [0x02, 0x11, 0x22, 0x33, 0x44, 0x55],
         [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
     )
-    .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 64)
+    .ipv4([10, 0, 0, 1], dst, 64)
     .tcp(12345, 443, 0x1000_0000, 8192)
     .syn();
     let payload = [0x11, 0x22, 0x33];
     let mut packet = Vec::with_capacity(builder.size(payload.len()));
     builder.write(&mut packet, &payload).unwrap();
     packet
+}
+
+fn build_ipv4_packet() -> Vec<u8> {
+    build_ipv4_packet_to([10, 0, 0, 2])
 }
 
 fn build_ipv6_packet() -> Vec<u8> {
@@ -202,4 +211,77 @@ fn chain_root_bypasses_non_ip_and_encapsulates_ip_on_the_exit() {
     assert_eq!(enc_out[12], 0x88, "encapsulated ethertype 0x8864");
     assert_eq!(enc_out[13], 0x64);
     assert_eq!(&enc_out[22..ip_pkt.len() + 8], &ip_pkt[14..], "payload preserved");
+}
+
+fn assert_pppoe_frame(output: &[u8], plain: &[u8]) {
+    assert_eq!(output[12], 0x88, "ethertype hi");
+    assert_eq!(output[13], 0x64, "ethertype lo (PPPoE session)");
+    assert_eq!(output[14], 0x11, "version/type");
+    assert_eq!(output[16], (SESSION_ID >> 8) as u8, "session id hi");
+    assert_eq!(output[17], SESSION_ID as u8, "session id lo");
+    assert_eq!(output[20], 0x00, "PPP proto hi");
+    assert_eq!(output[21], 0x21, "PPP proto lo (IPv4)");
+    assert_eq!(&output[22..plain.len() + 8], &plain[14..], "L3 payload preserved");
+}
+
+#[test]
+fn root_skip_route_bypasses_policy_but_keeps_pppoe_encap() {
+    const BLOCKED: [u8; 4] = [203, 0, 113, 1];
+    const ALLOWED: [u8; 4] = [198, 51, 100, 7];
+
+    let exit = load_pppoe_exit(default_tmpl(SESSION_ID));
+    let exit_fd = exit.progs.tc_wan_pppoe_exit_redirect.as_fd().as_raw_fd();
+
+    let mut fw_object = MaybeUninit::zeroed();
+    let fw = TcFirewallSkelBuilder::default().open(&mut fw_object).unwrap().load().unwrap();
+    let mut key = [0u8; 8];
+    key[0..4].copy_from_slice(&32u32.to_ne_bytes());
+    key[4..8].copy_from_slice(&BLOCKED);
+    fw.maps.firewall_block_ip4_map.update(&key, &[1u8, 0, 0, 0], MapFlags::ANY).unwrap();
+    fw.maps
+        .tc_from_lan_exit_map
+        .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let mut root_object = MaybeUninit::zeroed();
+    let root =
+        TcWanEgressRootSkelBuilder::default().open(&mut root_object).unwrap().load().unwrap();
+    let fw_v4 = fw.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd();
+    root.maps
+        .wan_egress_root_next_stage
+        .update(&0u32.to_ne_bytes(), &fw_v4.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    root.maps
+        .tc_from_lan_exit_map
+        .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let run = |pkt: &[u8], mark: u32| -> (i32, Vec<u8>) {
+        let mut out = vec![0u8; pkt.len() + 8];
+        let mut ctx = TestSkb { mark, ..Default::default() };
+        let ret = root
+            .progs
+            .tc_wan_egress_root
+            .test_run(ProgramInput {
+                data_in: Some(pkt),
+                data_out: Some(&mut out),
+                context_in: Some(ctx.as_mut_bytes()),
+                ..Default::default()
+            })
+            .expect("test_run tc_wan_egress_root")
+            .return_value as i32;
+        (ret, out)
+    };
+
+    let blocked = build_ipv4_packet_to(BLOCKED);
+    assert_eq!(run(&blocked, skip_route_mark(1)).0, 2, "SkipRoute must run the firewall");
+
+    let (ret, out) = run(&blocked, skip_route_and_stage_mark(1));
+    assert_eq!(ret, -1, "SkipRouteAndStage must bypass the firewall");
+    assert_pppoe_frame(&out, &blocked);
+
+    let allowed = build_ipv4_packet_to(ALLOWED);
+    let (ret, out) = run(&allowed, skip_route_mark(1));
+    assert_eq!(ret, -1, "SkipRoute that survives policy still reaches the exit");
+    assert_pppoe_frame(&out, &allowed);
 }

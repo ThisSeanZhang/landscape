@@ -1,9 +1,9 @@
 //! WAN egress entry's SkipRoute lanes: packets whose mark uses a SkipRoute
 //! layout (SO_MARK, chain id in bits 0-15) are host-originated traffic with
 //! a direct chain assignment. They enter `tc_wan_egress_roots[chain]`
-//! directly. SkipRouteAndStage also self-skips every policy stage
-//! (mss/firewall/nat) — e.g. a native PPPoE link's DHCPv6-PD socket — so
-//! the packet rides the chain's PPPoE exit; SkipRoute keeps the policy
+//! directly. SkipRouteAndStage makes the chain root bypass every policy
+//! stage (mss/firewall/nat) — e.g. a native PPPoE link's DHCPv6-PD socket —
+//! so the packet rides the chain's PPPoE exit; SkipRoute keeps the policy
 //! stages for WAN-link probing.
 //!
 //! Witness: the real chain terminal (a PPPoE-configured

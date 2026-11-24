@@ -67,8 +67,6 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
     __be16 new_port = 0;
     int rc = TC_ACT_OK;
 
-    if (!not_skip_route_and_stage(skb_mark(skb))) goto chain;
-
     if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN))
         goto chain;
 
@@ -111,8 +109,6 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
     int rc = TC_ACT_OK;
-
-    if (!not_skip_route_and_stage(skb_mark(skb))) goto chain;
 
     if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN))
         goto chain;

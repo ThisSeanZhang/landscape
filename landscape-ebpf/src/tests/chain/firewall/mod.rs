@@ -53,6 +53,7 @@ pub fn test_ingress_and_egress(egress_payload: Vec<u8>, ingress_payload: Vec<u8>
 pub mod tests {
     use std::mem::MaybeUninit;
     use std::net::Ipv4Addr;
+    use std::os::fd::{AsFd, AsRawFd};
 
     use libbpf_rs::{
         MapCore, MapFlags, ProgramInput,
@@ -61,6 +62,7 @@ pub mod tests {
     use zerocopy::IntoBytes;
 
     use super::TcFirewallSkelBuilder;
+    use crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder;
     use crate::tests::TestSkb;
     use crate::tests::chain::firewall::{
         package::{icmpv6_ping_egress, icmpv6_ping_ingress},
@@ -75,38 +77,45 @@ pub mod tests {
     }
 
     #[test]
-    fn skip_route_runs_firewall_but_skip_route_and_stage_does_not() {
-        let mut obj = MaybeUninit::zeroed();
-        let skel = TcFirewallSkelBuilder::default().open(&mut obj).unwrap().load().unwrap();
+    fn skip_route_runs_firewall_but_skip_route_and_stage_bypasses_the_root() {
+        let mut fw_obj = MaybeUninit::zeroed();
+        let fw = TcFirewallSkelBuilder::default().open(&mut fw_obj).unwrap().load().unwrap();
 
         let mut key = [0u8; 8];
         key[0..4].copy_from_slice(&32u32.to_ne_bytes());
         key[4..8].copy_from_slice(&[203, 0, 113, 1]);
-        skel.maps.firewall_block_ip4_map.update(&key, &[1u8, 0, 0, 0], MapFlags::ANY).unwrap();
+        fw.maps.firewall_block_ip4_map.update(&key, &[1u8, 0, 0, 0], MapFlags::ANY).unwrap();
+
+        let mut root_obj = MaybeUninit::zeroed();
+        let root =
+            TcWanEgressRootSkelBuilder::default().open(&mut root_obj).unwrap().load().unwrap();
+        let fw_v4 = fw.progs.tc_firewall_wan_egress_v4.as_fd().as_raw_fd();
+        root.maps
+            .wan_egress_root_next_stage
+            .update(&0u32.to_ne_bytes(), &fw_v4.to_ne_bytes(), MapFlags::ANY)
+            .unwrap();
 
         let pkt = simple_ipv4_tcp(Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(203, 0, 113, 1));
         let run = |mark: u32| {
             let mut ctx = TestSkb { mark, ..Default::default() };
-            let mut ctx_out = TestSkb::default();
             let mut out = vec![0u8; pkt.len()];
-            skel.progs
-                .tc_firewall_wan_egress_v4
+            root.progs
+                .tc_wan_egress_root
                 .test_run(ProgramInput {
                     data_in: Some(&pkt),
                     data_out: Some(&mut out),
                     context_in: Some(ctx.as_mut_bytes()),
-                    context_out: Some(ctx_out.as_mut_bytes()),
                     ..Default::default()
                 })
-                .expect("run tc_firewall_wan_egress_v4")
+                .expect("run tc_wan_egress_root")
                 .return_value as i32
         };
 
-        assert_eq!(run(skip_route_mark(1)), 2, "SkipRoute must run the firewall block");
+        assert_eq!(run(skip_route_mark(1)), 2, "SkipRoute must enter and run the firewall");
         assert_eq!(
             run(skip_route_and_stage_mark(1)),
             -1,
-            "SkipRouteAndStage must skip the firewall"
+            "SkipRouteAndStage must bypass the stage lineup"
         );
     }
 }

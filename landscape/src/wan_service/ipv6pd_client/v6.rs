@@ -275,8 +275,9 @@ fn create_pd_socket(
     socket.set_nonblocking(true)?;
     // All sends (Solicit / Renew / Release) carry the session's chain in
     // the SkipRouteAndStage mark: the WAN egress entry hands the packet to
-    // the link's chain root directly and every policy stage self-skips on
-    // this mark, so the control plane rides the PPP terminal unfiltered.
+    // the link's chain root directly and the root bypasses the policy
+    // stages on this mark, so the control plane rides the PPP terminal
+    // unfiltered.
     socket.set_mark(u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id }, 0)))?;
     UdpSocket::from_std(socket.into())
 }

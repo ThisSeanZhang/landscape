@@ -41,8 +41,7 @@ static __always_inline __be32 wan_ipv4_next_hop(__be32 dst, __u64 *gateway_mac) 
 /* A redirected frame carries the previous link's header. Same-device traffic
  * coming from the kernel already has its route's chosen next-hop header. */
 static __always_inline int prepare_forwarded_ipv4(struct __sk_buff *skb) {
-    if (!tc_cb_forwarded(skb) || is_skip_route_and_stage(skb_mark(skb)) || !egress_binding.has_l2 ||
-        egress_binding.is_pppoe)
+    if (!tc_cb_forwarded(skb) || !egress_binding.has_l2 || egress_binding.is_pppoe)
         return TC_ACT_OK;
 
     const u32 need = sizeof(struct ethhdr) + sizeof(struct iphdr);
@@ -92,9 +91,8 @@ pending:
 /* Off-link IPv6 leaves through the gateway probed by the NS worker; on-link
  * and unresolved frames keep the header prepared by the route stage. */
 static __always_inline int prepare_forwarded_ipv6(struct __sk_buff *skb) {
-    if (!tc_cb_forwarded(skb) || is_skip_route_and_stage(skb_mark(skb)) || !egress_binding.has_l2 ||
-        egress_binding.is_pppoe || !egress_binding.has_ipv6 ||
-        egress_binding.ifindex != skb->ifindex)
+    if (!tc_cb_forwarded(skb) || !egress_binding.has_l2 || egress_binding.is_pppoe ||
+        !egress_binding.has_ipv6 || egress_binding.ifindex != skb->ifindex)
         return TC_ACT_OK;
 
     const u32 need = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
@@ -132,6 +130,11 @@ static __always_inline int prepare_forwarded_ipv6(struct __sk_buff *skb) {
 SEC("tc/egress")
 int tc_wan_egress_root(struct __sk_buff *skb) {
     skb->cb[2] = 0;
+
+    /* Legacy HostDirect lanes skip the whole policy lineup; only the
+     * chain exit (which may still PPPoE-encapsulate) runs. */
+    if (is_skip_route_and_stage(skb_mark(skb))) goto exit;
+
     u8 l3_protocol = 0;
     if (current_l3_protocol(skb, current_l3_offset, &l3_protocol) == TC_ACT_OK) {
         if (l3_protocol == LANDSCAPE_IPV6_TYPE) {
@@ -144,6 +147,7 @@ int tc_wan_egress_root(struct __sk_buff *skb) {
     }
 
     ld_from_wan_log("ROOT next-stage tail FAILED (l3 %u) -> exit", l3_protocol);
+exit:
     TC_FROM_LAN_CHAIN_EXIT(skb);
     return TC_ACT_UNSPEC;
 }

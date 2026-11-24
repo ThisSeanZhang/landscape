@@ -20,6 +20,7 @@ use crate::landscape::OwnedOpenObject;
 use crate::skel::tc_firewall::TcFirewallSkelBuilder;
 use crate::skel::tc_mss::TcMssSkelBuilder;
 use crate::tests::TestSkb;
+use crate::tests::helper::map::{skip_route_and_stage_mark, skip_route_mark};
 
 const TC_SLOT_V4: u32 = 0;
 const TC_SLOT_V6: u32 = 1;
@@ -368,6 +369,47 @@ mod tests {
         let first = v6_frag_tcp(1460, 0, true);
         let (_, out) = run_root(root_prog, &first);
         assert_eq!(out, first, "v6 LAND_FRAG_FIRST is not clamped");
+    }
+
+    #[test]
+    fn ppp_root_skip_route_keeps_stages_but_skip_route_and_stage_bypasses_them() {
+        let root = load_ppp_egress_root();
+        let mss = mss_skel();
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &mss.progs.tc_mss_wan_egress_v4,
+        );
+        let prog = &root.skel.progs.tc_wan_egress_ppp_root;
+        let syn = ipv4_tcp_syn_mss(1460);
+        let mss_off = L3 as usize + 20 + 20 + 2;
+
+        let (_, out, _) = run_prog_with_ctx(
+            prog,
+            &syn,
+            TestSkb { mark: skip_route_mark(3), ..Default::default() },
+        );
+        assert_eq!(
+            u16::from_be_bytes([out[mss_off], out[mss_off + 1]]),
+            1492 - 20 - 20,
+            "SkipRoute must enter the MSS stage"
+        );
+
+        let (ret, out, cb) = run_prog_with_ctx(
+            prog,
+            &syn,
+            TestSkb {
+                mark: skip_route_and_stage_mark(3),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ret, -1);
+        assert_eq!(
+            u16::from_be_bytes([out[mss_off], out[mss_off + 1]]),
+            1460,
+            "SkipRouteAndStage must bypass the MSS stage"
+        );
+        assert_eq!(cb[2], 0);
     }
 
     #[test]
