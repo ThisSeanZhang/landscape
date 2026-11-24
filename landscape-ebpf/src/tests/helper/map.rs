@@ -35,10 +35,22 @@ pub(crate) fn normal_mark(action: FlowMarkAction, flow_id: u8, allow_reuse_port:
     ))
 }
 
-/// HostDirect-layout mark: the host control plane's direct chain
-/// assignment (SO_MARK on e.g. the DHCPv6-PD socket).
-pub(crate) fn host_direct_mark(chain_id: u16) -> u32 {
-    u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0))
+/// SkipRouteAndStage mark: host-originated traffic that bypasses both the
+/// route lookup and the policy stages (SO_MARK on the DHCPv6-PD socket).
+pub(crate) fn skip_route_and_stage_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id }, 0))
+}
+
+/// SkipRoute mark: host-originated traffic that bypasses only the route
+/// lookup and keeps the policy stages (e.g. WAN-link probing).
+pub(crate) fn skip_route_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipRoute { chain_id }, 0))
+}
+
+/// SkipAll mark: raw/pre-IP control traffic that bypasses the route lookup,
+/// the policy stages and the terminal exit.
+pub(crate) fn skip_all_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipAll { chain_id }, 0))
 }
 
 pub(crate) fn local_addr() -> Ipv6Addr {

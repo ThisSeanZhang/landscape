@@ -100,9 +100,10 @@ struct {
  *      │    slots when the mark carries none)
  *      └─ ingress_ifindex == 0  (local outbound)
  *           ├─ route_wan_egress entry (broadcast → v4/v6 dispatch)
- *           │    ├─ HostDirect mark (SO_MARK, chain id in bits 0-15):
- *           │    │    host control plane → chain root directly; the
- *           │    │    policy stages self-skip on that mark
+ *           │    ├─ SkipRoute mark (SO_MARK, chain id in bits 0-15):
+ *           │    │    host control plane → chain root directly;
+ *           │    │    SkipRouteAndStage also self-skips the policy
+ *           │    │    stages, SkipRoute keeps them
  *           │    └─ broadcast/multicast MAC: pass-through
  *           ├─ rt4_wan_egress / rt6_wan_egress logic
  *           └─ tc_route4/6_pick_wan_in_wan_egress:

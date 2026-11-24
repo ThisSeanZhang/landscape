@@ -352,16 +352,21 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     bool is_ipv4;
     int ret;
 
-    // Host-originated control plane with a direct chain assignment:
-    // SO_MARK in the HostDirect layout (bits 0-15 = chain id), e.g. the
-    // DHCPv6-PD socket of a native PPPoE link.  The policy stages
-    // self-skip on this mark (base/mark.h), so the packet rides the
-    // chain's terminal (PPP encapsulation) and exits untouched.
+    // Host-originated traffic with a direct chain assignment: SO_MARK in a
+    // SkipRoute layout (bits 0-15 = chain id). SkipRouteAndStage also
+    // bypasses the policy stages (e.g. the DHCPv6-PD socket of a native
+    // PPPoE link); SkipRoute keeps them for WAN-link probing. Both still
+    // ride the chain's terminal (PPP encapsulation) and exit.
     u32 mark = skb_mark(skb);
-    if (unlikely(is_host_direct(mark))) {
-        u32 chain = get_host_direct_chain_id(mark);
+    if (unlikely(is_skip_all(mark))) {
+        // Raw/pre-IP control frames: bypass the whole landscape chain and
+        // let the kernel send the frame on the bound device.
+        return TC_ACT_OK;
+    }
+    if (unlikely(is_skip_route(mark))) {
+        u32 chain = get_skip_route_chain_id(mark);
         bpf_tail_call(skb, &tc_wan_egress_roots, chain);
-        ld_from_wan_log("host-direct root tail failed chain %u; passing", chain);
+        ld_from_wan_log("skip-route root tail failed chain %u; passing", chain);
         return TC_ACT_UNSPEC;
     }
 

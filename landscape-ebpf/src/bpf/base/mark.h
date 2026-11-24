@@ -9,11 +9,15 @@
 #define FLOW_REDIRECT 3
 #define FLOW_ALLOW_REUSE 4
 
-// bits 24-31: mark layout-type tag (Normal layout = 0, HostDirect layout = 1)
-// bits 16-23: trace_mark (reserved for observability, carried by both
+// bits 24-31: mark layout-type tag
+//   Normal = 0, SkipRouteAndStage = 1 (legacy HostDirect), SkipRoute = 2,
+//   SkipAll = 3
+// bits 16-23: trace_mark (reserved for observability, carried by all
 //             layouts, always 0 for now)
 #define MARK_TYPE_NORMAL 0
-#define MARK_TYPE_HOST_DIRECT 1
+#define MARK_TYPE_SKIP_ROUTE_AND_STAGE 1
+#define MARK_TYPE_SKIP_ROUTE 2
+#define MARK_TYPE_SKIP_ALL 3
 
 #define MARK_TYPE_MASK 0xFF000000
 #define FLOW_ACTION_MASK 0x00007F00
@@ -77,16 +81,35 @@ static __always_inline bool get_flow_allow_reuse_port(u32 original) {
 // Get the mark layout type (bits 24-31)
 static __always_inline u8 get_mark_type(u32 original) { return (original & MARK_TYPE_MASK) >> 24; }
 
-// Whether the mark uses the HostDirect layout
-static __always_inline bool is_host_direct(u32 original) {
-    return get_mark_type(original) == MARK_TYPE_HOST_DIRECT;
+// Whether the mark bypasses the route lookup (either SkipRoute layout).
+// SkipAll is intentionally excluded: it is handled before this check.
+static __always_inline bool is_skip_route(u32 original) {
+    u8 mark_type = get_mark_type(original);
+    return mark_type == MARK_TYPE_SKIP_ROUTE_AND_STAGE || mark_type == MARK_TYPE_SKIP_ROUTE;
 }
 
-// Whether the mark does NOT use the HostDirect layout
-static __always_inline bool not_host_direct(u32 original) { return !is_host_direct(original); }
+// Whether the mark bypasses the route lookup, the policy stages and the
+// terminal exit (the entry passes the frame back to the kernel untouched).
+static __always_inline bool is_skip_all(u32 original) {
+    return get_mark_type(original) == MARK_TYPE_SKIP_ALL;
+}
 
-// chain_id of the HostDirect layout (bits 0-15)
-static __always_inline u16 get_host_direct_chain_id(u32 original) {
+// Whether the mark skips both the route lookup and the policy stages.
+static __always_inline bool is_skip_route_and_stage(u32 original) {
+    return get_mark_type(original) == MARK_TYPE_SKIP_ROUTE_AND_STAGE;
+}
+
+// Whether the mark skips the route lookup but keeps the policy stages.
+static __always_inline bool is_skip_route_only(u32 original) {
+    return get_mark_type(original) == MARK_TYPE_SKIP_ROUTE;
+}
+
+static __always_inline bool not_skip_route_and_stage(u32 original) {
+    return !is_skip_route_and_stage(original);
+}
+
+// chain_id of the SkipRoute layouts (bits 0-15)
+static __always_inline u16 get_skip_route_chain_id(u32 original) {
     return (u16)(original & 0xFFFF);
 }
 

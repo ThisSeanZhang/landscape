@@ -1,9 +1,10 @@
-//! WAN egress entry's HostDirect lane: packets whose mark uses the
-//! HostDirect layout (SO_MARK, chain id in bits 0-15) are host-originated
-//! control plane (e.g. a native PPPoE link's DHCPv6-PD socket) — they enter
-//! `tc_wan_egress_roots[chain]` directly, and every policy stage
-//! (mss/firewall/nat) self-skips on that mark, so the packet rides the
-//! chain's PPPoE terminal and exits.
+//! WAN egress entry's SkipRoute lanes: packets whose mark uses a SkipRoute
+//! layout (SO_MARK, chain id in bits 0-15) are host-originated traffic with
+//! a direct chain assignment. They enter `tc_wan_egress_roots[chain]`
+//! directly. SkipRouteAndStage also self-skips every policy stage
+//! (mss/firewall/nat) — e.g. a native PPPoE link's DHCPv6-PD socket — so
+//! the packet rides the chain's PPPoE terminal and exits; SkipRoute keeps
+//! the policy stages for WAN-link probing.
 //!
 //! Witness: the real chain terminal (the `tc_pppoe` v6 stage) is registered
 //! as the egress root, so a handed-off packet is proven by its +8-byte
@@ -23,7 +24,7 @@ use libbpf_rs::{
 use zerocopy::IntoBytes;
 
 use crate::tests::TestSkb;
-use crate::tests::helper::map::host_direct_mark;
+use crate::tests::helper::map::{skip_all_mark, skip_route_and_stage_mark};
 
 use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
 
@@ -138,15 +139,15 @@ fn run_entry(f: &Fixture, pkt: &[u8], mark: u32) -> (i32, Vec<u8>) {
     (ret, out)
 }
 
-/// HostDirect-marked DHCPv6-PD enters the chain and leaves with the
+/// SkipRouteAndStage-marked DHCPv6-PD enters the chain and leaves with the
 /// PPPoE session frame (bytes, not verdict: the stage's exit falls back
 /// to TC_ACT_UNSPEC either way).
 #[test]
-fn host_direct_marked_pd_enters_chain_and_is_encapped() {
-    let f = load("host-direct-hit");
+fn skip_route_and_stage_marked_pd_enters_chain_and_is_encapped() {
+    let f = load("skip-route-hit");
 
     let pkt = build_dhcpv6_multicast(SESSION_LL);
-    let (ret, out) = run_entry(&f, &pkt, host_direct_mark(CHAIN as u16));
+    let (ret, out) = run_entry(&f, &pkt, skip_route_and_stage_mark(CHAIN as u16));
 
     assert_eq!(ret, -1, "stage exit fallback is TC_ACT_UNSPEC; the bytes are the witness");
     assert_eq!(out[12], 0x88, "ethertype hi");
@@ -163,7 +164,7 @@ fn host_direct_marked_pd_enters_chain_and_is_encapped() {
 /// broadcast pass-through: the packet leaves untouched.
 #[test]
 fn unmarked_multicast_passes_raw() {
-    let f = load("host-direct-miss");
+    let f = load("skip-route-miss");
 
     let pkt =
         build_dhcpv6_multicast(Ipv6Addr::new(0xfe80, 0x1111, 0x1111, 0x1111, 0x1111, 0, 0, 0));
@@ -176,11 +177,23 @@ fn unmarked_multicast_passes_raw() {
 /// v4 broadcast keeps the classic behavior: pass, no chain.
 #[test]
 fn broadcast_v4_passes_raw() {
-    let f = load("host-direct-v4-ctrl");
+    let f = load("skip-route-v4-ctrl");
 
     let pkt = build_ipv4_broadcast();
     let (ret, out) = run_entry(&f, &pkt, 0);
 
     assert_eq!(ret, -1);
+    assert!(out[..pkt.len()].iter().zip(pkt.iter()).all(|(a, b)| a == b), "untouched");
+}
+
+/// SkipAll bypasses the chain entirely: TC_ACT_OK and no PPPoE encap.
+#[test]
+fn skip_all_passes_through_the_entry() {
+    let f = load("skip-all");
+
+    let pkt = build_dhcpv6_multicast(SESSION_LL);
+    let (ret, out) = run_entry(&f, &pkt, skip_all_mark(CHAIN as u16));
+
+    assert_eq!(ret, 0, "SkipAll must return TC_ACT_OK");
     assert!(out[..pkt.len()].iter().zip(pkt.iter()).all(|(a, b)| a == b), "untouched");
 }

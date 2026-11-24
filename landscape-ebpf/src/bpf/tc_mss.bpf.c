@@ -107,7 +107,7 @@ static __always_inline void clamp_tcp_v6(struct __sk_buff *skb, u32 current_l3_o
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         clamp_tcp_v4(skb, current_l3_offset, mtu_size);
     }
 
@@ -118,7 +118,7 @@ int tc_mss_wan_ingress_v4(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         clamp_tcp_v6(skb, current_l3_offset, mtu_size);
     }
 
@@ -129,7 +129,7 @@ int tc_mss_wan_ingress_v6(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         clamp_tcp_v4(skb, current_l3_offset, mtu_size);
     }
 
@@ -140,7 +140,7 @@ int tc_mss_wan_egress_v4(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_mss_wan_egress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         clamp_tcp_v6(skb, current_l3_offset, mtu_size);
     }
 

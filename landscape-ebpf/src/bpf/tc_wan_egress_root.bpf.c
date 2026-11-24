@@ -41,7 +41,7 @@ static __always_inline __be32 wan_ipv4_next_hop(__be32 dst, __u64 *gateway_mac) 
 /* A redirected frame carries the previous link's header. Same-device traffic
  * coming from the kernel already has its route's chosen next-hop header. */
 static __always_inline int prepare_forwarded_ipv4(struct __sk_buff *skb) {
-    if (!tc_cb_forwarded(skb) || is_host_direct(skb_mark(skb)) || !egress_binding.has_l2 ||
+    if (!tc_cb_forwarded(skb) || is_skip_route_and_stage(skb_mark(skb)) || !egress_binding.has_l2 ||
         egress_binding.is_pppoe)
         return TC_ACT_OK;
 
@@ -92,7 +92,7 @@ pending:
 /* Off-link IPv6 leaves through the gateway probed by the NS worker; on-link
  * and unresolved frames keep the header prepared by the route stage. */
 static __always_inline int prepare_forwarded_ipv6(struct __sk_buff *skb) {
-    if (!tc_cb_forwarded(skb) || is_host_direct(skb_mark(skb)) || !egress_binding.has_l2 ||
+    if (!tc_cb_forwarded(skb) || is_skip_route_and_stage(skb_mark(skb)) || !egress_binding.has_l2 ||
         egress_binding.is_pppoe || !egress_binding.has_ipv6 ||
         egress_binding.ifindex != skb->ifindex)
         return TC_ACT_OK;

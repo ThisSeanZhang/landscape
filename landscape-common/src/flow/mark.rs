@@ -14,13 +14,17 @@ const FLOW_DROP: u8 = 2;
 const FLOW_REDIRECT: u8 = 3;
 
 /// Full SocketMark bit layout (32 bits):
-///   bits 24-31  mark layout-type tag (Normal = 0, HostDirect = 1)
-///   bits 16-23  trace_mark (reserved for observability, carried by both
+///   bits 24-31  mark layout-type tag
+///                 Normal = 0, SkipRouteAndStage = 1, SkipRoute = 2,
+///                 SkipAll = 3
+///   bits 16-23  trace_mark (reserved for observability, carried by all
 ///               layouts, always 0 for now)
-///   bits 0-15   payload (Normal: FlowMark | HostDirect: chain_id)
+///   bits 0-15   payload (Normal: FlowMark | SkipRoute*/SkipAll: chain_id)
 const MARK_TYPE_MASK: u32 = 0xFF00_0000;
 const TRACE_MARK_MASK: u32 = 0x00FF_0000;
-const MARK_TYPE_HOST_DIRECT: u32 = 1;
+const MARK_TYPE_SKIP_ROUTE_AND_STAGE: u32 = 1;
+const MARK_TYPE_SKIP_ROUTE: u32 = 2;
+const MARK_TYPE_SKIP_ALL: u32 = 3;
 
 /// The full socket mark (the `skb->mark` / `SO_MARK` field).
 ///
@@ -35,14 +39,22 @@ pub struct SocketMark {
     trace_mark: u8,
 }
 
-/// Mark layout type, discriminated by the bits 24-31 tag; the two layouts
-/// are mutually exclusive
+/// Mark layout type, discriminated by the bits 24-31 tag; the layouts are
+/// mutually exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkType {
-    /// tag = [`MARK_TYPE_NORMAL`](0): bits 0-15 are the standard FlowMark layout
+    /// tag = 0: bits 0-15 are the standard FlowMark layout
     Normal(FlowMark),
-    /// tag = 1: bits 0-15 are the chain_id as a whole
-    HostDirect { chain_id: u16 },
+    /// tag = 1: skip the route lookup and the policy stages. The chain id
+    /// occupies bits 0-15. This is the legacy HostDirect layout.
+    SkipRouteAndStage { chain_id: u16 },
+    /// tag = 2: skip only the route lookup; the policy stages still run.
+    /// The chain id occupies bits 0-15.
+    SkipRoute { chain_id: u16 },
+    /// tag = 3: skip the route lookup, the policy stages and the terminal
+    /// exit. The datapath passes the frame back to the kernel untouched.
+    /// The chain id occupies bits 0-15 for uniformity/traceability.
+    SkipAll { chain_id: u16 },
 }
 
 impl SocketMark {
@@ -146,12 +158,15 @@ impl From<FlowMark> for u32 {
 impl From<u32> for SocketMark {
     fn from(value: u32) -> Self {
         let trace_mark = ((value & TRACE_MARK_MASK) >> 16) as u8;
-        // Unknown tags (>1) fall back to Normal, matching FlowMarkAction's
-        // lenient style
-        let mark_type = if (value & MARK_TYPE_MASK) >> 24 == MARK_TYPE_HOST_DIRECT {
-            MarkType::HostDirect { chain_id: value as u16 }
-        } else {
-            MarkType::Normal(FlowMark::from(value as u16))
+        // Unknown tags fall back to Normal, matching FlowMarkAction's lenient
+        // style.
+        let mark_type = match (value & MARK_TYPE_MASK) >> 24 {
+            MARK_TYPE_SKIP_ROUTE_AND_STAGE => {
+                MarkType::SkipRouteAndStage { chain_id: value as u16 }
+            }
+            MARK_TYPE_SKIP_ROUTE => MarkType::SkipRoute { chain_id: value as u16 },
+            MARK_TYPE_SKIP_ALL => MarkType::SkipAll { chain_id: value as u16 },
+            _ => MarkType::Normal(FlowMark::from(value as u16)),
         };
         SocketMark { mark_type, trace_mark }
     }
@@ -162,11 +177,15 @@ impl From<SocketMark> for u32 {
         let raw = (v.trace_mark as u32) << 16;
         match v.mark_type {
             MarkType::Normal(fm) => raw | u32::from(fm),
-            // HostDirect encoding writes the tag unconditionally; the type
-            // guarantees no other layout is possible
-            MarkType::HostDirect { chain_id } => {
-                raw | (MARK_TYPE_HOST_DIRECT << 24) | chain_id as u32
+            // The Skip* layouts write their tag unconditionally; the type
+            // guarantees no other layout is possible.
+            MarkType::SkipRouteAndStage { chain_id } => {
+                raw | (MARK_TYPE_SKIP_ROUTE_AND_STAGE << 24) | chain_id as u32
             }
+            MarkType::SkipRoute { chain_id } => {
+                raw | (MARK_TYPE_SKIP_ROUTE << 24) | chain_id as u32
+            }
+            MarkType::SkipAll { chain_id } => raw | (MARK_TYPE_SKIP_ALL << 24) | chain_id as u32,
         }
     }
 }
@@ -286,18 +305,34 @@ mod tests {
     }
 
     #[test]
-    fn test_socket_mark_host_direct_roundtrip() {
-        let sm = SocketMark::new(MarkType::HostDirect { chain_id: 0xBEEF }, 7);
+    fn test_socket_mark_skip_route_and_stage_roundtrip() {
+        let sm = SocketMark::new(MarkType::SkipRouteAndStage { chain_id: 0xBEEF }, 7);
         let raw = u32::from(sm);
         assert_eq!(raw, (1 << 24) | (7 << 16) | 0xBEEF);
         assert_eq!(SocketMark::from(raw), sm);
     }
 
     #[test]
+    fn test_socket_mark_skip_route_roundtrip() {
+        let sm = SocketMark::new(MarkType::SkipRoute { chain_id: 0xBEEF }, 7);
+        let raw = u32::from(sm);
+        assert_eq!(raw, (2 << 24) | (7 << 16) | 0xBEEF);
+        assert_eq!(SocketMark::from(raw), sm);
+    }
+
+    #[test]
+    fn test_socket_mark_skip_all_roundtrip() {
+        let sm = SocketMark::new(MarkType::SkipAll { chain_id: 0xBEEF }, 7);
+        let raw = u32::from(sm);
+        assert_eq!(raw, (3 << 24) | (7 << 16) | 0xBEEF);
+        assert_eq!(SocketMark::from(raw), sm);
+    }
+
+    #[test]
     fn test_socket_mark_unknown_tag_falls_back_to_normal() {
-        // tag = 2 is undefined -> fall back to the Normal layout, decoding
+        // tag = 4 is undefined -> fall back to the Normal layout, decoding
         // the low 16 bits
-        let sm = SocketMark::from(0x0200_0305);
+        let sm = SocketMark::from(0x0400_0305);
         assert_eq!(
             sm,
             SocketMark::new(MarkType::Normal(FlowMark::new(FlowMarkAction::Redirect, 5, false)), 0)

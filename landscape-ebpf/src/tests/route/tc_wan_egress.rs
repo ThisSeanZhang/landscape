@@ -829,13 +829,13 @@ fn wan_egress_flow_match_by_src_ip_selects_flow() {
 
 #[test]
 fn wan_egress_preserves_mark_type_tag() {
-    // A host-direct tagged mark (MARK_TYPE_HOST_DIRECT tag, chain id in the
-    // low 16 bits) must pass the egress verdict untouched: with no rule
-    // matching, the verdict keeps the input mark and the tag bit survives.
+    // A SkipRouteAndStage tag (chain id in the low 16 bits) must pass the
+    // egress verdict untouched: with no rule matching, the verdict keeps
+    // the input mark and the tag bits survive.
     load_skel!("tc-wan-eg-flow-tagkeep", skel);
     assert_no_route_cache(&skel);
 
-    let tag_mark = u32::from(SocketMark::new(MarkType::HostDirect { chain_id: 0x1234 }, 0));
+    let tag_mark = u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id: 0x1234 }, 0));
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
     let mut ctx = TestSkb {
         ifindex: LOOPBACK_IFINDEX,

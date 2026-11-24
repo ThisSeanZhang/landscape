@@ -4,7 +4,7 @@
 //! encode path) and feeds them through PROG_TEST_RUN into the test-only BPF
 //! program `test_mark_type_decode` (src/bpf/tests/base/test_mark_type.bpf.c),
 //! which decodes with the C helpers in `bpf/base/mark.h`
-//! (`get_mark_type` / `get_host_direct_chain_id`).
+//! (`get_mark_type` / `get_skip_route_chain_id`).
 //!
 //! The wire format itself is pinned by hand-written hex oracle tests in
 //! `landscape-common`'s mark.rs; this module closes the cross-language half.
@@ -54,11 +54,27 @@ fn run_decode(mark: u32) -> (u32, u32) {
 }
 
 #[test]
-fn mark_type_echo_host_direct() {
+fn mark_type_echo_skip_route_and_stage() {
     // trace bits (16-23) ride along and must not disturb the C decode.
-    let sm = SocketMark::new(MarkType::HostDirect { chain_id: 0x1234 }, 0x56);
+    let sm = SocketMark::new(MarkType::SkipRouteAndStage { chain_id: 0x1234 }, 0x56);
     let (chain_id, mark_type) = run_decode(u32::from(sm));
-    assert_eq!(mark_type, 1, "C must read MARK_TYPE_HOST_DIRECT");
+    assert_eq!(mark_type, 1, "C must read MARK_TYPE_SKIP_ROUTE_AND_STAGE");
+    assert_eq!(chain_id, 0x1234, "C must read the chain id from bits 0-15");
+}
+
+#[test]
+fn mark_type_echo_skip_route() {
+    let sm = SocketMark::new(MarkType::SkipRoute { chain_id: 0x1234 }, 0x56);
+    let (chain_id, mark_type) = run_decode(u32::from(sm));
+    assert_eq!(mark_type, 2, "C must read MARK_TYPE_SKIP_ROUTE");
+    assert_eq!(chain_id, 0x1234, "C must read the chain id from bits 0-15");
+}
+
+#[test]
+fn mark_type_echo_skip_all() {
+    let sm = SocketMark::new(MarkType::SkipAll { chain_id: 0x1234 }, 0x56);
+    let (chain_id, mark_type) = run_decode(u32::from(sm));
+    assert_eq!(mark_type, 3, "C must read MARK_TYPE_SKIP_ALL");
     assert_eq!(chain_id, 0x1234, "C must read the chain id from bits 0-15");
 }
 

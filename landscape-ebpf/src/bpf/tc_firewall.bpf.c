@@ -74,7 +74,7 @@ static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(fw_do_egress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 
@@ -85,7 +85,7 @@ int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(fw_do_egress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 
@@ -96,7 +96,7 @@ int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(fw_do_ingress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 
@@ -107,7 +107,7 @@ int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(fw_do_ingress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 

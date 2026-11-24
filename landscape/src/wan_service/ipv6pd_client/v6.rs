@@ -274,10 +274,10 @@ fn create_pd_socket(
     socket.bind(&(*socket_addr).into())?;
     socket.set_nonblocking(true)?;
     // All sends (Solicit / Renew / Release) carry the session's chain in
-    // the HostDirect mark: the WAN egress entry hands the packet to the
-    // link's chain root directly and every policy stage self-skips on
+    // the SkipRouteAndStage mark: the WAN egress entry hands the packet to
+    // the link's chain root directly and every policy stage self-skips on
     // this mark, so the control plane rides the PPP terminal unfiltered.
-    socket.set_mark(u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0)))?;
+    socket.set_mark(u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id }, 0)))?;
     UdpSocket::from_std(socket.into())
 }
 
@@ -330,7 +330,7 @@ pub async fn dhcp_v6_pd_client(
     ifindex: u32,
     // session's IPv6CP link-local (SessionIface::v6_linklocal); kept
     // bound on the iface as a stable DHCPv6 source (chain steering is
-    // the HostDirect SO_MARK above, not the address)
+    // the SkipRouteAndStage SO_MARK above, not the address)
     session_ll: Option<Ipv6Addr>,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,

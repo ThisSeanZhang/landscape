@@ -1,7 +1,7 @@
 use super::*;
 use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder;
 use crate::skel::tc_wan_egress_root::types::wan_egress_binding;
-use crate::tests::helper::map::{host_direct_mark, insert_ip_mac_v4};
+use crate::tests::helper::map::{insert_ip_mac_v4, skip_route_and_stage_mark};
 use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 use landscape_common::net::MacAddr;
 
@@ -139,7 +139,7 @@ fn only_forwarded_unicast_ethernet_ipv4_uses_neighbour_resolution() {
     for (cfg, packet, ctx) in [
         (wan_egress_binding { is_pppoe: 1, ..binding() }, &pkt, forwarded()),
         (wan_egress_binding { has_l2: 0, ..binding() }, &pkt, forwarded()),
-        (binding(), &pkt, TestSkb { mark: host_direct_mark(9), ..forwarded() }),
+        (binding(), &pkt, TestSkb { mark: skip_route_and_stage_mark(9), ..forwarded() }),
         (binding(), &pkt, TestSkb { ifindex: IFINDEX, ..Default::default() }),
         (binding(), &multicast, forwarded()),
         (binding(), &vif, forwarded()),
@@ -205,9 +205,9 @@ fn v6_rewrite_requires_a_forwarded_frame_and_a_confirmed_mac() {
     assert_eq!(out, pkt);
     assert_eq!(cb[2], 0);
     for (cfg, packet, ctx) in [
-        // Not forwarded or host-direct: kernel paths keep their header.
+        // Not forwarded or skip-route-and-stage: kernel paths keep their header.
         (binding6(), &pkt, TestSkb { ifindex: IFINDEX, ..Default::default() }),
-        (binding6(), &pkt, TestSkb { mark: host_direct_mark(9), ..forwarded() }),
+        (binding6(), &pkt, TestSkb { mark: skip_route_and_stage_mark(9), ..forwarded() }),
         // No IPv6 binding: the frame passes untouched.
         (binding(), &pkt, forwarded()),
         // Multicast destinations are not gateway traffic.

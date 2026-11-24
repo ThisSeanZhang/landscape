@@ -78,7 +78,7 @@ static __always_inline int tc_nat_ingress_v6_entry(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_nat_wan_egress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(tc_nat_egress_v6_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 
@@ -89,7 +89,7 @@ int tc_nat_wan_egress_v6(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_nat_wan_ingress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
+    if (likely(not_skip_route_and_stage(skb_mark(skb)))) {
         if (unlikely(tc_nat_ingress_v6_entry(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
     }
 
