@@ -7,7 +7,7 @@ use crate::{
     bpf_error::LdEbpfResult,
     chain::stage::{FamilyProg, FromLanStageType, StageFamily},
     chain::wan_link::WanLinkDataplane,
-    landscape::{OwnedOpenObject, pin_and_reuse_map},
+    landscape::OwnedOpenObject,
     stages::pppoe::XdpPppoeHandle,
 };
 
@@ -57,22 +57,13 @@ fn attach_tc_pppoe(
     dp: &Arc<WanLinkDataplane>,
     tmpl: PppoeEgressTmpl,
 ) -> LdEbpfResult<TcPppoeStage> {
-    let paths = dp.backbone().paths();
-
     let builder = crate::skel::tc_pppoe::TcPppoeSkelBuilder::default();
     let (backing, obj) = OwnedOpenObject::new();
     let mut open_skel = crate::bpf_ctx!(builder.open(obj), "open tc_pppoe skeleton")?;
 
     open_skel.maps.rodata_data.as_deref_mut().unwrap().pppoe_tmpl = tmpl;
 
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_ingress,
-        &paths.tc_pipe_exits_wan_ingress_path(),
-    )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
+    dp.reuse_tc_wan_egress_exit_map(&mut open_skel.maps.tc_from_lan_exit_map)?;
 
     let skel = crate::bpf_ctx!(open_skel.load(), "load tc_pppoe skeleton")?;
 

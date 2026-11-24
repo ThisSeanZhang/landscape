@@ -396,11 +396,11 @@ fn xdp_lan_route_wan_pipeline() {
     mss.maps.next_stage.update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY).unwrap();
     lan_root
         .maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     mss.maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 

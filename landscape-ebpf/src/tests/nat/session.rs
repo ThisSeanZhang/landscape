@@ -555,7 +555,7 @@ fn xdp_nat_firewall_pipeline() {
             .update(&0u32.to_ne_bytes(), &fw_lan_fd.to_ne_bytes(), MapFlags::ANY)
             .unwrap();
         nat.maps
-            .xdp_pipe_exits_lan
+            .xdp_from_lan_exit_map
             .update(&0u32.to_ne_bytes(), &fw_lan_fd.to_ne_bytes(), MapFlags::ANY)
             .unwrap();
 
@@ -850,11 +850,11 @@ fn xdp_nat_chain_pipeline() {
             .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
             .unwrap();
         nat.maps
-            .xdp_pipe_exits_lan
+            .xdp_from_lan_exit_map
             .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
             .unwrap();
         fw.maps
-            .xdp_pipe_exits_lan
+            .xdp_from_lan_exit_map
             .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
             .unwrap();
 

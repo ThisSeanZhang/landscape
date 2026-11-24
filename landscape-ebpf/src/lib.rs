@@ -153,20 +153,12 @@ impl LandscapeMapPath {
         self.tc_chain_base().join("tc_pipe_exits_wan_ingress")
     }
 
-    pub fn tc_pipe_exits_wan_egress_path(&self) -> PathBuf {
-        self.tc_chain_base().join("tc_pipe_exits_wan_egress")
-    }
-
     pub fn tc_wan_egress_roots_path(&self) -> PathBuf {
         self.tc_chain_base().join("tc_wan_egress_roots")
     }
 
     pub fn xdp_pipe_root_progs_path(&self) -> PathBuf {
         self.xdp_base.join("pipe_root_progs")
-    }
-
-    pub fn xdp_pipe_exits_lan_path(&self) -> PathBuf {
-        self.xdp_base.join("pipe_exits_lan")
     }
 
     pub fn xdp_pipe_exits_wan_path(&self) -> PathBuf {

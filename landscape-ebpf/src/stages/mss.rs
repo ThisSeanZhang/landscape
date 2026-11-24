@@ -53,10 +53,7 @@ pub fn attach_tc_mss(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
         &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
+    dp.reuse_tc_wan_egress_exit_map(&mut open_skel.maps.tc_from_lan_exit_map)?;
     let skel = bpf_ctx!(open_skel.load(), "load tc_mss skeleton")?;
 
     let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
@@ -132,10 +129,7 @@ pub fn init_xdp_mss(
         ),
         "xdp_mss pin xdp_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path(),),
-        "xdp_mss pin xdp_pipe_exits_lan"
-    )?;
+    dp.reuse_xdp_lan_exit_map(&mut open_skel.maps.xdp_from_lan_exit_map)?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path(),),
         "xdp_mss pin xdp_pipe_exits_wan"

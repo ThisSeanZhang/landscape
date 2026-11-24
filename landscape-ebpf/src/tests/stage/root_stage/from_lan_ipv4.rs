@@ -117,7 +117,7 @@ fn prefix_boundaries_and_missing_gateway_reach_the_exit_with_the_selected_next_h
             ..binding()
         });
         wire_stage(
-            &root.skel.maps.tc_pipe_exits_wan_egress,
+            &root.skel.maps.tc_from_lan_exit_map,
             0,
             &exit.progs.tc_wan_egress_exit_redirect,
         );

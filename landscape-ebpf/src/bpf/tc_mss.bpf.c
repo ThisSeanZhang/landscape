@@ -6,7 +6,8 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
+#include "chain/tc_from_wan_exit_maps.h"
 #include "reader/tc_mss4.h"
 #include "reader/tc_mss6.h"
 

@@ -201,15 +201,15 @@ fn xdp_firewall_pipeline() {
     // LAN fallback exits: all point to exit
     lan_root
         .maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     mss.maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
     fw.maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &exit_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 

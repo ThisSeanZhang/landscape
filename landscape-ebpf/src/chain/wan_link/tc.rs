@@ -4,6 +4,7 @@
 
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
+use std::os::fd::BorrowedFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use libbpf_rs::MapCore;
@@ -22,6 +23,7 @@ use crate::chain::stage::relink_family_stages;
 use crate::landscape::OwnedOpenObject;
 use crate::landscape::pin_and_reuse_map;
 use crate::route_backbone::RouteBackbone;
+use crate::route_backbone::create_prog_array_map;
 use crate::route_backbone::pinned_map;
 
 use super::WanLinkDataplane;
@@ -143,6 +145,26 @@ pub(super) struct TcChainState {
 }
 
 impl WanLinkDataplane {
+    /// Load this chain's from-LAN TC exit program into an unpinned exit map.
+    /// The PROG_ARRAY slot keeps the program alive after the skeleton drops.
+    pub(super) fn create_tc_wan_egress_exit_map() -> LdEbpfResult<libbpf_rs::MapHandle> {
+        let builder = crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;
+        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_egress_exit skeleton")?;
+
+        let map = create_prog_array_map("tc_from_lan_exit_map", 1)?;
+        map.update(
+            &0u32.to_ne_bytes(),
+            &skel.progs.tc_wan_egress_exit_redirect.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+
+        drop(skel);
+        drop(backing);
+        Ok(map)
+    }
+
     fn relink_tc(&self, dir: TcChainDir) -> LdEbpfResult<()> {
         let inner = self.inner.lock().unwrap();
         if inner.closed {
@@ -216,11 +238,12 @@ impl WanLinkDataplane {
         backbone: &RouteBackbone,
         binding: &WanEgressBinding,
         previous: Option<&EgressRoot>,
+        exit_map: BorrowedFd<'_>,
     ) -> LdEbpfResult<EgressRoot> {
         if binding.is_p2p && !binding.has_l2 {
             Self::build_ppp_egress_root(previous)
         } else {
-            Self::build_l2_egress_root(backbone, binding, previous)
+            Self::build_l2_egress_root(backbone, binding, previous, exit_map)
         }
     }
 
@@ -228,6 +251,7 @@ impl WanLinkDataplane {
         backbone: &RouteBackbone,
         binding: &WanEgressBinding,
         previous: Option<&EgressRoot>,
+        exit_map: BorrowedFd<'_>,
     ) -> LdEbpfResult<EgressRoot> {
         let egress_builder = TcWanEgressRootSkelBuilder::default();
         let (egress_back, egress_obj) = OwnedOpenObject::new();
@@ -258,10 +282,7 @@ impl WanLinkDataplane {
                 .reuse_fd(old.next_stage_map().as_fd())?;
         }
 
-        pin_and_reuse_map(
-            &mut egress_open_skel.maps.tc_pipe_exits_wan_egress,
-            &backbone.paths().tc_pipe_exits_wan_egress_path(),
-        )?;
+        egress_open_skel.maps.tc_from_lan_exit_map.reuse_fd(exit_map)?;
         // See create_ingress_root: frag caches are initialized once by maps::init_path.
         let egress_skel = bpf_ctx!(egress_open_skel.load(), "load tc_wan_egress_root")?;
 

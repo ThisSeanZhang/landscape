@@ -118,11 +118,11 @@ struct {
  *      │                   └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → PPPoE_{v4,v6}
  *      │                        └─ TC_FROM_LAN_CHAIN_NEXT(skb, slot) → (next stage)
  *      │
- *      └─ bpf_tail_call(skb, &tc_pipe_exits_wan_egress, 0)
+ *      └─ bpf_tail_call(skb, &tc_from_lan_exit_map, 0)
  *           └─ tc_wan_egress_exit_redirect → bpf_redirect_neigh on pending IPv4 miss, else UNSPEC
  *
- *    Each stage (MSS / FW / NAT / PPPoE) shares the same exit map:
- *      tc_pipe_exits_wan_egress[0] = tc_wan_egress_exit_redirect
+ *    Each stage falls back to its chain's from-LAN exit map:
+ *      <chain>.tc_from_lan_exit_map[0] = tc_wan_egress_exit_redirect
  *
  *  ─────────────────────────────────────────────────────────────────────────
  *  LAN INGRESS CHAIN
@@ -138,7 +138,7 @@ struct {
  *                                                          cb chain id)
  *      └─ tc_wan_egress_root
  *           ├─ MSS → FW → NAT  (WAN egress chain)
- *           └─ tc_pipe_exits_wan_egress → tc_wan_egress_exit_redirect
+ *           └─ tc_from_lan_exit_map → tc_wan_egress_exit_redirect
  *
  *    LAN ingress no longer injects stages; all egress processing happens
  *    on the WAN egress side after the redirect.
@@ -206,9 +206,9 @@ struct {
  *        return TC_ACT_OK;
  *    }
  *
- *  Fallback exit maps (declared in chain/tc_wan_exit_maps.h):
- *    tc_pipe_exits_wan_ingress — WAN ingress exit
- *    tc_pipe_exits_wan_egress  — WAN egress exit
+ *  Fallback exit maps:
+ *    chain/tc_from_wan_exit_maps.h — tc_pipe_exits_wan_ingress (shared)
+ *    chain/tc_from_lan_exit_maps.h — tc_from_lan_exit_map (per-chain)
  *
  *  Multi-entry prog arrays (declared in tc_wan_egress_route.bpf.c):
  *    tc_wan_egress_roots — per-WAN-link egress chain roots, keyed by the

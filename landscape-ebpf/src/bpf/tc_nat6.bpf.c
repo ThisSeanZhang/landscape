@@ -7,7 +7,8 @@
 #include "base/landscape.h"
 #include "base/mark.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
+#include "chain/tc_from_wan_exit_maps.h"
 #include "nat/tc_nat6.h"
 #include "reader/tc_nat_read6.h"
 

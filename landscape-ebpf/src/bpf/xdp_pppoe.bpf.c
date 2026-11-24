@@ -8,6 +8,7 @@
 #include "chain/xdp_stage.h"
 #include "chain/xdp_wan_maps.h"
 #include "chain/xdp_lan_maps.h"
+#include "chain/xdp_from_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

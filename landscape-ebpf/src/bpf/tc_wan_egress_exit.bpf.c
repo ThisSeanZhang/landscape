@@ -5,7 +5,6 @@
 #include "base/landscape.h"
 
 #include "chain/tc_cb.h"
-#include "chain/tc_wan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -7,7 +7,7 @@
 #include "base/pppoe_def.h"
 #include "chain/tc_cb.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

@@ -4,9 +4,12 @@
 
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
+use std::os::fd::BorrowedFd;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+use libbpf_rs::MapCore;
+use libbpf_rs::MapFlags;
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;
 
@@ -21,6 +24,7 @@ use crate::chain::stage::relink_family_stages;
 use crate::landscape::OwnedOpenObject;
 use crate::landscape::pin_and_reuse_map;
 use crate::route_backbone::RouteBackbone;
+use crate::route_backbone::create_prog_array_map;
 
 use super::WanLinkDataplane;
 use super::from_lan::WanEgressBinding;
@@ -111,6 +115,26 @@ impl FromLanRoot {
 }
 
 impl WanLinkDataplane {
+    /// Load this chain's from-LAN XDP exit program into an unpinned exit map.
+    /// The PROG_ARRAY slot keeps the program alive after the skeleton drops.
+    pub(super) fn create_xdp_lan_exit_map() -> LdEbpfResult<libbpf_rs::MapHandle> {
+        let builder = crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_exit skeleton")?;
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_exit skeleton")?;
+
+        let map = create_prog_array_map("xdp_from_lan_exit_map", 1)?;
+        map.update(
+            &0u32.to_ne_bytes(),
+            &skel.progs.xdp_lan_exit.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+
+        drop(skel);
+        drop(backing);
+        Ok(map)
+    }
+
     fn relink_xdp(&self, dir: ChainDir) -> LdEbpfResult<()> {
         let inner = self.inner.lock().unwrap();
         if inner.closed {
@@ -153,10 +177,6 @@ impl WanLinkDataplane {
             &backbone.paths().xdp_pipe_root_progs_path(),
         )?;
         pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &backbone.paths().xdp_pipe_exits_lan_path(),
-        )?;
-        pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_exits_wan,
             &backbone.paths().xdp_pipe_exits_wan_path(),
         )?;
@@ -179,6 +199,7 @@ impl WanLinkDataplane {
         link_chain_id: u16,
         binding: &WanEgressBinding,
         previous: Option<&FromLanRoot>,
+        exit_map: BorrowedFd<'_>,
     ) -> LdEbpfResult<FromLanRoot> {
         let builder = XdpLanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
@@ -208,14 +229,7 @@ impl WanLinkDataplane {
             &mut open_skel.maps.xdp_pipe_root_progs,
             &backbone.paths().xdp_pipe_root_progs_path(),
         )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &backbone.paths().xdp_pipe_exits_lan_path(),
-        )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_wan,
-            &backbone.paths().xdp_pipe_exits_wan_path(),
-        )?;
+        open_skel.maps.xdp_from_lan_exit_map.reuse_fd(exit_map)?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &backbone.paths().xdp_lan_pipe_root_progs_path(),

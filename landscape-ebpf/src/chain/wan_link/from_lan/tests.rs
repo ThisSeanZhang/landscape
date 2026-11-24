@@ -46,8 +46,45 @@ fn stage_ids(dp: &WanLinkDataplane) -> [[u32; 2]; 2] {
     [[program_id(xdp, 0), program_id(xdp, 1)], [program_id(tc, 0), program_id(tc, 1)]]
 }
 
+fn xdp_lan_exit_id(dp: &WanLinkDataplane) -> u32 {
+    program_id(&dp.xdp_lan_exit_map, 0)
+}
+
+fn tc_egress_exit_id(dp: &WanLinkDataplane) -> u32 {
+    program_id(&dp.tc_wan_egress_exit_map, 0)
+}
+
+fn root_lan_exit_id(dp: &WanLinkDataplane) -> u32 {
+    let inner = dp.inner.lock().unwrap();
+    program_id(&inner.xdp.lan_root.as_ref().unwrap().skel.maps.xdp_from_lan_exit_map, 0)
+}
+
+fn root_egress_exit_id(dp: &WanLinkDataplane) -> u32 {
+    let inner = dp.inner.lock().unwrap();
+    let root = inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root");
+    program_id(&root.maps.tc_from_lan_exit_map, 0)
+}
+
 fn bind(dp: &WanLinkDataplane, prefix: u8) {
     dp.bind_wan_ipv4(IFINDEX, IP, Some(GATEWAY), prefix, Some(MAC));
+}
+
+#[test]
+fn from_lan_exits_are_per_chain_and_wired_into_their_roots() {
+    let (_pins, first) = dataplane();
+    let second =
+        WanLinkDataplane::new(first.backbone().clone(), first.id() + 1, Some(IFINDEX), true)
+            .unwrap();
+
+    assert_ne!(xdp_lan_exit_id(&first), xdp_lan_exit_id(&second));
+    assert_ne!(tc_egress_exit_id(&first), tc_egress_exit_id(&second));
+    assert_eq!(root_lan_exit_id(&first), xdp_lan_exit_id(&first));
+    assert_eq!(root_lan_exit_id(&second), xdp_lan_exit_id(&second));
+    assert_eq!(root_egress_exit_id(&first), tc_egress_exit_id(&first));
+    assert_eq!(root_egress_exit_id(&second), tc_egress_exit_id(&second));
+
+    first.close();
+    second.close();
 }
 
 fn assert_root_gateway_mac(dp: &WanLinkDataplane, expected: MacAddr) {

@@ -196,10 +196,7 @@ pub fn attach_nat4(
         &mut open.maps.tc_pipe_exits_wan_ingress,
         &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
+    dp.reuse_tc_wan_egress_exit_map(&mut open.maps.tc_from_lan_exit_map)?;
     pin_and_reuse_map(&mut open.maps.nat_metric_events, &paths.nat_metric_events)?;
     pin_and_reuse_map(&mut open.maps.frag4_cache_lan, &paths.frag4_cache_lan)?;
     pin_and_reuse_map(&mut open.maps.frag4_cache_wan, &paths.frag4_cache_wan)?;
@@ -221,10 +218,7 @@ pub fn attach_nat4(
         ),
         "xdp_nat4_v4 pin xdp_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
-        "xdp_nat4_v4 pin xdp_pipe_exits_lan"
-    )?;
+    dp.reuse_xdp_lan_exit_map(&mut xdp_open.maps.xdp_from_lan_exit_map)?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
         "xdp_nat4_v4 pin xdp_pipe_exits_wan"

@@ -4,11 +4,12 @@
 //! whole eBPF chain lifecycle: the four root programs (XDP from-WAN /
 //! from-LAN, TC WAN-ingress / WAN-egress) registered under the link's
 //! chain id in the shared root prog arrays, the per-direction stage
-//! tables, and the link's WAN address publications in the dispatch
-//! trie.  Dropping the object tears all of that down (see [`Drop`]).
+//! tables, the link's from-LAN exit programs, and the link's WAN address
+//! publications in the dispatch trie.  Dropping the object tears all of
+//! that down (see [`Drop`]).
 //!
-//! The shared, link-independent substrate (trie, intro seed, exit
-//! skeletons, root-array shells) lives in
+//! The shared, link-independent substrate (trie, intro seed, from-WAN
+//! exit skeletons, root-array shells) lives in
 //! [`crate::route_backbone::RouteBackbone`]. The two
 //! hook planes' stage plumbing (state, root loaders, relinks,
 //! loader-facing views) lives in the [`xdp`] and [`tc`] submodules.
@@ -21,6 +22,7 @@ mod xdp;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::os::fd::AsFd;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -30,6 +32,7 @@ use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use libbpf_rs::MapCore;
 
+use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
 use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
@@ -105,6 +108,9 @@ pub struct WanLinkDataplane {
     backbone: Arc<RouteBackbone>,
     id: u16,
     inner: Mutex<Inner>,
+    /// Chain-private from-LAN exits, shared by this chain's roots and stages.
+    xdp_lan_exit_map: libbpf_rs::MapHandle,
+    tc_wan_egress_exit_map: libbpf_rs::MapHandle,
 }
 
 impl WanLinkDataplane {
@@ -117,8 +123,16 @@ impl WanLinkDataplane {
         ifindex: Option<u32>,
         has_eth_header: bool,
     ) -> LdEbpfResult<Arc<Self>> {
+        let xdp_lan_exit_map = Self::create_xdp_lan_exit_map()?;
+        let tc_wan_egress_exit_map = Self::create_tc_wan_egress_exit_map()?;
         let inner = Inner { ifindex, has_eth_header, ..Inner::default() };
-        let dp = Arc::new(Self { backbone, id, inner: Mutex::new(inner) });
+        let dp = Arc::new(Self {
+            backbone,
+            id,
+            inner: Mutex::new(inner),
+            xdp_lan_exit_map,
+            tc_wan_egress_exit_map,
+        });
         {
             let mut inner = dp.inner.lock().unwrap();
             inner.xdp.wan_root = Some(Self::create_wan_root(&dp.backbone, id)?);
@@ -136,6 +150,30 @@ impl WanLinkDataplane {
 
     pub(crate) fn backbone(&self) -> &Arc<RouteBackbone> {
         &self.backbone
+    }
+
+    /// Point a skeleton's from-LAN XDP exit slot at this chain's exit map.
+    pub(crate) fn reuse_xdp_lan_exit_map(
+        &self,
+        map: &mut libbpf_rs::OpenMapMut<'_>,
+    ) -> LdEbpfResult<()> {
+        map.reuse_fd(self.xdp_lan_exit_map.as_fd()).map_err(|source| LandscapeEbpfError::Context {
+            context: "reuse per-chain XDP from-LAN exit map failed".to_string(),
+            source,
+        })
+    }
+
+    /// Point a skeleton's from-LAN TC exit slot at this chain's exit map.
+    pub(crate) fn reuse_tc_wan_egress_exit_map(
+        &self,
+        map: &mut libbpf_rs::OpenMapMut<'_>,
+    ) -> LdEbpfResult<()> {
+        map.reuse_fd(self.tc_wan_egress_exit_map.as_fd()).map_err(|source| {
+            LandscapeEbpfError::Context {
+                context: "reuse per-chain TC from-LAN exit map failed".to_string(),
+                source,
+            }
+        })
     }
 
     fn sync_wan_binding(&self, inner: &mut Inner) {

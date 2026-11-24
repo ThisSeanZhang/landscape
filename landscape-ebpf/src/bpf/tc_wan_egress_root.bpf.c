@@ -6,7 +6,7 @@
 #include "chain/from_lan_root.h"
 #include "neigh/neigh_ip4.h"
 
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
 #include "chain/tc_cb.h"
 
 char LICENSE[] SEC("license") = "GPL";

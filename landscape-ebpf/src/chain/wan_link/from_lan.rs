@@ -86,9 +86,20 @@ impl WanLinkDataplane {
         // Each replacement reuses its predecessor's next-stage map. This keeps
         // both family chains wired even for packets already running in an old root.
         let old_xdp = inner.xdp.lan_root.as_ref();
-        let mut xdp = Self::build_lan_root(&self.backbone, self.id, &binding, old_xdp)?;
-        let mut tc =
-            Self::build_egress_root(&self.backbone, &binding, inner.tc.egress_root.as_ref())?;
+        let old_tc = inner.tc.egress_root.as_ref();
+        let mut xdp = Self::build_lan_root(
+            &self.backbone,
+            self.id,
+            &binding,
+            old_xdp,
+            self.xdp_lan_exit_map.as_fd(),
+        )?;
+        let mut tc = Self::build_egress_root(
+            &self.backbone,
+            &binding,
+            old_tc,
+            self.tc_wan_egress_exit_map.as_fd(),
+        )?;
         xdp.sync_gateway_mac(&inner.gateway_arp);
         tc.sync_gateway_mac(&inner.gateway_arp);
 

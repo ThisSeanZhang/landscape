@@ -6,8 +6,8 @@
 //! * the global [`WanTrieDispatcher`] (dest IP / PPPoE session → chain id,
 //!   the sole dispatch authority) plus the intro seed skeleton that carries
 //!   its arena and pins the shared root prog arrays;
-//! * the shared exit skeletons pinned into the per-direction exit maps
-//!   (the chains' terminal tail-call targets are route programs);
+//! * the shared from-WAN exit skeletons pinned into the shared from-WAN
+//!   exit maps (the from-LAN exits are owned by each WAN link chain);
 //! * creation of the pinned prog-array maps every chain registers into.
 //!
 //! The root arrays are the route↔chain contract surface: their *shell*
@@ -41,9 +41,7 @@ use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 
 /// Shared with `crate::maps` (wan binding writes go through this
 /// skeleton's pinned map types).
-use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder;
 use crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkelBuilder;
-use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
 use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
 
@@ -58,6 +56,22 @@ fn bpf_create_opts() -> libbpf_sys::bpf_map_create_opts {
 
 fn create_pinned_prog_array(path: &Path, max_entries: u32) -> LdEbpfResult<()> {
     create_pinned_map(path, MapType::ProgArray, 4, 4, max_entries)
+}
+
+/// Create an unpinned PROG_ARRAY. WAN links use one per chain as the
+/// from-LAN exit slot shared by that chain's roots and stages.
+///
+/// `name` must match the skeleton map it will be reused into: libbpf keeps
+/// the skeleton's full map name only when the kernel name is its 15-byte
+/// truncation, which is what lets a later `load()` re-match the field.
+pub(crate) fn create_prog_array_map(name: &str, max_entries: u32) -> LdEbpfResult<MapHandle> {
+    let opts = bpf_create_opts();
+    MapHandle::create(MapType::ProgArray, Some(name), 4, 4, max_entries, &opts).map_err(|e| {
+        LandscapeEbpfError::Context {
+            context: "create prog array map".to_string(),
+            source: e,
+        }
+    })
 }
 
 fn create_pinned_map(
@@ -110,14 +124,10 @@ pub struct RouteBackbone {
         crate::skel::xdp_wan_intro::XdpWanIntroSkel<'static>,
     >,
     _backing: OwnedOpenObject,
-    _exit_lan_skel: crate::skel::xdp_lan_exit::XdpLanExitSkel<'static>,
-    _exit_lan_backing: OwnedOpenObject,
     _exit_wan_skel: crate::skel::xdp_wan_route::XdpWanRouteSkel<'static>,
     _exit_wan_backing: OwnedOpenObject,
     _route_wi: crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkel<'static>,
     _back_wi: OwnedOpenObject,
-    _exit_we: crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel<'static>,
-    _back_we: OwnedOpenObject,
 }
 
 impl RouteBackbone {
@@ -147,10 +157,6 @@ impl RouteBackbone {
             &paths.xdp_pipe_root_progs_path(),
         );
         crate::maps::reuse_pinned_map_or_recreate(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &paths.xdp_pipe_exits_lan_path(),
-        );
-        crate::maps::reuse_pinned_map_or_recreate(
             &mut open_skel.maps.xdp_pipe_exits_wan,
             &paths.xdp_pipe_exits_wan_path(),
         );
@@ -171,18 +177,11 @@ impl RouteBackbone {
         // the kernel finally unload the orphaned root/exit programs.
         clear_map_entries(&skel.maps.xdp_pipe_root_progs);
         clear_map_entries(&skel.maps.xdp_lan_pipe_root_progs);
-        clear_map_entries(&skel.maps.xdp_pipe_exits_lan);
         clear_map_entries(&skel.maps.xdp_pipe_exits_wan);
 
-        // ── Exit programs are loaded once per manager and stay pinned in the
-        // shared exit slots for the manager's whole lifetime. ──
-
-        let (exit_lan_skel, exit_lan_backing) = Self::load_lan_exit()?;
-        skel.maps.xdp_pipe_exits_lan.update(
-            &0u32.to_ne_bytes(),
-            &exit_lan_skel.progs.xdp_lan_exit.as_fd().as_raw_fd().to_ne_bytes(),
-            MapFlags::ANY,
-        )?;
+        // ── The from-WAN exit program is loaded once per manager and stays
+        // pinned in the shared from-WAN exit slot for the manager's whole
+        // lifetime. From-LAN exits are owned by each WAN link chain. ──
 
         let (exit_wan_skel, exit_wan_backing) = Self::load_wan_exit(&paths)?;
         skel.maps.xdp_pipe_exits_wan.update(
@@ -206,27 +205,21 @@ impl RouteBackbone {
 
         create_pinned_prog_array(&paths.tc_pipe_root_progs_path(), 1024)?;
         create_pinned_prog_array(&paths.tc_pipe_exits_wan_ingress_path(), 1)?;
-        create_pinned_prog_array(&paths.tc_pipe_exits_wan_egress_path(), 1)?;
         create_pinned_prog_array(&paths.tc_wan_egress_roots_path(), 1024)?;
 
-        // ── 2. Load exit skeletons and inject their program FDs ──
+        // ── 2. Load the shared from-WAN exit skeleton and inject its FD ──
 
         let (route_wi, back_wi) = Self::init_wan_ingress_route(&paths)?;
-        let (exit_we, back_we) = Self::init_exit_wan_egress(&paths)?;
 
         Ok(Self {
             paths,
             trie: wan_trie,
             _seed: crate::maps::wan_trie::dispatcher::TrieTarget::from_parts(wan_trie_guard, skel),
             _backing: backing,
-            _exit_lan_skel: exit_lan_skel,
-            _exit_lan_backing: exit_lan_backing,
             _exit_wan_skel: exit_wan_skel,
             _exit_wan_backing: exit_wan_backing,
             _route_wi: route_wi,
             _back_wi: back_wi,
-            _exit_we: exit_we,
-            _back_we: back_we,
         })
     }
 
@@ -239,15 +232,6 @@ impl RouteBackbone {
         })
     }
 
-    fn load_lan_exit()
-    -> LdEbpfResult<(crate::skel::xdp_lan_exit::XdpLanExitSkel<'static>, OwnedOpenObject)> {
-        let builder = XdpLanExitSkelBuilder::default();
-        let (backing, obj) = OwnedOpenObject::new();
-        let open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_exit skeleton")?;
-        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_exit skeleton")?;
-        Ok((skel, backing))
-    }
-
     fn load_wan_exit(
         paths: &LandscapeMapPath,
     ) -> LdEbpfResult<(crate::skel::xdp_wan_route::XdpWanRouteSkel<'static>, OwnedOpenObject)> {
@@ -258,14 +242,6 @@ impl RouteBackbone {
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_root_progs,
             &paths.xdp_pipe_root_progs_path(),
-        )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &paths.xdp_pipe_exits_lan_path(),
-        )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_wan,
-            &paths.xdp_pipe_exits_wan_path(),
         )?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
@@ -369,29 +345,6 @@ impl RouteBackbone {
         skel.maps.tc_pipe_exits_wan_ingress.update(
             &0u32.to_ne_bytes(),
             &route_fd.to_ne_bytes(),
-            MapFlags::ANY,
-        )?;
-        Ok((skel, back))
-    }
-
-    fn init_exit_wan_egress(
-        paths: &LandscapeMapPath,
-    ) -> LdEbpfResult<(
-        crate::skel::tc_wan_egress_exit::TcWanEgressExitSkel<'static>,
-        OwnedOpenObject,
-    )> {
-        let builder = TcWanEgressExitSkelBuilder::default();
-        let (back, obj) = OwnedOpenObject::new();
-        let mut open_skel = bpf_ctx!(builder.open(obj), "open tc_wan_egress_exit skeleton")?;
-        crate::maps::reuse_pinned_map_or_recreate(
-            &mut open_skel.maps.tc_pipe_exits_wan_egress,
-            &paths.tc_pipe_exits_wan_egress_path(),
-        );
-        let skel = bpf_ctx!(open_skel.load(), "load tc_wan_egress_exit skeleton")?;
-        let exit_fd = skel.progs.tc_wan_egress_exit_redirect.as_fd().as_raw_fd();
-        skel.maps.tc_pipe_exits_wan_egress.update(
-            &0u32.to_ne_bytes(),
-            &exit_fd.to_ne_bytes(),
             MapFlags::ANY,
         )?;
         Ok((skel, back))

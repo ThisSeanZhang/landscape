@@ -42,14 +42,7 @@ pub fn init_xdp_pppoe(dp: &Arc<WanLinkDataplane>, session_id: u16) -> LdEbpfResu
         ),
         "xdp_pppoe pin xdp_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
-        "xdp_pppoe pin xdp_pipe_exits_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
-        "xdp_pppoe pin xdp_pipe_exits_wan"
-    )?;
+    dp.reuse_xdp_lan_exit_map(&mut open_skel.maps.xdp_from_lan_exit_map)?;
     crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
