@@ -371,7 +371,7 @@ fn seed_static(
     wan[4..6].copy_from_slice(&internal_port.to_be_bytes());
     wan[6] = KIND_STATIC;
     wan[7] = 1;
-    wan[24..32].copy_from_slice(&((STATE_ACTIVE << STATE_SHIFT) | 0).to_ne_bytes());
+    wan[24..32].copy_from_slice(&(STATE_ACTIVE << STATE_SHIFT).to_ne_bytes());
     let wan_key = from_wan_index(proto, external_port).to_ne_bytes();
     skel.maps.napt_from_wan.update(&wan_key, &wan, MapFlags::ANY).unwrap();
 }

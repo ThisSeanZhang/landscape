@@ -304,6 +304,7 @@ fn build_udp_pkt(src_ip: [u8; 4], dst_ip: [u8; 4], src_port: u16, dst_port: u16)
     pkt
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_ipv4_fragment(
     src_ip: [u8; 4],
     dst_ip: [u8; 4],

@@ -43,8 +43,8 @@ fn run_reader_seq(payloads: &[&[u8]], direction: u32) -> Vec<TcReadHead6Result> 
 
     let mut results = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        let mut data = payload.to_vec();
-        let input = ProgramInput { data_in: Some(&mut data), ..Default::default() };
+        let data = payload.to_vec();
+        let input = ProgramInput { data_in: Some(&data), ..Default::default() };
         let run_result = prog.test_run(input).expect("test_run failed");
         println!("return={} duration={:?}", run_result.return_value as i32, run_result.duration);
 
@@ -74,10 +74,10 @@ fn run_reader_at(payload: &[u8], direction: u32, l3_offset: u32) -> TcReadHead6R
         rodata.current_direction = direction;
     }
     let skel = open.load().unwrap();
-    let mut data = payload.to_vec();
+    let data = payload.to_vec();
     skel.progs
         .test_tc_read_head6
-        .test_run(ProgramInput { data_in: Some(&mut data), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&data), ..Default::default() })
         .expect("test_run failed");
     let bytes =
         skel.maps.reader_test_map.lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY).unwrap().unwrap();

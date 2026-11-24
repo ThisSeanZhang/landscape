@@ -41,10 +41,10 @@ fn run_xdp(pkt: &[u8]) -> XdpReadHead6Result {
         rodata.current_direction = DIR_LAN;
     }
     let skel = open.load().unwrap();
-    let mut data = pkt.to_vec();
+    let data = pkt.to_vec();
     skel.progs
         .test_xdp_read_head6
-        .test_run(ProgramInput { data_in: Some(&mut data), ..Default::default() })
+        .test_run(ProgramInput { data_in: Some(&data), ..Default::default() })
         .expect("xdp test_run failed");
 
     let bytes = skel
