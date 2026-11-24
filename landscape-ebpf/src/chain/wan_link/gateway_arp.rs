@@ -63,6 +63,9 @@ impl Inner {
         if let Some(root) = self.tc.egress_root.as_mut() {
             root.sync_gateway_mac(&self.gateway_arp);
         }
+        if let Some(root) = self.xdp.lan_root.as_mut() {
+            root.sync_gateway_mac(&self.gateway_arp);
+        }
     }
 
     pub(super) fn clear_gateway_arp(&mut self) {

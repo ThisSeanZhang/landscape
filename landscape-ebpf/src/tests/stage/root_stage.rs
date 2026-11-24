@@ -36,6 +36,7 @@ const V6_DST: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
 // ── roots ──
 
 mod from_lan_ipv4;
+mod from_lan_xdp;
 
 struct IngressRoot {
     skel: crate::skel::tc_wan_ingress_root::TcWanIngressRootSkel<'static>,

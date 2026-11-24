@@ -49,10 +49,16 @@ fn bind(dp: &WanLinkDataplane, prefix: u8) {
 
 fn assert_root_gateway_mac(dp: &WanLinkDataplane, expected: MacAddr) {
     let inner = dp.inner.lock().unwrap();
-    let skel = inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root");
-    let bytes = skel.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac.to_ne_bytes();
-    assert_eq!(bytes[..6], expected.octets());
-    assert_eq!(bytes[6..], [0, 0]);
+    let tc = inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root");
+    let xdp = &inner.xdp.lan_root.as_ref().unwrap().skel;
+    for word in [
+        tc.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac,
+        xdp.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac,
+    ] {
+        let bytes = word.to_ne_bytes();
+        assert_eq!(bytes[..6], expected.octets());
+        assert_eq!(bytes[6..], [0, 0]);
+    }
 }
 
 #[test]

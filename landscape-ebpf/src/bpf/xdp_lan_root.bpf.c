@@ -17,6 +17,10 @@ char LICENSE[] SEC("license") = "GPL";
 
 const volatile struct wan_egress_binding egress_binding = {};
 
+/* Updated in place by this WAN's ARP worker. The first six bytes in memory
+ * are the MAC in wire order. Zero means the gateway is unresolved. */
+volatile __u64 confirmed_gateway_mac;
+
 /* Chain id of the owning WAN link; stamped into the packet metadata
  * alongside the mark/target_ifindex written by xdp_lan_route. */
 const volatile u32 current_chain = 0;
@@ -27,6 +31,27 @@ struct {
     __uint(key_size, sizeof(u32));
     __uint(value_size, sizeof(u32));
 } root_next_stage SEC(".maps");
+
+static __always_inline void prepare_forwarded_ipv4(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    const struct iphdr *iph = data + sizeof(*eth);
+    if ((void *)(iph + 1) > data_end) return;
+
+    __be32 dst = iph->daddr;
+    __be32 mask = egress_binding.wan_mask4;
+    if (unlikely((dst & mask) == (egress_binding.wan_ip4 & mask))) return;
+    // Delegate a directed broadcast to the kernel. Both /31 endpoints are hosts.
+    if (unlikely(bpf_ntohl(mask) < 0xfffffffe && (dst | mask) == 0xffffffff)) return;
+
+    __u64 mac = confirmed_gateway_mac;
+    if (unlikely(!mac)) return;
+    __builtin_memcpy(eth->h_dest, &mac, sizeof(eth->h_dest));
+    // Byte loads keep clang from folding the const volatile source.
+#pragma unroll
+    for (int i = 0; i < 6; i++) eth->h_source[i] = egress_binding.source_mac[i];
+}
 
 SEC("xdp")
 int xdp_lan_root(struct xdp_md *ctx) {
@@ -52,6 +77,7 @@ int xdp_lan_root(struct xdp_md *ctx) {
         bpf_tail_call_static(ctx, &root_next_stage, XDP_ROOT_SLOT_V6);
         break;
     case XDP_L3_V4:
+        prepare_forwarded_ipv4(ctx);
         bpf_tail_call_static(ctx, &root_next_stage, XDP_ROOT_SLOT_V4);
         break;
     default:
