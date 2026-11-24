@@ -2,7 +2,7 @@ use super::*;
 use crate::skel::tc_wan_egress_exit::TcWanEgressExitSkelBuilder;
 use crate::skel::tc_wan_egress_root::types::wan_egress_binding;
 use crate::tests::helper::map::{host_direct_mark, insert_ip_mac_v4};
-use crate::tests::pkt::simple_ipv4_tcp;
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 use landscape_common::net::MacAddr;
 
 const IFINDEX: u32 = 1; // loopback in PROG_TEST_RUN
@@ -13,6 +13,12 @@ const REMOTE: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 8);
 const SRC: MacAddr = MacAddr(2, 0, 0, 0, 0, 10);
 const GW_MAC: MacAddr = MacAddr(2, 0, 0, 0, 0, 1);
 const PEER_MAC: MacAddr = MacAddr(2, 0, 0, 0, 0, 11);
+
+const WAN6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10);
+const GATEWAY6: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+const PEER6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 11);
+const REMOTE6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1);
+const GW6_MAC: MacAddr = MacAddr(2, 0, 0, 0, 0, 0x21);
 
 fn binding() -> wan_egress_binding {
     wan_egress_binding {
@@ -139,6 +145,76 @@ fn only_forwarded_unicast_ethernet_ipv4_uses_neighbour_resolution() {
         (binding(), &vif, forwarded()),
     ] {
         let root = load_egress_root_with(cfg);
+        let (_, out, cb) = run_prog_with_ctx(&root.skel.progs.tc_wan_egress_root, packet, ctx);
+        assert_eq!(out, *packet);
+        assert_eq!(cb[2], 0);
+    }
+}
+
+fn binding6() -> wan_egress_binding {
+    wan_egress_binding {
+        ifindex: IFINDEX,
+        has_l2: 1,
+        has_ipv6: 1,
+        wan_ip6: WAN6.octets(),
+        wan_mask6: {
+            let mut mask = [0u8; 16];
+            mask[..8].fill(0xff);
+            mask
+        },
+        gateway_ip6: GATEWAY6.octets(),
+        source_mac: SRC.octets(),
+        ..Default::default()
+    }
+}
+
+fn set_confirmed6(root: &mut EgressRoot, mac: MacAddr) {
+    let mut bytes = [0u8; 8];
+    bytes[..6].copy_from_slice(&mac.octets());
+    root.skel.maps.bss_data.as_deref_mut().unwrap().confirmed_gateway_mac6 =
+        u64::from_ne_bytes(bytes);
+}
+
+#[test]
+fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
+    let mut root = load_egress_root_with(binding6());
+    set_confirmed6(&mut root, GW6_MAC);
+    let prog = &root.skel.progs.tc_wan_egress_root;
+    for (dst, expected) in [(REMOTE6, GW6_MAC), (PEER6, MacAddr::zero())] {
+        let packet = simple_ipv6_tcp_syn(V6_SRC, dst);
+        let (_, out, cb) = run_prog_with_ctx(prog, &packet, forwarded());
+        if expected.is_zero() {
+            assert_eq!(out, packet, "on-link dst={dst}");
+        } else {
+            assert_eq!(&out[..6], &expected.octets());
+            assert_eq!(&out[6..12], &SRC.octets());
+            assert_eq!(out[12..], packet[12..]);
+        }
+        assert_eq!(cb[2], 0);
+    }
+}
+
+#[test]
+fn v6_rewrite_requires_a_forwarded_frame_and_a_confirmed_mac() {
+    let pkt = simple_ipv6_tcp_syn(V6_SRC, REMOTE6);
+    let multicast = simple_ipv6_tcp_syn(V6_SRC, Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1));
+    // No confirmed MAC: the mirror/route stage result is kept.
+    let unresolved = load_egress_root_with(binding6());
+    let (_, out, cb) =
+        run_prog_with_ctx(&unresolved.skel.progs.tc_wan_egress_root, &pkt, forwarded());
+    assert_eq!(out, pkt);
+    assert_eq!(cb[2], 0);
+    for (cfg, packet, ctx) in [
+        // Not forwarded or host-direct: kernel paths keep their header.
+        (binding6(), &pkt, TestSkb { ifindex: IFINDEX, ..Default::default() }),
+        (binding6(), &pkt, TestSkb { mark: host_direct_mark(9), ..forwarded() }),
+        // No IPv6 binding: the frame passes untouched.
+        (binding(), &pkt, forwarded()),
+        // Multicast destinations are not gateway traffic.
+        (binding6(), &multicast, forwarded()),
+    ] {
+        let mut root = load_egress_root_with(cfg);
+        set_confirmed6(&mut root, GW6_MAC);
         let (_, out, cb) = run_prog_with_ctx(&root.skel.progs.tc_wan_egress_root, packet, ctx);
         assert_eq!(out, *packet);
         assert_eq!(cb[2], 0);

@@ -2,17 +2,19 @@ use std::{io, mem, net::Ipv4Addr};
 
 use landscape_common::concurrency::{spawn_task, task_label};
 use landscape_common::net::MacAddr;
-use libc::{ETH_P_ARP, sockaddr_ll};
+use libc::{ETH_P_ARP, ETH_P_IPV6, sockaddr_ll};
 use socket2::{Domain, Socket, Type};
 use std::os::fd::AsRawFd;
 use tokio::{io::unix::AsyncFd, sync::mpsc};
 
 mod gateway;
+mod gateway6;
 pub mod scan;
 
 pub use gateway::probe_gateway_mac;
+pub use gateway6::probe_gateway_mac6;
 
-fn open_arp_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
+fn open_l2_socket(ifindex: u32, protocol: u16) -> io::Result<AsyncFd<Socket>> {
     // Enable reception at bind time so only frames from this interface are queued.
     let socket = Socket::new(Domain::PACKET, Type::RAW, None)?;
     socket.set_nonblocking(true)?; // 必须设置为非阻塞
@@ -20,7 +22,7 @@ fn open_arp_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
     // 填写 sockaddr_ll
     let saddr = sockaddr_ll {
         sll_family: libc::AF_PACKET as u16,
-        sll_protocol: (ETH_P_ARP as u16).to_be(),
+        sll_protocol: protocol.to_be(),
         sll_ifindex: i32::try_from(ifindex)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid interface index"))?,
         sll_hatype: 1,
@@ -38,6 +40,14 @@ fn open_arp_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
     }
 
     AsyncFd::new(socket)
+}
+
+fn open_arp_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
+    open_l2_socket(ifindex, ETH_P_ARP as u16)
+}
+
+fn open_ip6_socket(ifindex: u32) -> io::Result<AsyncFd<Socket>> {
+    open_l2_socket(ifindex, ETH_P_IPV6 as u16)
 }
 
 pub async fn create_arp_listen(

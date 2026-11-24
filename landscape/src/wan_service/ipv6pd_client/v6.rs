@@ -386,6 +386,7 @@ pub async fn dhcp_v6_pd_client(
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
     // 接收数据
+    let is_pppoe_session = session_ll.is_some();
     service_status.spawn_task(task_label::task::WAN_IPV6PD_CLIENT_RENEW, async move {
         // 超时重发定时器
 
@@ -523,6 +524,7 @@ pub async fn dhcp_v6_pd_client(
                             &mut current_wan_addr,
                             &prefix_sender,
                             expected_pd_len,
+                            is_pppoe_session,
                             &link_state,
                         )
                         .await;
@@ -643,6 +645,8 @@ async fn clear_active_pd_prefix(
 
     route_service.remove_ipv6_link_route(link_id).await;
     chain_dataplane.unbind_wan_ipv6();
+    // Forget the confirmation so a re-acquisition of the same prefix probes again.
+    chain_dataplane.clear_gateway_ns();
     link_state.clear_v6_prefix();
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
@@ -1046,6 +1050,7 @@ async fn handle_packet(
     current_wan_addr: &mut Option<Ipv6Addr>,
     prefix_sender: &IAPrefixEventSender,
     expected_pd_len: u8,
+    is_pppoe_session: bool,
     link_state: &LinkStateHandle,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
@@ -1269,6 +1274,7 @@ async fn handle_packet(
                                 iface_name,
                                 ifindex,
                                 mac_addr,
+                                is_pppoe_session,
                                 chain_dataplane,
                             );
                             let wan_v6_prefix = WanV6Prefix {
@@ -1320,6 +1326,7 @@ fn replace_ip_route(
     iface_name: &str,
     ifindex: u32,
     mac: &Option<MacAddr>,
+    is_pppoe: bool,
     chain_dataplane: &WanLinkDataplane,
 ) {
     let result = std::process::Command::new("ip")
@@ -1339,7 +1346,23 @@ fn replace_ip_route(
         ])
         .output();
 
-    chain_dataplane.bind_wan_ipv6(ifindex, iapd.prefix_ip, Some(route_ip), iapd.prefix_len, *mac);
+    if is_pppoe {
+        chain_dataplane.bind_pppoe_ipv6(
+            ifindex,
+            iapd.prefix_ip,
+            Some(route_ip),
+            iapd.prefix_len,
+            *mac,
+        );
+    } else {
+        chain_dataplane.bind_wan_ipv6(
+            ifindex,
+            iapd.prefix_ip,
+            Some(route_ip),
+            iapd.prefix_len,
+            *mac,
+        );
+    }
     match result {
         Ok(output) if output.status.success() => {
             tracing::info!(

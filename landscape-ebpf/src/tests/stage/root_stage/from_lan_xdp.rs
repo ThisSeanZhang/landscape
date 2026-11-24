@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use libbpf_rs::ProgramInput;
 use libbpf_rs::skel::OpenSkel;
@@ -8,9 +8,9 @@ use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 
 use crate::landscape::OwnedOpenObject;
-use crate::tests::pkt::simple_ipv4_tcp;
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 
-use super::LAN_HOST;
+use super::{LAN_HOST, V6_SRC};
 
 const IFINDEX: u32 = 7;
 const WAN: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
@@ -20,6 +20,12 @@ const REMOTE: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 8);
 const SRC: [u8; 6] = [2, 0, 0, 0, 0, 10];
 const GW_MAC: [u8; 6] = [2, 0, 0, 0, 0, 1];
 const XDP_PASS: u32 = 2;
+
+const WAN6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10);
+const GATEWAY6: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
+const PEER6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 11);
+const REMOTE6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1);
+const GW6_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x21];
 
 const META_SIZE: usize = 12;
 
@@ -55,6 +61,30 @@ fn set_confirmed(root: &mut XdpLanRoot, mac: &[u8; 6]) {
     let mut bytes = [0u8; 8];
     bytes[..6].copy_from_slice(mac);
     root.skel.maps.bss_data.as_deref_mut().unwrap().confirmed_gateway_mac =
+        u64::from_ne_bytes(bytes);
+}
+
+fn binding6() -> crate::skel::xdp_lan_root::types::wan_egress_binding {
+    crate::skel::xdp_lan_root::types::wan_egress_binding {
+        ifindex: IFINDEX,
+        has_l2: 1,
+        has_ipv6: 1,
+        wan_ip6: WAN6.octets(),
+        wan_mask6: {
+            let mut mask = [0u8; 16];
+            mask[..8].fill(0xff);
+            mask
+        },
+        gateway_ip6: GATEWAY6.octets(),
+        source_mac: SRC,
+        ..Default::default()
+    }
+}
+
+fn set_confirmed6(root: &mut XdpLanRoot, mac: &[u8; 6]) {
+    let mut bytes = [0u8; 8];
+    bytes[..6].copy_from_slice(mac);
+    root.skel.maps.bss_data.as_deref_mut().unwrap().confirmed_gateway_mac6 =
         u64::from_ne_bytes(bytes);
 }
 
@@ -171,4 +201,43 @@ fn non_ip_and_broadcast_frames_pass_through() {
     bcast[30..34].copy_from_slice(&[255, 255, 255, 255]);
     let (_, out) = run_root(&root, &bcast);
     assert_eq!(out, bcast);
+}
+
+#[test]
+fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
+    let mut root = load_root(binding6());
+    set_confirmed6(&mut root, &GW6_MAC);
+    for (dst, expected) in [(REMOTE6, Some(GW6_MAC)), (PEER6, None)] {
+        let pkt = simple_ipv6_tcp_syn(V6_SRC, dst);
+        let (ret, out) = run_root(&root, &pkt);
+        assert_eq!(ret, XDP_PASS, "all stage slots are empty in this rig");
+        match expected {
+            Some(mac) => {
+                assert_eq!(&out[..6], &mac);
+                assert_eq!(&out[6..12], &SRC);
+                assert_eq!(out[12..], pkt[12..]);
+            }
+            None => assert_eq!(out, pkt, "on-link dst={dst}"),
+        }
+    }
+}
+
+#[test]
+fn v6_rewrite_requires_a_confirmed_mac_and_skips_multicast() {
+    let pkt = simple_ipv6_tcp_syn(V6_SRC, REMOTE6);
+    let multicast = simple_ipv6_tcp_syn(V6_SRC, Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1));
+    // No confirmed MAC: the xdp_lan_route header is kept.
+    let unresolved = load_root(binding6());
+    let (_, out) = run_root(&unresolved, &pkt);
+    assert_eq!(out, pkt);
+    // Without a v6 binding nothing is rewritten.
+    let mut v4only = load_root(binding());
+    set_confirmed6(&mut v4only, &GW6_MAC);
+    let (_, out) = run_root(&v4only, &pkt);
+    assert_eq!(out, pkt);
+    // Multicast destinations are not gateway traffic.
+    let mut root = load_root(binding6());
+    set_confirmed6(&mut root, &GW6_MAC);
+    let (_, out) = run_root(&root, &multicast);
+    assert_eq!(out, multicast);
 }

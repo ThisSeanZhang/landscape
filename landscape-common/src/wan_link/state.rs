@@ -82,6 +82,39 @@ impl GatewayArpTarget {
     }
 }
 
+/// The addresses used for one Ethernet WAN's IPv6 gateway NS exchange.
+/// The NS source is the interface's own link-local address, looked up at
+/// probe time, so only the peer address is carried here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GatewayNsTarget {
+    pub ifindex: u32,
+    pub local_mac: MacAddr,
+    pub gateway_ip: Ipv6Addr,
+}
+
+impl GatewayNsTarget {
+    pub fn validate(&self) -> std::io::Result<()> {
+        use std::io::{Error, ErrorKind};
+
+        if self.ifindex == 0 || self.local_mac.is_zero() || self.local_mac.is_multicast() {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "expected a WAN interface and unicast MAC",
+            ));
+        }
+        if self.gateway_ip.is_unspecified()
+            || self.gateway_ip.is_loopback()
+            || self.gateway_ip.is_multicast()
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidInput,
+                "expected a unicast gateway IPv6 address",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The delegated v6 prefix bound on the WAN side; nat6 starts on its presence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WanV6Prefix {

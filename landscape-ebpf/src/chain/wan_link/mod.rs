@@ -140,6 +140,7 @@ impl WanLinkDataplane {
 
     fn sync_wan_binding(&self, inner: &mut Inner) {
         inner.sync_gateway_arp_target();
+        inner.sync_gateway_ns_target();
         if let Err(err) = self.refresh_from_lan_roots(inner) {
             tracing::warn!(chain = self.id, error = %err, "refreshing from-LAN roots failed");
         }
@@ -350,6 +351,31 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
+        self.bind_ipv6(ifindex, addr, gateway, mask, mac, false);
+    }
+
+    /// Native PPPoE v6: the session supplies the peer MAC, so the IPv6
+    /// gateway is never resolvable directly on the wire.
+    pub fn bind_pppoe_ipv6(
+        &self,
+        ifindex: u32,
+        addr: Ipv6Addr,
+        gateway: Option<Ipv6Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+    ) {
+        self.bind_ipv6(ifindex, addr, gateway, mask, mac, true);
+    }
+
+    fn bind_ipv6(
+        &self,
+        ifindex: u32,
+        addr: Ipv6Addr,
+        gateway: Option<Ipv6Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+        is_pppoe: bool,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if inner.closed {
             return;
@@ -362,7 +388,7 @@ impl WanLinkDataplane {
             gateway: gateway.map(IpAddr::V6),
             mask,
             mac,
-            is_pppoe: false,
+            is_pppoe,
         };
         self.publish_bind(&bind);
         inner.v6 = Some(bind);
@@ -370,12 +396,17 @@ impl WanLinkDataplane {
     }
 
     pub fn unbind_wan_ipv6(&self) {
-        if let Some(bind) = self.inner.lock().unwrap().v6.take() {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        if let Some(bind) = inner.v6.take() {
             maps::wan::del_ipv6_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv6 without a recorded binding");
         }
+        self.sync_wan_binding(&mut inner);
     }
 
     /// Publish the link's WAN address binding to the dispatch trie
@@ -419,7 +450,7 @@ impl WanLinkDataplane {
         if inner.closed {
             return;
         }
-        inner.clear_gateway_arp();
+        inner.clear_gateway_macs();
         inner.gateway_arp = GatewayArpState::default();
         if let Some(bind) = inner.v4.take() {
             maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);

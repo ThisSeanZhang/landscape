@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use landscape_common::net::MacAddr;
@@ -15,6 +15,9 @@ const IFINDEX: u32 = 7;
 const IP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const GATEWAY: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const MAC: MacAddr = MacAddr(2, 0, 0, 0, 0, 7);
+
+const IP6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10);
+const GATEWAY6: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
 
 fn dataplane() -> (PinRootGuard, Arc<WanLinkDataplane>) {
     let pins = isolated_pin_root("from-lan-roots");
@@ -54,6 +57,20 @@ fn assert_root_gateway_mac(dp: &WanLinkDataplane, expected: MacAddr) {
     for word in [
         tc.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac,
         xdp.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac,
+    ] {
+        let bytes = word.to_ne_bytes();
+        assert_eq!(bytes[..6], expected.octets());
+        assert_eq!(bytes[6..], [0, 0]);
+    }
+}
+
+fn assert_root_gateway_mac6(dp: &WanLinkDataplane, expected: MacAddr) {
+    let inner = dp.inner.lock().unwrap();
+    let tc = inner.tc.egress_root.as_ref().unwrap().l2_skel().expect("L2 egress root");
+    let xdp = &inner.xdp.lan_root.as_ref().unwrap().skel;
+    for word in [
+        tc.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac6,
+        xdp.maps.bss_data.as_ref().unwrap().confirmed_gateway_mac6,
     ] {
         let bytes = word.to_ne_bytes();
         assert_eq!(bytes[..6], expected.octets());
@@ -145,6 +162,60 @@ fn gateway_arp_skips_ppp_and_forgets_explicitly_closed_bindings() {
     assert!(targets.has_changed().is_err());
     assert_eq!(dp.confirmed_gateway_mac(), None);
     assert!(!dp.confirm_gateway_mac(&before_close, peer));
+}
+
+#[test]
+fn gateway_ns_tracks_v6_bind_changes_and_rejects_late_replies() {
+    let (_pins, dp) = dataplane();
+    let mut targets = dp.subscribe_gateway_ns();
+    let peer = MacAddr(2, 1, 2, 3, 4, 5);
+    let new_peer = MacAddr(2, 6, 7, 8, 9, 10);
+    assert!(targets.borrow().is_none());
+
+    dp.bind_wan_ipv6(IFINDEX, IP6, Some(GATEWAY6), 64, Some(MAC));
+    let first = targets.borrow_and_update().clone().unwrap();
+    assert_eq!((first.ifindex, first.local_mac, first.gateway_ip), (IFINDEX, MAC, GATEWAY6));
+    assert!(dp.confirm_gateway_mac6(&first, peer));
+    assert_root_gateway_mac6(&dp, peer);
+    assert!(!dp.confirm_gateway_mac6(&first, peer));
+    assert!(dp.confirm_gateway_mac6(&first, new_peer));
+    assert_root_gateway_mac6(&dp, new_peer);
+
+    // A gateway change clears the confirmation and restarts probing.
+    let other_gateway = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
+    dp.bind_wan_ipv6(IFINDEX, IP6, Some(other_gateway), 64, Some(MAC));
+    assert_eq!(dp.confirmed_gateway_mac6(), None);
+    assert_root_gateway_mac6(&dp, MacAddr::zero());
+    let other = targets.borrow().clone().unwrap();
+    assert_eq!(other.gateway_ip, other_gateway);
+    assert!(!dp.confirm_gateway_mac6(&first, peer));
+    assert!(dp.confirm_gateway_mac6(&other, peer));
+    assert_root_gateway_mac6(&dp, peer);
+
+    dp.unbind_wan_ipv6();
+    assert!(targets.borrow().is_none());
+    assert_eq!(dp.confirmed_gateway_mac6(), None);
+    assert_root_gateway_mac6(&dp, MacAddr::zero());
+
+    // A v4-only explicit clear must leave the IPv6 confirmation alone.
+    bind(&dp, 24);
+    dp.bind_wan_ipv6(IFINDEX, IP6, Some(GATEWAY6), 64, Some(MAC));
+    let rebound = targets.borrow().clone().unwrap();
+    assert!(dp.confirm_gateway_mac6(&rebound, new_peer));
+    dp.clear_gateway_arp();
+    assert_eq!(dp.confirmed_gateway_mac6(), Some(new_peer));
+    assert_root_gateway_mac6(&dp, new_peer);
+    // A v6 clear forgets it, so a same-address re-bind probes again.
+    dp.clear_gateway_ns();
+    assert_eq!(dp.confirmed_gateway_mac6(), None);
+    assert_root_gateway_mac6(&dp, MacAddr::zero());
+    dp.bind_wan_ipv6(IFINDEX, IP6, Some(GATEWAY6), 64, Some(MAC));
+    assert_eq!(dp.confirmed_gateway_mac6(), None);
+
+    // A native PPPoE v6 bind never probes: the session peer is the L2 next hop.
+    dp.bind_pppoe_ipv6(IFINDEX, IP6, Some(GATEWAY6), 64, Some(MAC));
+    assert!(targets.borrow().is_none());
+    dp.close();
 }
 
 fn assert_ipv4_config(dp: &WanLinkDataplane, expected: Option<(Ipv4Addr, [u8; 4])>) {

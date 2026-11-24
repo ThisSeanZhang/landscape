@@ -4,46 +4,73 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use landscape_common::net::MacAddr;
-use landscape_common::wan_link::GatewayArpTarget;
+use landscape_common::wan_link::{GatewayArpTarget, GatewayNsTarget};
 use landscape_ebpf::chain::wan_link::WanLinkDataplane;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::arp::probe_gateway_mac;
+use crate::arp::{probe_gateway_mac, probe_gateway_mac6};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 pub(super) async fn run(dataplane: Arc<WanLinkDataplane>, stop: CancellationToken) {
-    let targets = dataplane.subscribe_gateway_arp();
-    let probe = |target: GatewayArpTarget| {
-        probe_gateway_mac(
-            target.ifindex,
-            target.local_mac,
-            target.local_ip,
-            target.gateway_ip,
-            PROBE_TIMEOUT,
+    let arp = {
+        let dataplane = dataplane.clone();
+        run_probes(
+            dataplane.subscribe_gateway_arp(),
+            |target: GatewayArpTarget| {
+                probe_gateway_mac(
+                    target.ifindex,
+                    target.local_mac,
+                    target.local_ip,
+                    target.gateway_ip,
+                    PROBE_TIMEOUT,
+                )
+            },
+            move |target: &Arc<GatewayArpTarget>, mac| {
+                if dataplane.confirm_gateway_mac(target, mac) {
+                    tracing::info!(chain = dataplane.id(), ifindex = target.ifindex, gateway = %target.gateway_ip, %mac, "confirmed WAN gateway MAC");
+                }
+            },
         )
     };
-    let confirm = |target: &Arc<GatewayArpTarget>, mac| {
-        if dataplane.confirm_gateway_mac(target, mac) {
-            tracing::info!(chain = dataplane.id(), ifindex = target.ifindex, gateway = %target.gateway_ip, %mac, "confirmed WAN gateway MAC");
-        }
+    let ns = {
+        let dataplane = dataplane.clone();
+        run_probes(
+            dataplane.subscribe_gateway_ns(),
+            |target: GatewayNsTarget| {
+                probe_gateway_mac6(
+                    target.ifindex,
+                    target.local_mac,
+                    target.gateway_ip,
+                    PROBE_TIMEOUT,
+                )
+            },
+            move |target: &Arc<GatewayNsTarget>, mac| {
+                if dataplane.confirm_gateway_mac6(target, mac) {
+                    tracing::info!(chain = dataplane.id(), ifindex = target.ifindex, gateway = %target.gateway_ip, %mac, "confirmed WAN gateway MAC over NS");
+                }
+            },
+        )
     };
     tokio::select! {
         biased;
         _ = stop.cancelled() => {},
-        _ = run_probes(targets, probe, confirm) => {},
+        _ = arp => {},
+        _ = ns => {},
     }
     dataplane.clear_gateway_arp();
 }
 
-async fn run_probes<F: Future<Output = io::Result<Option<MacAddr>>>>(
-    mut targets: watch::Receiver<Option<Arc<GatewayArpTarget>>>,
-    probe: impl Fn(GatewayArpTarget) -> F,
-    confirm: impl Fn(&Arc<GatewayArpTarget>, MacAddr),
-) {
+async fn run_probes<T, F: Future<Output = io::Result<Option<MacAddr>>>>(
+    mut targets: watch::Receiver<Option<Arc<T>>>,
+    probe: impl Fn(T) -> F,
+    confirm: impl Fn(&Arc<T>, MacAddr),
+) where
+    T: Copy + Send + Sync + std::fmt::Debug + 'static,
+{
     loop {
         let target = targets.wait_for(Option::is_some).await.ok().and_then(|t| t.clone());
         let Some(target) = target else { return };
@@ -56,7 +83,7 @@ async fn run_probes<F: Future<Output = io::Result<Option<MacAddr>>>>(
                     }
                     Ok(None) => RETRY_INTERVAL,
                     Err(err) => {
-                        tracing::debug!(ifindex = target.ifindex, gateway = %target.gateway_ip, %err, "WAN gateway ARP probe failed");
+                        tracing::debug!(target = ?*target, %err, "WAN gateway probe failed");
                         RETRY_INTERVAL
                     }
                 };
@@ -75,7 +102,7 @@ async fn run_probes<F: Future<Output = io::Result<Option<MacAddr>>>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::Instant;
 
@@ -131,6 +158,47 @@ mod tests {
         tokio::time::advance(REFRESH_INTERVAL).await;
         tokio::task::yield_now().await;
         assert!(attempts.try_recv().is_err());
+        drop(bindings);
+        worker.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ns_worker_probes_refreshes_and_confirms_like_arp() {
+        let (bindings, targets) = watch::channel(None);
+        let (requests, mut attempts) = mpsc::unbounded_channel();
+        let (confirmed, mut confirmations) = mpsc::unbounded_channel();
+        let probe = move |target| {
+            let (reply, result) = oneshot::channel();
+            requests.send((Instant::now(), target, reply)).unwrap();
+            async move { result.await.unwrap() }
+        };
+        let worker = tokio::spawn(run_probes(targets, probe, move |target, mac| {
+            confirmed.send((**target, mac)).unwrap();
+        }));
+        tokio::task::yield_now().await;
+        assert!(attempts.try_recv().is_err());
+
+        let first = GatewayNsTarget {
+            ifindex: 7,
+            local_mac: MacAddr(2, 0, 0, 0, 0, 7),
+            gateway_ip: Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+        };
+        let start = Instant::now();
+        bindings.send_replace(Some(Arc::new(first)));
+        let (at, target, reply) = attempts.recv().await.unwrap();
+        assert_eq!((at, target), (start, first));
+        let peer = MacAddr(2, 1, 2, 3, 4, 5);
+        reply.send(Ok(Some(peer))).unwrap();
+        assert_eq!(confirmations.recv().await, Some((first, peer)));
+
+        let (refresh, _, reply) = attempts.recv().await.unwrap();
+        assert_eq!(refresh - start, REFRESH_INTERVAL);
+        reply.send(Ok(None)).unwrap();
+        let (retry, _, reply) = attempts.recv().await.unwrap();
+        assert_eq!(retry - refresh, RETRY_INTERVAL);
+        reply.send(Ok(Some(peer))).unwrap();
+        assert_eq!(confirmations.recv().await, Some((first, peer)));
+
         drop(bindings);
         worker.await.unwrap();
     }

@@ -90,11 +90,23 @@ impl FromLanRoot {
         {
             bytes[..6].copy_from_slice(&mac.octets());
         }
+        let mut bytes6 = [0u8; 8];
+        if let Some((target, mac)) = arp.active_confirmation6()
+            && binding.has_l2 != 0
+            && binding.is_pppoe == 0
+            && binding.has_ipv6 != 0
+            && binding.ifindex == target.ifindex
+            && binding.gateway_ip6 == target.gateway_ip.octets()
+        {
+            bytes6[..6].copy_from_slice(&mac.octets());
+        }
         let bss = self.skel.maps.bss_data.as_deref_mut().expect("XDP lan root .bss");
         // The mmap lives with the skeleton. The BPF global is aligned to eight bytes
         // and each packet reads it in one load, so it cannot see a partial MAC.
         unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac) }
             .store(u64::from_ne_bytes(bytes), Ordering::Relaxed);
+        unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac6) }
+            .store(u64::from_ne_bytes(bytes6), Ordering::Relaxed);
     }
 }
 
@@ -183,6 +195,10 @@ impl WanLinkDataplane {
             has_ipv4: u8::from(binding.has_ipv4),
             has_l2: u8::from(binding.has_l2),
             is_pppoe: u8::from(binding.is_pppoe),
+            wan_ip6: binding.wan_ip6,
+            wan_mask6: binding.wan_mask6,
+            gateway_ip6: binding.gateway_ip6,
+            has_ipv6: u8::from(binding.has_ipv6),
         };
         if let Some(old) = previous {
             open_skel.maps.root_next_stage.reuse_fd(old.skel.maps.root_next_stage.as_fd())?;
