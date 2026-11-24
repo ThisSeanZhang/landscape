@@ -35,7 +35,11 @@ fmt *args:
     ./fmt.sh "$@"
 
 # Run all Containerlab cases in sequence
-e2e: e2e-lan e2e-gateway e2e-acme e2e-pppoe e2e-dns-negative-cache
+e2e: e2e-lan e2e-wan-gateway-arp e2e-gateway e2e-acme e2e-pppoe e2e-dns-negative-cache
+
+# Check active gateway ARP and forwarded IPv4 Ethernet headers on the WAN
+e2e-wan-gateway-arp:
+    ./tests/e2e/containerlab/cases/wan/gateway-arp/run.sh
 
 # Run LAN forwarding, DHCP acquisition and renewal cases
 e2e-lan: e2e-lan-static e2e-lan-dhcp e2e-lan-dhcp-renew
