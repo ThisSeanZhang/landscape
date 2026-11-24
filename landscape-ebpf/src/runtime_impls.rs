@@ -7,7 +7,8 @@
 //! boundary as `Box<dyn DataplaneGuard>`: dropping it tears the state
 //! down.
 
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 
 use crate::maps;
 use crate::runtime::EbpfRuntime;
@@ -222,11 +223,15 @@ impl WanRouteDataplane for EbpfWanRouteDataplane {
 
 pub struct EbpfRouteTableDataplane {
     rt: Arc<EbpfRuntime>,
+    last_policy_chains: Mutex<BTreeSet<u16>>,
 }
 
 impl EbpfRouteTableDataplane {
     pub(crate) fn new(rt: Arc<EbpfRuntime>) -> Self {
-        Self { rt }
+        Self {
+            rt,
+            last_policy_chains: Mutex::new(BTreeSet::new()),
+        }
     }
 }
 
@@ -288,6 +293,14 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
         }
 
         run_kernel_default_sync("ipv6", &kernel_default_ipv6_args(nexthops)).await
+    }
+
+    async fn sync_kernel_wan_policy_ipv4(
+        &self,
+        targets: &[landscape_common::sys_service::route_service::WanRouteTarget],
+    ) -> bool {
+        crate::wan_policy_route::sync_kernel_wan_policy_ipv4(targets, &self.last_policy_chains)
+            .await
     }
 
     fn invalidate_lan_cache(&self) {

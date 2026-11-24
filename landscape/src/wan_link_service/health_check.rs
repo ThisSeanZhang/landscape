@@ -40,6 +40,7 @@ enum RoundOutcome {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     link_id: Uuid,
+    chain_id: u16,
     iface: SessionIface,
     link_state: LinkStateHandle,
     config: RuntimeWanLinkHealthCheckConfig,
@@ -98,8 +99,15 @@ pub(super) async fn run(
                 if round_targets.is_empty() {
                     continue;
                 }
-                match probe_round(&probe, &iface.iface_name, src, &round_targets, config.timeout_ms)
-                    .await
+                match probe_round(
+                    &probe,
+                    &iface.iface_name,
+                    src,
+                    chain_id,
+                    &round_targets,
+                    config.timeout_ms,
+                )
+                .await
                 {
                     RoundOutcome::Evidence(results) => {
                         blind_rounds = 0;
@@ -210,6 +218,7 @@ async fn probe_round(
     probe: &Arc<dyn WanHealthProbe>,
     dev: &str,
     src: Ipv4Addr,
+    chain_id: u16,
     targets: &[Ipv4Addr],
     timeout_ms: u16,
 ) -> RoundOutcome {
@@ -218,10 +227,10 @@ async fn probe_round(
         let probe = probe.clone();
         let dev = dev.to_string();
         async move {
-            match probe.ping_v4(&dev, src, target, timeout).await {
+            match probe.ping_v4(&dev, src, chain_id, target, timeout).await {
                 Ok(rtt) => Some(TargetProbe { target, rtt }),
                 Err(err) => {
-                    tracing::warn!(iface = %dev, target = %target, error = %err, "health-check probe error");
+                    tracing::warn!(iface = %dev, chain_id, target = %target, error = %err, "health-check probe error");
                     None
                 }
             }

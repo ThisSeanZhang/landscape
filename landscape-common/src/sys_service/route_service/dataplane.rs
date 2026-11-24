@@ -41,6 +41,16 @@ pub trait RouteTableDataplane: Send + Sync {
     /// should be retried.
     async fn sync_kernel_default_ipv6(&self, nexthops: &[RouteTargetInfo]) -> bool;
 
+    /// Synchronize per-WAN-link kernel IPv4 policy routes (`ip rule` +
+    /// dedicated routing table) used by `SkipRoute`-marked local sockets
+    /// such as WAN health-check probes. Unlike `sync_kernel_default_ipv4`, an
+    /// empty slice cleans up stale managed policy rules and tables. Returns
+    /// `false` when any update failed and should be retried.
+    async fn sync_kernel_wan_policy_ipv4(&self, targets: &[WanRouteTarget]) -> bool {
+        let _ = targets;
+        true
+    }
+
     /// Recreate the LAN verdict-cache inner maps (invalidate all cached
     /// verdicts).
     fn invalidate_lan_cache(&self);
@@ -68,6 +78,10 @@ impl RouteTableDataplane for NoopRouteTableDataplane {
     }
 
     async fn sync_kernel_default_ipv6(&self, _nexthops: &[RouteTargetInfo]) -> bool {
+        true
+    }
+
+    async fn sync_kernel_wan_policy_ipv4(&self, _targets: &[WanRouteTarget]) -> bool {
         true
     }
 

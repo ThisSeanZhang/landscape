@@ -507,11 +507,13 @@ impl ServiceStarterTrait for WanLinkService {
                     let link_state = link_state.clone();
                     let health_runtime = health_runtime.clone();
                     Box::pin(async move {
+                        let runtime = RuntimeWanLinkConfig::from_config(&cfg);
                         health_check::run(
-                            cfg.id,
+                            runtime.id,
+                            runtime.link_chain_id,
                             iface,
                             link_state,
-                            RuntimeWanLinkConfig::from_config(&cfg).health_check,
+                            runtime.health_check,
                             status,
                             probe,
                             route_service,

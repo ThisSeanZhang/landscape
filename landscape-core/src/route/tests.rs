@@ -923,6 +923,8 @@ struct RecordingRouteDataplane {
     lan_ops: std::sync::Mutex<Vec<LanRouteOp>>,
     fail_next: std::sync::atomic::AtomicBool,
     fail_next_v6: std::sync::atomic::AtomicBool,
+    policy_calls: std::sync::Mutex<Vec<Vec<WanRouteTarget>>>,
+    fail_next_policy: std::sync::atomic::AtomicBool,
     wan_slots_v4: std::sync::Mutex<HashMap<FlowId, Vec<(WanRouteTarget, u32)>>>,
     wan_slots_v6: std::sync::Mutex<HashMap<FlowId, Vec<(WanRouteTarget, u32)>>>,
     lan_cache_invalidations: std::sync::atomic::AtomicUsize,
@@ -947,6 +949,14 @@ impl RecordingRouteDataplane {
 
     fn set_fail_next_v6(&self) {
         self.fail_next_v6.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn policy_calls(&self) -> Vec<Vec<WanRouteTarget>> {
+        self.policy_calls.lock().unwrap().clone()
+    }
+
+    fn set_fail_next_policy(&self) {
+        self.fail_next_policy.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn slots_v4(&self, flow_id: FlowId) -> Option<Vec<(WanRouteTarget, u32)>> {
@@ -998,6 +1008,11 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
     async fn sync_kernel_default_ipv6(&self, nexthops: &[RouteTargetInfo]) -> bool {
         self.v6_calls.lock().unwrap().push(nexthops.to_vec());
         !self.fail_next_v6.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn sync_kernel_wan_policy_ipv4(&self, targets: &[WanRouteTarget]) -> bool {
+        self.policy_calls.lock().unwrap().push(targets.to_vec());
+        !self.fail_next_policy.swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     fn invalidate_lan_cache(&self) {
@@ -2014,5 +2029,174 @@ fn concurrent_route_and_health_updates_converge_without_deadlock() {
         let flow5 = dataplane.slots_v4(5).unwrap();
         assert_eq!(flow5.len(), 1);
         assert_eq!(flow5[0].0.info.iface_name, "wan2");
+    });
+}
+
+#[test]
+fn kernel_wan_policy_targets_includes_all_active_v4_links_and_excludes_invalid() {
+    let mut routes = WanRoutesByOwner::new();
+
+    let wan1 = WanRouteTarget::link(
+        2,
+        RouteTargetInfo::new_gateway_v4(
+            5,
+            "enp1s0.105",
+            None,
+            Ipv4Addr::new(100, 65, 89, 96),
+            Ipv4Addr::new(100, 65, 0, 1),
+            true,
+        ),
+    );
+    let wan2 = WanRouteTarget::link(
+        3,
+        RouteTargetInfo::new_gateway_v4(
+            37,
+            "enp1s0.101",
+            None,
+            Ipv4Addr::new(100, 65, 247, 59),
+            Ipv4Addr::new(100, 65, 0, 1),
+            false,
+        ),
+    );
+    let pppd = WanRouteTarget::link(
+        4,
+        RouteTargetInfo::new_p2p_v4(
+            40,
+            "ppp0",
+            Ipv4Addr::new(10, 0, 0, 2),
+            Ipv4Addr::new(10, 0, 0, 1),
+            false,
+        ),
+    );
+    // Excluded: unassigned chain_id == 0
+    let chain_zero = WanRouteTarget::link(
+        0,
+        RouteTargetInfo::new_gateway_v4(
+            6,
+            "eth1",
+            None,
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            false,
+        ),
+    );
+    // Excluded: ifindex == 0
+    let ifindex_zero = WanRouteTarget::link(
+        5,
+        RouteTargetInfo::new_gateway_v4(
+            0,
+            "eth2",
+            None,
+            Ipv4Addr::new(192, 0, 2, 11),
+            Ipv4Addr::new(192, 0, 2, 1),
+            false,
+        ),
+    );
+    // Excluded: unspecified gateway (non-p2p)
+    let bad_gw = WanRouteTarget::link(
+        6,
+        RouteTargetInfo::new_gateway_v4(
+            7,
+            "eth3",
+            None,
+            Ipv4Addr::new(192, 0, 2, 12),
+            Ipv4Addr::UNSPECIFIED,
+            false,
+        ),
+    );
+    let (docker_v4, _) = RouteTargetInfo::new_docker(99, "sing-box-flow1");
+
+    routes.insert(link_owner("wan2"), wan2);
+    routes.insert(link_owner("pppd"), pppd);
+    routes.insert(link_owner("wan1"), wan1);
+    routes.insert(link_owner("chain_zero"), chain_zero);
+    routes.insert(link_owner("ifindex_zero"), ifindex_zero);
+    routes.insert(link_owner("bad_gw"), bad_gw);
+    routes
+        .insert(RouteOwner::Netns("sing-box-flow1".to_string()), WanRouteTarget::netns(docker_v4));
+
+    let targets = super::wan::kernel_wan_policy_targets(&routes);
+    let summary: Vec<(u16, &str, u32, bool)> = targets
+        .iter()
+        .map(|t| {
+            (t.link_chain_id, t.info.iface_name.as_str(), t.info.ifindex, t.info.dev_only_nexthop)
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![(2, "enp1s0.105", 5, false), (3, "enp1s0.101", 37, false), (4, "ppp0", 40, true),]
+    );
+    assert_eq!(targets[1].info.iface_ip, IpAddr::V4(Ipv4Addr::new(100, 65, 247, 59)));
+    assert_eq!(targets[1].info.gateway_ip, IpAddr::V4(Ipv4Addr::new(100, 65, 0, 1)));
+}
+
+#[test]
+fn reconcile_kernel_wan_policy_caches_retries_and_cleans_up_empty() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let wan1_id = named_uuid("enp1s0.105");
+        let wan2_id = named_uuid("enp1s0.101");
+
+        // Startup reconcile with empty routes still invokes dataplane once to purge stale rules.
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 1);
+        assert!(dataplane.policy_calls()[0].is_empty());
+
+        // Second identical empty pass is deduplicated by the cache.
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 1);
+
+        let wan1 = WanRouteTarget::link(
+            2,
+            RouteTargetInfo::new_gateway_v4(
+                5,
+                "enp1s0.105",
+                None,
+                Ipv4Addr::new(100, 65, 89, 96),
+                Ipv4Addr::new(100, 65, 0, 1),
+                true,
+            ),
+        );
+        let wan2 = WanRouteTarget::link(
+            3,
+            RouteTargetInfo::new_gateway_v4(
+                37,
+                "enp1s0.101",
+                None,
+                Ipv4Addr::new(100, 65, 247, 59),
+                Ipv4Addr::new(100, 65, 0, 1),
+                false,
+            ),
+        );
+
+        service.insert_ipv4_link_route(wan1_id, wan1.clone()).await;
+        service.insert_ipv4_link_route(wan2_id, wan2.clone()).await;
+
+        // Failed sync leaves cache dirty so the next pass retries.
+        dataplane.set_fail_next_policy();
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 2);
+
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 3);
+        assert_eq!(dataplane.policy_calls()[2].len(), 2);
+
+        // Health failover changes Flow 0 default route but must not churn per-link policy routes.
+        service.update_link_health(health_info(wan1_id, WanLinkHealthState::Unhealthy)).await;
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 3);
+
+        // Removing both links pushes an empty target slice to clean up rules and tables.
+        service.remove_ipv4_link_route(wan2_id).await;
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 4);
+        assert_eq!(dataplane.policy_calls()[3].len(), 1);
+        assert_eq!(dataplane.policy_calls()[3][0].link_chain_id, 2);
+
+        service.remove_ipv4_link_route(wan1_id).await;
+        service.reconcile_kernel_wan_policy_ipv4().await;
+        assert_eq!(dataplane.policy_calls().len(), 5);
+        assert!(dataplane.policy_calls()[4].is_empty());
     });
 }

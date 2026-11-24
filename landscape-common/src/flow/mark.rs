@@ -62,6 +62,23 @@ impl SocketMark {
         SocketMark { mark_type, trace_mark }
     }
 
+    /// Construct a `SkipRoute` socket mark targeting `chain_id` with `trace_mark = 0`.
+    pub const fn skip_route(chain_id: u16) -> Self {
+        Self::new(MarkType::SkipRoute { chain_id }, 0)
+    }
+
+    /// Extract the target `chain_id` when this mark uses the `SkipRoute` layout
+    /// with `trace_mark == 0`.
+    pub const fn skip_route_chain_id(self) -> Option<u16> {
+        match self {
+            SocketMark {
+                mark_type: MarkType::SkipRoute { chain_id },
+                trace_mark: 0,
+            } => Some(chain_id),
+            _ => None,
+        }
+    }
+
     /// Compute the SO_MARK for a DNS upstream socket: always the Normal
     /// layout with the action bits left empty; upstream selection is carried
     /// only by the flow_id bits, and the NAT port-reuse bit is always set.
@@ -310,6 +327,10 @@ mod tests {
         let raw = u32::from(sm);
         assert_eq!(raw, (1 << 24) | (7 << 16) | 0xBEEF);
         assert_eq!(SocketMark::from(raw), sm);
+        assert_eq!(
+            SocketMark::new(MarkType::SkipRouteAndStage { chain_id: 3 }, 0).skip_route_chain_id(),
+            None
+        );
     }
 
     #[test]
@@ -318,6 +339,16 @@ mod tests {
         let raw = u32::from(sm);
         assert_eq!(raw, (2 << 24) | (7 << 16) | 0xBEEF);
         assert_eq!(SocketMark::from(raw), sm);
+        assert_eq!(sm.skip_route_chain_id(), None, "non-zero trace_mark is excluded");
+
+        let skip_route = SocketMark::skip_route(0x0003);
+        let skip_route_raw = u32::from(skip_route);
+        assert_eq!(skip_route_raw, 0x0200_0003);
+        assert_eq!(skip_route, SocketMark::new(MarkType::SkipRoute { chain_id: 3 }, 0));
+        assert_eq!(SocketMark::from(skip_route_raw).skip_route_chain_id(), Some(3));
+        assert_eq!(SocketMark::from(0x0000_0003).skip_route_chain_id(), None);
+        assert_eq!(SocketMark::from(0x0100_0003).skip_route_chain_id(), None);
+        assert_eq!(SocketMark::from(0x0300_0003).skip_route_chain_id(), None);
     }
 
     #[test]
