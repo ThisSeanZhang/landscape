@@ -7,7 +7,10 @@ use zerocopy::FromBytes;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 
+use landscape_common::net::MacAddr;
+
 use crate::landscape::OwnedOpenObject;
+use crate::tests::helper::map::insert_ip_mac_v4;
 use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 
 use super::{LAN_HOST, V6_SRC};
@@ -19,6 +22,8 @@ const PEER: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 11);
 const REMOTE: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 8);
 const SRC: [u8; 6] = [2, 0, 0, 0, 0, 10];
 const GW_MAC: [u8; 6] = [2, 0, 0, 0, 0, 1];
+const PEER_MAC: MacAddr = MacAddr(2, 0, 0, 0, 0, 11);
+const XDP_DROP: u32 = 1;
 const XDP_PASS: u32 = 2;
 
 const WAN6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10);
@@ -145,36 +150,52 @@ fn off_link_uses_the_confirmed_gateway_mac() {
 }
 
 #[test]
-fn on_link_frames_keep_their_neighbour_header() {
+fn on_link_uses_the_neighbour_mac() {
+    let mut root = load_root(binding());
+    set_confirmed(&mut root, &GW_MAC);
+    insert_ip_mac_v4(&root.skel.maps.ip_mac_v4, PEER, PEER_MAC, MacAddr::from(SRC), IFINDEX);
+    let pkt = simple_ipv4_tcp(LAN_HOST, PEER);
+    let (ret, out) = run_root(&root, &pkt);
+    assert_eq!(ret, XDP_PASS);
+    assert_eq!(&out[..6], &PEER_MAC.octets());
+    assert_eq!(&out[6..12], &SRC);
+    assert_eq!(out[12..], pkt[12..]);
+}
+
+#[test]
+fn on_link_without_a_neighbour_is_dropped() {
     let mut root = load_root(binding());
     set_confirmed(&mut root, &GW_MAC);
     let pkt = simple_ipv4_tcp(LAN_HOST, PEER);
-    let (_, out) = run_root(&root, &pkt);
+    let (ret, out) = run_root(&root, &pkt);
+    assert_eq!(ret, XDP_DROP);
     assert_eq!(out, pkt);
 }
 
 #[test]
-fn unresolved_gateway_leaves_the_frame_untouched() {
+fn unresolved_gateway_drops_the_frame() {
     let root = load_root(binding());
     let pkt = simple_ipv4_tcp(LAN_HOST, REMOTE);
-    let (_, out) = run_root(&root, &pkt);
+    let (ret, out) = run_root(&root, &pkt);
+    assert_eq!(ret, XDP_DROP);
     assert_eq!(out, pkt);
 }
 
 #[test]
-fn directed_broadcast_and_prefix_edges_stay_untouched() {
-    for (mask, dst, expect_untouched) in [
+fn directed_broadcast_and_prefix_edges() {
+    for (mask, dst, expected) in [
         // Directed broadcast of a /24 delegates to the kernel.
-        ([255, 255, 255, 0], Ipv4Addr::new(192, 0, 2, 255), true),
+        ([255, 255, 255, 0], Ipv4Addr::new(192, 0, 2, 255), "pass"),
         // A /31 has no broadcast address: both endpoints are hosts, so
         // anything off-link still takes the gateway.
-        ([255, 255, 255, 254], Ipv4Addr::new(192, 0, 2, 255), false),
-        // The other /31 endpoint is on-link.
-        ([255, 255, 255, 254], PEER, true),
-        // A /0 binding treats every destination as on-link.
-        ([0; 4], REMOTE, true),
+        ([255, 255, 255, 254], Ipv4Addr::new(192, 0, 2, 255), "rewrite"),
+        // The other /31 endpoint is on-link; with no neighbour entry seeded the
+        // root can only drop it.
+        ([255, 255, 255, 254], PEER, "drop"),
+        // A /0 binding treats every destination as on-link (again unresolved).
+        ([0; 4], REMOTE, "drop"),
         // A /32 binding routes everything off-link.
-        ([255; 4], GATEWAY, false),
+        ([255; 4], GATEWAY, "rewrite"),
     ] {
         let mut root = load_root(crate::skel::xdp_lan_root::types::wan_egress_binding {
             wan_mask4: u32::from_ne_bytes(mask),
@@ -182,12 +203,22 @@ fn directed_broadcast_and_prefix_edges_stay_untouched() {
         });
         set_confirmed(&mut root, &GW_MAC);
         let pkt = simple_ipv4_tcp(LAN_HOST, dst);
-        let (_, out) = run_root(&root, &pkt);
-        if expect_untouched {
-            assert_eq!(out, pkt, "mask={mask:?} dst={dst}");
-        } else {
-            assert_eq!(&out[..6], &GW_MAC, "mask={mask:?} dst={dst}");
-            assert_eq!(&out[6..12], &SRC, "mask={mask:?} dst={dst}");
+        let (ret, out) = run_root(&root, &pkt);
+        match expected {
+            "pass" => {
+                assert_eq!(ret, XDP_PASS, "mask={mask:?} dst={dst}");
+                assert_eq!(out, pkt, "mask={mask:?} dst={dst}");
+            }
+            "drop" => {
+                assert_eq!(ret, XDP_DROP, "mask={mask:?} dst={dst}");
+                assert_eq!(out, pkt, "mask={mask:?} dst={dst}");
+            }
+            "rewrite" => {
+                assert_eq!(ret, XDP_PASS, "mask={mask:?} dst={dst}");
+                assert_eq!(&out[..6], &GW_MAC, "mask={mask:?} dst={dst}");
+                assert_eq!(&out[6..12], &SRC, "mask={mask:?} dst={dst}");
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -204,21 +235,16 @@ fn non_ip_and_broadcast_frames_pass_through() {
 }
 
 #[test]
-fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
+fn v6_uses_the_confirmed_gateway_mac_for_all_destinations() {
     let mut root = load_root(binding6());
     set_confirmed6(&mut root, &GW6_MAC);
-    for (dst, expected) in [(REMOTE6, Some(GW6_MAC)), (PEER6, None)] {
+    for dst in [REMOTE6, PEER6] {
         let pkt = simple_ipv6_tcp_syn(V6_SRC, dst);
         let (ret, out) = run_root(&root, &pkt);
-        assert_eq!(ret, XDP_PASS, "all stage slots are empty in this rig");
-        match expected {
-            Some(mac) => {
-                assert_eq!(&out[..6], &mac);
-                assert_eq!(&out[6..12], &SRC);
-                assert_eq!(out[12..], pkt[12..]);
-            }
-            None => assert_eq!(out, pkt, "on-link dst={dst}"),
-        }
+        assert_eq!(ret, XDP_PASS);
+        assert_eq!(&out[..6], &GW6_MAC);
+        assert_eq!(&out[6..12], &SRC);
+        assert_eq!(out[12..], pkt[12..]);
     }
 }
 
@@ -226,18 +252,21 @@ fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
 fn v6_rewrite_requires_a_confirmed_mac_and_skips_multicast() {
     let pkt = simple_ipv6_tcp_syn(V6_SRC, REMOTE6);
     let multicast = simple_ipv6_tcp_syn(V6_SRC, Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1));
-    // No confirmed MAC: the xdp_lan_route header is kept.
+    // No confirmed MAC: the forwarded frame is dropped.
     let unresolved = load_root(binding6());
-    let (_, out) = run_root(&unresolved, &pkt);
+    let (ret, out) = run_root(&unresolved, &pkt);
+    assert_eq!(ret, XDP_DROP);
     assert_eq!(out, pkt);
     // Without a v6 binding nothing is rewritten.
     let mut v4only = load_root(binding());
     set_confirmed6(&mut v4only, &GW6_MAC);
-    let (_, out) = run_root(&v4only, &pkt);
+    let (ret, out) = run_root(&v4only, &pkt);
+    assert_eq!(ret, XDP_PASS);
     assert_eq!(out, pkt);
     // Multicast destinations are not gateway traffic.
     let mut root = load_root(binding6());
     set_confirmed6(&mut root, &GW6_MAC);
-    let (_, out) = run_root(&root, &multicast);
+    let (ret, out) = run_root(&root, &multicast);
+    assert_eq!(ret, XDP_PASS);
     assert_eq!(out, multicast);
 }

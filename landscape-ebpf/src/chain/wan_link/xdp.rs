@@ -238,6 +238,9 @@ impl WanLinkDataplane {
             &mut open_skel.maps.xdp_redirect_able,
             &backbone.paths().xdp_redirect_able,
         )?;
+        // On-link IPv4 forwarding resolves the neighbour MAC directly from the
+        // shared map populated by ARP/traffic learning.
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &backbone.paths().ip_mac_v4)?;
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_root")?;
 

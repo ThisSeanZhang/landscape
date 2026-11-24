@@ -176,20 +176,16 @@ fn set_confirmed6(root: &mut EgressRoot, mac: MacAddr) {
 }
 
 #[test]
-fn v6_off_link_uses_the_confirmed_gateway_mac_and_on_link_keeps_neighbours() {
+fn v6_uses_the_confirmed_gateway_mac_for_all_destinations() {
     let mut root = load_egress_root_with(binding6());
     set_confirmed6(&mut root, GW6_MAC);
     let prog = &root.skel.progs.tc_wan_egress_root;
-    for (dst, expected) in [(REMOTE6, GW6_MAC), (PEER6, MacAddr::zero())] {
+    for dst in [REMOTE6, PEER6] {
         let packet = simple_ipv6_tcp_syn(V6_SRC, dst);
         let (_, out, cb) = run_prog_with_ctx(prog, &packet, forwarded());
-        if expected.is_zero() {
-            assert_eq!(out, packet, "on-link dst={dst}");
-        } else {
-            assert_eq!(&out[..6], &expected.octets());
-            assert_eq!(&out[6..12], &SRC.octets());
-            assert_eq!(out[12..], packet[12..]);
-        }
+        assert_eq!(&out[..6], &GW6_MAC.octets());
+        assert_eq!(&out[6..12], &SRC.octets());
+        assert_eq!(out[12..], packet[12..]);
         assert_eq!(cb[2], 0);
     }
 }

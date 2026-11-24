@@ -109,15 +109,9 @@ static __always_inline int prepare_forwarded_ipv6(struct __sk_buff *skb) {
     const u8 *dst = ip6->daddr.in6_u.u6_addr8;
     if (unlikely((dst[0] & 0xff) == 0xff)) return TC_ACT_OK;
 
-    u8 offlink = 0;
-#pragma unroll
-    for (int i = 0; i < 16; i++) {
-        if ((dst[i] & egress_binding.wan_mask6[i]) !=
-            (egress_binding.wan_ip6[i] & egress_binding.wan_mask6[i]))
-            offlink = 1;
-    }
-    if (unlikely(!offlink)) return TC_ACT_OK;
-
+    // PD IPv6 egress always targets the upstream gateway; on-link
+    // destinations are intentionally unsupported until IPv4/IPv6 on-link
+    // handling is unified.
     __u64 mac = confirmed_gateway_mac6;
     if (unlikely(!mac)) return TC_ACT_SHOT;
     __builtin_memcpy(eth->h_dest, &mac, sizeof(eth->h_dest));

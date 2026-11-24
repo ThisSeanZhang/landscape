@@ -2,16 +2,19 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::process::Command;
 use std::time::Duration;
 
+use zerocopy::{FromBytes, Immutable, IntoBytes};
+
 use libbpf_rs::{
-    MapCore, MapFlags, MapHandle,
+    MapCore, MapFlags, MapHandle, ProgramInput,
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::maps::route::cache::WAN_CACHE;
 use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{v4_entry, wan_trie_publish};
-use crate::maps::{Route4CacheKey, Route4CacheValue};
+use crate::maps::{Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue};
 use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
 use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
@@ -20,9 +23,10 @@ use crate::skel::xdp_wan_intro::XdpWanIntroSkelBuilder;
 use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
 use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
 use crate::tests::helper::net::{
-    NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, send_raw_packet, settle,
-    wait_for,
+    NetNsGuard, VethPair, dummy_recv_count, dummy_reset, route_slot, route_slot_v6,
+    send_raw_packet, settle, wait_for,
 };
+use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 
 fn build_ipv4_tcp_pkt(
@@ -135,6 +139,18 @@ fn lookup_inner_map(outer_map: &impl MapCore, cache_index: u32) -> MapHandle {
         .expect("inner map missing");
     let id = read_unaligned::<i32>(&val);
     MapHandle::from_map_id(id as u32).expect("open inner map")
+}
+
+/// `struct xdp_md` as accepted by BPF_PROG_TEST_RUN's `ctx_in`.
+#[repr(C)]
+#[derive(IntoBytes, FromBytes, Immutable, Default)]
+struct XdpMd {
+    data: u32,
+    data_end: u32,
+    data_meta: u32,
+    ingress_ifindex: u32,
+    rx_queue_index: u32,
+    egress_ifindex: u32,
 }
 
 // ── Test A: verifier smoke ──
@@ -511,6 +527,205 @@ fn xdp_lan_route_wan_pipeline() {
     drop(intro);
     drop(lr);
     drop(maps);
+}
+
+// ── Test D2: a stale WAN-cache link chain falls back to route-slot re-resolution ──
+
+#[test]
+fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
+    const LAN_HOST: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
+    const REMOTE: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
+    const WAN_IFINDEX: u32 = 42;
+    const STALE_CHAIN: u32 = 999;
+    const VALID_CHAIN: u32 = 9;
+    const XDP_PASS: u32 = 2;
+
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-fallback");
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
+
+    // The WAN cache still names a link whose chain is no longer registered.
+    let wan_inner = lookup_inner_map(&maps.rt4_cache_map, WAN_CACHE);
+    let cache_key = Route4CacheKey {
+        local_addr: LAN_HOST.to_bits().to_be(),
+        remote_addr: REMOTE.to_bits().to_be(),
+    };
+    let cache_value = Route4CacheValue {
+        xdp_redirect_able: 1,
+        ifindex: WAN_IFINDEX,
+        link_chain_id: STALE_CHAIN as u16,
+        ..Default::default()
+    };
+    wan_inner
+        .update(as_bytes(&cache_key), as_bytes(&cache_value), MapFlags::ANY)
+        .expect("seed stale WAN cache entry");
+
+    // The route slot already points at the replacement link's chain.
+    let mut slot_key = [0u8; 8];
+    slot_key[0..4].copy_from_slice(&0u32.to_ne_bytes());
+    slot_key[4..8].copy_from_slice(&route_slot(u32::from_be_bytes(REMOTE.octets())).to_ne_bytes());
+    let mut slot_value = [0u8; 20];
+    slot_value[0..4].copy_from_slice(&WAN_IFINDEX.to_ne_bytes());
+    slot_value[16..18].copy_from_slice(&(VALID_CHAIN as u16).to_ne_bytes());
+    maps.rt4_slot_map.update(&slot_key, &slot_value, MapFlags::ANY).unwrap();
+
+    let mut lr_b = XdpLanRouteSkelBuilder::default();
+    lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut lr_obj = std::mem::MaybeUninit::uninit();
+    let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
+
+    lr.maps
+        .xdp_redirect_able
+        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let dummy_b = TestXdpDummySkelBuilder::default();
+    let mut dummy_obj = std::mem::MaybeUninit::uninit();
+    let dummy = dummy_b.open(&mut dummy_obj).unwrap().load().unwrap();
+    let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
+    lr.maps
+        .xdp_lan_pipe_root_progs
+        .update(&VALID_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    // The plain no-meta layout: the frame follows a zeroed metadata area.
+    const META_SIZE: usize = 12;
+    let pkt = simple_ipv4_tcp(LAN_HOST, REMOTE);
+    let mut input = vec![0u8; META_SIZE + pkt.len()];
+    input[META_SIZE..].copy_from_slice(&pkt);
+    let mut ctx = XdpMd {
+        data: META_SIZE as u32,
+        data_end: input.len() as u32,
+        data_meta: 0,
+        ingress_ifindex: 3,
+        ..Default::default()
+    };
+    let mut out = vec![0u8; input.len() + 256];
+    let ret = lr
+        .progs
+        .xdp_lan_route
+        .test_run(ProgramInput {
+            data_in: Some(&input),
+            data_out: Some(&mut out),
+            context_in: Some(ctx.as_mut_bytes()),
+            ..Default::default()
+        })
+        .expect("run xdp_lan_route")
+        .return_value as u32;
+
+    assert_eq!(ret, XDP_PASS, "stale cache must not drop the frame");
+    let rec = dummy
+        .maps
+        .dummy_recv_map
+        .lookup(&0u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap()
+        .expect("dummy recv record");
+    let count = u64::from_ne_bytes(rec[..8].try_into().unwrap());
+    assert_eq!(count, 1, "frame must reach the replacement link's chain");
+
+    let raw = wan_inner
+        .lookup(as_bytes(&cache_key), MapFlags::ANY)
+        .unwrap()
+        .expect("stale WAN cache entry must be refreshed");
+    let updated: Route4CacheValue = read_unaligned(&raw);
+    assert_eq!(updated.link_chain_id, VALID_CHAIN as u16);
+    assert_eq!(updated.ifindex, WAN_IFINDEX);
+}
+
+#[test]
+fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
+    const LAN_HOST: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+    const REMOTE: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
+    const WAN_IFINDEX: u32 = 42;
+    const STALE_CHAIN: u32 = 999;
+    const VALID_CHAIN: u32 = 9;
+    const XDP_PASS: u32 = 2;
+
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-fallback-v6");
+    let maps = crate::tests::init_shared_maps_for_test(&share_pin);
+
+    let wan_inner = lookup_inner_map(&maps.rt6_cache_map, WAN_CACHE);
+    let cache_key = Route6CacheKey {
+        local_addr: LAN_HOST.octets(),
+        remote_addr: REMOTE.octets(),
+    };
+    let cache_value = Route6CacheValue {
+        xdp_redirect_able: 1,
+        ifindex: WAN_IFINDEX,
+        link_chain_id: STALE_CHAIN as u16,
+        ..Default::default()
+    };
+    wan_inner
+        .update(as_bytes(&cache_key), as_bytes(&cache_value), MapFlags::ANY)
+        .expect("seed stale WAN cache entry");
+
+    let mut slot_key = [0u8; 8];
+    slot_key[0..4].copy_from_slice(&0u32.to_ne_bytes());
+    slot_key[4..8].copy_from_slice(&route_slot_v6(&REMOTE.octets()).to_ne_bytes());
+    let mut slot_value = [0u8; 32];
+    slot_value[0..4].copy_from_slice(&WAN_IFINDEX.to_ne_bytes());
+    slot_value[28..30].copy_from_slice(&(VALID_CHAIN as u16).to_ne_bytes());
+    maps.rt6_slot_map.update(&slot_key, &slot_value, MapFlags::ANY).unwrap();
+
+    let mut lr_b = XdpLanRouteSkelBuilder::default();
+    lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
+    let mut lr_obj = std::mem::MaybeUninit::uninit();
+    let lr = lr_b.open(&mut lr_obj).unwrap().load().unwrap();
+
+    lr.maps
+        .xdp_redirect_able
+        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let dummy_b = TestXdpDummySkelBuilder::default();
+    let mut dummy_obj = std::mem::MaybeUninit::uninit();
+    let dummy = dummy_b.open(&mut dummy_obj).unwrap().load().unwrap();
+    let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
+    lr.maps
+        .xdp_lan_pipe_root_progs
+        .update(&VALID_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    const META_SIZE: usize = 12;
+    let pkt = simple_ipv6_tcp_syn(LAN_HOST, REMOTE);
+    let mut input = vec![0u8; META_SIZE + pkt.len()];
+    input[META_SIZE..].copy_from_slice(&pkt);
+    let mut ctx = XdpMd {
+        data: META_SIZE as u32,
+        data_end: input.len() as u32,
+        data_meta: 0,
+        ingress_ifindex: 3,
+        ..Default::default()
+    };
+    let mut out = vec![0u8; input.len() + 256];
+    let ret = lr
+        .progs
+        .xdp_lan_route
+        .test_run(ProgramInput {
+            data_in: Some(&input),
+            data_out: Some(&mut out),
+            context_in: Some(ctx.as_mut_bytes()),
+            ..Default::default()
+        })
+        .expect("run xdp_lan_route")
+        .return_value as u32;
+
+    assert_eq!(ret, XDP_PASS, "stale cache must not drop the frame");
+    let rec = dummy
+        .maps
+        .dummy_recv_map
+        .lookup(&1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap()
+        .expect("dummy v6 recv record");
+    let count = u64::from_ne_bytes(rec[..8].try_into().unwrap());
+    assert_eq!(count, 1, "v6 frame must reach the replacement link's chain");
+
+    let raw = wan_inner
+        .lookup(as_bytes(&cache_key), MapFlags::ANY)
+        .unwrap()
+        .expect("stale WAN cache entry must be refreshed");
+    let updated: Route6CacheValue = read_unaligned(&raw);
+    assert_eq!(updated.link_chain_id, VALID_CHAIN as u16);
+    assert_eq!(updated.ifindex, WAN_IFINDEX);
 }
 
 // ── Test E: unknown IP must not be redirected (regression guard) ──

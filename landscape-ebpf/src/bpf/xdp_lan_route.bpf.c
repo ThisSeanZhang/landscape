@@ -223,18 +223,6 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
 
     if (info->ifindex == ctx->ingress_ifindex) return 0;
 
-    if (info->has_mac) {
-        struct mac_value_v4 *mac_val = bpf_map_lookup_elem(&ip_mac_v4, &info->gate_addr);
-        if (mac_val) {
-            void *data = (void *)(long)ctx->data;
-            void *data_end = (void *)(long)ctx->data_end;
-            struct ethhdr *eth = data;
-            if ((void *)(eth + 1) > data_end) return XDP_DROP;
-            __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-            __builtin_memcpy(eth->h_source, info->mac, 6);
-        }
-    }
-
     bool already_cached = false;
     struct route4_cache_key cache_key = {.local_addr = context->saddr,
                                          .remote_addr = context->daddr};
@@ -242,7 +230,20 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
     u32 wan_key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &wan_key);
     if (wan_cache) {
-        if (bpf_map_lookup_elem(wan_cache, &cache_key) != NULL) already_cached = true;
+        struct route4_cache_value *cached = bpf_map_lookup_elem(wan_cache, &cache_key);
+        if (cached) {
+            already_cached = true;
+            if (cached->ifindex != info->ifindex || cached->link_chain_id != info->link_chain_id) {
+                cached->mark_value = flow_id;
+                cached->ifindex = info->ifindex;
+                cached->has_mac = info->has_mac;
+                cached->is_docker = info->is_docker;
+                cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
+                cached->gate_addr = info->gate_addr;
+                __builtin_memcpy(cached->mac, info->mac, 6);
+                cached->link_chain_id = info->link_chain_id;
+            }
+        }
     }
 
     if (!already_cached) {
@@ -317,18 +318,6 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
         return 0;
     }
 
-    if (info->has_mac) {
-        struct mac_value_v6 *mac_val = bpf_map_lookup_elem(&ip_mac_v6, &info->gate_addr);
-        if (mac_val) {
-            void *data = (void *)(long)ctx->data;
-            void *data_end = (void *)(long)ctx->data_end;
-            struct ethhdr *eth = data;
-            if ((void *)(eth + 1) > data_end) return XDP_DROP;
-            __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-            __builtin_memcpy(eth->h_source, info->mac, 6);
-        }
-    }
-
     bool already_cached = false;
     struct route6_cache_key cache_key = {};
     __builtin_memcpy(cache_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
@@ -337,7 +326,21 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
     u32 wan_key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &wan_key);
     if (wan_cache) {
-        if (bpf_map_lookup_elem(wan_cache, &cache_key) != NULL) already_cached = true;
+        struct route6_cache_value *cached = bpf_map_lookup_elem(wan_cache, &cache_key);
+        if (cached) {
+            already_cached = true;
+            if (cached->ifindex != info->ifindex || cached->link_chain_id != info->link_chain_id) {
+                cached->mark_value = flow_id;
+                cached->ifindex = info->ifindex;
+                cached->has_mac = info->has_mac;
+                cached->is_docker = info->is_docker;
+                cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
+                __builtin_memcpy(cached->gate_addr.in6_u.u6_addr8, info->gate_addr.in6_u.u6_addr8,
+                                 16);
+                __builtin_memcpy(cached->mac, info->mac, 6);
+                cached->link_chain_id = info->link_chain_id;
+            }
+        }
     }
 
     if (!already_cached) {
@@ -544,44 +547,26 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
-            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
-                                              .l3_protocol = LANDSCAPE_IPV4_TYPE};
-            struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
-            if (wan_info != NULL && target->has_mac) {
-                struct mac_value_v4 *mac_val =
-                    bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
-                if (!mac_val) {
-                    mac_val =
-                        bpf_map_lookup_elem(&ip_mac_v4, &wan_info->gateway.in6_u.u6_addr32[0]);
-                }
-                if (mac_val) {
-                    void *data = (void *)(long)ctx->data;
-                    void *data_end = (void *)(long)ctx->data_end;
-                    struct ethhdr *eth = data;
-                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-                }
-            }
             if (!target->xdp_redirect_able) {
                 int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
                                                    target->link_chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
-            if (wan_info != NULL) {
-                struct xdp_pipe_meta meta = {};
-                xdp_get_meta(ctx, &meta);
-                meta.target_ifindex = target->ifindex;
-                meta.mark = target->mark_value;
-                xdp_set_meta(ctx, &meta);
-                // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to chain=%u",
-                //            target->link_chain_id);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
-                bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED chain=%u",
-                           target->link_chain_id);
-                return XDP_DROP;
-            }
+            struct xdp_pipe_meta meta = {};
+            xdp_get_meta(ctx, &meta);
+            meta.target_ifindex = target->ifindex;
+            meta.mark = target->mark_value;
+            xdp_set_meta(ctx, &meta);
+            // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to chain=%u",
+            //            target->link_chain_id);
+            bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+            bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED chain=%u, re-route",
+                       target->link_chain_id);
+            // The cached link's chain is gone. Fall through so xdp_lan_route
+            // re-resolves the target from the route slots, which may already
+            // point at the replacement link.
+            return 0;
         }
     }
 
@@ -650,48 +635,22 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
             }
             // bpf_printk("[wan_cache_r] v6 HIT src=%pI6c dst=%pI6c ifindex=%u has_mac=%u",
             //            &context->saddr, &context->daddr, target->ifindex, target->has_mac);
-            struct wan_ip_info_key wan_key = {.ifindex = target->ifindex,
-                                              .l3_protocol = LANDSCAPE_IPV6_TYPE};
-            struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_key);
-            if (wan_info != NULL && target->has_mac) {
-                struct mac_key_v6 mac_key = {};
-                COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8, search_key.remote_addr.in6_u.u6_addr8);
-                struct mac_value_v6 *mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                if (!mac_val) {
-                    COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8, wan_info->gateway.in6_u.u6_addr8);
-                    mac_val = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                }
-                if (mac_val) {
-                    void *data = (void *)(long)ctx->data;
-                    void *data_end = (void *)(long)ctx->data_end;
-                    struct ethhdr *eth = data;
-                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    // DAD-learned entries carry no dev_mac (the DAD frame does
-                    // not expose the router's own MAC); keep the original
-                    // source MAC instead of emitting an all-zero one.
-                    if (!is_zero_mac(mac_val->dev_mac)) {
-                        __builtin_memcpy(eth->h_source, mac_val->dev_mac, 6);
-                    }
-                }
-            }
             if (!target->xdp_redirect_able) {
                 int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
                                                    target->link_chain_id);
                 if (ret) return XDP_DROP;
                 return XDP_PASS;
             }
-            if (wan_info != NULL) {
-                struct xdp_pipe_meta meta = {};
-                xdp_get_meta(ctx, &meta);
-                meta.target_ifindex = target->ifindex;
-                meta.mark = target->mark_value;
-                xdp_set_meta(ctx, &meta);
-                bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
-                bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED chain=%u",
-                           target->link_chain_id);
-                return XDP_DROP;
-            }
+            struct xdp_pipe_meta meta = {};
+            xdp_get_meta(ctx, &meta);
+            meta.target_ifindex = target->ifindex;
+            meta.mark = target->mark_value;
+            xdp_set_meta(ctx, &meta);
+            bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
+            bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED chain=%u, re-route",
+                       target->link_chain_id);
+            // See the v4 path: re-resolve instead of dropping a stale cache hit.
+            return 0;
         }
     }
 
