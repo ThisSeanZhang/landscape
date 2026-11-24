@@ -1,11 +1,13 @@
 //! WAN link health probing: one ICMP echo exchange confined to the link's
-//! iface and source address (`SO_BINDTODEVICE` + explicit source bind), so
-//! a probe always leaves through the link it judges.
+//! iface, source address, and eBPF chain (`SO_BINDTODEVICE` + explicit source
+//! bind + `SkipRoute` `SO_MARK`), so a probe always leaves through the link it
+//! judges while still traversing egress policy/NAT stages.
 
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use landscape_common::flow::mark::SocketMark;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 /// Local probe failure (missing `CAP_NET_RAW`, socket setup, send error).
@@ -18,6 +20,12 @@ pub enum ProbeError {
     Task(#[from] tokio::task::JoinError),
 }
 
+/// Encode the `SkipRoute` socket mark for a WAN link's eBPF chain.
+/// Chain `0` means unassigned (e.g. loopback tests) and omits `SO_MARK`.
+pub(crate) fn skip_route_probe_mark(chain_id: u16) -> Option<u32> {
+    (chain_id != 0).then(|| u32::from(SocketMark::skip_route(chain_id)))
+}
+
 /// One health probe exchange, injected into the health-check runner so
 /// tests can drive it with a fake.
 #[async_trait::async_trait]
@@ -26,6 +34,7 @@ pub trait WanHealthProbe: Send + Sync {
         &self,
         dev: &str,
         src: Ipv4Addr,
+        chain_id: u16,
         target: Ipv4Addr,
         timeout: Duration,
     ) -> Result<Option<Duration>, ProbeError>;
@@ -40,25 +49,36 @@ impl WanHealthProbe for IcmpV4Probe {
         &self,
         dev: &str,
         src: Ipv4Addr,
+        chain_id: u16,
         target: Ipv4Addr,
         timeout: Duration,
     ) -> Result<Option<Duration>, ProbeError> {
         let dev = dev.to_string();
-        tokio::task::spawn_blocking(move || icmp_ping_blocking(&dev, src, target, timeout))
-            .await
-            .map_err(ProbeError::Task)?
+        tokio::task::spawn_blocking(move || {
+            icmp_ping_blocking(&dev, src, chain_id, target, timeout)
+        })
+        .await
+        .map_err(ProbeError::Task)?
     }
 }
 
 fn icmp_ping_blocking(
     dev: &str,
     src: Ipv4Addr,
+    chain_id: u16,
     target: Ipv4Addr,
     timeout: Duration,
 ) -> Result<Option<Duration>, ProbeError> {
     let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))?;
     socket.bind_device(Some(dev.as_bytes()))?;
     socket.bind(&SockAddr::from(SocketAddr::from((src, 0))))?;
+    if let Some(mark) = skip_route_probe_mark(chain_id) {
+        // Carry the link's chain in the SkipRoute mark so both Linux policy
+        // routing (dedicated per-link table) and TC WAN egress pin this probe
+        // directly to its own WAN chain instead of Flow 0's default WAN, while
+        // still running policy stages (including NAT4 CT tracking).
+        socket.set_mark(mark)?;
+    }
 
     let ident: u16 = rand::random();
     let seq: u16 = rand::random();
@@ -157,6 +177,7 @@ where
         &self,
         _dev: &str,
         _src: Ipv4Addr,
+        _chain_id: u16,
         target: Ipv4Addr,
         _timeout: Duration,
     ) -> Result<Option<Duration>, ProbeError> {
@@ -167,9 +188,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use landscape_common::flow::mark::MarkType;
 
     fn raw_socket_available() -> bool {
         Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).is_ok()
+    }
+
+    #[test]
+    fn skip_route_probe_mark_skips_unassigned_chain_and_matches_socket_mark() {
+        assert_eq!(skip_route_probe_mark(0), None);
+        assert_eq!(
+            skip_route_probe_mark(3),
+            Some(u32::from(SocketMark::new(MarkType::SkipRoute { chain_id: 3 }, 0)))
+        );
+        assert_eq!(skip_route_probe_mark(3), Some(0x0200_0003));
     }
 
     #[test]
@@ -214,7 +246,7 @@ mod tests {
         }
         let probe = IcmpV4Probe;
         let rtt = probe
-            .ping_v4("lo", Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST, Duration::from_secs(2))
+            .ping_v4("lo", Ipv4Addr::LOCALHOST, 0, Ipv4Addr::LOCALHOST, Duration::from_secs(2))
             .await
             .expect("raw socket is available");
         assert!(rtt.is_some(), "loopback echo must answer");

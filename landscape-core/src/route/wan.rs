@@ -358,6 +358,41 @@ pub(crate) fn kernel_default_nexthops_v6(
     kernel_default_nexthops_for(routes, healths, has_configured_default, DefaultFamily::V6)
 }
 
+/// Collect active non-docker IPv4 WAN links that need a dedicated `SkipRoute`
+/// kernel policy route (`fwmark SkipRoute(chain_id)` -> dedicated per-chain
+/// table). Sorted deterministically by `link_chain_id` and normalized to omit
+/// fields that do not affect the kernel policy route (such as `default_route`,
+/// `weight`, and `mac`), so Flow 0 failover flips never cause redundant kernel
+/// churn.
+pub(crate) fn kernel_wan_policy_targets(routes: &WanRoutesByOwner) -> Vec<WanRouteTarget> {
+    let mut targets: Vec<WanRouteTarget> = routes
+        .iter()
+        .filter(|(owner, entry)| {
+            matches!(owner, RouteOwner::Link(_))
+                && !entry.info.is_docker
+                && entry.link_chain_id != 0
+                && entry.info.ifindex != 0
+                && usable_default_nexthop(entry, DefaultFamily::V4)
+        })
+        .map(|(_, entry)| {
+            let mut normalized = entry.clone();
+            normalized.info.weight = 1;
+            normalized.info.mac = None;
+            normalized.info.default_route = false;
+            normalized
+        })
+        .collect();
+
+    targets.sort_by(|a, b| {
+        a.link_chain_id
+            .cmp(&b.link_chain_id)
+            .then(a.info.ifindex.cmp(&b.info.ifindex))
+            .then(a.info.iface_name.cmp(&b.info.iface_name))
+    });
+    targets.dedup_by_key(|target| target.link_chain_id);
+    targets
+}
+
 impl IpRouteService {
     pub(crate) async fn clone_ipv4_wan_infos(&self) -> WanRoutesByOwner {
         clone_locked_state(&self.ipv4_wan_ifaces).await
@@ -444,8 +479,12 @@ impl IpRouteService {
             reconcile_wan_route(&mut lock, owner, target)
         };
         let changed = !matches!(update, WanRouteUpdate::Noop);
+        let refreshed = matches!(update, WanRouteUpdate::Changed { refresh_default_router: true });
 
         self.apply_ipv4_wan_route_update(update).await;
+        if changed && !refreshed {
+            self.kernel_default_notify.notify_one();
+        }
         if changed {
             self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Upserted);
         }
@@ -479,6 +518,8 @@ impl IpRouteService {
 
         if route_affects_default || health_event.is_some() {
             self.refresh_default_router().await;
+        } else if had_removed {
+            self.kernel_default_notify.notify_one();
         }
         if let Some(event) = health_event {
             let _ = self.health_events.send(event);
@@ -625,12 +666,32 @@ impl IpRouteService {
         }
     }
 
+    /// Reconcile per-WAN `SkipRoute` kernel IPv4 policy routes (`ip rule` +
+    /// per-chain routing table) with the active IPv4 WAN links. An empty
+    /// target set still invokes the dataplane so stale rules and tables from
+    /// stopped links or prior crashes are cleaned up.
+    pub(crate) async fn reconcile_kernel_wan_policy_ipv4(&self) {
+        let targets = {
+            let routes = self.ipv4_wan_ifaces.read().await;
+            kernel_wan_policy_targets(&routes)
+        };
+        let mut cache = self.kernel_wan_policy_ipv4_cache.write().await;
+        if *cache == Some(targets.clone()) {
+            return;
+        }
+        if self.dataplane.sync_kernel_wan_policy_ipv4(&targets).await {
+            *cache = Some(targets);
+        } else {
+            *cache = None;
+        }
+    }
+
     /// Spawn the kernel-default-route reconcile loop (IPv4 + IPv6): it
     /// wakes up right after every WAN route change (`notify_one` permit)
     /// and on a periodic safety-net tick. The ticker's first tick fires
     /// immediately, forcing a startup reconcile that pushes the current
-    /// WAN default set; when there is none, the kernel default route is
-    /// left untouched.
+    /// WAN default set and cleans up stale SkipRoute policy routes; when
+    /// there is no default WAN, the `main` default route is left untouched.
     pub fn spawn_kernel_default_sync_loop(&self) {
         const KERNEL_DEFAULT_SYNC_INTERVAL_SECS: u64 = 30;
         let service = self.clone();
@@ -646,6 +707,7 @@ impl IpRouteService {
                         _ = service.kernel_default_notify.notified() => {}
                         _ = ticker.tick() => {}
                     }
+                    service.reconcile_kernel_wan_policy_ipv4().await;
                     service.reconcile_kernel_default_ipv4().await;
                     service.reconcile_kernel_default_ipv6().await;
                 }

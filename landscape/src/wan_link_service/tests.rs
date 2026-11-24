@@ -717,6 +717,7 @@ async fn health_check_runner_judges_and_cleans_up() {
     link_status.just_change_status(ServiceStatus::Staring);
     let handle = tokio::spawn(health_check::run(
         link_id,
+        3,
         SessionIface::new(1, "eth0", None),
         link_state,
         config,
@@ -766,6 +767,7 @@ async fn health_check_persistently_blind_rounds_fail_the_section() {
     link_status.just_change_status(ServiceStatus::Staring);
     let handle = tokio::spawn(health_check::run(
         link_id,
+        3,
         SessionIface::new(1, "eth0", None),
         link_state,
         config,
@@ -821,6 +823,7 @@ async fn health_check_local_error_target_carries_no_link_evidence() {
     link_status.just_change_status(ServiceStatus::Staring);
     let handle = tokio::spawn(health_check::run(
         link_id,
+        3,
         SessionIface::new(1, "eth0", None),
         link_state,
         config,
@@ -875,6 +878,7 @@ async fn health_check_local_error_target_does_not_block_recovery() {
     link_status.just_change_status(ServiceStatus::Staring);
     let handle = tokio::spawn(health_check::run(
         link_id,
+        3,
         SessionIface::new(1, "eth0", None),
         link_state,
         config,
@@ -933,6 +937,7 @@ async fn health_check_local_error_target_does_not_wedge_full_reliability() {
     link_status.just_change_status(ServiceStatus::Staring);
     let handle = tokio::spawn(health_check::run(
         link_id,
+        3,
         SessionIface::new(1, "eth0", None),
         link_state,
         config,
@@ -948,6 +953,96 @@ async fn health_check_local_error_target_does_not_wedge_full_reliability() {
     assert_eq!(info.targets[0].target, healthy_target);
     assert_eq!(info.consecutive_failures, 0);
     assert_eq!(link_status.current(), ServiceStatus::Running);
+
+    link_status.just_change_status(ServiceStatus::Stopping);
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("runner did not stop")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn health_check_runner_forwards_chain_id_dev_and_src_to_probe() {
+    use std::net::Ipv4Addr;
+    use std::sync::Mutex;
+
+    use landscape_common::wan_link::WanLinkHealthState;
+
+    use super::health_check;
+    use super::probe::{ProbeError, WanHealthProbe};
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct ProbeCall {
+        dev: String,
+        src: Ipv4Addr,
+        chain_id: u16,
+        target: Ipv4Addr,
+    }
+
+    struct CaptureProbe {
+        seen: Arc<Mutex<Vec<ProbeCall>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WanHealthProbe for CaptureProbe {
+        async fn ping_v4(
+            &self,
+            dev: &str,
+            src: Ipv4Addr,
+            chain_id: u16,
+            target: Ipv4Addr,
+            _timeout: Duration,
+        ) -> Result<Option<Duration>, ProbeError> {
+            self.seen.lock().unwrap().push(ProbeCall {
+                dev: dev.to_string(),
+                src,
+                chain_id,
+                target,
+            });
+            Ok(Some(Duration::from_millis(4)))
+        }
+    }
+
+    let route_service = landscape_core::route::test_used_ip_route();
+    let link_id = Uuid::new_v4();
+    let chain_id = 3u16;
+    let src = Ipv4Addr::new(100, 65, 247, 59);
+    let target = Ipv4Addr::new(223, 5, 5, 5);
+
+    let (link_state, _state_rx) = LinkStateHandle::new(None);
+    link_state
+        .session_up(SessionIface::new(37, "enp1s0.101", None), Some(WanV4Lease::new(37, src)));
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let probe: Arc<dyn WanHealthProbe> = Arc::new(CaptureProbe { seen: seen.clone() });
+    let config = health_config(vec![target]);
+
+    let link_status = ServiceHandle::new();
+    link_status.just_change_status(ServiceStatus::Staring);
+    let handle = tokio::spawn(health_check::run(
+        link_id,
+        chain_id,
+        SessionIface::new(37, "enp1s0.101", None),
+        link_state,
+        config,
+        link_status.clone(),
+        probe,
+        route_service.clone(),
+        runtime_slot(),
+    ));
+
+    wait_health(&route_service, link_id, WanLinkHealthState::Healthy).await;
+    {
+        let calls = seen.lock().unwrap();
+        let expected = ProbeCall {
+            dev: "enp1s0.101".to_string(),
+            src,
+            chain_id,
+            target,
+        };
+        assert!(!calls.is_empty(), "probe must have been invoked");
+        assert!(calls.iter().all(|c| c == &expected), "unexpected probe arguments: {calls:?}");
+    }
 
     link_status.just_change_status(ServiceStatus::Stopping);
     tokio::time::timeout(Duration::from_secs(2), handle)

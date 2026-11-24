@@ -772,3 +772,43 @@ fn normal_flow_mark_is_preserved_in_ct() {
         assert_eq!(lan[3], 1, "Normal layout keeps allow_reuse");
     });
 }
+
+#[test]
+fn skip_route_wan_icmp_probe_is_tracked_with_strict_reuse_and_reply_restores_id() {
+    with_skel(&[], &[], &[ICMP_EXTERNAL_ID], |skel| {
+        assert_eq!(skip_route_mark(2), 0x0200_0002);
+        // Set bit 15 in chain_id (0x8002) under SkipRoute (tag=2) to prove
+        // WAN-sourced ICMP probes create dynamic NAT4 mappings and CT entries
+        // without leaking chain_id bits into allow_reuse or flow_id.
+        let mark = skip_route_mark(0x8002);
+        let (ret, out) = run_marked(
+            &skel.progs.tc_v4_from_lan,
+            &icmp_pkt(WAN_IP, REMOTE_IP, ICMP_INTERNAL_ID, true),
+            mark,
+        );
+        assert_eq!(ret, TC_ACT_UNSPEC);
+        let (dst, id) = parse_icmp_dst_id(&out);
+        assert_eq!(dst, REMOTE_IP);
+        assert_eq!(id, ICMP_EXTERNAL_ID);
+
+        let wan_key = from_wan_index(PROTO_ICMP, ICMP_EXTERNAL_ID).to_ne_bytes();
+        let wan_raw = skel.maps.napt_from_wan.lookup(&wan_key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(wan_raw[6], KIND_DYNAMIC);
+        assert_eq!(wan_raw[7], 0, "SkipRoute ICMP mapping must force allow_reuse = 0");
+
+        let lan_key = from_lan_key(WAN_IP, ICMP_INTERNAL_ID, PROTO_ICMP);
+        let lan_raw = skel.maps.napt_from_lan.lookup(&lan_key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(lan_raw[3], 0, "SkipRoute ICMP LAN mapping must force allow_reuse = 0");
+
+        let key = ct_key(WAN_IP, ICMP_INTERNAL_ID, REMOTE_IP, 0, PROTO_ICMP);
+        let ct_raw = skel.maps.napt_ct.lookup(&key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(ct_flow_id(&ct_raw), 0, "SkipRoute ICMP CT must keep flow_id = 0");
+
+        let (ret, out) =
+            run(&skel.progs.tc_v4_from_wan, &icmp_pkt(REMOTE_IP, WAN_IP, ICMP_EXTERNAL_ID, false));
+        assert_eq!(ret, TC_ACT_OK);
+        let (dst, id) = parse_icmp_dst_id(&out);
+        assert_eq!(dst, WAN_IP);
+        assert_eq!(id, ICMP_INTERNAL_ID);
+    });
+}

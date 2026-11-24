@@ -15,6 +15,7 @@ mod runtime_impls;
 pub mod skel;
 pub mod stages;
 pub mod tproxy;
+mod wan_policy_route;
 pub mod xdp_attach;
 
 #[cfg(test)]
