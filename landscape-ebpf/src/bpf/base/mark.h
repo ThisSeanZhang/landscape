@@ -81,6 +81,17 @@ static __always_inline bool get_flow_allow_reuse_port(u32 original) {
 // Get the mark layout type (bits 24-31)
 static __always_inline u8 get_mark_type(u32 original) { return (original & MARK_TYPE_MASK) >> 24; }
 
+// Whether the mark uses the Normal FlowMark layout (high 8 bits are zero).
+static __always_inline bool is_normal_mark(u32 original) {
+    return get_mark_type(original) == MARK_TYPE_NORMAL;
+}
+
+// FlowMark bits are only meaningful in the Normal layout; every skip
+// layout stores a chain id in the low 16 bits instead.
+static __always_inline u32 get_flow_mark(u32 original) {
+    return is_normal_mark(original) ? original : 0;
+}
+
 // Whether the mark bypasses the route lookup (either SkipRoute layout).
 // SkipAll is intentionally excluded: it is handled before this check.
 static __always_inline bool is_skip_route(u32 original) {

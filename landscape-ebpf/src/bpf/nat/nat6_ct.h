@@ -57,8 +57,9 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
         .remote_port = remote_port,
     };
     COPY_ADDR_FROM(key.local.client_suffix, (const u8 *)local + sizeof(prefix));
+    u32 flow_mark = get_flow_mark(mark);
     bool icmp_error = off->icmp_inner_l4_offset != 0;
-    bool allow_reuse = get_flow_allow_reuse_port(mark);
+    bool allow_reuse = get_flow_allow_reuse_port(flow_mark);
     struct nat6_timer_value *ct = bpf_map_lookup_elem(&nat6_timer_map, &key);
     if (unlikely(!ct)) {
         struct static_nat6_mapping_value *rule = nat6_lookup_static(&key.local);
@@ -86,7 +87,7 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
         initial.need_prefix_replace = out->replace;
         initial.create_time = bpf_ktime_get_tai_ns();
         initial.cpu_id = bpf_get_smp_processor_id();
-        initial.flow_id = get_flow_id(mark);
+        initial.flow_id = get_flow_id(flow_mark);
         initial.ifindex = ifindex;
         initial.client_prefix = out->client_prefix;
         ct = nat6_insert_timer(&key, &initial);
@@ -123,7 +124,7 @@ static __always_inline int nat6_resolve(const struct ip6_scan_offsets *off,
                     }
                 }
                 ct->client_prefix = prefix;
-                ct->flow_id = get_flow_id(mark);
+                ct->flow_id = get_flow_id(flow_mark);
             }
         }
         if (egress) {

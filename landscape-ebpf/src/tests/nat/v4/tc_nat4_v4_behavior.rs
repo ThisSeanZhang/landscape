@@ -6,11 +6,15 @@ use etherparse::{
     IcmpEchoHeader, Icmpv4Type, IpFragOffset, IpHeaders, IpNumber, Ipv4Extensions, Ipv4Header,
     NetHeaders, PacketBuilder, PacketHeaders, TransportHeader, icmpv4,
 };
+use landscape_common::flow::mark::{FlowMark, FlowMarkAction, MarkType, SocketMark};
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput, ProgramMut,
     skel::{OpenSkel, SkelBuilder as _},
 };
+use zerocopy::IntoBytes;
 
+use crate::tests::TestSkb;
+use crate::tests::helper::map::skip_route_mark;
 use crate::tests::tc_nat4_v4_skel::{TcNat4V4Skel, TcNat4V4SkelBuilder};
 
 const TC_ACT_OK: i32 = 0;
@@ -100,6 +104,19 @@ fn run(prog: &ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>) {
     let input = ProgramInput {
         data_in: Some(pkt),
         data_out: Some(&mut out),
+        ..Default::default()
+    };
+    let ret = prog.test_run(input).expect("test_run failed").return_value as i32;
+    (ret, out)
+}
+
+fn run_marked(prog: &ProgramMut<'_>, pkt: &[u8], mark: u32) -> (i32, Vec<u8>) {
+    let mut out = vec![0u8; pkt.len()];
+    let mut ctx = TestSkb { mark, ..Default::default() };
+    let input = ProgramInput {
+        data_in: Some(pkt),
+        data_out: Some(&mut out),
+        context_in: Some(ctx.as_mut_bytes()),
         ..Default::default()
     };
     let ret = prog.test_run(input).expect("test_run failed").return_value as i32;
@@ -702,5 +719,56 @@ fn lan_broadcast_mac_is_not_natted() {
         let key = from_wan_index(PROTO_UDP, UDP_NAT_PORT).to_ne_bytes();
         let wan = skel.maps.napt_from_wan.lookup(&key, MapFlags::ANY).unwrap().unwrap();
         assert_eq!(wan[6], KIND_FREE);
+    });
+}
+
+fn ct_flow_id(bytes: &[u8]) -> u8 {
+    bytes[std::mem::offset_of!(crate::tests::tc_nat4_v4_skel::types::napt_ct_value, flow_id)]
+}
+
+#[test]
+fn skip_route_mark_does_not_leak_chain_id_into_ct_flow_id() {
+    with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
+        // bit 15 of the chain id is the Normal-layout allow_reuse bit; the
+        // low byte is the Normal-layout flow id.
+        let mark = skip_route_mark(0x8003);
+        let (ret, _) = run_marked(
+            &skel.progs.tc_v4_from_lan,
+            &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT),
+            mark,
+        );
+        assert_eq!(ret, TC_ACT_UNSPEC);
+
+        let key = ct_key(LAN_HOST, LAN_PORT, REMOTE_IP, REMOTE_PORT, PROTO_UDP);
+        let val = skel.maps.napt_ct.lookup(&key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(ct_flow_id(&val), 0, "chain id must not become a CT flow id");
+
+        let lan_key = from_lan_key(LAN_HOST, LAN_PORT, PROTO_UDP);
+        let lan = skel.maps.napt_from_lan.lookup(&lan_key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(lan[3], 0, "chain id must not set allow_reuse");
+    });
+}
+
+#[test]
+fn normal_flow_mark_is_preserved_in_ct() {
+    with_skel(&[UDP_NAT_PORT], &[], &[], |skel| {
+        let mark = u32::from(SocketMark::new(
+            MarkType::Normal(FlowMark::new(FlowMarkAction::Redirect, 5, true)),
+            0,
+        ));
+        let (ret, _) = run_marked(
+            &skel.progs.tc_v4_from_lan,
+            &udp_pkt(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT),
+            mark,
+        );
+        assert_eq!(ret, TC_ACT_UNSPEC);
+
+        let key = ct_key(LAN_HOST, LAN_PORT, REMOTE_IP, REMOTE_PORT, PROTO_UDP);
+        let val = skel.maps.napt_ct.lookup(&key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(ct_flow_id(&val), 5, "Normal layout keeps its flow id");
+
+        let lan_key = from_lan_key(LAN_HOST, LAN_PORT, PROTO_UDP);
+        let lan = skel.maps.napt_from_lan.lookup(&lan_key, MapFlags::ANY).unwrap().unwrap();
+        assert_eq!(lan[3], 1, "Normal layout keeps allow_reuse");
     });
 }

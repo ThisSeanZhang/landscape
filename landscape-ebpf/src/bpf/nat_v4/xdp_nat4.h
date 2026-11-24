@@ -40,6 +40,7 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
     __u32 gen = 0;
     __u8 kind = NAPT_MAPPING_FREE;
     int mapping_new = 0;
+    u32 flow_mark = get_flow_mark(mark);
 
     struct napt_from_lan_value *lan = napt_lan_lookup(src_addr, internal_port, proto);
 
@@ -49,7 +50,7 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
         kind = lan->kind;
     } else {
         if (!allow_create) return NAPT_XDP_DROP;
-        __u8 allow_reuse = get_flow_allow_reuse_port(mark) ? 1 : 0;
+        __u8 allow_reuse = get_flow_allow_reuse_port(flow_mark) ? 1 : 0;
         if (napt_queue_pop(proto, &external_port, &gen) != 0) return NAPT_XDP_DROP;
         if (napt_create_dynamic_mapping(proto, src_addr, internal_port, dst_addr, remote_port,
                                         external_port, gen, allow_reuse) != 0) {
@@ -86,7 +87,7 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
 
     if (!mapping_new && mapping->kind == NAPT_MAPPING_DYNAMIC &&
         mapping->trigger_addr == dst_addr && mapping->trigger_port == remote_port) {
-        __u8 allow_reuse = get_flow_allow_reuse_port(mark) ? 1 : 0;
+        __u8 allow_reuse = get_flow_allow_reuse_port(flow_mark) ? 1 : 0;
         mapping->allow_reuse = allow_reuse;
         if (lan && lan->kind == NAPT_MAPPING_DYNAMIC) lan->allow_reuse = allow_reuse;
     }
@@ -104,8 +105,8 @@ static __always_inline int xdp_napt_lan_state(const struct xdp_nat_view *view, _
             return NAPT_XDP_DROP;
         }
 
-        ct = napt_ct_create(ifindex, mark, &key, external_port, gen, kind == NAPT_MAPPING_STATIC,
-                            NAPT_GRESS_LAN, mapping);
+        ct = napt_ct_create(ifindex, flow_mark, &key, external_port, gen,
+                            kind == NAPT_MAPPING_STATIC, NAPT_GRESS_LAN, mapping);
         if (!ct) {
             if (mapping_new)
                 napt_rollback_new_mapping(proto, src_addr, internal_port, external_port, gen);
@@ -141,6 +142,7 @@ static __always_inline int xdp_napt_wan_state(const struct xdp_nat_view *view, _
     __be16 remote_port = icmp ? 0 : view->sport;
     __u32 gen = 0;
     int static_mapping;
+    u32 flow_mark = get_flow_mark(*mark);
 
     struct napt_from_wan_value *mapping = napt_wan_lookup(proto, external_port);
     if (!mapping || (mapping->kind != NAPT_MAPPING_DYNAMIC && mapping->kind != NAPT_MAPPING_STATIC))
@@ -170,7 +172,7 @@ static __always_inline int xdp_napt_wan_state(const struct xdp_nat_view *view, _
     if (!ct) {
         if (!allow_create) return NAPT_XDP_DROP;
 
-        ct = napt_ct_create(ifindex, *mark, &key, external_port, gen, static_mapping,
+        ct = napt_ct_create(ifindex, flow_mark, &key, external_port, gen, static_mapping,
                             NAPT_GRESS_WAN, mapping);
         if (!ct) return NAPT_XDP_DROP;
     }

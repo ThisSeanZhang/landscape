@@ -594,4 +594,49 @@ mod tests {
         assert_eq!(lookup_ct6_entry(&skel.maps.nat6_timer_map, &first).egress_packets, 3);
         assert_eq!(lookup_ct6_entry(&skel.maps.nat6_timer_map, &second).egress_packets, 3);
     }
+    #[test]
+    fn skip_route_mark_does_not_leak_chain_id_into_nat6_ct() {
+        let src = lan_host();
+        let peer = remote();
+        let key = timer_key_for(src, CLIENT_PORT, 60, peer, 443);
+
+        let mut builder = TcNat6SkelBuilder::default();
+        let root = crate::tests::isolated_pin_root("nat6-skip-route-mark");
+        builder.object_builder_mut().pin_root_path(&root).unwrap();
+        let mut obj = MaybeUninit::uninit();
+        let mut open = builder.open(&mut obj).unwrap();
+        let ro = open.maps.rodata_data.as_deref_mut().unwrap();
+        ro.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
+        ro.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        let skel = open.load().unwrap();
+
+        let mut frame = Vec::new();
+        PacketBuilder::ethernet2([2; 6], [4; 6])
+            .ipv6(src.octets(), peer.octets(), 64)
+            .tcp(CLIENT_PORT, 443, 1, 4096)
+            .syn()
+            .write(&mut frame, &[])
+            .unwrap();
+
+        let mut ctx = TestSkb {
+            ifindex: IFINDEX,
+            mark: crate::tests::helper::map::skip_route_mark(0x8003),
+            ..Default::default()
+        };
+        let ret = skel
+            .progs
+            .tc_nat_wan_egress_v6
+            .test_run(ProgramInput {
+                data_in: Some(&frame),
+                context_in: Some(ctx.as_mut_bytes()),
+                ..Default::default()
+            })
+            .unwrap()
+            .return_value as i32;
+        assert_eq!(ret, -1);
+
+        let ct = lookup_ct6_entry(&skel.maps.nat6_timer_map, &key);
+        assert_eq!(ct.flow_id, 0, "chain id must not become a NAT6 flow id");
+        assert_eq!(ct.allow_reuse, 0, "chain id must not set allow_reuse");
+    }
 }
