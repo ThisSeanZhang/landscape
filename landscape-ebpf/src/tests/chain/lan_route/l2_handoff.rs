@@ -37,7 +37,7 @@
 //!      fed both real post-XDP frames from Stage 1, asserting both produce the
 //!      same `(CONFIRMED_MAC, WAN_MAC)` Ethernet header.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
@@ -195,7 +195,7 @@ fn recv_matching_frame(capture: &mut socket2::Socket, orig_frame: &[u8], label: 
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         match capture.read(&mut buf) {
-            Ok(n) if n >= orig_frame.len() && buf[12..orig_frame.len()] == orig_frame[12..] => {
+            Ok(n) if n >= orig_frame.len() && buf[14..orig_frame.len()] == orig_frame[14..] => {
                 return buf[..orig_frame.len()].to_vec();
             }
             Ok(_) => continue,
@@ -234,26 +234,81 @@ fn assert_final_wan_l2(frame: &[u8], orig_frame: &[u8], label: &str) {
 enum LanIngress {
     XdpHandoff(Family),
     TcV6,
+    TcV6Tun,
+}
+
+enum LanDev {
+    Veth(VethPair),
+    Tun(std::fs::File, u32),
+}
+
+impl LanDev {
+    fn ifindex(&self) -> u32 {
+        match self {
+            Self::Veth(pair) => pair.host_ifindex(),
+            Self::Tun(_, ifindex) => *ifindex,
+        }
+    }
+
+    fn inject(&mut self, peer_ns: &NetNsGuard, frame: &[u8]) {
+        match self {
+            Self::Veth(pair) => {
+                let _peer = peer_ns.enter();
+                send_raw_packet(pair.peer(), frame);
+            }
+            Self::Tun(tun, _) => {
+                let raw_l3 = &frame[14..];
+                assert_eq!(raw_l3[0] >> 4, 6, "TUN fixture payload must be bare IPv6");
+                tun.write_all(raw_l3).expect("inject bare IPv6 packet into TUN");
+            }
+        }
+    }
+}
+
+fn open_tun(name: &str) -> (std::fs::File, u32) {
+    let tun = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open("/dev/net/tun")
+        .expect("open /dev/net/tun");
+    // SAFETY: ifreq is a plain C struct safe to zero-initialize.
+    let mut ifr: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (dst, src) in ifr.ifr_name.iter_mut().zip(name.bytes()) {
+        *dst = src as libc::c_char;
+    }
+    ifr.ifr_ifru.ifru_flags = (libc::IFF_TUN | libc::IFF_NO_PI) as libc::c_short;
+    // SAFETY: TUNSETIFF takes a writable ifreq for this open TUN fd.
+    let rc = unsafe { libc::ioctl(tun.as_raw_fd(), libc::TUNSETIFF, &mut ifr) };
+    assert_eq!(rc, 0, "TUNSETIFF {name}: {}", std::io::Error::last_os_error());
+    let up = std::process::Command::new("ip")
+        .args(["link", "set", "dev", name, "up"])
+        .output()
+        .expect("bring up TUN");
+    assert!(up.status.success(), "ip link set {name} up: {}", String::from_utf8_lossy(&up.stderr));
+    let ifindex = nix::net::if_::if_nametoindex(name).expect("TUN ifindex");
+    (tun, ifindex)
 }
 
 fn run_live_veth(ingress: LanIngress) {
-    let family = match ingress {
-        LanIngress::XdpHandoff(family) => family,
-        LanIngress::TcV6 => Family::V6,
-    };
-    let handoff = matches!(ingress, LanIngress::XdpHandoff(_));
-    let tag = match family {
-        Family::V4 => "v4",
-        Family::V6 => "v6",
+    let (family, tag, handoff, pure_l3) = match ingress {
+        LanIngress::XdpHandoff(Family::V4) => (Family::V4, "v4", true, false),
+        LanIngress::XdpHandoff(Family::V6) => (Family::V6, "v6", true, false),
+        LanIngress::TcV6 => (Family::V6, "tcv6", false, false),
+        LanIngress::TcV6Tun => (Family::V6, "l3v6", false, true),
     };
     let test_ns = NetNsGuard::create(&format!("l2h{tag}"));
     let peer_ns = NetNsGuard::create(&format!("l2p{tag}"));
     // TCAttach::drop also looks up the ifindex in the current netns. Keep the
-    // router namespace active for the full lifetime of both hooks, including unwind.
+    // router namespace and LAN device active for the full lifetime of both hooks.
     let _router_ns = test_ns.enter();
-    let lan_pair = VethPair::create_with_netns(&format!("l2l{tag}"), &peer_ns);
+    let mut lan_dev = if pure_l3 {
+        let (tun, ifindex) = open_tun(&format!("l3l{tag}"));
+        LanDev::Tun(tun, ifindex)
+    } else {
+        LanDev::Veth(VethPair::create_with_netns(&format!("l2l{tag}"), &peer_ns))
+    };
     let wan_pair = VethPair::create_with_netns(&format!("l2w{tag}"), &peer_ns);
-    let lan_ifindex = lan_pair.host_ifindex();
+    let lan_ifindex = lan_dev.ifindex();
     let wan_ifindex = wan_pair.host_ifindex();
     assert_ne!(lan_ifindex, wan_ifindex, "LAN and WAN ifindexes must differ");
 
@@ -277,7 +332,13 @@ fn run_live_veth(ingress: LanIngress) {
     let mut tb = TcLanIngressRouteSkelBuilder::default();
     tb.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut topen = tb.open(&mut tobj).expect("open tc_lan_ingress_route");
-    topen.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = handoff;
+    {
+        let rodata = topen.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.xdp_handoff_enabled = handoff;
+        if pure_l3 {
+            rodata.current_l3_offset = 0;
+        }
+    }
     pin_and_reuse_map(&mut topen.maps.ip_mac_v4, &paths.ip_mac_v4).unwrap();
     pin_and_reuse_map(&mut topen.maps.ip_mac_v6, &paths.ip_mac_v6).unwrap();
     pin_and_reuse_map(&mut topen.maps.xdp_redirect_able, &paths.xdp_redirect_able).unwrap();
@@ -306,11 +367,15 @@ fn run_live_veth(ingress: LanIngress) {
     };
 
     let mut check_wire = |label: &str| {
-        {
-            let _peer = peer_ns.enter();
-            send_raw_packet(lan_pair.peer(), &case.packet);
-        }
+        lan_dev.inject(&peer_ns, &case.packet);
         let wire = recv_matching_frame(&mut capture, &case.packet, label);
+        if pure_l3 {
+            assert_eq!(
+                &wire[12..14],
+                &[0x86, 0xdd],
+                "{label}: rebuilt Ethernet header must carry IPv6 EtherType 0x86dd"
+            );
+        }
         assert_final_wan_l2(&wire, &case.packet, label);
         wire
     };
@@ -344,6 +409,12 @@ fn xdp_to_tc_cold_vs_warm_live_veth_v6() {
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn tc_ipv6_lan_cache_leaves_l2_to_wan_root_live_veth() {
     run_live_veth(LanIngress::TcV6);
+}
+
+#[test]
+#[ignore = "requires root, /dev/net/tun and network namespaces; run with --include-ignored"]
+fn tc_ipv6_pure_l3_lan_to_eth_wan_cold_vs_warm_live_tun() {
+    run_live_veth(LanIngress::TcV6Tun);
 }
 
 // ── 2. Two-stage BPF_PROG_TEST_RUN comparison (default non-ignored) ──
