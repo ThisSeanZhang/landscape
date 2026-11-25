@@ -11,10 +11,13 @@ use libbpf_rs::{
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::maps::route::cache::WAN_CACHE;
+use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
 use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{v4_entry, wan_trie_publish};
-use crate::maps::{Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue};
+use crate::maps::{
+    Route4CacheKey, Route4CacheValue, Route4SlotKey, Route4TargetInfo, Route6CacheKey,
+    Route6CacheValue, Route6SlotKey, Route6TargetInfo,
+};
 use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
 use crate::skel::xdp_lan_route::XdpLanRouteSkelBuilder;
@@ -726,6 +729,132 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
     let updated: Route6CacheValue = read_unaligned(&raw);
     assert_eq!(updated.link_chain_id, VALID_CHAIN as u16);
     assert_eq!(updated.ifindex, WAN_IFINDEX);
+}
+
+// ── Test D3: an unresolved LAN cache entry must behave exactly like a miss ──
+
+fn check_unresolved_lan_cache(
+    pin: &std::path::Path,
+    packet: &[u8],
+    cache: MapHandle,
+    key: &[u8],
+    stale: &[u8],
+    expected: &[u8],
+) {
+    let mut builder = XdpLanRouteSkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(pin).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let route = builder.open(&mut obj).unwrap().load().unwrap();
+
+    // Flow 0 tail-calls the dummy. Flow 5 has a different, TC-only target:
+    // choosing it would not reach the dummy and would cache a different ifindex.
+    let mut dummy_obj = std::mem::MaybeUninit::uninit();
+    let dummy = TestXdpDummySkelBuilder::default().open(&mut dummy_obj).unwrap().load().unwrap();
+    let fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd() as u32;
+    route
+        .maps
+        .xdp_lan_pipe_root_progs
+        .update(&9u32.to_ne_bytes(), &fd.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    route
+        .maps
+        .xdp_redirect_able
+        .update(&42u32.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let mut input = vec![0u8; 12]; // xdp_pipe_meta
+    input.extend_from_slice(packet);
+    let mut ctx = XdpMd {
+        data: 12,
+        data_end: input.len() as u32,
+        ingress_ifindex: 3,
+        ..Default::default()
+    };
+    let is_v6 = packet[12..14] == [0x86, 0xdd];
+    for (i, entry) in [None, Some(stale)].into_iter().enumerate() {
+        if let Some(entry) = entry {
+            cache.update(key, entry, MapFlags::ANY).unwrap();
+        }
+        let ret = route
+            .progs
+            .xdp_lan_route
+            .test_run(ProgramInput {
+                data_in: Some(&input),
+                context_in: Some(ctx.as_mut_bytes()),
+                ..Default::default()
+            })
+            .unwrap()
+            .return_value;
+        assert_eq!(ret, 2, "expected XDP_PASS from the default flow's chain");
+        assert_eq!(dummy_recv_count(&dummy.maps.dummy_recv_map, is_v6), (i + 1) as u64);
+        assert_eq!(cache.lookup(key, MapFlags::ANY).unwrap().unwrap(), expected);
+    }
+}
+
+#[test]
+fn xdp_lan_route_zero_ifindex_lan_cache_rebuilds_to_current_flow() {
+    let pin = crate::tests::isolated_pin_root("xdp-lr-zero-lan-v4");
+    let maps = crate::tests::init_shared_maps_for_test(&pin);
+    let local = Ipv4Addr::new(10, 0, 0, 1);
+    let remote = Ipv4Addr::new(203, 0, 113, 1);
+    let slot = route_slot(remote.to_bits());
+    for (flow_id, ifindex, link_chain_id) in [(0, 42, 9), (5, 43, 10)] {
+        let key = Route4SlotKey { flow_id, slot };
+        let target = Route4TargetInfo { ifindex, link_chain_id, ..Default::default() };
+        maps.rt4_slot_map.update(as_bytes(&key), as_bytes(&target), MapFlags::ANY).unwrap();
+    }
+    let key = Route4CacheKey {
+        local_addr: local.to_bits().to_be(),
+        remote_addr: remote.to_bits().to_be(),
+    };
+    let stale = Route4CacheValue { mark_value: 0x0305, ..Default::default() };
+    let expected = Route4CacheValue {
+        ifindex: 42,
+        link_chain_id: 9,
+        xdp_redirect_able: 1,
+        ..Default::default()
+    };
+    check_unresolved_lan_cache(
+        &pin,
+        &simple_ipv4_tcp(local, remote),
+        lookup_inner_map(&maps.rt4_cache_map, LAN_CACHE),
+        as_bytes(&key),
+        as_bytes(&stale),
+        as_bytes(&expected),
+    );
+}
+
+#[test]
+fn xdp_lan_route_zero_ifindex_lan_cache_rebuilds_to_current_flow_v6() {
+    let pin = crate::tests::isolated_pin_root("xdp-lr-zero-lan-v6");
+    let maps = crate::tests::init_shared_maps_for_test(&pin);
+    let local = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+    let remote = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
+    let slot = route_slot_v6(&remote.octets());
+    for (flow_id, ifindex, link_chain_id) in [(0, 42, 9), (5, 43, 10)] {
+        let key = Route6SlotKey { flow_id, slot };
+        let target = Route6TargetInfo { ifindex, link_chain_id, ..Default::default() };
+        maps.rt6_slot_map.update(as_bytes(&key), as_bytes(&target), MapFlags::ANY).unwrap();
+    }
+    let key = Route6CacheKey {
+        local_addr: local.octets(),
+        remote_addr: remote.octets(),
+    };
+    let stale = Route6CacheValue { mark_value: 0x0305, ..Default::default() };
+    let expected = Route6CacheValue {
+        ifindex: 42,
+        link_chain_id: 9,
+        xdp_redirect_able: 1,
+        ..Default::default()
+    };
+    check_unresolved_lan_cache(
+        &pin,
+        &simple_ipv6_tcp_syn(local, remote),
+        lookup_inner_map(&maps.rt6_cache_map, LAN_CACHE),
+        as_bytes(&key),
+        as_bytes(&stale),
+        as_bytes(&expected),
+    );
 }
 
 // ── Test E: unknown IP must not be redirected (regression guard) ──

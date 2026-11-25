@@ -7,9 +7,7 @@
 //! divergences noted below) before any route rewrite.
 //!
 //! Baseline quirks locked here (see tc_lan_ingress_route.bpf.c):
-//!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT, i.e. the TC
-//!     worker drops even default-flow traffic, unlike the XDP/legacy twin
-//!     which passes it (DROP default flow branch);
+//!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT;
 //!   * skb->mark is written only on two paths: search-cache non-OK returns
 //!     and after a OK verdict — lan_redirect and flow-verdict short returns
 //!     leave the mark untouched;
@@ -17,7 +15,9 @@
 //!     TC_CHAIN_CB_FORWARDED_OFFSET cb flag;
 //!   * a cache hit with ifindex != 0 redirects without learning but still
 //!     stamps the cb forwarded flag (route4_redirect_by_cached_target);
-//!     a cache hit with ifindex == 0 goes through pick_wan (cb set there too);
+//!     a LAN-cache entry with ifindex == 0 is treated as a true cache miss
+//!     (without leaking its stale mark) and falls through to the slow path,
+//!     which rebuilds the cache entry on redirect;
 //!   * a WAN-cache hit only stamps the target chain and redirects; the WAN
 //!     link's from-LAN root owns the Ethernet rewrite and neigh fallback.  The
 //!     cache path does NOT update the flow mark value.

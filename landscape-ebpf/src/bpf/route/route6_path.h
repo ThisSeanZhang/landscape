@@ -366,90 +366,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route6_pick_wan_and_send_by_flow_id(struct __sk_buff *skb,
-                                                               u32 current_l3_offset,
-                                                               const struct route6_context *context,
-                                                               const u32 flow_id) {
-    int ret;
-    const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route6_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route6_target_slot(&context->daddr),
-    };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
-
-    // 找不到转发的 target 按照原有计划进行处理
-    if (target_info == NULL) {
-        if (resolved_flow_id == 0) {
-            // Default flow PASS
-            return TC_ACT_UNSPEC;
-        } else {
-            ld_from_lan_log("DROP flow_id v6: %d", resolved_flow_id);
-            // Other DROP
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->ifindex == skb->ifindex) {
-        // Belongs to the current ifindex No redirection required
-        return TC_ACT_UNSPEC;
-    }
-
-    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
-    // chain through these flags; without them the skb carries stale cb from
-    // recycled sk_buffs and dies at the WAN egress root tail call.
-    tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (current_l3_offset == 0 && target_info->has_mac) {
-        if (prepend_dummy_mac_v6(skb) != 0) {
-            ld_from_lan_log("add dummy_mac fail");
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->is_docker) {
-        ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-        if (ret) {
-            ld_from_lan_log("bpf_skb_vlan_push error");
-        }
-        ret = bpf_redirect(target_info->ifindex, 0);
-        if (ret != 7) {
-            ld_from_lan_log("bpf_redirect docker error: %d", ret);
-        }
-        return ret;
-    }
-
-    // ld_from_lan_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
-    // ld_from_lan_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
-
-    bool target_has_mac = target_info->has_mac;
-
-    if (!target_has_mac) {
-        return bpf_redirect(target_info->ifindex, 0);
-    } else {
-        struct mac_value_v6 *mac_value = bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
-        if (mac_value) {
-            ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-            if (!ret) {
-                return bpf_redirect(target_info->ifindex, 0);
-            }
-        } else {
-            ld_from_lan_log("can't find mac by: %pI6", &target_info->gate_addr);
-        }
-    }
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET6;
-
-    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr8);
-    ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (ret != 7) {
-        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
-    }
-    return ret;
-}
-
 static __always_inline int route6_is_current_wan_packet(struct __sk_buff *skb,
                                                         u32 current_l3_offset,
                                                         struct route6_context *context) {
@@ -549,13 +465,9 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
-                return route6_redirect_by_cached_target(skb, current_l3_offset, target);
-            }
-            return route6_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
-                                                       target->mark_value);
+            return route6_redirect_by_cached_target(skb, current_l3_offset, target);
         }
     }
 
@@ -642,7 +554,7 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             target->mark_value = flow_mark;
         } else {
             const u32 resolved_flow_id = get_flow_id(flow_mark);

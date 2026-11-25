@@ -12,9 +12,7 @@
 //! and locks the current behaviour before any route rewrite.
 //!
 //! Baseline quirks locked here (see tc_wan_egress_route.bpf.c):
-//!   * no slot target + default flow → TC_ACT_SHOT (same divergence as the
-//!     lan worker; the legacy route4_pick_wan_and_send_by_flow_id twin passes
-//!     default-flow traffic instead);
+//!   * no slot target + default flow → TC_ACT_SHOT (same as the TC LAN worker);
 //!   * a slot target on the egress device itself (ifindex == skb->ifindex)
 //!     tail-calls into tc_wan_egress_roots[target chain]; with the root map
 //!     empty (no chain assembled) the packet is dropped — root assembly is

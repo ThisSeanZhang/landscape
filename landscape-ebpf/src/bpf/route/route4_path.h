@@ -367,65 +367,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff *skb,
-                                                               u32 current_l3_offset,
-                                                               const struct route4_context *context,
-                                                               const u32 flow_id) {
-    int ret;
-    const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route4_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route4_target_slot(context->daddr),
-    };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
-
-    // 找不到转发的 target 按照原有计划进行处理
-    if (target_info == NULL) {
-        if (resolved_flow_id == 0) {
-            // Default flow PASS
-            return TC_ACT_UNSPEC;
-        } else {
-            ld_from_lan_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
-            // Other DROP
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->ifindex == skb->ifindex) {
-        // Belongs to the current ifindex No redirection required
-        return TC_ACT_UNSPEC;
-    }
-
-    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
-    // chain through these flags; without them the skb carries stale cb from
-    // recycled sk_buffs and dies at the WAN egress root tail call.
-    tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (current_l3_offset == 0 && target_info->has_mac) {
-        if (prepend_dummy_mac(skb, target_info->is_docker) != 0) {
-            ld_from_lan_log("add dummy_mac fail");
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->is_docker) {
-        ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-        if (ret) {
-            ld_from_lan_log("bpf_skb_vlan_push error");
-        }
-        ret = bpf_redirect(target_info->ifindex, 0);
-        if (ret != 7) {
-            ld_from_lan_log("bpf_redirect docker error: %d", ret);
-        }
-        return ret;
-    }
-
-    // The target WAN link's from-LAN root owns the Ethernet rewrite and
-    // neighbour fallback.  This legacy pick_wan path only selects the link.
-    return bpf_redirect(target_info->ifindex, 0);
-}
-
 static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
                                                         u32 current_l3_offset,
                                                         struct route4_context *context) {
@@ -511,13 +452,9 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
     void *lan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (lan_cache) {
         struct route4_cache_value *target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
-                return route4_redirect_by_cached_target(skb, current_l3_offset, target);
-            }
-            return route4_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
-                                                       target->mark_value);
+            return route4_redirect_by_cached_target(skb, current_l3_offset, target);
         }
     }
 
@@ -613,7 +550,7 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
     void *lan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             target->mark_value = flow_mark;
         } else {
             const u32 resolved_flow_id = get_flow_id(flow_mark);
