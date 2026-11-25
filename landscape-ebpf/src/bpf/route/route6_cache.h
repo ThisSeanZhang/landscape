@@ -17,13 +17,14 @@ struct route6_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
-    struct in6_addr gate_addr;
-    u8 mac[6];
     __u16 link_chain_id;
+    u8 _pad_tail[2];
 };
 
 _Static_assert(sizeof(struct route6_cache_key) == 32, "route6_cache_key must be 32 bytes");
-_Static_assert(sizeof(struct route6_cache_value) == 36, "route6_cache_value must be 36 bytes");
+_Static_assert(sizeof(struct route6_cache_value) == 16, "route6_cache_value must be 16 bytes");
+_Static_assert(__builtin_offsetof(struct route6_cache_value, link_chain_id) == 12,
+               "route6_cache_value link_chain_id must be at offset 12");
 
 // 缓存
 struct route6_each_cache {

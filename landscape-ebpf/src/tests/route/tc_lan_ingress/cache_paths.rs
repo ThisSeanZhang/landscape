@@ -116,12 +116,11 @@ fn lan_ingress_lan_cache_same_ifindex_entry_hands_to_stack() {
 
 #[test]
 fn lan_ingress_lan_cache_has_mac_entry_defers_rewrite_to_root() {
-    // The cached target is a WAN link.  Even with cached gateway data and a
-    // resolvable ip_mac_v4 entry, LAN ingress must only hand the packet to
-    // that link's root, which owns the single Ethernet rewrite.
+    // The cached target is a WAN link.  Even with has_mac set on the cached
+    // target and a resolvable ip_mac_v4 entry, LAN ingress must only hand the
+    // packet to that link's root, which owns the single Ethernet rewrite.
     load_skel!("tc-lan-flow-cache-gwmac", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    let entry_mac = [0x02, 0x44, 0x55, 0x66, 0x77, 0x88];
     put_rt4_cache_full(
         &skel.maps.rt4_cache_map,
         LAN_CACHE,
@@ -131,8 +130,6 @@ fn lan_ingress_lan_cache_has_mac_entry_defers_rewrite_to_root() {
         true,
         0x0305,
         false,
-        wan_gateway(),
-        entry_mac,
     );
     let gw_mac = MacAddr::from_str("02:55:66:77:88:99").unwrap();
     let gw_dev = MacAddr::from_str("02:aa:bb:cc:dd:f0").unwrap();
@@ -160,8 +157,6 @@ fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_defers_to_root() {
         true,
         0x0305,
         false,
-        wan_gateway(),
-        [0x02, 0x44, 0x55, 0x66, 0x77, 0x88],
     );
     // Leave the neighbour map empty to exercise the handoff on a miss.
 
@@ -186,8 +181,6 @@ fn lan_ingress_lan_cache_docker_entry_pushes_vlan_and_redirects() {
         false,
         0x0305,
         true,
-        Ipv4Addr::UNSPECIFIED,
-        [0; 6],
     );
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());

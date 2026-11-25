@@ -239,8 +239,6 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 cached->has_mac = info->has_mac;
                 cached->is_docker = info->is_docker;
                 cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                cached->gate_addr = info->gate_addr;
-                __builtin_memcpy(cached->mac, info->mac, 6);
                 cached->link_chain_id = info->link_chain_id;
             }
         }
@@ -257,8 +255,6 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 entry->has_mac = info->has_mac;
                 entry->is_docker = info->is_docker;
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                entry->gate_addr = info->gate_addr;
-                __builtin_memcpy(entry->mac, info->mac, 6);
                 entry->link_chain_id = info->link_chain_id;
             } else {
                 struct route4_cache_value new_entry = {};
@@ -267,8 +263,6 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
                 new_entry.has_mac = info->has_mac;
                 new_entry.is_docker = info->is_docker;
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                new_entry.gate_addr = info->gate_addr;
-                __builtin_memcpy(new_entry.mac, info->mac, 6);
                 new_entry.link_chain_id = info->link_chain_id;
                 bpf_map_update_elem(lan_cache, &cache_key, &new_entry, BPF_ANY);
             }
@@ -335,9 +329,6 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 cached->has_mac = info->has_mac;
                 cached->is_docker = info->is_docker;
                 cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                __builtin_memcpy(cached->gate_addr.in6_u.u6_addr8, info->gate_addr.in6_u.u6_addr8,
-                                 16);
-                __builtin_memcpy(cached->mac, info->mac, 6);
                 cached->link_chain_id = info->link_chain_id;
             }
         }
@@ -354,9 +345,6 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 entry->has_mac = info->has_mac;
                 entry->is_docker = info->is_docker;
                 entry->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                __builtin_memcpy(entry->gate_addr.in6_u.u6_addr8, info->gate_addr.in6_u.u6_addr8,
-                                 16);
-                __builtin_memcpy(entry->mac, info->mac, 6);
                 entry->link_chain_id = info->link_chain_id;
             } else {
                 struct route6_cache_value new_entry = {};
@@ -365,9 +353,6 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
                 new_entry.has_mac = info->has_mac;
                 new_entry.is_docker = info->is_docker;
                 new_entry.xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                __builtin_memcpy(new_entry.gate_addr.in6_u.u6_addr8, info->gate_addr.in6_u.u6_addr8,
-                                 16);
-                __builtin_memcpy(new_entry.mac, info->mac, 6);
                 new_entry.link_chain_id = info->link_chain_id;
                 bpf_map_update_elem(lan_cache, &cache_key, &new_entry, BPF_ANY);
             }

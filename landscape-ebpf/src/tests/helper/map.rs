@@ -125,8 +125,7 @@ pub(crate) fn make_rt4_cache_key(local: Ipv4Addr, remote: Ipv4Addr) -> Route4Cac
 }
 
 /// v4 twin of `put_rt6_cache_ifindex` (see `route4_cache_value` C layout).
-/// Full-control v4 cache insert (docker flag, gate addr, cached mac).
-/// `gate_addr`/`mac` back `route4_redirect_by_cached_target`'s rewrite branches.
+/// Full-control v4 cache insert (mark / docker flag).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn put_rt4_cache_full<T: MapCore>(
     outer_map: &T,
@@ -137,8 +136,6 @@ pub(crate) fn put_rt4_cache_full<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
     is_docker: bool,
-    gate_addr: Ipv4Addr,
-    mac: [u8; 6],
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt4_cache_key(local, remote);
@@ -147,8 +144,6 @@ pub(crate) fn put_rt4_cache_full<T: MapCore>(
         ifindex,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
-        gate_addr: gate_addr.to_bits().to_be(),
-        mac,
         ..Default::default()
     };
     inner
@@ -165,18 +160,7 @@ pub(crate) fn put_rt4_cache_value<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
 ) {
-    put_rt4_cache_full(
-        outer_map,
-        cache_index,
-        local,
-        remote,
-        ifindex,
-        has_mac,
-        mark_value,
-        false,
-        Ipv4Addr::UNSPECIFIED,
-        [0; 6],
-    );
+    put_rt4_cache_full(outer_map, cache_index, local, remote, ifindex, has_mac, mark_value, false);
 }
 
 pub(crate) fn put_rt4_cache_ifindex<T: MapCore>(
@@ -201,7 +185,7 @@ pub(crate) fn put_rt6_cache_ifindex<T: MapCore>(
     put_rt6_cache_value(outer_map, cache_index, local, remote, ifindex, has_mac, 0);
 }
 
-/// Full-control v6 cache insert (mark / docker / gate addr / cached mac),
+/// Full-control v6 cache insert (mark / docker flag),
 /// v6 twin of `put_rt4_cache_full`.
 pub(crate) fn put_rt6_cache_value<T: MapCore>(
     outer_map: &T,
@@ -212,18 +196,7 @@ pub(crate) fn put_rt6_cache_value<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
 ) {
-    put_rt6_cache_full(
-        outer_map,
-        cache_index,
-        local,
-        remote,
-        ifindex,
-        has_mac,
-        mark_value,
-        false,
-        Ipv6Addr::UNSPECIFIED,
-        [0; 6],
-    );
+    put_rt6_cache_full(outer_map, cache_index, local, remote, ifindex, has_mac, mark_value, false);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -236,8 +209,6 @@ pub(crate) fn put_rt6_cache_full<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
     is_docker: bool,
-    gate_addr: Ipv6Addr,
-    mac: [u8; 6],
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
@@ -246,8 +217,6 @@ pub(crate) fn put_rt6_cache_full<T: MapCore>(
         ifindex,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
-        gate_addr: gate_addr.octets(),
-        mac,
         ..Default::default()
     };
     inner

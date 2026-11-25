@@ -62,9 +62,8 @@ pub(crate) struct Route4CacheValue {
     pub xdp_redirect_able: u8,
     pub _pad: u8,
     pub ifindex: u32,
-    pub gate_addr: u32,
-    pub mac: [u8; 6],
     pub link_chain_id: u16,
+    pub _pad_tail: [u8; 2],
 }
 
 #[repr(C)]
@@ -76,9 +75,8 @@ pub(crate) struct Route6CacheValue {
     pub xdp_redirect_able: u8,
     pub _pad: u8,
     pub ifindex: u32,
-    pub gate_addr: [u8; 16],
-    pub mac: [u8; 6],
     pub link_chain_id: u16,
+    pub _pad_tail: [u8; 2],
 }
 
 #[repr(C)]
@@ -121,7 +119,7 @@ pub(crate) struct Route6TargetInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::mem::size_of;
+    use std::mem::{offset_of, size_of};
 
     use super::*;
     use crate::skel::xdp_wan_route::types as share;
@@ -152,8 +150,10 @@ mod tests {
 
         assert_eq!(size_of::<Route4CacheKey>(), 8);
         assert_eq!(size_of::<Route6CacheKey>(), 32);
-        assert_eq!(size_of::<Route4CacheValue>(), 24);
-        assert_eq!(size_of::<Route6CacheValue>(), 36);
+        assert_eq!(size_of::<Route4CacheValue>(), 16);
+        assert_eq!(size_of::<Route6CacheValue>(), 16);
+        assert_eq!(offset_of!(Route4CacheValue, link_chain_id), 12);
+        assert_eq!(offset_of!(Route6CacheValue, link_chain_id), 12);
 
         assert_size!(Route4SlotKey, share::route4_slot_key);
         assert_field!(Route4SlotKey, share::route4_slot_key, flow_id);

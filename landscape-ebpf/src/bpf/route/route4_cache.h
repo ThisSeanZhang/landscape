@@ -15,13 +15,14 @@ struct route4_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
-    __be32 gate_addr;
-    u8 mac[6];
     __u16 link_chain_id;
+    u8 _pad_tail[2];
 };
 
 _Static_assert(sizeof(struct route4_cache_key) == 8, "route4_cache_key must be 8 bytes");
-_Static_assert(sizeof(struct route4_cache_value) == 24, "route4_cache_value must be 24 bytes");
+_Static_assert(sizeof(struct route4_cache_value) == 16, "route4_cache_value must be 16 bytes");
+_Static_assert(__builtin_offsetof(struct route4_cache_value, link_chain_id) == 12,
+               "route4_cache_value link_chain_id must be at offset 12");
 
 // 缓存
 struct route4_each_cache {
