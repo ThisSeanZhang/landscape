@@ -197,8 +197,8 @@ fn get_first_non_loopback_with_peer() -> Result<(String, i32, i32), io::Error> {
             .parse()
             .map_err(|_| io::Error::new(ErrorKind::InvalidData, "Invalid iflink"))?;
 
-        // 判断是否是成对接口（如 veth）：ifindex != iflink
-        if ifindex != iflink {
+        // 只上报有效的对端索引；iflink 为 0 表示没有可用的对端。
+        if iflink > 0 && ifindex != iflink {
             return Ok((iface_name, ifindex, iflink));
         }
     }

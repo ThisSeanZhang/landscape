@@ -422,6 +422,10 @@ pub async fn accept_docker_info(
                 tracing::error!("failed to parse docker registration info");
                 return;
             };
+            if ifindex == 0 {
+                tracing::warn!(container_id = %id, "ignoring docker registration with zero peer ifindex");
+                return;
+            }
 
             let query: Option<InspectContainerOptions> = None;
             let Ok(container_info) = docker.inspect_container(&id, query).await else {
