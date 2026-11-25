@@ -11,6 +11,8 @@ use crate::skel::xdp_nat6::XdpNat6SkelBuilder;
 
 const IFINDEX: u32 = 6;
 const XDP_PASS: u32 = 2;
+const INGRESS_STATIC_MARK: u32 = 1;
+const INGRESS_CACHE_MASK: u32 = 0x0000_00ff;
 
 fn wan_ip() -> Ipv6Addr {
     Ipv6Addr::from_str("2409:8888:6666:4f21::").unwrap()
@@ -88,6 +90,15 @@ fn packet_data(output: &[u8]) -> &[u8] {
     if output.get(12..14) == Some(&[0x86, 0xdd]) { output } else { &output[XDP_PIPE_META_LEN..] }
 }
 
+fn ingress_meta_mark(output: &[u8], frame_len: usize) -> Option<u32> {
+    if output.len() == frame_len + XDP_PIPE_META_LEN {
+        Some(u32::from_ne_bytes(output[..4].try_into().unwrap()))
+    } else {
+        assert_eq!(output.len(), frame_len, "unexpected XDP output length");
+        None
+    }
+}
+
 fn assert_xdp_round_trip(
     name: &str,
     static_target: Option<Ipv6Addr>,
@@ -141,7 +152,18 @@ fn assert_xdp_round_trip(
         })
         .expect("ingress test_run failed");
     assert_eq!(result.return_value, XDP_PASS);
-    assert_eq!(packet_destination(result.data.as_deref().unwrap()), client_address);
+    let out_data = result.data.as_deref().unwrap();
+    assert_eq!(packet_destination(out_data), client_address);
+    let meta_mark = ingress_meta_mark(out_data, ingress.len());
+    if static_target.is_some() {
+        assert_eq!(
+            meta_mark.map(|m| m & INGRESS_CACHE_MASK),
+            Some(INGRESS_STATIC_MARK),
+            "static ingress must set INGRESS_STATIC_MARK in xdp_pipe_meta",
+        );
+    } else {
+        assert_eq!(meta_mark, None, "dynamic ingress must not set INGRESS_STATIC_MARK");
+    }
 }
 
 #[test]
@@ -186,7 +208,13 @@ fn xdp_icmpv6_echo_round_trip() {
         })
         .expect("ingress test_run failed");
     assert_eq!(result.return_value, XDP_PASS);
-    assert_eq!(packet_destination(result.data.as_deref().unwrap()), lan_host());
+    let out_data = result.data.as_deref().unwrap();
+    assert_eq!(packet_destination(out_data), lan_host());
+    assert_eq!(
+        ingress_meta_mark(out_data, reply.len()),
+        None,
+        "dynamic ICMPv6 echo reply must not set INGRESS_STATIC_MARK",
+    );
 }
 
 #[test]
@@ -266,6 +294,49 @@ fn xdp_nonzero_prefix_static_replaces_both_directions() {
         wan_npt_addr(),
         80,
     );
+}
+
+#[test]
+fn xdp_nonzero_prefix_static_ingress_first_packet_and_ct_hit_sets_static_mark() {
+    let mut builder = XdpNat6SkelBuilder::default();
+    let pin_root = crate::tests::isolated_pin_root("nat-v6-xdp-static-replace-first-pkt");
+    builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut open_object = MaybeUninit::uninit();
+    let mut open_skel = builder.open(&mut open_object).unwrap();
+    {
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
+    }
+    open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;
+    let skel = open_skel.load().unwrap();
+
+    crate::maps::nat::add_static_nat6_mapping(
+        &skel.maps.nat6_static_map,
+        vec![StaticNatMappingV6Item { port: 80, lan_ip: lan_host(), l4_protocol: 17 }],
+    );
+
+    let ingress = build_ipv6_udp(remote(), wan_npt_addr(), 9999, 80);
+    for pkt_idx in 0..2 {
+        let mut ingress_out = vec![0; ingress.len() + XDP_PIPE_META_LEN];
+        let result = skel
+            .progs
+            .ingress_nat_v6
+            .test_run(ProgramInput {
+                data_in: Some(&ingress),
+                data_out: Some(&mut ingress_out),
+                ..Default::default()
+            })
+            .expect("ingress test_run failed");
+        assert_eq!(result.return_value, XDP_PASS);
+        let out_data = result.data.as_deref().unwrap();
+        assert_eq!(packet_destination(out_data), lan_host());
+        assert_eq!(
+            ingress_meta_mark(out_data, ingress.len()).map(|m| m & INGRESS_CACHE_MASK),
+            Some(INGRESS_STATIC_MARK),
+            "NAT6_STATIC_REPLACE XDP ingress packet #{pkt_idx} must set INGRESS_STATIC_MARK",
+        );
+    }
 }
 
 #[test]

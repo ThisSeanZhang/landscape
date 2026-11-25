@@ -161,23 +161,29 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     __be64 local_client_prefix = trans.client_prefix;
     __be64 dst_prefix;
     __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
-    if (!trans.replace || dst_prefix == local_client_prefix) {
-        if (trans.is_static) {
-            u32 mark = skb->mark;
-            barrier_var(mark);
-            skb->mark = replace_cache_mask(mark, INGRESS_STATIC_MARK);
+    int ret = TC_ACT_UNSPEC;
+    if (trans.replace && dst_prefix != local_client_prefix) {
+        bool is_icmp_error = nat6_is_icmp_error(off);
+        if (unlikely(is_icmp_error)) {
+            ret = nat6_modify_icmp_error(skb, off, true, local_client_prefix);
+        } else {
+            __be64 old_ip_prefix;
+            COPY_ADDR_FROM(&old_ip_prefix, dst_addr->in6_u.u6_addr32);
+            if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
+                ret = nat6_modify_fragment(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
+                                           local_client_prefix);
+            else
+                ret = nat6_modify_outer(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
+                                        local_client_prefix);
         }
-        return TC_ACT_UNSPEC;
+        if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     }
-    bool is_icmp_error = nat6_is_icmp_error(off);
-    if (unlikely(is_icmp_error)) return nat6_modify_icmp_error(skb, off, true, local_client_prefix);
-
-    __be64 old_ip_prefix;
-    COPY_ADDR_FROM(&old_ip_prefix, dst_addr->in6_u.u6_addr32);
-    if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
-        return nat6_modify_fragment(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
-                                    local_client_prefix);
-    return nat6_modify_outer(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix, local_client_prefix);
+    if (trans.is_static) {
+        u32 mark = skb->mark;
+        barrier_var(mark);
+        skb->mark = replace_cache_mask(mark, INGRESS_STATIC_MARK);
+    }
+    return ret;
 }
 
 #endif /* LD_NAT6_V3_H */
