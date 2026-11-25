@@ -17,6 +17,7 @@ use crate::tests::helper::map::{insert_ip_mac_v4, insert_ip_mac_v6};
 
 pub(super) const WAN4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 2);
 pub(super) const GW4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+pub(super) const GW6: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
 pub(super) const NEIGH_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x11];
 pub(super) const SLOT_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x12];
 pub(super) const CONFIRMED_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x21];
@@ -111,20 +112,19 @@ pub(super) fn seed_route(
         Family::V6 => {
             let src = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
             let dst = Ipv6Addr::new(0x2001, 0xdb8, 0x113, 0, 0, 0, 0, 9);
-            let gw = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
             let slot = Route6SlotKey { flow_id: 0, slot: route_slot_v6(&dst.octets()) };
             let target = Route6TargetInfo {
                 ifindex,
                 link_chain_id,
                 has_mac: 1,
                 mac: SLOT_MAC,
-                gate_addr: gw.octets(),
+                gate_addr: GW6.octets(),
                 ..Default::default()
             };
             maps.rt6_slot_map.update(slot.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();
             insert_ip_mac_v6(
                 &MapHandle::from_pinned_path(&paths.ip_mac_v6).unwrap(),
-                gw,
+                GW6,
                 neigh,
                 dev,
                 ifindex,

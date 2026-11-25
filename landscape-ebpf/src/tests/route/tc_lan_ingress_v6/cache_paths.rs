@@ -113,58 +113,39 @@ fn lan6_ingress_lan_cache_same_ifindex_entry_hands_to_stack() {
 }
 
 #[test]
-fn lan6_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
-    load_skel!("tc-lan6-cache-gwmac", skel);
-    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
+fn lan6_ingress_lan_cache_has_mac_preserves_frame_with_or_without_gate_ip_mac() {
     let entry_mac = [0x02, 0x44, 0x55, 0x66, 0x77, 0x88];
-    put_rt6_cache_full(
-        &skel.maps.rt6_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_addr(),
-        TARGET_IFINDEX,
-        true,
-        0x0305,
-        false,
-        gateway_addr(),
-        entry_mac,
-    );
     let gw_mac = MacAddr::from_str("02:55:66:77:88:99").unwrap();
     let gw_dev = MacAddr::from_str("02:aa:bb:cc:dd:f0").unwrap();
-    insert_ip_mac_v6(&skel.maps.ip_mac_v6, gateway_addr(), gw_mac, gw_dev, TARGET_IFINDEX);
-
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
-    let (ret, out, mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gw_mac.octets(), "dst = ip_mac[gate_addr].mac");
-    assert_eq!(&out[6..12], &entry_mac, "src = cached entry mac");
-    assert_eq!(&out[12..14], &[0x86, 0xdd]);
-    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-}
+    for (pin, seed_gw_neighbor) in [("tc-lan6-cache-gwmac", true), ("tc-lan6-cache-gwmiss", false)]
+    {
+        load_skel!(pin, skel);
+        create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
+        put_rt6_cache_full(
+            &skel.maps.rt6_cache_map,
+            LAN_CACHE,
+            local_addr(),
+            remote_addr(),
+            TARGET_IFINDEX,
+            true,
+            0x0305,
+            false,
+            gateway_addr(),
+            entry_mac,
+        );
+        if seed_gw_neighbor {
+            insert_ip_mac_v6(&skel.maps.ip_mac_v6, gateway_addr(), gw_mac, gw_dev, TARGET_IFINDEX);
+        }
 
-#[test]
-fn lan6_ingress_lan_cache_has_mac_entry_without_ip_mac_falls_to_neigh() {
-    load_skel!("tc-lan6-cache-gwmiss", skel);
-    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
-    put_rt6_cache_full(
-        &skel.maps.rt6_cache_map,
-        LAN_CACHE,
-        local_addr(),
-        remote_addr(),
-        TARGET_IFINDEX,
-        true,
-        0x0305,
-        false,
-        gateway_addr(),
-        [0x02, 0x44, 0x55, 0x66, 0x77, 0x88],
-    );
+        let (ret, out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
-    let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
-    let (ret, out, _mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
-
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened");
+        assert_eq!(ret, RET_REDIRECT);
+        assert_eq!(out, pkt, "LAN-cache hit must preserve the original Ethernet frame");
+        assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
+        assert_eq!(forwarded, 1, "LAN-cache redirect must stamp the cb forwarded flag");
+    }
 }
 
 #[test]

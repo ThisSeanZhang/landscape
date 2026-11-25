@@ -4,7 +4,11 @@
 //! route slot) vs WAN egress root's confirmed gateway MAC (`CONFIRMED_MAC`, paired
 //! with `WAN_MAC` in `egress_binding`).
 //!
-//! Two complementary test pairs are provided:
+//! A pure TC IPv6 control uses the same veth rig without attaching XDP. It
+//! compares the slot path with cache hits both before and after deleting the
+//! ingress gateway neighbour, while the WAN root's confirmed MAC stays valid.
+//!
+//! The XDP handoff cases run at two levels:
 //!
 //! 1. **Live veth end-to-end (`#[ignore]`, run with `--include-ignored`)**:
 //!    Runs the full production chain on real veth pairs with zero simulated
@@ -227,7 +231,17 @@ fn assert_final_wan_l2(frame: &[u8], orig_frame: &[u8], label: &str) {
 
 // ── 1. Live veth end-to-end production handoff ──
 
-fn run_live_veth_handoff(family: Family) {
+enum LanIngress {
+    XdpHandoff(Family),
+    TcV6,
+}
+
+fn run_live_veth(ingress: LanIngress) {
+    let family = match ingress {
+        LanIngress::XdpHandoff(family) => family,
+        LanIngress::TcV6 => Family::V6,
+    };
+    let handoff = matches!(ingress, LanIngress::XdpHandoff(_));
     let tag = match family {
         Family::V4 => "v4",
         Family::V6 => "v6",
@@ -247,30 +261,32 @@ fn run_live_veth_handoff(family: Family) {
     let paths = LandscapeMapPath::from_root(&pin_root);
     let case = seed_route(&pin_root, family, wan_ifindex, CHAIN);
 
-    // XDP LAN route: xdp_redirect_able is empty, so both cold and warm packets
-    // must write XDP_HANDOFF_TC_REDIRECT_MAGIC metadata and return XDP_PASS.
-    let mut xobj = MaybeUninit::uninit();
-    let mut xb = XdpLanRouteSkelBuilder::default();
-    xb.object_builder_mut().pin_root_path(&pin_root).unwrap();
-    let mut xopen = xb.open(&mut xobj).expect("open xdp_lan_route");
-    reuse_route_neighbours(&mut xopen, &pin_root);
-    pin_and_reuse_map(&mut xopen.maps.xdp_redirect_able, &paths.xdp_redirect_able).unwrap();
-    let xskel = xopen.load().expect("load xdp_lan_route");
+    // Pure TC must run the real LAN family worker, with no XDP program attached.
+    let _xdp_link = handoff.then(|| {
+        let mut xobj = MaybeUninit::uninit();
+        let mut xb = XdpLanRouteSkelBuilder::default();
+        xb.object_builder_mut().pin_root_path(&pin_root).unwrap();
+        let mut xopen = xb.open(&mut xobj).expect("open xdp_lan_route");
+        reuse_route_neighbours(&mut xopen, &pin_root);
+        pin_and_reuse_map(&mut xopen.maps.xdp_redirect_able, &paths.xdp_redirect_able).unwrap();
+        let xskel = xopen.load().expect("load xdp_lan_route");
+        xskel.progs.xdp_lan_route.attach_xdp(lan_ifindex as i32).unwrap()
+    });
 
-    // TC LAN ingress intro: xdp_handoff_enabled = true and family workers
-    // removed so missing/invalid XDP metadata drops instead of masking handoff
-    // by falling back to normal TC routing.
     let mut tobj = MaybeUninit::uninit();
     let mut tb = TcLanIngressRouteSkelBuilder::default();
     tb.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut topen = tb.open(&mut tobj).expect("open tc_lan_ingress_route");
-    topen.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = true;
+    topen.maps.rodata_data.as_deref_mut().unwrap().xdp_handoff_enabled = handoff;
     pin_and_reuse_map(&mut topen.maps.ip_mac_v4, &paths.ip_mac_v4).unwrap();
     pin_and_reuse_map(&mut topen.maps.ip_mac_v6, &paths.ip_mac_v6).unwrap();
     pin_and_reuse_map(&mut topen.maps.xdp_redirect_able, &paths.xdp_redirect_able).unwrap();
     let tskel = topen.load().expect("load tc_lan_ingress_route");
-    for slot in 0u32..2 {
-        let _ = tskel.maps.ls_lan_ingress_tails.delete(&slot.to_ne_bytes());
+    if handoff {
+        // With XDP attached, a missing handoff must not be masked by ordinary TC routing.
+        for slot in 0u32..2 {
+            tskel.maps.ls_lan_ingress_tails.delete(&slot.to_ne_bytes()).unwrap();
+        }
     }
 
     // WAN egress root + route (strictly gated on tc_cb_forwarded + CHAIN).
@@ -280,7 +296,6 @@ fn run_live_veth_handoff(family: Family) {
     let mut route_obj = MaybeUninit::uninit();
     let route_skel = load_wan_egress_route(&pin_root, root_fd, &mut route_obj);
 
-    let _xdp_link = xskel.progs.xdp_lan_route.attach_xdp(lan_ifindex as i32).unwrap();
     let _tc_in = TCAttach::attach_ingress(&tskel.progs.tc_lan_ingress_route, lan_ifindex as i32);
     let _tc_out =
         TCAttach::attach_egress(&route_skel.progs.tc_wan_egress_route, wan_ifindex as i32);
@@ -290,56 +305,45 @@ fn run_live_veth_handoff(family: Family) {
         open_wan_capture(wan_pair.peer_ifindex())
     };
 
-    // Packet 1 (COLD): slot lookup -> populates LAN cache -> XDP_PASS meta ->
-    // TC intro stamps cb + redirects -> WAN egress route+root rewrites L2.
-    {
-        let _e = peer_ns.enter();
-        send_raw_packet(lan_pair.peer(), &case.packet);
+    let mut check_wire = |label: &str| {
+        {
+            let _peer = peer_ns.enter();
+            send_raw_packet(lan_pair.peer(), &case.packet);
+        }
+        let wire = recv_matching_frame(&mut capture, &case.packet, label);
+        assert_final_wan_l2(&wire, &case.packet, label);
+        wire
+    };
+    assert_eq!(case.cached_ifindex(), None);
+    let cold = check_wire("cold slot");
+    assert_eq!(case.cached_ifindex(), Some(wan_ifindex));
+    case.remove_slot(); // No slow-path fallback can pass either warm check.
+    assert_eq!(check_wire("cached, conflicting gateway neighbour"), cold);
+    if !handoff {
+        // Both helpers return TC_ACT_REDIRECT under TEST_RUN. Without a kernel
+        // route/neighbour for this gateway, only direct redirect reaches the WAN
+        // root and delivers the data frame on the isolated peer.
+        tskel.maps.ip_mac_v6.delete(&GW6.octets()).unwrap();
+        assert_eq!(check_wire("cached, absent gateway neighbour"), cold);
     }
-    let cold_wire =
-        recv_matching_frame(&mut capture, &case.packet, &format!("{family:?} live cold"));
-    eprintln!(
-        "[{family:?} live cold] wire dst={:02x?} src={:02x?}",
-        &cold_wire[0..6],
-        &cold_wire[6..12]
-    );
-    assert_eq!(
-        case.cached_ifindex(),
-        Some(wan_ifindex),
-        "{family:?}: cold packet must populate LAN cache with wan_ifindex={wan_ifindex}"
-    );
-    assert_final_wan_l2(&cold_wire, &case.packet, &format!("{family:?} live cold"));
-
-    // Remove the flow-0 slot so Packet 2 can ONLY reach WAN via a LAN-cache hit.
-    case.remove_slot();
-
-    // Packet 2 (WARM): LAN cache hit (sees conflicting NEIGH_MAC/SLOT_MAC) ->
-    // XDP_PASS meta -> TC intro stamps cb + redirects -> WAN egress route+root.
-    {
-        let _e = peer_ns.enter();
-        send_raw_packet(lan_pair.peer(), &case.packet);
-    }
-    let warm_wire =
-        recv_matching_frame(&mut capture, &case.packet, &format!("{family:?} live warm"));
-    eprintln!(
-        "[{family:?} live warm] wire dst={:02x?} src={:02x?}",
-        &warm_wire[0..6],
-        &warm_wire[6..12]
-    );
-    assert_final_wan_l2(&warm_wire, &case.packet, &format!("{family:?} live warm"));
-    assert_eq!(warm_wire, cold_wire, "{family:?}: cold and warm wire frames must match");
 }
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_to_tc_cold_vs_warm_live_veth_v4() {
-    run_live_veth_handoff(Family::V4);
+    run_live_veth(LanIngress::XdpHandoff(Family::V4));
 }
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
 fn xdp_to_tc_cold_vs_warm_live_veth_v6() {
-    run_live_veth_handoff(Family::V6);
+    run_live_veth(LanIngress::XdpHandoff(Family::V6));
+}
+
+#[test]
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
+fn tc_ipv6_lan_cache_leaves_l2_to_wan_root_live_veth() {
+    run_live_veth(LanIngress::TcV6);
 }
 
 // ── 2. Two-stage BPF_PROG_TEST_RUN comparison (default non-ignored) ──

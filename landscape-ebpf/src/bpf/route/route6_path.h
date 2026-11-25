@@ -412,22 +412,8 @@ static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *sk
         return ret;
     }
 
-    if (!target->has_mac) {
-        return bpf_redirect(target->ifindex, 0);
-    } else {
-        struct mac_value_v6 *mac_value = bpf_map_lookup_elem(&ip_mac_v6, &target->gate_addr);
-        if (mac_value) {
-            int ret = store_mac_v6(skb, mac_value->mac, target->mac);
-            if (!ret) {
-                return bpf_redirect(target->ifindex, 0);
-            }
-        }
-    }
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET6;
-    COPY_ADDR_FROM(param.ipv6_nh, target->gate_addr.in6_u.u6_addr8);
-    return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
+    // As on a slot hit, the selected WAN root owns the Ethernet header.
+    return bpf_redirect(target->ifindex, 0);
 }
 
 static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
