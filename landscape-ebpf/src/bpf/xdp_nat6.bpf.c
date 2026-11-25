@@ -79,8 +79,9 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
     if (ret == -1) return XDP_DROP;
     if (ret == 1) {
         meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);
-        void *dm = (void *)(long)ctx->data_meta;
-        if (dm + sizeof(meta) <= data)
+        void *dm = ctx_data_meta(ctx);
+        void *cur_data = ctx_data(ctx);
+        if (dm + sizeof(meta) <= cur_data)
             __builtin_memcpy(dm, &meta, sizeof(meta));
         else
             xdp_set_meta(ctx, &meta);

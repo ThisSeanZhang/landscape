@@ -80,6 +80,8 @@ mod tests {
     use super::*;
     use crate::maps::nat::add_static_nat6_mapping;
 
+    const INGRESS_STATIC_MARK: u32 = 1;
+    const INGRESS_CACHE_MASK: u32 = 0x0000_00ff;
     const LAN_CLIENT_SUFFIX: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00];
     const LAN_CLIENT_PREFIX: [u8; 8] = [0xfd, 0x00, 0x12, 0x34, 0x56, 0x78, 0xab, 0xc5];
 
@@ -167,36 +169,50 @@ mod tests {
         // No pre-populated CT.
 
         let wan_npt_ip = Ipv6Addr::from_str("2409:8888:6666:4f25::100").unwrap();
-        let pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 80);
-        let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
-        let mut packet_out = vec![0u8; pkt.len()];
-        let input = ProgramInput {
-            data_in: Some(&pkt),
-            context_in: Some(ctx.as_mut_bytes()),
-            data_out: Some(&mut packet_out),
-            ..Default::default()
-        };
+        for pkt_idx in 0..2 {
+            let pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 80);
+            let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+            let mut ctx_out = TestSkb::default();
+            let mut packet_out = vec![0u8; pkt.len()];
+            let input = ProgramInput {
+                data_in: Some(&pkt),
+                context_in: Some(ctx.as_mut_bytes()),
+                context_out: Some(ctx_out.as_mut_bytes()),
+                data_out: Some(&mut packet_out),
+                ..Default::default()
+            };
 
-        let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
-        assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
-
-        // NPTv6 dst rewrite
-        let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
-        if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
-            let dst: Ipv6Addr = ipv6.destination.into();
+            let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
+            assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
+            let mark = ctx_out.mark;
             assert_eq!(
-                &dst.octets()[..8],
-                &LAN_CLIENT_PREFIX,
-                "dst prefix should be rewritten to LAN client prefix",
+                mark & INGRESS_CACHE_MASK,
+                INGRESS_STATIC_MARK,
+                "NAT6_STATIC_REPLACE ingress packet #{pkt_idx} must set INGRESS_STATIC_MARK",
             );
-            assert_eq!(&dst.octets()[8..], &LAN_CLIENT_SUFFIX, "dst suffix should be preserved",);
-        } else {
-            panic!("expected IPv6 header in output");
-        }
-        if let Some(etherparse::TransportHeader::Udp(udp)) = pkt_out.transport {
-            assert_eq!(udp.destination_port, 80, "dst_port should be unchanged");
-        } else {
-            panic!("expected UDP transport header in output");
+
+            // NPTv6 dst rewrite
+            let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
+            if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
+                let dst: Ipv6Addr = ipv6.destination.into();
+                assert_eq!(
+                    &dst.octets()[..8],
+                    &LAN_CLIENT_PREFIX,
+                    "dst prefix should be rewritten to LAN client prefix",
+                );
+                assert_eq!(
+                    &dst.octets()[8..],
+                    &LAN_CLIENT_SUFFIX,
+                    "dst suffix should be preserved"
+                );
+            } else {
+                panic!("expected IPv6 header in output");
+            }
+            if let Some(etherparse::TransportHeader::Udp(udp)) = pkt_out.transport {
+                assert_eq!(udp.destination_port, 80, "dst_port should be unchanged");
+            } else {
+                panic!("expected UDP transport header in output");
+            }
         }
 
         // Verify CT was created with is_static=1 (keyed by WAN destination)
@@ -284,16 +300,24 @@ mod tests {
         let wan_npt_ip = Ipv6Addr::from_str("2409:8888:6666:4f25::100").unwrap();
         let pkt = build_ipv6_udp(remote(), wan_npt_ip, 9999, 443);
         let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+        let mut ctx_out = TestSkb::default();
         let mut packet_out = vec![0u8; pkt.len()];
         let input = ProgramInput {
             data_in: Some(&pkt),
             context_in: Some(ctx.as_mut_bytes()),
+            context_out: Some(ctx_out.as_mut_bytes()),
             data_out: Some(&mut packet_out),
             ..Default::default()
         };
 
         let result = skel.progs.tc_nat_wan_ingress_v6.test_run(input).expect("test_run failed");
         assert_eq!(result.return_value as i32, 0, "ingress should return TC_ACT_OK(0)");
+        let mark = ctx_out.mark;
+        assert_eq!(
+            mark & INGRESS_CACHE_MASK,
+            INGRESS_STATIC_MARK,
+            "port=0 static replace ingress must set INGRESS_STATIC_MARK",
+        );
 
         let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
         if let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net {
@@ -388,6 +412,7 @@ mod tests {
         for _ in 0..2 {
             let pkt = build_ipv6_udp(remote(), local_wan_ip(), 9999, 53);
             let mut ctx = TestSkb { ifindex: IFINDEX, ..Default::default() };
+            let mut ctx_out = TestSkb::default();
             let mut packet_out = vec![0u8; pkt.len()];
             let result = skel
                 .progs
@@ -395,11 +420,18 @@ mod tests {
                 .test_run(ProgramInput {
                     data_in: Some(&pkt),
                     context_in: Some(ctx.as_mut_bytes()),
+                    context_out: Some(ctx_out.as_mut_bytes()),
                     data_out: Some(&mut packet_out),
                     ..Default::default()
                 })
                 .expect("test_run failed");
             assert_eq!(result.return_value as i32, 0);
+            let mark = ctx_out.mark;
+            assert_eq!(
+                mark & INGRESS_CACHE_MASK,
+                INGRESS_STATIC_MARK,
+                "zero-prefix static pass ingress must set INGRESS_STATIC_MARK",
+            );
 
             let pkt_out = PacketHeaders::from_ethernet_slice(&packet_out).expect("parse output");
             let Some(etherparse::NetHeaders::Ipv6(ipv6, _)) = pkt_out.net else {

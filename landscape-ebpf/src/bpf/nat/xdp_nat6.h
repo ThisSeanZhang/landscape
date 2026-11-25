@@ -191,17 +191,22 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
     *out_is_static = trans.is_static;
     if (!trans.replace || dst_prefix == local_client_prefix) return trans.is_static ? 1 : 0;
 
+    int ret;
     bool is_icmp_error = xdp_nat6_is_icmp_error(off);
-    if (unlikely(is_icmp_error))
-        return xdp_nat6_modify_icmp_error_ingress(ctx, off, local_client_prefix);
-
-    __be64 old_ip_prefix;
-    __builtin_memcpy(&old_ip_prefix, dst_addr->in6_u.u6_addr32, 8);
-    if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
-        return xdp_nat6_modify_fragment(data, data_end, off, LAND_FRAG_FROM_WAN,
+    if (unlikely(is_icmp_error)) {
+        ret = xdp_nat6_modify_icmp_error_ingress(ctx, off, local_client_prefix);
+    } else {
+        __be64 old_ip_prefix;
+        __builtin_memcpy(&old_ip_prefix, dst_addr->in6_u.u6_addr32, 8);
+        if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
+            ret = xdp_nat6_modify_fragment(data, data_end, off, LAND_FRAG_FROM_WAN,
+                                           local_client_prefix);
+        else
+            ret = xdp_nat6_modify_outer(data, data_end, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
                                         local_client_prefix);
-    return xdp_nat6_modify_outer(data, data_end, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
-                                 local_client_prefix);
+    }
+    if (ret != 0) return -1;
+    return trans.is_static ? 1 : 0;
 }
 
 #endif /* __LD_XDP_NAT6_H__ */
