@@ -299,7 +299,7 @@ fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
 }
 
 #[test]
-fn lan6_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
+fn lan6_ingress_wan_cache_hit_ignores_remote_ip_mac() {
     load_skel!("tc-lan6-wan-cache", skel);
     seed_wan_cache(&skel);
 
@@ -311,9 +311,7 @@ fn lan6_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     let (ret, out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &next_hop.octets());
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x86, 0xdd]);
+    assert_eq!(out, pkt, "the WAN egress root owns the Ethernet rewrite");
     assert_eq!(
         mark,
         normal_mark(FlowMarkAction::KeepGoing, 0, false),
@@ -323,7 +321,7 @@ fn lan6_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
 }
 
 #[test]
-fn lan6_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
+fn lan6_ingress_wan_cache_hit_ignores_gateway_mac() {
     load_skel!("tc-lan6-wan-cache-gw", skel);
     seed_wan_cache(&skel);
 
@@ -335,27 +333,25 @@ fn lan6_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
     let (ret, out, _mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gateway_mac.octets(), "must fall back to the wan gateway mac");
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x86, 0xdd]);
+    assert_eq!(out, pkt, "the WAN egress root resolves the gateway, not this stage");
 }
 
 #[test]
-fn lan6_ingress_wan_cache_hit_without_any_ip_mac_falls_to_neigh() {
+fn lan6_ingress_wan_cache_hit_without_ip_mac_redirects() {
     load_skel!("tc-lan6-wan-cache-neigh", skel);
     seed_wan_cache(&skel);
 
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
     let (ret, out, _mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
+    assert_eq!(ret, RET_REDIRECT);
     assert_eq!(out, pkt, "no rewrite happened");
 }
 
 #[test]
 fn lan6_ingress_wan_cache_no_mac_entry_redirects_directly() {
-    // route6_search_cache_in_lan !target_has_mac row: a mac-less WAN-cache
-    // entry redirects immediately, without touching ip_mac_v6 or the packet.
+    // A WAN-cache hit redirects without touching ip_mac_v6 or the packet,
+    // regardless of the cached has_mac flag.
     load_skel!("tc-lan6-wan-cache-nomac", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     put_rt6_cache_value(

@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[test]
-fn v6_search_cache_in_lan_uses_ip_mac_v6() {
+fn v6_search_cache_in_lan_ignores_remote_ip_mac() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-search");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -64,13 +64,11 @@ fn v6_search_cache_in_lan_uses_ip_mac_v6() {
         .expect("run test_route_v6_search_cache_in_lan");
 
     assert_eq!(result.return_value as i32, 7);
-    assert_eq!(&packet_out[0..6], &next_hop_mac.octets());
-    assert_eq!(&packet_out[6..12], &dev_mac.octets());
-    assert_eq!(&packet_out[12..14], &[0x86, 0xdd]);
+    assert_eq!(packet_out, packet, "the WAN egress root owns the Ethernet rewrite");
 }
 
 #[test]
-fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
+fn v6_search_cache_in_lan_ignores_gateway_mac() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-gateway-fallback");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -114,7 +112,5 @@ fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
         .expect("run test_route_v6_search_cache_in_lan gateway fallback");
 
     assert_eq!(result.return_value as i32, 7);
-    assert_eq!(&packet_out[0..6], &gateway_mac.octets());
-    assert_eq!(&packet_out[6..12], &dev_mac.octets());
-    assert_eq!(&packet_out[12..14], &[0x86, 0xdd]);
+    assert_eq!(packet_out, packet, "the WAN egress root resolves the gateway");
 }

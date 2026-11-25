@@ -273,8 +273,9 @@ fn lan6_ingress_docker_slot_pushes_vlan_and_redirects() {
 }
 
 #[test]
-fn lan6_ingress_flow_slot_with_mac_rewrites_header() {
-    // Shared pick_wan has_mac branch: store_mac_v6 writes the 86dd ethertype.
+fn lan6_ingress_flow_slot_with_mac_redirects_without_rewrite() {
+    // pick_wan only selects the target link; the target egress root owns the
+    // Ethernet rewrite.
     load_skel!("tc-lan6-flow-slot-mac", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
     seed_flow_rule_under(&skel, 0, remote_addr(), FLOW_REDIRECT_MARK);
@@ -288,9 +289,7 @@ fn lan6_ingress_flow_slot_with_mac_rewrites_header() {
     let (ret, out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gw_mac.octets());
-    assert_eq!(&out[6..12], &target_mac.octets());
-    assert_eq!(&out[12..14], &[0x86, 0xdd], "store_mac_v6 stamps the v6 ethertype");
+    assert_eq!(out, pkt);
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
 }
@@ -320,10 +319,9 @@ fn lan6_ingress_flow_slot_on_ingress_iface_sets_cb_and_redirects() {
 }
 
 #[test]
-fn lan6_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
-    // First-packet pick_wan row: has_mac slot whose gate address has no
-    // ip_mac_v6 entry → cb flag stamped, packet leaves via
-    // bpf_redirect_neigh(gate) without a rewrite.
+fn lan6_ingress_flow_slot_with_mac_ignores_missing_gateway_mac() {
+    // First-packet pick_wan row: a missing ip_mac_v6 entry for the slot gate
+    // address no longer affects the redirect.
     load_skel!("tc-lan6-flow-gwmiss", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
     seed_flow_rule_under(&skel, 0, remote_addr(), FLOW_REDIRECT_MARK);
@@ -334,16 +332,16 @@ fn lan6_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
     let (ret, out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
+    assert_eq!(ret, RET_REDIRECT);
     assert_eq!(out, pkt, "no rewrite happened");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-    assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
+    assert_eq!(forwarded, 1);
 
     let cache =
         lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
             .expect("LAN cache entry must be written after the redirect");
     assert_eq!(cache.ifindex, TARGET_IFINDEX);
-    assert_eq!(cache.has_mac, 1, "cache mirrors the slot's has_mac even on the neigh path");
+    assert_eq!(cache.has_mac, 1, "cache mirrors the slot's has_mac on the redirect path");
 }
 
 // ---------------------------------------------------------------------------

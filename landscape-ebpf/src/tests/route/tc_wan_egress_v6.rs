@@ -221,7 +221,7 @@ fn wan6_egress_flow_redirect_without_slot_target_drops() {
 }
 
 #[test]
-fn wan6_egress_slot_with_mac_rewrites_header() {
+fn wan6_egress_slot_with_mac_redirects_without_rewrite() {
     load_skel!("tc-wan6-eg-flow-mac", skel);
     seed_flow_rule(&skel, remote_addr(), FLOW_REDIRECT_MARK);
     let target_mac = MacAddr::from_str("02:22:33:44:55:66").unwrap();
@@ -235,9 +235,7 @@ fn wan6_egress_slot_with_mac_rewrites_header() {
     let (ret, out, _mark, _forwarded, _chain_id) = run_wan6_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gw_mac.octets());
-    assert_eq!(&out[6..12], &target_mac.octets());
-    assert_eq!(&out[12..14], &[0x86, 0xdd], "store_mac_v6 stamps the v6 ethertype");
+    assert_eq!(out, pkt, "the target link's egress root owns the Ethernet rewrite");
 }
 
 #[test]
@@ -700,9 +698,9 @@ fn wan6_egress_preserves_mark_type_tag() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn wan6_egress_slot_with_mac_gateway_miss_falls_to_neigh() {
-    // pick_wan has_mac slot whose gate address has no ip_mac_v6 entry: the
-    // forwarded cb flag is already stamped when the neigh fallback runs.
+fn wan6_egress_slot_with_mac_ignores_missing_gateway_mac() {
+    // pick_wan only selects the link; a missing ip_mac_v6 entry for the gate
+    // address no longer affects the redirect.
     load_skel!("tc-wan6-eg-flow-gwmiss", skel);
     seed_flow_rule(&skel, remote_addr(), FLOW_REDIRECT_MARK);
     let target_mac = MacAddr::from_str("02:22:33:44:55:66").unwrap();
@@ -712,10 +710,10 @@ fn wan6_egress_slot_with_mac_gateway_miss_falls_to_neigh() {
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
     let (ret, out, mark, forwarded, _chain_id) = run_wan6_egress(&skel, &pkt, &mut egress_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
+    assert_eq!(ret, RET_REDIRECT);
     assert_eq!(out, pkt, "no rewrite happened");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-    assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
+    assert_eq!(forwarded, 1, "the cb flag is stamped before the redirect");
 }
 
 // ---------------------------------------------------------------------------

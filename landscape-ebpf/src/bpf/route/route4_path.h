@@ -21,13 +21,7 @@
 
 static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
-                                                               struct route4_context *context,
-                                                               bool is_lan) {
-    // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below. Its only
-    // production caller (tc_route4_wan_ingress) passes false, so that branch
-    // is currently dead code; the LAN-ingress variant (tc_route4_lan_redirect_check_in_lan)
-    // inlines the is_lan=true behaviour instead. Revisit before dedup.
-
+                                                               struct route4_context *context) {
     int ret;
     struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -51,16 +45,6 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
         }
         // is LAN Packet, redirect to lan
         if (unlikely(lan_info->ifindex == skb->ifindex)) {
-            if (is_lan && lan_info->has_mac && lan_info->addr != 0 &&
-                lan_info->addr != context->daddr) {
-                mac_key_search.addr = context->daddr;
-                mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
-                if (mac_value) {
-                    if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                        return bpf_redirect(lan_info->ifindex, 0);
-                    }
-                }
-            }
             // current iface
             return TC_ACT_UNSPEC;
         }
@@ -219,7 +203,7 @@ static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff 
 }
 
 // ── tc_route4/6_lan_redirect_check_in_wan_egress: adapted from
-// tc_route4/6_lan_redirect_check_in_wan (no is_lan) ──
+// tc_route4/6_lan_redirect_check_in_wan ──
 
 static __always_inline int
 tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3_offset,

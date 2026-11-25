@@ -126,32 +126,9 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
             return bpf_redirect(target_info->ifindex, 0);
         }
 
-        bool mac_stored = !target_info->has_mac;
-        if (target_info->has_mac) {
-            struct mac_value_v6 *mac_value =
-                bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
-            if (mac_value) {
-                ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-                if (!ret) {
-                    mac_stored = true;
-                } else {
-                    ld_from_wan_log("store_mac_v6 err: %d", ret);
-                }
-            } else {
-                ld_from_wan_log("can't find mac by: %pI6", &target_info->gate_addr);
-            }
-        }
-
+        // The target link's egress root owns the Ethernet rewrite.
         tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-        if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
-
-        struct bpf_redir_neigh param;
-        param.nh_family = AF_INET6;
-        COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr32);
-        ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-        if (unlikely(ret != TC_ACT_REDIRECT)) ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
-        return ret;
+        return bpf_redirect(target_info->ifindex, 0);
     }
 
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);

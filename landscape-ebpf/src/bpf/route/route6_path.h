@@ -22,11 +22,7 @@
 // TODO: split two function
 static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
-                                                               struct route6_context *context,
-                                                               bool is_lan) {
-    // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below; its only
-    // production caller passes false (dead branch), see v4 twin comment.
-
+                                                               struct route6_context *context) {
     int ret;
     struct route6_lan_key lan_search_key = {0};
     struct mac_key_v6 mac_key_search = {0};
@@ -53,16 +49,6 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
 
     // is LAN Packet, redirect to lan
     if (unlikely(lan_info->ifindex == skb->ifindex)) {
-        if (is_lan && lan_info->has_mac && !ip_addr_is_zero_in6(&lan_info->addr) &&
-            !ip_addr_equal_in6(&lan_info->addr, &context->daddr)) {
-            COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
-            mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key_search);
-            if (mac_value) {
-                if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                    return bpf_redirect(lan_info->ifindex, 0);
-                }
-            }
-        }
         // current iface
         return TC_ACT_UNSPEC;
     }
@@ -532,11 +518,8 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route6_context *context,
                                                       u32 *flow_mark) {
-    int ret = 0;
     u32 key = WAN_CACHE;
     struct route6_cache_key search_key = {0};
-    struct mac_key_v6 mac_key = {0};
-    struct mac_value_v6 *mac_value = NULL;
     struct route6_cache_value *target = NULL;
 
     __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
@@ -554,42 +537,10 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
             struct wan_ip_info_value *wan_ip_info =
                 bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
             if (wan_ip_info != NULL) {
-                bool target_has_mac = target->has_mac;
+                if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
+                    return TC_ACT_SHOT;
                 tc_cb_mark_forwarded(skb, target->link_chain_id);
-
-                // struct mac_key_v6 search_mac_key = {0};
-                // COPY_ADDR_FROM(search_mac_key.addr.in6_u.u6_addr32,
-                // wan_ip_info->gateway.in6_u.u6_addr32);
-
-                if (!target_has_mac) {
-                    return bpf_redirect(target->ifindex, 0);
-                } else {
-                    COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
-                                   search_key.remote_addr.in6_u.u6_addr8);
-                    mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                    if (mac_value) {
-                        if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                            return bpf_redirect(target->ifindex, 0);
-                        }
-                    } else {
-                        COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
-                                       wan_ip_info->gateway.in6_u.u6_addr8);
-                        mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                        if (mac_value) {
-                            if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                                return bpf_redirect(target->ifindex, 0);
-                            }
-                        }
-                    }
-                }
-
-                struct bpf_redir_neigh param;
-
-                param.nh_family = AF_INET6;
-
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
-                ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
-                return ret;
+                return bpf_redirect(target->ifindex, 0);
             }
         }
     }
