@@ -97,24 +97,18 @@ pub(crate) struct Route6SlotKey {
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Route4TargetInfo {
     pub ifindex: u32,
-    pub gate_addr: u32,
     pub has_mac: u8,
     pub is_docker: u8,
-    pub mac: [u8; 6],
     pub link_chain_id: u16,
-    pub _pad_tail: [u8; 2],
 }
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Route6TargetInfo {
     pub ifindex: u32,
-    pub gate_addr: [u8; 16],
     pub has_mac: u8,
     pub is_docker: u8,
-    pub mac: [u8; 6],
     pub link_chain_id: u16,
-    pub _pad_tail: [u8; 2],
 }
 
 #[cfg(test)]
@@ -165,18 +159,14 @@ mod tests {
 
         assert_size!(Route4TargetInfo, share::route4_target_info);
         assert_field!(Route4TargetInfo, share::route4_target_info, ifindex);
-        assert_field!(Route4TargetInfo, share::route4_target_info, gate_addr);
         assert_field!(Route4TargetInfo, share::route4_target_info, has_mac);
         assert_field!(Route4TargetInfo, share::route4_target_info, is_docker);
-        assert_field!(Route4TargetInfo, share::route4_target_info, mac);
         assert_field!(Route4TargetInfo, share::route4_target_info, link_chain_id);
 
         assert_size!(Route6TargetInfo, share::route6_target_info);
         assert_field!(Route6TargetInfo, share::route6_target_info, ifindex);
-        assert_field!(Route6TargetInfo, share::route6_target_info, gate_addr);
         assert_field!(Route6TargetInfo, share::route6_target_info, has_mac);
         assert_field!(Route6TargetInfo, share::route6_target_info, is_docker);
-        assert_field!(Route6TargetInfo, share::route6_target_info, mac);
         assert_field!(Route6TargetInfo, share::route6_target_info, link_chain_id);
     }
 }

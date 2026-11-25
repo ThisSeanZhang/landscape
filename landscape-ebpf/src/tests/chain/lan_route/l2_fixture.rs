@@ -1,4 +1,4 @@
-//! Off-link Ethernet fixtures. Keep ingress, cached and confirmed headers distinct.
+//! Off-link Ethernet fixtures. Keep ingress, neighbour and confirmed headers distinct.
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
     path::Path,
@@ -19,7 +19,7 @@ pub(super) const WAN4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 2);
 pub(super) const GW4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 pub(super) const GW6: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
 pub(super) const NEIGH_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x11];
-pub(super) const SLOT_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x12];
+pub(super) const NEIGH_DEV_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x12];
 pub(super) const CONFIRMED_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x21];
 pub(super) const WAN_MAC: [u8; 6] = [2, 0, 0, 0, 0, 0x22];
 
@@ -74,7 +74,7 @@ pub(super) fn seed_route(
     let maps = crate::tests::init_shared_maps_for_test(pin);
     let paths = crate::LandscapeMapPath::from_root(pin);
     let neigh = MacAddr::from(NEIGH_MAC);
-    let dev = MacAddr::from(SLOT_MAC);
+    let dev = MacAddr::from(NEIGH_DEV_MAC);
     match family {
         Family::V4 => {
             let src = Ipv4Addr::new(10, 0, 0, 1);
@@ -84,8 +84,6 @@ pub(super) fn seed_route(
                 ifindex,
                 link_chain_id,
                 has_mac: 1,
-                mac: SLOT_MAC,
-                gate_addr: GW4.to_bits().to_be(),
                 ..Default::default()
             };
             maps.rt4_slot_map.update(slot.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();
@@ -117,8 +115,6 @@ pub(super) fn seed_route(
                 ifindex,
                 link_chain_id,
                 has_mac: 1,
-                mac: SLOT_MAC,
-                gate_addr: GW6.octets(),
                 ..Default::default()
             };
             maps.rt6_slot_map.update(slot.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();

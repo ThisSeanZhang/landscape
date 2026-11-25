@@ -311,17 +311,15 @@ fn xdp_lan_route_wan_pipeline() {
     // Root prog-arrays and the dispatch trie are keyed by the WAN link's
     // chain id (ifindex keys are gone).
     const TEST_CHAIN: u32 = 9;
-    // A→C: slot target → wan_h (link_chain_id at bytes 16..18 of the
-    // 20-byte route4_target_info)
+    // A→C: slot target → wan_h
     {
-        let s = route_slot(0xCB007101);
-        let mut k = [0u8; 8];
-        let mut v = [0u8; 20];
-        k[0..4].copy_from_slice(&0u32.to_ne_bytes());
-        k[4..8].copy_from_slice(&s.to_ne_bytes());
-        v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        v[16..18].copy_from_slice(&(TEST_CHAIN as u16).to_ne_bytes());
-        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        let key = Route4SlotKey { flow_id: 0, slot: route_slot(0xCB007101) };
+        let target = Route4TargetInfo {
+            ifindex: wan_h_i,
+            link_chain_id: TEST_CHAIN as u16,
+            ..Default::default()
+        };
+        maps.rt4_slot_map.update(as_bytes(&key), as_bytes(&target), MapFlags::ANY).unwrap();
     }
     // C→A: lan route → lan_p
     {
@@ -567,13 +565,16 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
         .expect("seed stale WAN cache entry");
 
     // The route slot already points at the replacement link's chain.
-    let mut slot_key = [0u8; 8];
-    slot_key[0..4].copy_from_slice(&0u32.to_ne_bytes());
-    slot_key[4..8].copy_from_slice(&route_slot(u32::from_be_bytes(REMOTE.octets())).to_ne_bytes());
-    let mut slot_value = [0u8; 20];
-    slot_value[0..4].copy_from_slice(&WAN_IFINDEX.to_ne_bytes());
-    slot_value[16..18].copy_from_slice(&(VALID_CHAIN as u16).to_ne_bytes());
-    maps.rt4_slot_map.update(&slot_key, &slot_value, MapFlags::ANY).unwrap();
+    let slot_key = Route4SlotKey {
+        flow_id: 0,
+        slot: route_slot(u32::from_be_bytes(REMOTE.octets())),
+    };
+    let slot_value = Route4TargetInfo {
+        ifindex: WAN_IFINDEX,
+        link_chain_id: VALID_CHAIN as u16,
+        ..Default::default()
+    };
+    maps.rt4_slot_map.update(as_bytes(&slot_key), as_bytes(&slot_value), MapFlags::ANY).unwrap();
 
     let mut lr_b = XdpLanRouteSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();
@@ -665,13 +666,13 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
         .update(as_bytes(&cache_key), as_bytes(&cache_value), MapFlags::ANY)
         .expect("seed stale WAN cache entry");
 
-    let mut slot_key = [0u8; 8];
-    slot_key[0..4].copy_from_slice(&0u32.to_ne_bytes());
-    slot_key[4..8].copy_from_slice(&route_slot_v6(&REMOTE.octets()).to_ne_bytes());
-    let mut slot_value = [0u8; 32];
-    slot_value[0..4].copy_from_slice(&WAN_IFINDEX.to_ne_bytes());
-    slot_value[28..30].copy_from_slice(&(VALID_CHAIN as u16).to_ne_bytes());
-    maps.rt6_slot_map.update(&slot_key, &slot_value, MapFlags::ANY).unwrap();
+    let slot_key = Route6SlotKey { flow_id: 0, slot: route_slot_v6(&REMOTE.octets()) };
+    let slot_value = Route6TargetInfo {
+        ifindex: WAN_IFINDEX,
+        link_chain_id: VALID_CHAIN as u16,
+        ..Default::default()
+    };
+    maps.rt6_slot_map.update(as_bytes(&slot_key), as_bytes(&slot_value), MapFlags::ANY).unwrap();
 
     let mut lr_b = XdpLanRouteSkelBuilder::default();
     lr_b.object_builder_mut().pin_root_path(&share_pin).unwrap();

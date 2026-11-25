@@ -1,8 +1,7 @@
 //! XDP -> TC cold vs warm WAN L2 handoff comparison (off-link Ethernet v4/v6).
 //!
-//! Conflicting gateway neighbour MAC (`NEIGH_MAC`, paired with `SLOT_MAC` in the
-//! route slot) vs WAN egress root's confirmed gateway MAC (`CONFIRMED_MAC`, paired
-//! with `WAN_MAC` in `egress_binding`).
+//! The ingress neighbour entry (`NEIGH_MAC`, `NEIGH_DEV_MAC`) conflicts with the
+//! WAN root's confirmed gateway MAC (`CONFIRMED_MAC`) and bound source MAC (`WAN_MAC`).
 //!
 //! A pure TC IPv6 control uses the same veth rig without attaching XDP. It
 //! compares the slot path with cache hits both before and after deleting the
@@ -222,7 +221,7 @@ fn assert_final_wan_l2(frame: &[u8], orig_frame: &[u8], label: &str) {
     assert_eq!(
         &frame[6..12],
         &WAN_MAC,
-        "{label}: src MAC must be WAN root source MAC (not SLOT_MAC={SLOT_MAC:02x?})"
+        "{label}: src MAC must be WAN root source MAC (not neighbour dev MAC {NEIGH_DEV_MAC:02x?})"
     );
     assert_eq!(&frame[12..], &orig_frame[12..], "{label}: L3/L4 payload must be preserved");
 }

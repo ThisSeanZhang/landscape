@@ -111,8 +111,55 @@ mod tests {
                 .expect("lookup slot")
                 .expect("slot filled");
             let value = Route6TargetInfo::read_from_bytes(&bytes).expect("decode slot value");
-            assert_eq!(value.ifindex, 11);
-            assert_eq!(value.link_chain_id, 7);
+            assert_eq!(
+                value,
+                Route6TargetInfo {
+                    ifindex: 11,
+                    has_mac: 0,
+                    is_docker: 0,
+                    link_chain_id: 7
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn replace_slots_filters_family_and_preserves_forwarding_flags() {
+        use super::types::{Route4SlotKey, Route4TargetInfo};
+        use crate::maps::create_map_handle;
+
+        let mut eth = RouteTargetInfo::dummy(11, "wan", IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        eth.mac = Some([0x02, 0, 0, 0, 0, 0x11].into());
+        let (_, docker) = RouteTargetInfo::new_docker(12, "docker");
+        let targets = [(WanRouteTarget::link(0x123, eth), 1), (WanRouteTarget::netns(docker), 1)];
+        let v4 = create_map_handle(&RT4_SLOT_MAP_SPEC).unwrap();
+        let v6 = create_map_handle(&RT6_SLOT_MAP_SPEC).unwrap();
+        replace_wan_route_slots_v4_with_map(&v4, 5, &targets);
+        replace_wan_route_slots_v6_with_map(&v6, 5, &targets);
+
+        for slot in 0..16 {
+            let key4 = Route4SlotKey { flow_id: 5, slot };
+            let key6 = Route6SlotKey { flow_id: 5, slot };
+            let bytes4 = v4.lookup(key4.as_bytes(), MapFlags::ANY).unwrap().unwrap();
+            let bytes6 = v6.lookup(key6.as_bytes(), MapFlags::ANY).unwrap().unwrap();
+            assert_eq!(
+                Route4TargetInfo::read_from_bytes(&bytes4).unwrap(),
+                Route4TargetInfo {
+                    ifindex: 11,
+                    has_mac: 1,
+                    is_docker: 0,
+                    link_chain_id: 0x123
+                }
+            );
+            assert_eq!(
+                Route6TargetInfo::read_from_bytes(&bytes6).unwrap(),
+                Route6TargetInfo {
+                    ifindex: 12,
+                    has_mac: 1,
+                    is_docker: 1,
+                    link_chain_id: 0
+                }
+            );
         }
     }
 

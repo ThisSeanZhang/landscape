@@ -12,9 +12,11 @@ use libbpf_rs::{
     MapCore, MapFlags,
     skel::{OpenSkel, SkelBuilder as _},
 };
+use zerocopy::IntoBytes;
 
 use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{v4_entry, v6_entry, wan_trie_publish};
+use crate::maps::{Route4SlotKey, Route4TargetInfo, Route6SlotKey, Route6TargetInfo};
 use crate::skel::xdp_firewall::XdpFirewallSkelBuilder;
 use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
@@ -272,17 +274,15 @@ fn xdp_firewall_pipeline() {
     let lan_ip: u32 = u32::from_be_bytes([10, 0, 0, 1]);
     let wan_ip: u32 = u32::from_be_bytes([203, 0, 113, 1]);
 
-    // A→C: slot target → wan_h (chain-keyed tail; link_chain_id at bytes
-    // 16..18 of the 20-byte route4_target_info)
+    // A→C: slot target → wan_h (chain-keyed tail)
     {
-        let s = route_slot(wan_ip);
-        let mut k = [0u8; 8];
-        let mut v = [0u8; 20];
-        k[0..4].copy_from_slice(&0u32.to_ne_bytes());
-        k[4..8].copy_from_slice(&s.to_ne_bytes());
-        v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        v[16..18].copy_from_slice(&(TEST_CHAIN as u16).to_ne_bytes());
-        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        let key = Route4SlotKey { flow_id: 0, slot: route_slot(wan_ip) };
+        let target = Route4TargetInfo {
+            ifindex: wan_h_i,
+            link_chain_id: TEST_CHAIN as u16,
+            ..Default::default()
+        };
+        maps.rt4_slot_map.update(key.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();
     }
 
     // C→A: LAN route → lan_p
@@ -298,14 +298,13 @@ fn xdp_firewall_pipeline() {
     // route slot for 203.0.113.2
     {
         let wan_ip2: u32 = u32::from_be_bytes([203, 0, 113, 2]);
-        let s2 = route_slot(wan_ip2);
-        let mut k = [0u8; 8];
-        let mut v = [0u8; 20];
-        k[0..4].copy_from_slice(&0u32.to_ne_bytes());
-        k[4..8].copy_from_slice(&s2.to_ne_bytes());
-        v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        v[16..18].copy_from_slice(&(TEST_CHAIN as u16).to_ne_bytes());
-        maps.rt4_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        let key = Route4SlotKey { flow_id: 0, slot: route_slot(wan_ip2) };
+        let target = Route4TargetInfo {
+            ifindex: wan_h_i,
+            link_chain_id: TEST_CHAIN as u16,
+            ..Default::default()
+        };
+        maps.rt4_slot_map.update(key.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();
     }
 
     // v6 LAN route: fd00::1 → lan_h
@@ -320,18 +319,16 @@ fn xdp_firewall_pipeline() {
         maps.rt6_lan_map.update(&k, &v, MapFlags::ANY).unwrap();
     }
 
-    // v6 WAN target slot: fd00::2 → wan_h (link_chain_id at bytes 28..30
-    // of the 32-byte route6_target_info)
+    // v6 WAN target slot: fd00::2 → wan_h
     {
         let v6_wan: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
-        let slot = route_slot_v6(&v6_wan);
-        let mut k = [0u8; 8];
-        k[0..4].copy_from_slice(&0u32.to_ne_bytes());
-        k[4..8].copy_from_slice(&slot.to_ne_bytes());
-        let mut v = [0u8; 32];
-        v[0..4].copy_from_slice(&wan_h_i.to_ne_bytes());
-        v[28..30].copy_from_slice(&(TEST_CHAIN as u16).to_ne_bytes());
-        maps.rt6_slot_map.update(&k, &v, MapFlags::ANY).unwrap();
+        let key = Route6SlotKey { flow_id: 0, slot: route_slot_v6(&v6_wan) };
+        let target = Route6TargetInfo {
+            ifindex: wan_h_i,
+            link_chain_id: TEST_CHAIN as u16,
+            ..Default::default()
+        };
+        maps.rt6_slot_map.update(key.as_bytes(), target.as_bytes(), MapFlags::ANY).unwrap();
     }
 
     // ── block map helpers ──
