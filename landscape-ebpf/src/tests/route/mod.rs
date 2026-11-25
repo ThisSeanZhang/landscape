@@ -27,6 +27,8 @@ mod test_lan_redirect_check;
 #[cfg(test)]
 mod test_route_docker;
 #[cfg(test)]
+mod test_route_lan_cache;
+#[cfg(test)]
 mod test_route_search;
 #[cfg(test)]
 mod test_route_slot;

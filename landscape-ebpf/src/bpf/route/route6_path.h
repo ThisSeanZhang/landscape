@@ -652,17 +652,18 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
             };
             struct route6_target_info *slot_target = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
 
+            // The slot can disappear after pick_wan. Do not cache an unresolved target.
+            if (slot_target == NULL || slot_target->ifindex == 0) return TC_ACT_OK;
+
             struct route6_cache_value new_target_cache = {0};
             new_target_cache.mark_value = flow_mark;
-            if (slot_target != NULL) {
-                new_target_cache.ifindex = slot_target->ifindex;
-                new_target_cache.has_mac = slot_target->has_mac;
-                new_target_cache.is_docker = slot_target->is_docker;
-                __builtin_memcpy(new_target_cache.gate_addr.in6_u.u6_addr8,
-                                 slot_target->gate_addr.in6_u.u6_addr8, 16);
-                __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
-                new_target_cache.link_chain_id = slot_target->link_chain_id;
-            }
+            new_target_cache.ifindex = slot_target->ifindex;
+            new_target_cache.has_mac = slot_target->has_mac;
+            new_target_cache.is_docker = slot_target->is_docker;
+            __builtin_memcpy(new_target_cache.gate_addr.in6_u.u6_addr8,
+                             slot_target->gate_addr.in6_u.u6_addr8, 16);
+            __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
+            new_target_cache.link_chain_id = slot_target->link_chain_id;
             new_target_cache.xdp_redirect_able =
                 xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
             bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);

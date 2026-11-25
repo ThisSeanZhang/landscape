@@ -220,3 +220,25 @@ int test_route6_lan_redirect_check_in_wan_egress(struct __sk_buff *skb) {
 
     return tc_route6_lan_redirect_check_in_wan_egress(skb, current_l3_offset, &context);
 }
+
+SEC("tc")
+int test_route4_set_cache_in_lan(struct __sk_buff *skb) {
+    struct route4_context context = {0};
+    int ret = read_route4_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return route4_set_cache_in_lan(&context, skb->mark);
+}
+
+SEC("tc")
+int test_route6_set_cache_in_lan(struct __sk_buff *skb) {
+    struct route6_context context = {0};
+    int ret = read_route6_context(skb, &context);
+    if (ret != TC_ACT_OK) {
+        return ret;
+    }
+
+    return route6_set_cache_in_lan(&context, skb->mark);
+}
