@@ -77,7 +77,7 @@ pub fn del_route(prefix: Ipv6Addr, prefix_len: u8, iface_name: &str) {
 ///
 /// Uses `ip addr change` (not `replace`) so a disappeared address is not
 /// resurrected just to be removed again later.
-pub fn deprecate_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str, valid_lifetime: u32) {
+pub fn deprecate_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str, valid_lifetime: u32) -> bool {
     let args = vec![
         "-6".to_string(),
         "addr".to_string(),
@@ -92,7 +92,7 @@ pub fn deprecate_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str, valid_life
     ];
 
     match std::process::Command::new("ip").args(&args).output() {
-        Ok(output) if output.status.success() => {}
+        Ok(output) if output.status.success() => true,
         Ok(output) => {
             tracing::warn!(
                 iface = iface_name,
@@ -103,8 +103,12 @@ pub fn deprecate_iface_ip(ip: Ipv6Addr, prefix: u8, iface_name: &str, valid_life
                 stderr = %String::from_utf8_lossy(&output.stderr),
                 "failed to deprecate IPv6 address"
             );
+            false
         }
-        Err(e) => tracing::error!(iface = iface_name, %ip, "{e:?}"),
+        Err(e) => {
+            tracing::error!(iface = iface_name, %ip, "{e:?}");
+            false
+        }
     }
 }
 
@@ -131,7 +135,7 @@ pub fn set_iface_ip(
     iface_name: &str,
     valid_lifetime: Option<u32>,
     preferred_lft: Option<u32>,
-) {
+) -> bool {
     let mut args = vec![
         "-6".to_string(),
         "addr".to_string(),
@@ -151,9 +155,15 @@ pub fn set_iface_ip(
         args.push(preferred.to_string());
     }
 
-    let result = std::process::Command::new("ip").args(&args).output();
-
-    if let Err(e) = result {
-        tracing::error!("{e:?}");
+    match std::process::Command::new("ip").args(&args).output() {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            tracing::warn!(iface = iface_name, %ip, prefix, stderr = %String::from_utf8_lossy(&output.stderr), "failed to set IPv6 address");
+            false
+        }
+        Err(e) => {
+            tracing::error!(iface = iface_name, %ip, "{e:?}");
+            false
+        }
     }
 }

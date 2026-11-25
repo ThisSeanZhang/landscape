@@ -2,7 +2,7 @@
 //! each other) and per-key IPv6 routes, synced into the eBPF LAN route map.
 
 use landscape_common::sys_service::route_service::{
-    LanIPv6RouteKey, LanRouteInfo, dataplane::RouteTableDataplane,
+    LanIPv6RouteKey, LanRouteInfo, LanRouteMode, dataplane::RouteTableDataplane,
 };
 
 use super::{IpRouteService, Ipv4LanRoutesByOwner, Ipv6LanRoutesByKey, clone_locked_state};
@@ -152,11 +152,9 @@ impl IpRouteService {
     }
 
     pub async fn insert_ipv6_lan_route(&self, key: LanIPv6RouteKey, new_info: LanRouteInfo) {
-        let update = {
-            let mut lock = self.ipv6_lan_ifaces.write().await;
-            self.upsert_ipv6_lan_route_by_key(&mut lock, key, new_info)
-        };
-
+        let mut routes = self.ipv6_lan_ifaces.write().await;
+        let update = self.upsert_ipv6_lan_route_by_key(&mut routes, key, new_info);
+        // Serialize publication with withdrawal: the LPM key has no interface component.
         sync_ipv6_lan_update(&*self.dataplane, update);
     }
 
@@ -170,21 +168,32 @@ impl IpRouteService {
     }
 
     pub async fn remove_ipv6_lan_route(&self, key: &str) {
-        let removed_routes = {
-            let mut lock = self.ipv6_lan_ifaces.write().await;
-            self.remove_ipv6_lan_routes_for_iface(&mut lock, key)
-        };
-
-        sync_removed_lan_routes(&*self.dataplane, removed_routes);
+        let mut routes = self.ipv6_lan_ifaces.write().await;
+        for removed in self.remove_ipv6_lan_routes_for_iface(&mut routes, key) {
+            self.withdraw_ipv6_lan_route(&routes, removed);
+        }
     }
 
     pub async fn remove_ipv6_lan_route_by_key(&self, key: &LanIPv6RouteKey) {
-        let removed = {
-            let mut lock = self.ipv6_lan_ifaces.write().await;
-            self.remove_ipv6_lan_route_by_key_inner(&mut lock, key)
-        };
+        let mut routes = self.ipv6_lan_ifaces.write().await;
+        if let Some(removed) = self.remove_ipv6_lan_route_by_key_inner(&mut routes, key) {
+            self.withdraw_ipv6_lan_route(&routes, removed);
+        }
+    }
 
-        sync_removed_lan_routes(&*self.dataplane, removed);
+    fn withdraw_ipv6_lan_route(&self, remaining: &Ipv6LanRoutesByKey, removed: LanRouteInfo) {
+        // PD links use the same host IID. With overlapping delegations two
+        // interfaces can own the same /128, but rt6_lan_map has just one entry.
+        if removed.prefix == 128
+            && let Some(survivor) = remaining
+                .values()
+                .filter(|r| r.prefix == 128 && r.iface_ip == removed.iface_ip)
+                .min_by_key(|r| (r.mode != LanRouteMode::WanReachable, r.ifindex))
+        {
+            self.dataplane.add_lan_route(survivor.clone());
+        } else {
+            self.dataplane.del_lan_route(removed);
+        }
     }
 
     pub async fn get_all_ipv4_lan_routes(&self) -> Ipv4LanRoutesByOwner {

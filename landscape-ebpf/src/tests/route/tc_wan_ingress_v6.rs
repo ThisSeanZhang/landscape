@@ -677,3 +677,61 @@ fn wan6_ingress_reverse_entry_in_lan_cache_blocks_wan_write() {
         "lan-cache hit must suppress the wan cache write"
     );
 }
+
+#[test]
+fn wan6_ingress_pd_wan_host_128_coexists_with_covering_lan_prefix() {
+    // Regression: a WAN /128 host route (WanReachable) derived from the same
+    // delegated prefix as a covering LAN /64 route must deliver to the local
+    // stack via LPM longest-prefix match (without wan_ip_binding short-circuit),
+    // while other addresses in the same /64 still redirect to LAN.
+    load_skel!("tc-wan6-pd128-coexist", skel);
+    create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
+
+    let pd_prefix = Ipv6Addr::from_str("2001:db8:42::").unwrap();
+    let pd_lan_gw = Ipv6Addr::from_str("2001:db8:42::1").unwrap();
+    let wan_pd_host = Ipv6Addr::from_str("2001:db8:42::10").unwrap();
+    let lan_peer = Ipv6Addr::from_str("2001:db8:42::20").unwrap();
+
+    // Covering LAN prefix (/64) pointing to the LAN interface.
+    insert_route6_lan_entry(
+        &skel.maps.rt6_lan_map,
+        64,
+        pd_prefix,
+        pd_lan_gw,
+        LAN_ROUTE_TYPE,
+        TARGET_IFINDEX,
+        false,
+        [0; 6],
+    );
+    // WAN /128 host route (WanReachable) under the same /64.
+    // wan_ip_binding is intentionally omitted so tc_route6_is_current_wan_packet
+    // cannot short-circuit before rt6_lan_map lookup.
+    insert_route6_lan_entry(
+        &skel.maps.rt6_lan_map,
+        128,
+        wan_pd_host,
+        wan_pd_host,
+        WAN_ROUTE_TYPE,
+        WAN_IFINDEX,
+        false,
+        [0; 6],
+    );
+
+    let host_pkt = simple_ipv6_tcp_syn(public_src(), wan_pd_host);
+    let (host_ret, host_out) =
+        run_wan6_ingress(&skel, &host_pkt, &mut wan_ctx(INGRESS_STATIC_MARK));
+    assert_eq!(host_ret, RET_UNSPEC, "WAN /128 under covering LAN /64 must go to local stack");
+    assert_eq!(host_out, host_pkt);
+    assert!(
+        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, WAN_CACHE, wan_pd_host, public_src())
+            .is_none(),
+        "local-stack /128 must not populate WAN reverse cache"
+    );
+
+    let lan_pkt = simple_ipv6_tcp_syn(public_src(), lan_peer);
+    let (lan_ret, _lan_out) = run_wan6_ingress(&skel, &lan_pkt, &mut wan_ctx(INGRESS_STATIC_MARK));
+    assert_eq!(lan_ret, RET_REDIRECT, "other LAN address in same /64 must still redirect to LAN");
+    let cache = lookup_rt6_cache_value(&skel.maps.rt6_cache_map, WAN_CACHE, lan_peer, public_src())
+        .expect("LAN redirect under static mark must populate WAN reverse cache");
+    assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
+}

@@ -1,3 +1,6 @@
+mod host_routes;
+use host_routes::WanHostRoutes;
+
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -18,7 +21,7 @@ use uuid::Uuid;
 
 use crate::netlink::address::get_existing_linklocal;
 use crate::{
-    netlink::ipv6::{del_iface_ip, deprecate_iface_ip, set_iface_ip},
+    netlink::ipv6::{del_iface_ip, deprecate_iface_ip},
     sys_service::route::IpRouteService,
 };
 use landscape_common::flow::mark::{MarkType, SocketMark};
@@ -430,6 +433,7 @@ pub async fn dhcp_v6_pd_client(
 
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
 
+    let mut host_routes = WanHostRoutes::new(&route_service, &iface_name, ifindex, mac_addr);
     let mut current_wan_addr: Option<Ipv6Addr> = None;
     let mut status = IpV6PdState::init_status();
     swap_if_changed(&pd_runtime, pd_runtime_projection(&status, current_wan_addr));
@@ -443,6 +447,9 @@ pub async fn dhcp_v6_pd_client(
         let status_before = state_label(&status);
 
         tokio::select! {
+            _ = host_routes.wait_for_expiry() => {
+                host_routes.expire(Instant::now()).await;
+            },
             // 超时激发重发
             _ = active_send.as_mut() => {
                 #[cfg(debug_assertions)]
@@ -483,6 +490,7 @@ pub async fn dhcp_v6_pd_client(
                             &prefix_map,
                             &prefix_sender,
                             &mut current_wan_addr,
+                            &mut host_routes,
                             &link_state,
                         )
                         .await;
@@ -523,6 +531,7 @@ pub async fn dhcp_v6_pd_client(
                             &mac_addr,
                             shared_wan_iid.as_ref(),
                             &mut current_wan_addr,
+                            &mut host_routes,
                             &prefix_sender,
                             expected_pd_len,
                             is_pppoe_session,
@@ -562,9 +571,11 @@ pub async fn dhcp_v6_pd_client(
                     &prefix_map,
                     &prefix_sender,
                     &mut current_wan_addr,
+                    &mut host_routes,
                     &link_state,
                 )
                 .await;
+                host_routes.clear_on_stop().await;
                 cleaned_up = true;
                 if let Some((service_id, iapd, server_unicast)) = status.into_release()
                     && let Some(send_msg) = gen_release(&client_id, service_id, iapd)
@@ -600,9 +611,11 @@ pub async fn dhcp_v6_pd_client(
             &prefix_map,
             &prefix_sender,
             &mut current_wan_addr,
+            &mut host_routes,
             &link_state,
         )
         .await;
+        host_routes.clear_on_stop().await;
     }
     tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
 
@@ -625,6 +638,7 @@ async fn clear_active_pd_prefix(
     prefix_map: &IAPrefixMap,
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    host_routes: &mut WanHostRoutes<'_>,
     link_state: &LinkStateHandle,
 ) {
     let removed = prefix_map.remove(&link_id);
@@ -651,6 +665,7 @@ async fn clear_active_pd_prefix(
     link_state.clear_v6_prefix();
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
+        host_routes.remove(wan_addr).await;
     }
 
     if removed.is_some() {
@@ -752,6 +767,7 @@ fn plan_wan_addr_deprecation(
 }
 
 fn deprecate_previous_pd_address(
+    host_routes: &mut WanHostRoutes<'_>,
     previous_wan_addr: Option<Ipv6Addr>,
     new_wan_addr: Option<Ipv6Addr>,
     previous_remaining: Duration,
@@ -763,7 +779,11 @@ fn deprecate_previous_pd_address(
         return;
     };
     let valid_lifetime = grace.as_secs().clamp(1, u32::MAX as u64) as u32;
-    deprecate_iface_ip(wan_addr, 128, iface_name, valid_lifetime);
+    if !deprecate_iface_ip(wan_addr, 128, iface_name, valid_lifetime) {
+        return;
+    }
+    host_routes
+        .deprecate_until(wan_addr, Instant::now() + Duration::from_secs(valid_lifetime.into()));
     tracing::info!(
         iface = iface_name,
         %wan_addr,
@@ -1049,6 +1069,7 @@ async fn handle_packet(
     mac_addr: &Option<MacAddr>,
     shared_wan_iid: &u64,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    host_routes: &mut WanHostRoutes<'_>,
     prefix_sender: &IAPrefixEventSender,
     expected_pd_len: u8,
     is_pppoe_session: bool,
@@ -1253,13 +1274,13 @@ async fn handle_packet(
                             // before the replacement is ready.
                             let mut info = wan_route_info.clone();
                             if let Some(wan_addr) = wan_addr {
-                                set_iface_ip(
-                                    wan_addr,
-                                    128,
-                                    iface_name,
-                                    Some(ia_prefix.valid_lifetime),
-                                    Some(ia_prefix.preferred_lifetime),
-                                );
+                                host_routes
+                                    .install(
+                                        wan_addr,
+                                        ia_prefix.valid_lifetime,
+                                        ia_prefix.preferred_lifetime,
+                                    )
+                                    .await;
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
@@ -1290,6 +1311,7 @@ async fn handle_packet(
                             *current_wan_addr = wan_addr;
                             let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
                             deprecate_previous_pd_address(
+                                host_routes,
                                 previous_wan_addr,
                                 wan_addr,
                                 previous_remaining,
@@ -1620,6 +1642,11 @@ mod tests {
         assert!(matches!(pd_runtime_projection(&rebind, Some(wan_ip)), PdRuntime::Rebinding(_)));
 
         assert!(matches!(pd_runtime_projection(&IpV6PdState::Stop, None), PdRuntime::Stopped));
+    }
+
+    #[test]
+    fn pd_longer_than_a_64_has_no_wan_host_address() {
+        assert!(derive_wan_pd_addr(&prefix("2001:db8:1000::", 80), 0x42).is_none());
     }
 
     #[test]
