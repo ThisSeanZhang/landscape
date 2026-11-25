@@ -140,8 +140,9 @@ int tc_wan_egress_root(struct __sk_buff *skb) {
         }
     }
 
-    ld_from_wan_log("ROOT next-stage tail FAILED (l3 %u) -> exit", l3_protocol);
+    /* An empty policy slot normally falls through to the chain exit. */
 exit:
     TC_FROM_LAN_CHAIN_EXIT(skb);
+    ld_from_wan_log("ROOT exit tail FAILED");
     return TC_ACT_UNSPEC;
 }
