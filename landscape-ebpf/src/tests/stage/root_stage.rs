@@ -70,9 +70,7 @@ fn load_egress_root_with(
     let mut open = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default()
         .open(object)
         .unwrap();
-    let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
-    rodata.current_l3_offset = L3;
-    rodata.egress_binding = binding;
+    open.maps.rodata_data.as_deref_mut().unwrap().egress_binding = binding;
     EgressRoot { skel: open.load().unwrap(), _backing: backing }
 }
 
@@ -369,6 +367,62 @@ mod tests {
         let first = v6_frag_tcp(1460, 0, true);
         let (_, out) = run_root(root_prog, &first);
         assert_eq!(out, first, "v6 LAND_FRAG_FIRST is not clamped");
+    }
+
+    #[cfg(feature = "test-chain")]
+    #[test]
+    fn egress_root_dispatches_by_skb_protocol_over_wire_eth_proto() {
+        use crate::tests::test_tc_egress_root_proto::TestTcEgressRootProtoSkelBuilder;
+
+        const VERDICT_V4: i32 = 101;
+        const VERDICT_V6: i32 = 102;
+        const VERDICT_EXIT: i32 = 103;
+
+        let root = load_egress_root();
+        let (_shim_backing, shim_obj) = OwnedOpenObject::new();
+        let shim =
+            TestTcEgressRootProtoSkelBuilder::default().open(shim_obj).unwrap().load().unwrap();
+
+        wire_stage(&shim.maps.target_root, 0, &root.skel.progs.tc_wan_egress_root);
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &shim.progs.tc_verdict_v4,
+        );
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V6,
+            &shim.progs.tc_verdict_v6,
+        );
+        wire_stage(&root.skel.maps.tc_from_lan_exit_map, 0, &shim.progs.tc_verdict_exit);
+
+        let entry = &shim.progs.tc_rewrite_eth_proto_and_call;
+        for (skb_proto, wire_override, expected) in [
+            (0x0800_u16, 0x0000_u16, VERDICT_V4),
+            (0x86dd, 0x0000, VERDICT_V6),
+            (0x0806, 0x0000, VERDICT_EXIT),
+            (0x0800, 0x86dd, VERDICT_V4),
+            (0x0800, 0x0806, VERDICT_V4),
+            (0x86dd, 0x0800, VERDICT_V6),
+            (0x86dd, 0x0806, VERDICT_V6),
+            (0x0806, 0x0800, VERDICT_EXIT),
+            (0x0806, 0x86dd, VERDICT_EXIT),
+        ] {
+            let mut pkt = [0_u8; 64];
+            pkt[12..14].copy_from_slice(&skb_proto.to_be_bytes());
+            let ctx = TestSkb {
+                cb: [wire_override.to_be() as u32, 0, 0, 0, 0],
+                ..Default::default()
+            };
+            let (ret, out, _) = run_prog_with_ctx(entry, &pkt, ctx);
+            if wire_override != 0 {
+                assert_eq!(&out[12..14], &wire_override.to_be_bytes());
+            }
+            assert_eq!(
+                ret, expected,
+                "skb_proto={skb_proto:#06x} wire_override={wire_override:#06x}"
+            );
+        }
     }
 
     #[test]

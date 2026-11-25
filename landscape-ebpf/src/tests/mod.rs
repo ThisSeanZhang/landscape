@@ -53,6 +53,11 @@ pub(crate) mod test_xdp_chain_stage {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_xdp_chain_stage.skel.rs"));
 }
 
+#[cfg(feature = "test-chain")]
+pub(crate) mod test_tc_egress_root_proto {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf_rs/test_tc_egress_root_proto.skel.rs"));
+}
+
 // chain tests and the NAT session tests share this helper program.
 #[cfg(any(feature = "test-chain", feature = "test-nat"))]
 pub(crate) mod test_xdp_dummy {

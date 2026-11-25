@@ -25,8 +25,6 @@ struct {
     __uint(value_size, sizeof(u32));
 } wan_egress_root_next_stage SEC(".maps");
 
-const volatile u32 current_l3_offset = 14;
-
 static __always_inline __be32 wan_ipv4_next_hop(__be32 dst, __u64 *gateway_mac) {
     __be32 mask = egress_binding.wan_mask4;
     if ((dst & mask) != (egress_binding.wan_ip4 & mask)) {
@@ -129,15 +127,17 @@ int tc_wan_egress_root(struct __sk_buff *skb) {
      * chain exit (which may still PPPoE-encapsulate) runs. */
     if (is_skip_route_and_stage(skb_mark(skb))) goto exit;
 
-    u8 l3_protocol = 0;
-    if (current_l3_protocol(skb, current_l3_offset, &l3_protocol) == TC_ACT_OK) {
-        if (l3_protocol == LANDSCAPE_IPV6_TYPE) {
-            if (prepare_forwarded_ipv6(skb) == TC_ACT_SHOT) return TC_ACT_SHOT;
-            bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_SLOT_V6);
-        } else {
-            if (prepare_forwarded_ipv4(skb) == TC_ACT_SHOT) return TC_ACT_SHOT;
-            bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_SLOT_V4);
+    u32 proto = skb->protocol;
+    if (proto == ETH_IPV4) {
+        if (prepare_forwarded_ipv4(skb) == TC_ACT_SHOT) {
+            return TC_ACT_SHOT;
         }
+        bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_SLOT_V4);
+    } else if (proto == ETH_IPV6) {
+        if (prepare_forwarded_ipv6(skb) == TC_ACT_SHOT) {
+            return TC_ACT_SHOT;
+        }
+        bpf_tail_call_static(skb, &wan_egress_root_next_stage, TC_SLOT_V6);
     }
 
     /* An empty policy slot normally falls through to the chain exit. */

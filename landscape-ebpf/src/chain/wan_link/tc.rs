@@ -359,7 +359,6 @@ impl WanLinkDataplane {
             bpf_ctx!(egress_builder.open(egress_obj), "open tc_wan_egress_root")?;
 
         let rodata = egress_open_skel.maps.rodata_data.as_deref_mut().unwrap();
-        rodata.current_l3_offset = if binding.has_l2 { 14 } else { 0 };
         rodata.egress_binding = crate::skel::tc_wan_egress_root::types::wan_egress_binding {
             ifindex: binding.ifindex,
             wan_ip4: binding.wan_ip4,

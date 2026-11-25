@@ -121,9 +121,7 @@ fn load_wan_egress_root<'obj>(
     // Reuse ip_mac_v4 so the conflicting NEIGH_MAC seeded by the fixture is
     // visible to the root and confirmed_gateway_mac must beat it.
     pin_and_reuse_map(&mut open.maps.ip_mac_v4, &paths.ip_mac_v4).unwrap();
-    let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
-    rodata.current_l3_offset = 14;
-    rodata.egress_binding = egress_binding_for(wan_ifindex);
+    open.maps.rodata_data.as_deref_mut().unwrap().egress_binding = egress_binding_for(wan_ifindex);
     let mut skel = open.load().expect("load tc_wan_egress_root");
     let bss = skel.maps.bss_data.as_deref_mut().unwrap();
     bss.confirmed_gateway_mac = mac_word(CONFIRMED_MAC);
