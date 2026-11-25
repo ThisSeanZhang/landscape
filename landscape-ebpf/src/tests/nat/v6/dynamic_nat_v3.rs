@@ -134,7 +134,7 @@ fn assert_egress_ct_status_transition(initial_status: u64, expected_status: u64,
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
     }
     let skel = open_skel.load().unwrap();
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src);
@@ -166,7 +166,7 @@ fn assert_dynamic_translation(src: Ipv6Addr, dst: Ipv6Addr, prefix_len: u8) {
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
     }
     let skel = open_skel.load().unwrap();
     add_ct6_entry(&skel.maps.nat6_timer_map, &key, src);
@@ -222,7 +222,7 @@ fn assert_prefix_refresh(old_src: Ipv6Addr, new_src: Ipv6Addr, prefix_len: u8) {
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
     }
     let skel = open_skel.load().unwrap();
     add_ct6_entry(&skel.maps.nat6_timer_map, &old_key, old_src);
@@ -334,7 +334,7 @@ mod tests {
         {
             let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
             rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+            rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
         }
         let skel = open_skel.load().unwrap();
 
@@ -400,7 +400,7 @@ mod tests {
         {
             let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
             rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+            rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
         }
         let skel = open_skel.load().unwrap();
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, src);
@@ -478,7 +478,7 @@ mod tests {
         {
             let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
             rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-            rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(prefix_len);
+            rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(prefix_len);
         }
         let skel = open_skel.load().unwrap();
         add_ct6_entry(&skel.maps.nat6_timer_map, &key, src);
@@ -548,7 +548,7 @@ mod tests {
         let mut open = builder.open(&mut obj).unwrap();
         let ro = open.maps.rodata_data.as_deref_mut().unwrap();
         ro.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        ro.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        ro.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
         let skel = open.load().unwrap();
         let mapping = &skel.maps.nat6_mapping_map;
         let read = || {
@@ -607,7 +607,7 @@ mod tests {
         let mut open = builder.open(&mut obj).unwrap();
         let ro = open.maps.rodata_data.as_deref_mut().unwrap();
         ro.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        ro.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        ro.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
         let skel = open.load().unwrap();
 
         let mut frame = Vec::new();

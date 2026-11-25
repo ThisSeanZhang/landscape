@@ -198,9 +198,32 @@ async fn run_static_v4(
 
     let iface_name = iface.name.clone();
     tracing::info!("set ipv4 is: {}", ipv4);
-    let _ = std::process::Command::new("ip")
-        .args(["addr", "add", &format!("{}/{}", ipv4, ipv4_mask), "dev", &iface_name])
-        .output();
+    let addr_cidr = format!("{}/{}", ipv4, ipv4_mask);
+    let installed = tokio::process::Command::new("ip")
+        .args(["addr", "replace", &addr_cidr, "dev", &iface_name])
+        .output()
+        .await
+        .map(|output| {
+            if !output.status.success() {
+                tracing::error!(
+                    "ip addr replace {} dev {} failed: {:?}",
+                    addr_cidr,
+                    iface_name,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            output.status.success()
+        })
+        .unwrap_or_else(|e| {
+            tracing::error!("spawn ip addr replace failed: {:?}", e);
+            false
+        });
+    if !installed {
+        swap_if_changed(&v4_runtime, V4Runtime::Stopped);
+        service_status.just_change_status(ServiceStatus::Failed);
+        return;
+    }
+
     chain_dataplane.bind_wan_ipv4(iface.index, ipv4, default_router_ip, ipv4_mask, iface.mac);
 
     let lan_info = LanRouteInfo {

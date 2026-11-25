@@ -28,6 +28,36 @@ pub(crate) fn wan_ro_addr6(addr: Option<Ipv6Addr>) -> [u8; 16] {
     addr.map(|addr| addr.octets()).unwrap_or([0u8; 16])
 }
 
+/// Compute the NPT (Network Prefix Translation) mask for IPv6 prefix translation.
+///
+/// For a given prefix length N (0..64), the mask covers the bits between the
+/// prefix and the 64-bit interface-ID boundary. These are the bits that should
+/// be preserved from the LAN-side address during NPT translation.
+///
+/// The result is a little-endian u64 where each byte corresponds to bytes 0..7
+/// of the IPv6 address (in network order). Bits *inside* the prefix are 0
+/// (replaced by the WAN prefix) and bits *outside* the prefix (up to bit 63)
+/// are 1 (kept from the LAN address).
+pub(crate) fn compute_npt_mask(prefix_len: u8) -> u64 {
+    if prefix_len >= 64 {
+        return 0;
+    }
+    let mut mask: u64 = 0;
+    let full_bytes = (prefix_len / 8) as usize;
+    let remaining_bits = prefix_len % 8;
+    for i in 0..8usize {
+        let byte_mask: u8 = if i < full_bytes {
+            0x00
+        } else if i == full_bytes && remaining_bits > 0 {
+            (1u8 << (8 - remaining_bits)) - 1
+        } else {
+            0xFF
+        };
+        mask |= (byte_mask as u64) << (i * 8);
+    }
+    mask
+}
+
 /// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with shared
 /// endpoint mapping and conntrack maps.
 pub struct Nat6Handle {
@@ -88,7 +118,7 @@ pub fn attach_nat6(
     // "unconfigured" prefix, which the dataplane treats as drop (the
     // old map-miss semantics).
     let npt_mask = match prefix {
-        Some((_, prefix_len)) => crate::maps::wan::compute_npt_mask(prefix_len),
+        Some((_, prefix_len)) => compute_npt_mask(prefix_len),
         None => 0,
     };
 

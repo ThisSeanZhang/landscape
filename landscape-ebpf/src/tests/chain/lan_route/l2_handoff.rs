@@ -388,6 +388,8 @@ fn run_live_veth(ingress: LanIngress) {
         tskel.maps.ip_mac_v6.delete(&GW6.octets()).unwrap();
         assert_eq!(check_wire("cached, absent gateway neighbour"), cold);
     }
+    case.use_reverse_cache();
+    assert_eq!(check_wire("reverse WAN cache, no LAN cache or route slot"), cold);
 }
 
 #[test]

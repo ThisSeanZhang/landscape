@@ -92,10 +92,6 @@ pub fn init_xdp_wan_route(
         "tc_wan_egress_route pin flow_match_map"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut egress_route_open_skel.maps.wan_ip_binding, &paths.wan_ip),
-        "tc_wan_egress_route pin wan_ip_binding"
-    )?;
-    crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
         "tc_wan_egress_route pin rt4_lan_map"
     )?;

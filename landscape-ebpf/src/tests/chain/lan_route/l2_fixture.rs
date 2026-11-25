@@ -11,7 +11,8 @@ use zerocopy::{FromBytes, IntoBytes};
 use super::{lookup_inner_map, route_slot, route_slot_v6, simple_ipv4_tcp, simple_ipv6_tcp_syn};
 use crate::maps::{
     Route4CacheKey, Route4CacheValue, Route4SlotKey, Route4TargetInfo, Route6CacheKey,
-    Route6CacheValue, Route6SlotKey, Route6TargetInfo, route::cache::LAN_CACHE,
+    Route6CacheValue, Route6SlotKey, Route6TargetInfo,
+    route::cache::{LAN_CACHE, WAN_CACHE},
 };
 use crate::tests::helper::map::{insert_ip_mac_v4, insert_ip_mac_v6};
 
@@ -33,6 +34,7 @@ pub(super) struct RouteCase {
     family: Family,
     pub(super) packet: Vec<u8>,
     cache: MapHandle,
+    reverse_cache: MapHandle,
     cache_key: Vec<u8>,
     slots: MapHandle,
     slot_key: Vec<u8>,
@@ -49,7 +51,14 @@ impl RouteCase {
         self.cache.delete(&self.cache_key).unwrap();
     }
 
-    /// After the first packet, only a LAN-cache hit can reach the WAN root.
+    /// Reuse the same target and address pair, but leave only the reverse path in the map.
+    pub(super) fn use_reverse_cache(&self) {
+        let target = self.cache.lookup(&self.cache_key, MapFlags::ANY).unwrap().unwrap();
+        self.reverse_cache.update(&self.cache_key, &target, MapFlags::ANY).unwrap();
+        self.clear_cache();
+    }
+
+    /// After removing the slot, only a cache hit can reach the WAN root.
     pub(super) fn remove_slot(&self) {
         self.slots.delete(&self.slot_key).unwrap();
     }
@@ -102,6 +111,7 @@ pub(super) fn seed_route(
                 family,
                 packet: simple_ipv4_tcp(src, dst),
                 cache: lookup_inner_map(&maps.rt4_cache_map, LAN_CACHE),
+                reverse_cache: lookup_inner_map(&maps.rt4_cache_map, WAN_CACHE),
                 cache_key: key.as_bytes().to_vec(),
                 slots: maps.rt4_slot_map,
                 slot_key: slot.as_bytes().to_vec(),
@@ -133,6 +143,7 @@ pub(super) fn seed_route(
                 family,
                 packet: simple_ipv6_tcp_syn(src, dst),
                 cache: lookup_inner_map(&maps.rt6_cache_map, LAN_CACHE),
+                reverse_cache: lookup_inner_map(&maps.rt6_cache_map, WAN_CACHE),
                 cache_key: key.as_bytes().to_vec(),
                 slots: maps.rt6_slot_map,
                 slot_key: slot.as_bytes().to_vec(),

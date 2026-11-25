@@ -51,11 +51,6 @@ int tc_route4_wan_ingress(struct __sk_buff *skb) {
         return TC_ACT_UNSPEC;
     }
 
-    ret = route4_is_current_wan_packet(skb, l3, &context);
-    if (ret != TC_ACT_OK) {
-        return ret;
-    }
-
     ret = tc_route4_lan_redirect_check_in_wan(skb, l3, &context);
     if (ret == TC_ACT_REDIRECT) {
         u8 mark = get_cache_mask(skb->mark);
@@ -86,12 +81,6 @@ int tc_route6_wan_ingress(struct __sk_buff *skb) {
 
     if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
         return TC_ACT_UNSPEC;
-    }
-
-    ret = route6_is_current_wan_packet(skb, l3, &context);
-    if (ret != TC_ACT_OK) {
-        ld_from_wan_log("route6_is_current_wan_packet: %pI6", context.daddr.in6_u.u6_addr8);
-        return ret;
     }
 
     ret = tc_route6_lan_redirect_check_in_wan(skb, l3, &context);

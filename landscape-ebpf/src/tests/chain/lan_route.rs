@@ -534,21 +534,22 @@ fn xdp_lan_route_wan_pipeline() {
     drop(maps);
 }
 
-// ── Test D2: a stale WAN-cache link chain falls back to route-slot re-resolution ──
+// ── Test D2: WAN-cache return traffic pins to its original chain (surviving hits, missing drops) ──
 
 #[test]
-fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
+fn xdp_lan_route_missing_wan_cache_chain_drops_without_rerouting() {
     const LAN_HOST: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
     const REMOTE: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
-    const WAN_IFINDEX: u32 = 42;
-    const STALE_CHAIN: u32 = 999;
-    const VALID_CHAIN: u32 = 9;
-    const XDP_PASS: u32 = 2;
+    const ORIG_WAN_IFINDEX: u32 = 42;
+    const ALT_WAN_IFINDEX: u32 = 43;
+    const MISSING_CHAIN: u32 = 999;
+    const ALT_CHAIN: u32 = 9;
+    const XDP_DROP: u32 = 1;
 
-    let share_pin = crate::tests::isolated_pin_root("xdp-lr-fallback");
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-wan-missing");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
 
-    // The WAN cache still names a link whose chain is no longer registered.
+    // The WAN cache pins return traffic to a link whose chain is no longer registered.
     let wan_inner = lookup_inner_map(&maps.rt4_cache_map, WAN_CACHE);
     let cache_key = Route4CacheKey {
         local_addr: LAN_HOST.to_bits().to_be(),
@@ -556,22 +557,31 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
     };
     let cache_value = Route4CacheValue {
         xdp_redirect_able: 1,
-        ifindex: WAN_IFINDEX,
-        link_chain_id: STALE_CHAIN as u16,
+        ifindex: ORIG_WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN as u16,
         ..Default::default()
     };
     wan_inner
         .update(as_bytes(&cache_key), as_bytes(&cache_value), MapFlags::ANY)
-        .expect("seed stale WAN cache entry");
+        .expect("seed WAN cache entry");
 
-    // The route slot already points at the replacement link's chain.
+    // An available alternative WAN exists in both LAN_CACHE and route slots.
+    let lan_inner = lookup_inner_map(&maps.rt4_cache_map, LAN_CACHE);
+    let alt_cache = Route4CacheValue {
+        xdp_redirect_able: 1,
+        ifindex: ALT_WAN_IFINDEX,
+        link_chain_id: ALT_CHAIN as u16,
+        ..Default::default()
+    };
+    lan_inner.update(as_bytes(&cache_key), as_bytes(&alt_cache), MapFlags::ANY).unwrap();
+
     let slot_key = Route4SlotKey {
         flow_id: 0,
         slot: route_slot(u32::from_be_bytes(REMOTE.octets())),
     };
     let slot_value = Route4TargetInfo {
-        ifindex: WAN_IFINDEX,
-        link_chain_id: VALID_CHAIN as u16,
+        ifindex: ALT_WAN_IFINDEX,
+        link_chain_id: ALT_CHAIN as u16,
         ..Default::default()
     };
     maps.rt4_slot_map.update(as_bytes(&slot_key), as_bytes(&slot_value), MapFlags::ANY).unwrap();
@@ -583,7 +593,11 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
 
     lr.maps
         .xdp_redirect_able
-        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .update(&ORIG_WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    lr.maps
+        .xdp_redirect_able
+        .update(&ALT_WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     let dummy_b = TestXdpDummySkelBuilder::default();
@@ -592,10 +606,9 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
     let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&VALID_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .update(&ALT_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
-    // The plain no-meta layout: the frame follows a zeroed metadata area.
     const META_SIZE: usize = 12;
     let pkt = simple_ipv4_tcp(LAN_HOST, REMOTE);
     let mut input = vec![0u8; META_SIZE + pkt.len()];
@@ -608,19 +621,21 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
         ..Default::default()
     };
     let mut out = vec![0u8; input.len() + 256];
-    let ret = lr
-        .progs
-        .xdp_lan_route
-        .test_run(ProgramInput {
-            data_in: Some(&input),
-            data_out: Some(&mut out),
-            context_in: Some(ctx.as_mut_bytes()),
-            ..Default::default()
-        })
-        .expect("run xdp_lan_route")
-        .return_value as u32;
+    let mut run = || {
+        lr.progs
+            .xdp_lan_route
+            .test_run(ProgramInput {
+                data_in: Some(&input),
+                data_out: Some(&mut out),
+                context_in: Some(ctx.as_mut_bytes()),
+                ..Default::default()
+            })
+            .expect("run xdp_lan_route")
+            .return_value as u32
+    };
+    let ret = run();
 
-    assert_eq!(ret, XDP_PASS, "stale cache must not drop the frame");
+    assert_eq!(ret, XDP_DROP, "missing WAN-cache chain must drop, not reroute");
     let rec = dummy
         .maps
         .dummy_recv_map
@@ -628,27 +643,44 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot() {
         .unwrap()
         .expect("dummy recv record");
     let count = u64::from_ne_bytes(rec[..8].try_into().unwrap());
-    assert_eq!(count, 1, "frame must reach the replacement link's chain");
+    assert_eq!(count, 0, "available alternative chain must not be chosen");
 
     let raw = wan_inner
         .lookup(as_bytes(&cache_key), MapFlags::ANY)
         .unwrap()
-        .expect("stale WAN cache entry must be refreshed");
-    let updated: Route4CacheValue = read_unaligned(&raw);
-    assert_eq!(updated.link_chain_id, VALID_CHAIN as u16);
-    assert_eq!(updated.ifindex, WAN_IFINDEX);
+        .expect("WAN cache entry must remain untouched");
+    let preserved: Route4CacheValue = read_unaligned(&raw);
+    assert_eq!(preserved.link_chain_id, MISSING_CHAIN as u16);
+    assert_eq!(preserved.ifindex, ORIG_WAN_IFINDEX);
+
+    // The same cached return path works again once its own root is available.
+    // The alternate slot remains configured but cannot supply this verdict.
+    lr.maps.xdp_lan_pipe_root_progs.delete(&ALT_CHAIN.to_ne_bytes()).unwrap();
+    lr.maps
+        .xdp_lan_pipe_root_progs
+        .update(&MISSING_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    assert_eq!(run(), 2, "original chain is reached");
+    let rec =
+        dummy.maps.dummy_recv_map.lookup(&0u32.to_ne_bytes(), MapFlags::ANY).unwrap().unwrap();
+    assert_eq!(u64::from_ne_bytes(rec[..8].try_into().unwrap()), 1);
+
+    let invalid = Route4CacheValue { ifindex: 0, ..cache_value };
+    wan_inner.update(as_bytes(&cache_key), as_bytes(&invalid), MapFlags::ANY).unwrap();
+    assert_eq!(run(), XDP_DROP, "a chain without a cached exit interface cannot forward");
 }
 
 #[test]
-fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
+fn xdp_lan_route_missing_wan_cache_chain_drops_without_rerouting_v6() {
     const LAN_HOST: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
     const REMOTE: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
-    const WAN_IFINDEX: u32 = 42;
-    const STALE_CHAIN: u32 = 999;
-    const VALID_CHAIN: u32 = 9;
-    const XDP_PASS: u32 = 2;
+    const ORIG_WAN_IFINDEX: u32 = 42;
+    const ALT_WAN_IFINDEX: u32 = 43;
+    const MISSING_CHAIN: u32 = 999;
+    const ALT_CHAIN: u32 = 9;
+    const XDP_DROP: u32 = 1;
 
-    let share_pin = crate::tests::isolated_pin_root("xdp-lr-fallback-v6");
+    let share_pin = crate::tests::isolated_pin_root("xdp-lr-wan-missing-v6");
     let maps = crate::tests::init_shared_maps_for_test(&share_pin);
 
     let wan_inner = lookup_inner_map(&maps.rt6_cache_map, WAN_CACHE);
@@ -658,18 +690,27 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
     };
     let cache_value = Route6CacheValue {
         xdp_redirect_able: 1,
-        ifindex: WAN_IFINDEX,
-        link_chain_id: STALE_CHAIN as u16,
+        ifindex: ORIG_WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN as u16,
         ..Default::default()
     };
     wan_inner
         .update(as_bytes(&cache_key), as_bytes(&cache_value), MapFlags::ANY)
-        .expect("seed stale WAN cache entry");
+        .expect("seed WAN cache entry");
+
+    let lan_inner = lookup_inner_map(&maps.rt6_cache_map, LAN_CACHE);
+    let alt_cache = Route6CacheValue {
+        xdp_redirect_able: 1,
+        ifindex: ALT_WAN_IFINDEX,
+        link_chain_id: ALT_CHAIN as u16,
+        ..Default::default()
+    };
+    lan_inner.update(as_bytes(&cache_key), as_bytes(&alt_cache), MapFlags::ANY).unwrap();
 
     let slot_key = Route6SlotKey { flow_id: 0, slot: route_slot_v6(&REMOTE.octets()) };
     let slot_value = Route6TargetInfo {
-        ifindex: WAN_IFINDEX,
-        link_chain_id: VALID_CHAIN as u16,
+        ifindex: ALT_WAN_IFINDEX,
+        link_chain_id: ALT_CHAIN as u16,
         ..Default::default()
     };
     maps.rt6_slot_map.update(as_bytes(&slot_key), as_bytes(&slot_value), MapFlags::ANY).unwrap();
@@ -681,7 +722,11 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
 
     lr.maps
         .xdp_redirect_able
-        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .update(&ORIG_WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    lr.maps
+        .xdp_redirect_able
+        .update(&ALT_WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     let dummy_b = TestXdpDummySkelBuilder::default();
@@ -690,7 +735,7 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
     let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
     lr.maps
         .xdp_lan_pipe_root_progs
-        .update(&VALID_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .update(&ALT_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
     const META_SIZE: usize = 12;
@@ -705,19 +750,21 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
         ..Default::default()
     };
     let mut out = vec![0u8; input.len() + 256];
-    let ret = lr
-        .progs
-        .xdp_lan_route
-        .test_run(ProgramInput {
-            data_in: Some(&input),
-            data_out: Some(&mut out),
-            context_in: Some(ctx.as_mut_bytes()),
-            ..Default::default()
-        })
-        .expect("run xdp_lan_route")
-        .return_value as u32;
+    let mut run = || {
+        lr.progs
+            .xdp_lan_route
+            .test_run(ProgramInput {
+                data_in: Some(&input),
+                data_out: Some(&mut out),
+                context_in: Some(ctx.as_mut_bytes()),
+                ..Default::default()
+            })
+            .expect("run xdp_lan_route")
+            .return_value as u32
+    };
+    let ret = run();
 
-    assert_eq!(ret, XDP_PASS, "stale cache must not drop the frame");
+    assert_eq!(ret, XDP_DROP, "missing v6 WAN-cache chain must drop, not reroute");
     let rec = dummy
         .maps
         .dummy_recv_map
@@ -725,15 +772,31 @@ fn xdp_lan_route_stale_wan_cache_chain_reroutes_via_slot_v6() {
         .unwrap()
         .expect("dummy v6 recv record");
     let count = u64::from_ne_bytes(rec[..8].try_into().unwrap());
-    assert_eq!(count, 1, "v6 frame must reach the replacement link's chain");
+    assert_eq!(count, 0, "available alternative v6 chain must not be chosen");
 
     let raw = wan_inner
         .lookup(as_bytes(&cache_key), MapFlags::ANY)
         .unwrap()
-        .expect("stale WAN cache entry must be refreshed");
-    let updated: Route6CacheValue = read_unaligned(&raw);
-    assert_eq!(updated.link_chain_id, VALID_CHAIN as u16);
-    assert_eq!(updated.ifindex, WAN_IFINDEX);
+        .expect("WAN cache entry must remain untouched");
+    let preserved: Route6CacheValue = read_unaligned(&raw);
+    assert_eq!(preserved.link_chain_id, MISSING_CHAIN as u16);
+    assert_eq!(preserved.ifindex, ORIG_WAN_IFINDEX);
+
+    // The same cached return path works again once its own root is available.
+    // The alternate slot remains configured but cannot supply this verdict.
+    lr.maps.xdp_lan_pipe_root_progs.delete(&ALT_CHAIN.to_ne_bytes()).unwrap();
+    lr.maps
+        .xdp_lan_pipe_root_progs
+        .update(&MISSING_CHAIN.to_ne_bytes(), &(dummy_fd as u32).to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    assert_eq!(run(), 2, "original chain is reached");
+    let rec =
+        dummy.maps.dummy_recv_map.lookup(&1u32.to_ne_bytes(), MapFlags::ANY).unwrap().unwrap();
+    assert_eq!(u64::from_ne_bytes(rec[..8].try_into().unwrap()), 1);
+
+    let invalid = Route6CacheValue { ifindex: 0, ..cache_value };
+    wan_inner.update(as_bytes(&cache_key), as_bytes(&invalid), MapFlags::ANY).unwrap();
+    assert_eq!(run(), XDP_DROP, "a chain without a cached exit interface cannot forward");
 }
 
 // ── Test D3: an unresolved LAN cache entry must behave exactly like a miss ──

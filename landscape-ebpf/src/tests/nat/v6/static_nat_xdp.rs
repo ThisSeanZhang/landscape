@@ -103,7 +103,7 @@ fn assert_xdp_round_trip(
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
     }
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;
     let skel = open_skel.load().unwrap();
@@ -154,7 +154,7 @@ fn xdp_icmpv6_echo_round_trip() {
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
     }
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;
     let skel = open_skel.load().unwrap();
@@ -199,7 +199,7 @@ fn xdp_dynamic_flow_without_ethernet() {
     {
         let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
         rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(wan_ip()));
-        rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+        rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
         rodata.current_l3_offset = 0;
     }
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_ifindex = IFINDEX;

@@ -248,7 +248,6 @@ impl RouteBackbone {
             &paths.xdp_lan_pipe_root_progs_path(),
         )?;
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map)?;
-        pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip)?;
         pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map)?;
         pin_and_reuse_map(&mut open_skel.maps.rt6_lan_map, &paths.rt6_lan_map)?;
         pin_and_reuse_map(&mut open_skel.maps.rt4_slot_map, &paths.rt4_slot_map)?;
@@ -283,10 +282,6 @@ impl RouteBackbone {
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
             "tc_wan_ingress_route pin flow_match_map"
-        )?;
-        crate::bpf_ctx!(
-            pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
-            "tc_wan_ingress_route pin wan_ip_binding"
         )?;
         crate::bpf_ctx!(
             pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),

@@ -47,7 +47,7 @@ fn with_nat6_config(
 ) {
     let root = isolated_pin_root("nat6-checksums");
     let prefix = crate::stages::nat6::wan_ro_prefix6(Some(WAN_PREFIX));
-    let mask = crate::maps::wan::compute_npt_mask(prefix_len);
+    let mask = crate::stages::nat6::compute_npt_mask(prefix_len);
     let mut tc_obj = MaybeUninit::uninit();
     let mut builder = TcNat6SkelBuilder::default();
     builder.object_builder_mut().pin_root_path(&root).unwrap();

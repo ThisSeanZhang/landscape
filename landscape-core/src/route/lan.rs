@@ -1,9 +1,9 @@
 //! LAN route state: per-owner IPv4 route buckets (same-subnet routes replace
 //! each other) and per-key IPv6 routes, synced into the eBPF LAN route map.
 
-use landscape_common::sys_service::route_service::{
-    LanIPv6RouteKey, LanRouteInfo, LanRouteMode, dataplane::RouteTableDataplane,
-};
+use std::net::{IpAddr, Ipv4Addr};
+
+use landscape_common::sys_service::route_service::{LanIPv6RouteKey, LanRouteInfo, LanRouteMode};
 
 use super::{IpRouteService, Ipv4LanRoutesByOwner, Ipv6LanRoutesByKey, clone_locked_state};
 
@@ -17,6 +17,33 @@ pub(super) enum Ipv6LanRouteUpdate {
     Changed { removed: Option<LanRouteInfo>, added: LanRouteInfo },
 }
 
+// Keep the control-plane record unchanged. A WAN subnet produces an extra LPM
+// entry for its interface address; an existing /32 already serves both purposes.
+fn ipv4_dataplane_entries(route: LanRouteInfo) -> impl Iterator<Item = LanRouteInfo> {
+    let host =
+        (route.mode == LanRouteMode::WanReachable && route.prefix < 32 && route.iface_ip.is_ipv4())
+            .then(|| LanRouteInfo { prefix: 32, ..route.clone() });
+    std::iter::once(route).chain(host)
+}
+
+fn ipv4_host_addr(route: &LanRouteInfo) -> Option<Ipv4Addr> {
+    match route.iface_ip {
+        IpAddr::V4(ip) if route.prefix == 32 => Some(ip),
+        _ => None,
+    }
+}
+
+fn select_ipv4_host_route(routes: &Ipv4LanRoutesByOwner, ip: Ipv4Addr) -> Option<LanRouteInfo> {
+    routes
+        .values()
+        .flatten()
+        .filter(|r| {
+            r.iface_ip == IpAddr::V4(ip) && (r.prefix == 32 || r.mode == LanRouteMode::WanReachable)
+        })
+        .min_by_key(|r| (r.mode != LanRouteMode::WanReachable, r.ifindex))
+        .map(|r| LanRouteInfo { prefix: 32, ..r.clone() })
+}
+
 pub(super) fn reconcile_ipv4_lan_bucket(
     bucket: &mut Vec<LanRouteInfo>,
     new_info: LanRouteInfo,
@@ -25,11 +52,14 @@ pub(super) fn reconcile_ipv4_lan_bucket(
         return Ipv4LanBucketUpdate::Noop;
     }
 
+    let replace_wan = new_info.mode == LanRouteMode::WanReachable;
     let mut kept = Vec::with_capacity(bucket.len() + 1);
     let mut removed = Vec::new();
 
     for existing in std::mem::take(bucket) {
-        if existing.is_same_subnet(&new_info) {
+        if existing.is_same_subnet(&new_info)
+            || (replace_wan && existing.mode == LanRouteMode::WanReachable)
+        {
             removed.push(existing);
         } else {
             kept.push(existing);
@@ -42,27 +72,17 @@ pub(super) fn reconcile_ipv4_lan_bucket(
     Ipv4LanBucketUpdate::Changed { removed, added: new_info }
 }
 
-fn sync_ipv4_lan_update(dataplane: &dyn RouteTableDataplane, update: Ipv4LanBucketUpdate) {
-    if let Ipv4LanBucketUpdate::Changed { removed, added } = update {
-        sync_removed_lan_routes(dataplane, removed);
-        dataplane.add_lan_route(added);
+fn select_ipv6_host_route<'a>(
+    routes: &'a Ipv6LanRoutesByKey,
+    entry: &LanRouteInfo,
+) -> Option<&'a LanRouteInfo> {
+    if entry.prefix != 128 {
+        return None;
     }
-}
-
-fn sync_ipv6_lan_update(dataplane: &dyn RouteTableDataplane, update: Ipv6LanRouteUpdate) {
-    if let Ipv6LanRouteUpdate::Changed { removed, added } = update {
-        sync_removed_lan_routes(dataplane, removed);
-        dataplane.add_lan_route(added);
-    }
-}
-
-fn sync_removed_lan_routes(
-    dataplane: &dyn RouteTableDataplane,
-    routes: impl IntoIterator<Item = LanRouteInfo>,
-) {
-    for route in routes {
-        dataplane.del_lan_route(route);
-    }
+    routes
+        .values()
+        .filter(|r| r.prefix == 128 && r.iface_ip == entry.iface_ip)
+        .min_by_key(|r| (r.mode != LanRouteMode::WanReachable, r.ifindex))
 }
 
 impl IpRouteService {
@@ -143,28 +163,35 @@ impl IpRouteService {
     }
 
     pub async fn insert_ipv4_lan_route(&self, key: &str, info: LanRouteInfo) {
-        let update = {
-            let mut lock = self.ipv4_lan_ifaces.write().await;
-            self.upsert_ipv4_lan_routes_for_owner(&mut lock, key, info)
-        };
-
-        sync_ipv4_lan_update(&*self.dataplane, update);
+        let mut routes = self.ipv4_lan_ifaces.write().await;
+        let update = self.upsert_ipv4_lan_routes_for_owner(&mut routes, key, info);
+        // Serialize publication with withdrawal: the LPM key has no interface component.
+        self.sync_ipv4_lan_update(&routes, update);
     }
 
     pub async fn insert_ipv6_lan_route(&self, key: LanIPv6RouteKey, new_info: LanRouteInfo) {
         let mut routes = self.ipv6_lan_ifaces.write().await;
         let update = self.upsert_ipv6_lan_route_by_key(&mut routes, key, new_info);
         // Serialize publication with withdrawal: the LPM key has no interface component.
-        sync_ipv6_lan_update(&*self.dataplane, update);
+        if let Ipv6LanRouteUpdate::Changed { removed, added } = update {
+            if let Some(old) = removed
+                && !old.is_same_subnet(&added)
+            {
+                self.withdraw_ipv6_lan_route(&routes, old);
+            }
+            let wan = select_ipv6_host_route(&routes, &added)
+                .filter(|r| r.mode == LanRouteMode::WanReachable);
+            self.dataplane.add_lan_route(wan.cloned().unwrap_or(added));
+        }
     }
 
     pub async fn remove_ipv4_lan_route(&self, key: &str) {
-        let removed = {
-            let mut lock = self.ipv4_lan_ifaces.write().await;
-            self.remove_ipv4_lan_routes_for_owner(&mut lock, key)
-        };
-
-        sync_removed_lan_routes(&*self.dataplane, removed.into_iter().flatten());
+        let mut routes = self.ipv4_lan_ifaces.write().await;
+        if let Some(removed_routes) = self.remove_ipv4_lan_routes_for_owner(&mut routes, key) {
+            for entry in removed_routes.into_iter().flat_map(ipv4_dataplane_entries) {
+                self.withdraw_ipv4_entry(&routes, entry);
+            }
+        }
     }
 
     pub async fn remove_ipv6_lan_route(&self, key: &str) {
@@ -181,15 +208,46 @@ impl IpRouteService {
         }
     }
 
+    fn sync_ipv4_lan_update(&self, routes: &Ipv4LanRoutesByOwner, update: Ipv4LanBucketUpdate) {
+        let Ipv4LanBucketUpdate::Changed { removed, added } = update else { return };
+        let added: Vec<_> = ipv4_dataplane_entries(added).collect();
+        for old in removed.into_iter().flat_map(ipv4_dataplane_entries) {
+            // Overwriting a shared LPM key doesn't require deleting it first.
+            if !added.iter().any(|new| new.is_same_subnet(&old)) {
+                self.withdraw_ipv4_entry(routes, old);
+            }
+        }
+        for entry in added {
+            let winner = ipv4_host_addr(&entry)
+                .and_then(|ip| select_ipv4_host_route(routes, ip))
+                .filter(|r| r.mode == LanRouteMode::WanReachable);
+            self.dataplane.add_lan_route(winner.unwrap_or(entry));
+        }
+    }
+
+    fn withdraw_ipv4_entry(&self, remaining: &Ipv4LanRoutesByOwner, entry: LanRouteInfo) {
+        // The LPM key has no owner. Replace it in place if another owner still needs it.
+        let survivor = if let Some(ip) = ipv4_host_addr(&entry) {
+            select_ipv4_host_route(remaining, ip)
+        } else {
+            remaining
+                .values()
+                .flatten()
+                .filter(|r| r.is_same_subnet(&entry))
+                .min_by_key(|r| (r.mode == LanRouteMode::WanReachable, r.ifindex))
+                .cloned()
+        };
+        if let Some(survivor) = survivor {
+            self.dataplane.add_lan_route(survivor);
+        } else {
+            self.dataplane.del_lan_route(entry);
+        }
+    }
+
     fn withdraw_ipv6_lan_route(&self, remaining: &Ipv6LanRoutesByKey, removed: LanRouteInfo) {
         // PD links use the same host IID. With overlapping delegations two
         // interfaces can own the same /128, but rt6_lan_map has just one entry.
-        if removed.prefix == 128
-            && let Some(survivor) = remaining
-                .values()
-                .filter(|r| r.prefix == 128 && r.iface_ip == removed.iface_ip)
-                .min_by_key(|r| (r.mode != LanRouteMode::WanReachable, r.ifindex))
-        {
+        if let Some(survivor) = select_ipv6_host_route(remaining, &removed) {
             self.dataplane.add_lan_route(survivor.clone());
         } else {
             self.dataplane.del_lan_route(removed);

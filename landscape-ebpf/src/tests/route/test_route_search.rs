@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, net::IpAddr};
+use std::mem::MaybeUninit;
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
@@ -6,17 +6,14 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::{
-    maps::wan::add_wan_ip,
-    tests::{
-        helper::map::{
-            TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr,
-            insert_ip_mac_v6, local_addr, put_rt6_cache_ifindex, remote_addr, wan_addr,
-        },
-        isolated_pin_root,
-        pkt::simple_ipv6_tcp_syn,
-        route::test_route::TestRouteSkelBuilder,
+use crate::tests::{
+    helper::map::{
+        TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
+        local_addr, put_rt6_cache_ifindex, remote_addr,
     },
+    isolated_pin_root,
+    pkt::simple_ipv6_tcp_syn,
+    route::test_route::TestRouteSkelBuilder,
 };
 
 #[test]
@@ -37,14 +34,6 @@ fn v6_search_cache_in_lan_ignores_remote_ip_mac() {
         remote_addr(),
         TARGET_IFINDEX,
         true,
-    );
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        wan_addr(),
-        Some(IpAddr::V6(gateway_addr())),
-        64,
-        None,
     );
 
     let next_hop_mac = MacAddr::from_str("02:11:22:33:44:55").unwrap();
@@ -85,14 +74,6 @@ fn v6_search_cache_in_lan_ignores_gateway_mac() {
         remote_addr(),
         TARGET_IFINDEX,
         true,
-    );
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        wan_addr(),
-        Some(IpAddr::V6(gateway_addr())),
-        64,
-        None,
     );
 
     let gateway_mac = MacAddr::from_str("02:66:77:88:99:aa").unwrap();

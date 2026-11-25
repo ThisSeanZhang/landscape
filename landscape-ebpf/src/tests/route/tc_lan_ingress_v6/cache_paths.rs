@@ -206,35 +206,68 @@ fn lan6_ingress_lan_cache_zero_ifindex_default_flow_without_slot_drops() {
     );
 }
 
+fn put_wan_cache_with_chain(
+    skel: &TcLanIngressRouteSkel<'_>,
+    ifindex: u32,
+    has_mac: bool,
+    link_chain_id: u16,
+) {
+    let val = skel
+        .maps
+        .rt6_cache_map
+        .lookup(&WAN_CACHE.to_ne_bytes(), MapFlags::ANY)
+        .unwrap()
+        .expect("WAN_CACHE inner map missing");
+    let map_id = u32::from_ne_bytes(val[..4].try_into().unwrap());
+    let inner = libbpf_rs::MapHandle::from_map_id(map_id).expect("open WAN_CACHE inner map");
+    let key = crate::maps::Route6CacheKey {
+        local_addr: local_addr().octets(),
+        remote_addr: remote_addr().octets(),
+    };
+    let entry = crate::maps::Route6CacheValue {
+        ifindex,
+        has_mac: u8::from(has_mac),
+        link_chain_id,
+        ..Default::default()
+    };
+    inner.update(as_bytes(&key), as_bytes(&entry), MapFlags::ANY).unwrap();
+}
+
 #[test]
-fn lan6_ingress_set_cache_skipped_when_wan_cache_has_entry() {
-    // route6_set_cache_in_lan checks the WAN cache first: a stale entry there
-    // (inert during the search, no binding) suppresses the LAN cache write
-    // even after a fresh redirect.
+fn lan6_ingress_wan_cache_hit_short_circuits_without_writing_lan_cache() {
+    // A WAN-cache hit pins return traffic to the original WAN link and
+    // short-circuits before slow-path learning, flow verdict, pick_wan, and
+    // LAN-cache population — even when a competing flow rule and alternative
+    // WAN slot are available.
+    const ORIG_CHAIN: u16 = 7;
+    const ALT_IFINDEX: u32 = TARGET_IFINDEX + 1;
+
     load_skel!("tc-lan6-setcache-wanexist", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
-    put_rt6_cache_value(
-        &skel.maps.rt6_cache_map,
-        WAN_CACHE,
-        local_addr(),
-        remote_addr(),
-        TARGET_IFINDEX,
-        true,
-        0,
-    );
-    // no wan binding → the WAN-cache entry is inert during the search
+    put_wan_cache_with_chain(&skel, TARGET_IFINDEX, true, ORIG_CHAIN);
     seed_flow_rule_under(&skel, 0, remote_addr(), FLOW_REDIRECT_MARK);
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None);
+    seed_wan_slots(&skel, 5, ALT_IFINDEX, false, None);
 
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
-    let (ret, _out, _mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, _out, mark, cb) = run_lan6_ingress_with_cb(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
+    assert_eq!(cb[0], 1, "WAN-cache hit stamps the cb forwarded flag");
+    assert_eq!(cb[1] >> 16, u32::from(ORIG_CHAIN), "WAN-cache hit must keep the original chain");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "WAN-cache hit must not run flow verdict"
+    );
+    assert!(
+        lookup_ip_mac_v6(&skel.maps.ip_mac_v6, local_addr()).is_none(),
+        "WAN-cache hit must skip slow-path neighbour learning"
+    );
     assert!(
         lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
             .is_none(),
-        "a WAN-cache entry must suppress the LAN cache write"
+        "a WAN-cache hit must not populate the LAN cache"
     );
 }
 
@@ -253,7 +286,6 @@ fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
         true,
         0,
     );
-    seed_wan_binding(skel);
 }
 
 #[test]
@@ -321,7 +353,6 @@ fn lan6_ingress_wan_cache_no_mac_entry_redirects_directly() {
         false, // !has_mac
         0,
     );
-    seed_wan_binding(&skel);
 
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
     let (ret, out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
@@ -337,27 +368,31 @@ fn lan6_ingress_wan_cache_no_mac_entry_redirects_directly() {
 }
 
 #[test]
-fn lan6_ingress_wan_cache_hit_without_wan_binding_is_inert() {
-    load_skel!("tc-lan6-wan-cache-nobind", skel);
+fn lan6_ingress_wan_cache_zero_ifindex_drops_without_rerouting_to_alternative() {
+    const ALT_IFINDEX: u32 = TARGET_IFINDEX + 1;
+
+    load_skel!("tc-lan6-wan-cache-zeroif", skel);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, WAN_CACHE);
     create_route6_cache_inner_map(&skel.maps.rt6_cache_map, LAN_CACHE);
+    put_wan_cache_with_chain(&skel, 0, true, 7);
     put_rt6_cache_value(
         &skel.maps.rt6_cache_map,
-        WAN_CACHE,
+        LAN_CACHE,
         local_addr(),
         remote_addr(),
-        TARGET_IFINDEX,
+        ALT_IFINDEX,
         true,
-        0,
+        FLOW_REDIRECT_MARK,
     );
+    seed_flow_rule_under(&skel, 0, remote_addr(), FLOW_REDIRECT_MARK);
+    seed_wan_slots(&skel, 0, ALT_IFINDEX, false, None);
+    seed_wan_slots(&skel, 5, ALT_IFINDEX, false, None);
 
     let pkt = simple_ipv6_tcp_syn(local_addr(), remote_addr());
-    let (ret, _out, mark, _forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, _out, mark, forwarded) = run_lan6_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_SHOT, "no binding → WAN-cache entry is inert → default drop");
+    assert_eq!(ret, RET_SHOT, "zero-ifindex WAN-cache hit must drop without rerouting");
+    assert_eq!(forwarded, 0);
     assert_eq!(mark, normal_mark(FlowMarkAction::KeepGoing, 0, false));
-    assert!(
-        lookup_rt6_cache_value(&skel.maps.rt6_cache_map, LAN_CACHE, local_addr(), remote_addr())
-            .is_none()
-    );
+    assert!(lookup_ip_mac_v6(&skel.maps.ip_mac_v6, local_addr()).is_none());
 }

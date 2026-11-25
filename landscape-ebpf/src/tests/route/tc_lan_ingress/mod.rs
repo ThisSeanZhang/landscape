@@ -126,11 +126,11 @@ macro_rules! load_skel {
     };
 }
 
-fn run_lan_ingress(
+fn run_lan_ingress_with_cb(
     skel: &TcLanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
-) -> (i32, Vec<u8>, u32, u32) {
+) -> (i32, Vec<u8>, u32, [u32; 5]) {
     let mut out = vec![0_u8; pkt.len()];
     let mut ctx_out = TestSkb::default();
     let ret = skel
@@ -147,8 +147,17 @@ fn run_lan_ingress(
         .return_value as i32;
     // TestSkb is packed: copy the asserted fields out explicitly.
     let mark = ctx_out.mark;
-    let forwarded = ctx_out.cb[0];
-    (ret, out, mark, forwarded)
+    let cb = ctx_out.cb;
+    (ret, out, mark, cb)
+}
+
+fn run_lan_ingress(
+    skel: &TcLanIngressRouteSkel<'_>,
+    pkt: &[u8],
+    ctx: &mut TestSkb,
+) -> (i32, Vec<u8>, u32, u32) {
+    let (ret, out, mark, cb) = run_lan_ingress_with_cb(skel, pkt, ctx);
+    (ret, out, mark, cb[0])
 }
 
 /// Seed flow id 0's ip-trie with a single dst rule.
@@ -175,18 +184,6 @@ fn seed_wan_slots(
     info.gateway_ip = IpAddr::V4(wan_gateway());
     let targets = [(WanRouteTarget::link(0, info), 1)];
     replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &targets);
-}
-
-/// WAN-binding entry for the redirect target (needed by the WAN-cache path).
-fn seed_wan_binding(skel: &TcLanIngressRouteSkel<'_>) {
-    crate::maps::wan::add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        IpAddr::V4(Ipv4Addr::from_str("100.64.0.1").unwrap()),
-        Some(IpAddr::V4(wan_gateway())),
-        24,
-        None,
-    );
 }
 
 fn arp_frame() -> Vec<u8> {

@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 
 #include "route/flow6_maps.h"
 #include "route/route6_cache.h"
@@ -366,25 +365,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route6_is_current_wan_packet(struct __sk_buff *skb,
-                                                        u32 current_l3_offset,
-                                                        struct route6_context *context) {
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = skb->ingress_ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info != NULL) {
-        // Check if the current DST IP is the IP that enters the WAN network card
-        // ld_from_wan_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
-        if (ip_addr_equal_x(&wan_ip_info->addr, &context->daddr)) {
-            return TC_ACT_UNSPEC;
-        }
-    }
-
-    return TC_ACT_OK;
-}
-
 static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route6_cache_value *target) {
@@ -427,23 +407,18 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
     __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
-    // Fist WAN
+    // First WAN
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (wan_cache) {
         target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
-            struct wan_ip_info_key wan_search_key = {0};
-            wan_search_key.ifindex = target->ifindex;
-            wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-            struct wan_ip_info_value *wan_ip_info =
-                bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-            if (wan_ip_info != NULL) {
-                if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
-                    return TC_ACT_SHOT;
-                tc_cb_mark_forwarded(skb, target->link_chain_id);
-                return bpf_redirect(target->ifindex, 0);
+            if (target->ifindex == 0) {
+                return TC_ACT_SHOT;
             }
+            if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
+                return TC_ACT_SHOT;
+            tc_cb_mark_forwarded(skb, target->link_chain_id);
+            return bpf_redirect(target->ifindex, 0);
         }
     }
 

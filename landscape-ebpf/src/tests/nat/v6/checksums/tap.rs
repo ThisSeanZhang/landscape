@@ -62,7 +62,7 @@ fn tc_packet_too_big_tap() {
     let mut open = builder.open(&mut obj).unwrap();
     let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
     rodata.wan_ro_prefix6.b = crate::stages::nat6::wan_ro_prefix6(Some(WAN_PREFIX));
-    rodata.wan_ro_npt_mask = crate::maps::wan::compute_npt_mask(60);
+    rodata.wan_ro_npt_mask = crate::stages::nat6::compute_npt_mask(60);
     let skel = open.load().unwrap();
     add_static_nat6_mapping(
         &skel.maps.nat6_static_map,

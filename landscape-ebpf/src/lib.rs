@@ -34,7 +34,6 @@ pub struct LandscapeMapPath {
     /// The bpffs directory every pin below lives under
     /// (`/sys/fs/bpf/landscape/<map space>`).
     pub root: PathBuf,
-    pub wan_ip: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,
     pub frag4_cache_lan: PathBuf,
@@ -87,12 +86,11 @@ impl LandscapeMapPath {
     /// paths, skeleton pin reuse and tests all share one source of truth.
     pub fn from_root(root: &Path) -> Self {
         use crate::maps::{
-            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route, wan,
+            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route,
         };
 
         let root = root.to_path_buf();
         Self {
-            wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
             // NAT
             nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
             frag4_cache_lan: root.join(frag::FRAG4_CACHE_LAN_PIN),

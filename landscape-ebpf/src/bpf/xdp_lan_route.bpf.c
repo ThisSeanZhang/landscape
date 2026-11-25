@@ -6,7 +6,6 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 
 #include "chain/xdp_meta.h"
 #include "chain/redirect_able.h"
@@ -230,18 +229,7 @@ static __always_inline int xdp_route4_cache_pick_wan(struct xdp_md *ctx,
     u32 wan_key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &wan_key);
     if (wan_cache) {
-        struct route4_cache_value *cached = bpf_map_lookup_elem(wan_cache, &cache_key);
-        if (cached) {
-            already_cached = true;
-            if (cached->ifindex != info->ifindex || cached->link_chain_id != info->link_chain_id) {
-                cached->mark_value = flow_id;
-                cached->ifindex = info->ifindex;
-                cached->has_mac = info->has_mac;
-                cached->is_docker = info->is_docker;
-                cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                cached->link_chain_id = info->link_chain_id;
-            }
-        }
+        if (bpf_map_lookup_elem(wan_cache, &cache_key) != NULL) already_cached = true;
     }
 
     if (!already_cached) {
@@ -320,18 +308,7 @@ static __always_inline int xdp_route6_cache_pick_wan(struct xdp_md *ctx,
     u32 wan_key = WAN_CACHE;
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &wan_key);
     if (wan_cache) {
-        struct route6_cache_value *cached = bpf_map_lookup_elem(wan_cache, &cache_key);
-        if (cached) {
-            already_cached = true;
-            if (cached->ifindex != info->ifindex || cached->link_chain_id != info->link_chain_id) {
-                cached->mark_value = flow_id;
-                cached->ifindex = info->ifindex;
-                cached->has_mac = info->has_mac;
-                cached->is_docker = info->is_docker;
-                cached->xdp_redirect_able = xdp_redirect_target_able(info->ifindex) ? 1 : 0;
-                cached->link_chain_id = info->link_chain_id;
-            }
-        }
+        if (bpf_map_lookup_elem(wan_cache, &cache_key) != NULL) already_cached = true;
     }
 
     if (!already_cached) {
@@ -525,6 +502,7 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
     if (wan_cache) {
         struct route4_cache_value *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
+            if (!target->ifindex) return XDP_DROP;
             // bpf_printk("[wan_cache_r] v4 HIT src=%pI4 dst=%pI4 ifindex=%u has_mac=%u",
             //            &context->saddr, &context->daddr, target->ifindex, target->has_mac);
             if (target->is_docker) {
@@ -545,12 +523,11 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
             // bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall to chain=%u",
             //            target->link_chain_id);
             bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
-            bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED chain=%u, re-route",
+            bpf_printk("[lan_route] search_lan_v4 WAN-hit tailcall FAILED chain=%u",
                        target->link_chain_id);
-            // The cached link's chain is gone. Fall through so xdp_lan_route
-            // re-resolves the target from the route slots, which may already
-            // point at the replacement link.
-            return 0;
+            // WAN_CACHE pins return traffic to the original WAN link; drop when
+            // its chain is unavailable rather than rerouting to another WAN.
+            return XDP_DROP;
         }
     }
 
@@ -597,6 +574,7 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
     if (wan_cache) {
         struct route6_cache_value *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
+            if (!target->ifindex) return XDP_DROP;
             if (target->is_docker) {
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
@@ -615,10 +593,11 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
             meta.mark = target->mark_value;
             xdp_set_meta(ctx, &meta);
             bpf_tail_call(ctx, &xdp_lan_pipe_root_progs, target->link_chain_id);
-            bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED chain=%u, re-route",
+            bpf_printk("[lan_route] search_lan_v6 WAN-hit tailcall FAILED chain=%u",
                        target->link_chain_id);
-            // See the v4 path: re-resolve instead of dropping a stale cache hit.
-            return 0;
+            // See the v4 path: WAN_CACHE pins return traffic to the original
+            // WAN link and drops when its chain is unavailable.
+            return XDP_DROP;
         }
     }
 

@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 
 #include "route/flow4_maps.h"
 #include "route/route4_cache.h"
@@ -40,8 +39,9 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
             // redirect to lan_info->ifindex. F2 (in_lan) and F3
             // (in_wan_egress) both return TC_ACT_OK here instead. Locked as
             // current behaviour by tests test_route4/6_lan_redirect_check_in_wan
-            // (WAN-other row). No WanReachable entry producer exists today, so
-            // this branch is dormant; revisit before any dedup refactor.
+            // (WAN-other row). Current WanReachable producers only publish host
+            // routes (/32, addr == daddr), so this branch stays dormant;
+            // revisit before any dedup refactor.
         }
         // is LAN Packet, redirect to lan
         if (unlikely(lan_info->ifindex == skb->ifindex)) {
@@ -367,25 +367,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
-                                                        u32 current_l3_offset,
-                                                        struct route4_context *context) {
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = skb->ingress_ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info != NULL) {
-        // Check if the current DST IP is the IP that enters the WAN network card
-        // ld_from_wan_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
-        if (wan_ip_info->addr.in6_u.u6_addr32[0] == context->daddr) {
-            return TC_ACT_UNSPEC;
-        }
-    }
-
-    return TC_ACT_OK;
-}
-
 static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route4_cache_value *target) {
@@ -427,24 +408,19 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
     search_key.local_addr = context->saddr;
     search_key.remote_addr = context->daddr;
 
-    // Fist WAN
+    // First WAN
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (wan_cache) {
         struct route4_cache_value *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
-            struct wan_ip_info_key wan_search_key = {0};
-            wan_search_key.ifindex = target->ifindex;
-            wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
-
-            struct wan_ip_info_value *wan_ip_info =
-                bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-            if (wan_ip_info != NULL) {
-                if (current_l3_offset == 0 && target->has_mac &&
-                    prepend_dummy_mac(skb, target->is_docker))
-                    return TC_ACT_SHOT;
-                tc_cb_mark_forwarded(skb, target->link_chain_id);
-                return bpf_redirect(target->ifindex, 0);
+            if (target->ifindex == 0) {
+                return TC_ACT_SHOT;
             }
+            if (current_l3_offset == 0 && target->has_mac &&
+                prepend_dummy_mac(skb, target->is_docker))
+                return TC_ACT_SHOT;
+            tc_cb_mark_forwarded(skb, target->link_chain_id);
+            return bpf_redirect(target->ifindex, 0);
         }
     }
 
@@ -503,13 +479,6 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
             new_target_cache.ifindex = ifindex;
             new_target_cache.xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
             new_target_cache.link_chain_id = link_chain_id;
-            // if (new_target_cache.has_mac) {
-            //     struct wan_ip_info_value *wan_ip = bpf_map_lookup_elem(wan_cache, &search_key);
-            //     if (wan_ip) {
-
-            //         __builtin_memcpy(match_key.mac.mac, mac, 6);
-            //     }
-            // }
             bpf_map_update_elem(wan_cache, &search_key, &new_target_cache, BPF_ANY);
             // ld_from_wan_log("wan_cache new new_target_cache.ifindex: %d",
             // new_target_cache.ifindex);

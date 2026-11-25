@@ -16,8 +16,6 @@ async fn main() {
     let ifindex: u32 = 96;
     let link_chain_id: u16 = 1;
     let addr = Ipv4Addr::new(10, 200, 1, 1);
-    // Still consumed by the route side (is_current checks).
-    landscape_ebpf::maps::wan::add_ipv4_wan_ip(rt.paths(), ifindex, addr, None, 24, None);
 
     // The test drives the stage directly; stand the link chain up first.
     let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(

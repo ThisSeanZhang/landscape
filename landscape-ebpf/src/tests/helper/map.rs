@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "bpf-test"), allow(unused_imports))]
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use landscape_common::flow::mark::{FlowMark, FlowMarkAction, MarkType, SocketMark};
@@ -63,10 +63,6 @@ pub(crate) fn remote_addr() -> Ipv6Addr {
 
 pub(crate) fn gateway_addr() -> Ipv6Addr {
     Ipv6Addr::from_str("2001:db8:ffff::1").unwrap()
-}
-
-pub(crate) fn wan_addr() -> IpAddr {
-    IpAddr::V6(Ipv6Addr::from_str("2001:db8:ffff::10").unwrap())
 }
 
 pub(crate) fn as_bytes<T>(value: &T) -> &[u8] {
@@ -434,7 +430,6 @@ pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
 #[derive(Debug)]
 #[allow(dead_code)] // pinned handles exist for map-layout parity; not every test reads each one
 pub(crate) struct TestSharedMaps {
-    pub wan_ip_binding: libbpf_rs::MapHandle,
     pub rt4_lan_map: libbpf_rs::MapHandle,
     pub rt6_lan_map: libbpf_rs::MapHandle,
     pub rt4_slot_map: libbpf_rs::MapHandle,
@@ -450,7 +445,6 @@ impl TestSharedMaps {
                 .unwrap_or_else(|e| panic!("open test map at {}: {e}", path.display()))
         };
         Self {
-            wan_ip_binding: pin(&paths.wan_ip),
             rt4_lan_map: pin(&paths.rt4_lan_map),
             rt6_lan_map: pin(&paths.rt6_lan_map),
             rt4_slot_map: pin(&paths.rt4_slot_map),

@@ -34,7 +34,6 @@ use libbpf_rs::MapCore;
 
 use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
-use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
@@ -356,7 +355,6 @@ impl WanLinkDataplane {
         }
         inner.is_ppp = matches!(kind, BindKind::Ppp);
         self.observe_interface(&mut inner, ifindex, mac.is_some());
-        maps::wan::add_ipv4_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
         let bind = AddrBind {
             ifindex,
             addr: IpAddr::V4(addr),
@@ -376,7 +374,6 @@ impl WanLinkDataplane {
             return;
         }
         if let Some(bind) = inner.v4.take() {
-            maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv4 without a recorded binding");
@@ -422,7 +419,6 @@ impl WanLinkDataplane {
             return;
         }
         self.observe_interface(&mut inner, ifindex, mac.is_some());
-        maps::wan::add_ipv6_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
         let bind = AddrBind {
             ifindex,
             addr: IpAddr::V6(addr),
@@ -442,7 +438,6 @@ impl WanLinkDataplane {
             return;
         }
         if let Some(bind) = inner.v6.take() {
-            maps::wan::del_ipv6_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv6 without a recorded binding");
@@ -494,11 +489,9 @@ impl WanLinkDataplane {
         inner.clear_gateway_macs();
         inner.gateway_arp = GatewayArpState::default();
         if let Some(bind) = inner.v4.take() {
-            maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         }
         if let Some(bind) = inner.v6.take() {
-            maps::wan::del_ipv6_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         }
         if !inner.xdp.wan_stages.is_empty() || !inner.xdp.lan_stages.is_empty() {
