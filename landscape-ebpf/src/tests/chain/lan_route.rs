@@ -32,6 +32,10 @@ use crate::tests::helper::net::{
 use crate::tests::pkt::{simple_ipv4_tcp, simple_ipv6_tcp_syn};
 use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 
+mod l2_fixture;
+mod l2_handoff;
+mod l2_native;
+
 fn build_ipv4_tcp_pkt(
     src_mac: [u8; 6],
     dst_mac: [u8; 6],

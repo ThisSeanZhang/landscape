@@ -578,17 +578,7 @@ static __always_inline int xdp_route4_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
-            if (target->has_mac) {
-                struct mac_value_v4 *mac_val = bpf_map_lookup_elem(&ip_mac_v4, &target->gate_addr);
-                if (mac_val) {
-                    void *data = (void *)(long)ctx->data;
-                    void *data_end = (void *)(long)ctx->data_end;
-                    struct ethhdr *eth = data;
-                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    __builtin_memcpy(eth->h_source, target->mac, 6);
-                }
-            }
+            // As on a slot hit, the selected WAN root owns the Ethernet header.
             if (!target->xdp_redirect_able) {
                 int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
                                                    target->link_chain_id);
@@ -656,19 +646,7 @@ static __always_inline int xdp_route6_search_cache_in_lan(struct xdp_md *ctx,
                 xdp_set_docker_meta(ctx, target->mark_value, target->ifindex);
                 return XDP_PASS;
             }
-            if (target->has_mac) {
-                struct mac_key_v6 gw_key = {};
-                COPY_ADDR_FROM(gw_key.addr.in6_u.u6_addr8, target->gate_addr.in6_u.u6_addr8);
-                struct mac_value_v6 *mac_val = bpf_map_lookup_elem(&ip_mac_v6, &gw_key);
-                if (mac_val) {
-                    void *data = (void *)(long)ctx->data;
-                    void *data_end = (void *)(long)ctx->data_end;
-                    struct ethhdr *eth = data;
-                    if ((void *)(eth + 1) > data_end) return XDP_DROP;
-                    __builtin_memcpy(eth->h_dest, mac_val->mac, 6);
-                    __builtin_memcpy(eth->h_source, target->mac, 6);
-                }
-            }
+            // As on a slot hit, the selected WAN root owns the Ethernet header.
             if (!target->xdp_redirect_able) {
                 int ret = xdp_set_tc_redirect_meta(ctx, target->mark_value, target->ifindex,
                                                    target->link_chain_id);
