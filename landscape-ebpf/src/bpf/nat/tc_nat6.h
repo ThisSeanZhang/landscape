@@ -4,6 +4,7 @@
 #include "base/printk.h"
 #include "base/tcp_phase.h"
 #include "base/ipv6.h"
+#include "frag/tc_frag6.h"
 #include "nat/nat_common.h"
 #include "nat/nat6_ct.h"
 #include "nat/xdp_csum_helpers.h"
@@ -110,15 +111,21 @@ static __always_inline int ipv6_egress_prefix_check_and_replace(
     if (!wan_ro_prefix6.b[0] || nat6_resolve(off, src_addr, sport, dst_addr, dport, true, skb->mark,
                                              ifindex, skb->len, &trans))
         return TC_ACT_SHOT;
-    if (!trans.replace) return TC_ACT_UNSPEC;
+    if (!trans.replace) {
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
+        return TC_ACT_UNSPEC;
+    }
     bool is_icmpx_error = off->icmp_inner_l4_offset != 0;
     if (is_icmpx_error) return nat6_rewrite_icmp_error(skb, off, false, 0);
 
     u32 ip_src_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
     __be64 old_ip_prefix;
     COPY_ADDR_FROM(&old_ip_prefix, src_addr->in6_u.u6_addr32);
-    return nat6_replace_outer_prefix(skb, off, ip_src_offset, old_ip_prefix,
-                                     nat6_wan_prefix(old_ip_prefix));
+    int ret = nat6_replace_outer_prefix(skb, off, ip_src_offset, old_ip_prefix,
+                                        nat6_wan_prefix(old_ip_prefix));
+    if (ret != TC_ACT_SHOT)
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
+    return ret;
 }
 
 static __always_inline int ipv6_ingress_prefix_check_and_replace(
@@ -133,6 +140,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     __be64 dst_prefix;
     __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
     if (!trans.replace || dst_prefix == local_client_prefix) {
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
         if (trans.is_static) {
             u32 mark = skb->mark;
             barrier_var(mark);
@@ -146,7 +154,11 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
     u32 dst_ip_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
     __be64 old_ip_prefix;
     COPY_ADDR_FROM(&old_ip_prefix, dst_addr->in6_u.u6_addr32);
-    return nat6_replace_outer_prefix(skb, off, dst_ip_offset, old_ip_prefix, local_client_prefix);
+    int ret =
+        nat6_replace_outer_prefix(skb, off, dst_ip_offset, old_ip_prefix, local_client_prefix);
+    if (ret != TC_ACT_SHOT)
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
+    return ret;
 }
 
 #endif /* LD_NAT6_V3_H */

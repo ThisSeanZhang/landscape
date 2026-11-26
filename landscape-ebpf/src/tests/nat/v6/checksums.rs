@@ -688,3 +688,233 @@ fn exact_ct_then_static_then_shared_dynamic_mapping_across_hooks() {
         assert_eq!(mapping.refs, 2);
     });
 }
+
+fn frag6_key(src: Ipv6Addr, dst: Ipv6Addr, id: u32) -> [u8; 36] {
+    let mut key = [0u8; 36];
+    key[0..16].copy_from_slice(&src.octets());
+    key[16..32].copy_from_slice(&dst.octets());
+    key[32..36].copy_from_slice(&id.to_be_bytes());
+    key
+}
+
+fn icmpv6_echo_fragments(
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
+    id: u32,
+    echo_id: u16,
+    request: bool,
+) -> [Vec<u8>; 2] {
+    let echo = IcmpEchoHeader { id: echo_id, seq: 1 };
+    let ty = if request { Icmpv6Type::EchoRequest(echo) } else { Icmpv6Type::EchoReply(echo) };
+    let mut full = Vec::new();
+    PacketBuilder::ethernet2([2; 6], [4; 6])
+        .ipv6(src.octets(), dst.octets(), 64)
+        .icmpv6(ty)
+        .write(&mut full, &[0x5a; 16])
+        .unwrap();
+    let (eth, ip_packet) = Ethernet2Header::from_slice(&full).unwrap();
+    let (mut ip, icmp) = Ipv6Header::from_slice(ip_packet).unwrap();
+    ip.next_header = ip_number::IPV6_FRAGMENTATION_HEADER;
+    let (head, tail) = icmp.split_at(8);
+    [(0, true, head), (1, false, tail)].map(|(offset, more, bytes)| {
+        let frag = Ipv6FragmentHeader::new(
+            ip_number::IPV6_ICMP,
+            IpFragOffset::try_new(offset).unwrap(),
+            more,
+            id,
+        );
+        ip.set_payload_length(Ipv6FragmentHeader::LEN + bytes.len()).unwrap();
+        let mut frame = eth.to_bytes().to_vec();
+        ip.write(&mut frame).unwrap();
+        frag.write(&mut frame).unwrap();
+        frame.extend_from_slice(bytes);
+        frame
+    })
+}
+
+fn tcp_syn_fragments(
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
+    sport: u16,
+    dport: u16,
+    id: u32,
+) -> [Vec<u8>; 2] {
+    let mut full = Vec::new();
+    PacketBuilder::ethernet2([2; 6], [4; 6])
+        .ipv6(src.octets(), dst.octets(), 64)
+        .tcp(sport, dport, 100, 4096)
+        .syn()
+        .write(&mut full, &[0x33; 16])
+        .unwrap();
+    let (eth, ip_packet) = Ethernet2Header::from_slice(&full).unwrap();
+    let (mut ip, tcp) = Ipv6Header::from_slice(ip_packet).unwrap();
+    ip.next_header = ip_number::IPV6_FRAGMENTATION_HEADER;
+    let (head, tail) = tcp.split_at(24);
+    [(0, true, head), (3, false, tail)].map(|(offset, more, bytes)| {
+        let frag = Ipv6FragmentHeader::new(
+            ip_number::TCP,
+            IpFragOffset::try_new(offset).unwrap(),
+            more,
+            id,
+        );
+        ip.set_payload_length(Ipv6FragmentHeader::LEN + bytes.len()).unwrap();
+        let mut frame = eth.to_bytes().to_vec();
+        ip.write(&mut frame).unwrap();
+        frag.write(&mut frame).unwrap();
+        frame.extend_from_slice(bytes);
+        frame
+    })
+}
+
+#[test]
+fn unauthorized_wan_first_fragments_do_not_pollute_frag6_cache_wan() {
+    with_nat6(|tc, xdp| {
+        let [udp_first, udp_later, _] = udp_fragments(REMOTE, WAN_CLIENT, 0x1001);
+        let [tcp_first, tcp_later] = tcp_syn_fragments(REMOTE, WAN_CLIENT, 55555, 443, 0x1002);
+        let [icmp_first, icmp_later] =
+            icmpv6_echo_fragments(REMOTE, WAN_CLIENT, 0x1003, 0x4242, false);
+
+        for (first, later, id) in [
+            (&udp_first, &udp_later, 0x1001),
+            (&tcp_first, &tcp_later, 0x1002),
+            (&icmp_first, &icmp_later, 0x1003),
+        ] {
+            // TC ingress: unauthorized public first fragment must be dropped and never cached.
+            run(&tc.progs.tc_nat_wan_ingress_v6, first, TC_ACT_SHOT, 0);
+            assert!(
+                tc.maps
+                    .frag6_cache_wan
+                    .lookup(&frag6_key(REMOTE, WAN_CLIENT, id), MapFlags::ANY)
+                    .unwrap()
+                    .is_none(),
+                "TC must not insert frag6_cache_wan entry for unauthorized first fragment id={id:#x}"
+            );
+            run(&tc.progs.tc_nat_wan_ingress_v6, later, TC_ACT_SHOT, 0);
+
+            // XDP ingress: unauthorized public first fragment must be dropped and never cached.
+            run(&xdp.progs.ingress_nat_v6, first, XDP_DROP, 0);
+            assert!(
+                tc.maps
+                    .frag6_cache_wan
+                    .lookup(&frag6_key(REMOTE, WAN_CLIENT, id), MapFlags::ANY)
+                    .unwrap()
+                    .is_none(),
+                "XDP must not insert frag6_cache_wan entry for unauthorized first fragment id={id:#x}"
+            );
+            run(&xdp.progs.ingress_nat_v6, later, XDP_DROP, 0);
+        }
+
+        assert_eq!(
+            tc.maps.frag6_cache_wan.keys().count(),
+            0,
+            "frag6_cache_wan must remain completely empty after spoofed WAN first fragments"
+        );
+    });
+}
+
+#[test]
+fn authorized_static_and_dynamic_first_fragments_populate_frag6_cache_in_tc_and_xdp() {
+    // 1) Static mapping hit (both TC and XDP) stores frag6_cache_wan and forwards later fragment.
+    with_nat6(|tc, xdp| {
+        map_udp53(tc, LAN_CLIENT);
+        for (prog, verdict, id) in [
+            (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK, 0x2001),
+            (&xdp.progs.ingress_nat_v6, XDP_PASS, 0x2002),
+        ] {
+            let [first, later, _] = udp_fragments(REMOTE, WAN_CLIENT, id);
+            let [expected_first, expected_later, _] = udp_fragments(REMOTE, LAN_CLIENT, id);
+            assert_eq!(run(prog, &first, verdict, 0), expected_first);
+            assert!(
+                tc.maps
+                    .frag6_cache_wan
+                    .lookup(&frag6_key(REMOTE, WAN_CLIENT, id), MapFlags::ANY)
+                    .unwrap()
+                    .is_some(),
+                "authorized static first fragment id={id:#x} must populate frag6_cache_wan"
+            );
+            assert_eq!(run(prog, &later, verdict, 0), expected_later);
+        }
+        assert_eq!(tc.maps.frag6_cache_wan.keys().count(), 2);
+    });
+
+    // 1b) Static pass (zero-prefix rule, !trans.replace) in both TC and XDP.
+    with_nat6(|tc, xdp| {
+        map_udp53(tc, "::100".parse().unwrap());
+        for (prog, verdict, id) in [
+            (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK, 0x2101),
+            (&xdp.progs.ingress_nat_v6, XDP_PASS, 0x2102),
+        ] {
+            let [first, later, _] = udp_fragments(REMOTE, WAN_CLIENT, id);
+            assert_eq!(run(prog, &first, verdict, 0), first);
+            assert!(
+                tc.maps
+                    .frag6_cache_wan
+                    .lookup(&frag6_key(REMOTE, WAN_CLIENT, id), MapFlags::ANY)
+                    .unwrap()
+                    .is_some(),
+                "authorized static-pass first fragment id={id:#x} must populate frag6_cache_wan"
+            );
+            assert_eq!(run(prog, &later, verdict, 0), later);
+        }
+        assert_eq!(tc.maps.frag6_cache_wan.keys().count(), 2);
+    });
+
+    // 2) Dynamic CT (LAN egress creates CT + frag6_cache_lan; matching WAN reply populates
+    //    frag6_cache_wan; spoofed third-party remote is dropped without polluting frag6_cache_wan).
+    for use_xdp in [false, true] {
+        with_nat6(|tc, xdp| {
+            let (egress, eg_ok, ingress, in_ok, in_drop) = if use_xdp {
+                (&xdp.progs.egress_nat_v6, XDP_PASS, &xdp.progs.ingress_nat_v6, XDP_PASS, XDP_DROP)
+            } else {
+                (
+                    &tc.progs.tc_nat_wan_egress_v6,
+                    TC_ACT_UNSPEC,
+                    &tc.progs.tc_nat_wan_ingress_v6,
+                    TC_ACT_OK,
+                    TC_ACT_SHOT,
+                )
+            };
+
+            let [lan_first, lan_later] =
+                icmpv6_echo_fragments(LAN_CLIENT, REMOTE, 0x3001, 0x7777, true);
+            let [wan_first, wan_later] =
+                icmpv6_echo_fragments(WAN_CLIENT, REMOTE, 0x3001, 0x7777, true);
+            assert_eq!(run(egress, &lan_first, eg_ok, 0), wan_first);
+            assert!(
+                tc.maps
+                    .frag6_cache_lan
+                    .lookup(&frag6_key(LAN_CLIENT, REMOTE, 0x3001), MapFlags::ANY)
+                    .unwrap()
+                    .is_some(),
+                "authorized LAN egress first fragment must populate frag6_cache_lan"
+            );
+            assert_eq!(run(egress, &lan_later, eg_ok, 0), wan_later);
+
+            // Spoofed public first fragment from ROUTER (no CT with ROUTER) must be dropped and not cached.
+            let [spoof_first, _] = icmpv6_echo_fragments(ROUTER, WAN_CLIENT, 0x3002, 0x8888, false);
+            run(ingress, &spoof_first, in_drop, 0);
+            assert_eq!(
+                tc.maps.frag6_cache_wan.keys().count(),
+                0,
+                "spoofed ingress fragment must not pollute frag6_cache_wan"
+            );
+
+            // Legitimate reply from REMOTE matching the established CT populates frag6_cache_wan.
+            let [reply_first, reply_later] =
+                icmpv6_echo_fragments(REMOTE, WAN_CLIENT, 0x3003, 0x7777, false);
+            let [exp_reply_first, exp_reply_later] =
+                icmpv6_echo_fragments(REMOTE, LAN_CLIENT, 0x3003, 0x7777, false);
+            assert_eq!(run(ingress, &reply_first, in_ok, 0), exp_reply_first);
+            assert!(
+                tc.maps
+                    .frag6_cache_wan
+                    .lookup(&frag6_key(REMOTE, WAN_CLIENT, 0x3003), MapFlags::ANY)
+                    .unwrap()
+                    .is_some(),
+                "established CT reply first fragment must populate frag6_cache_wan"
+            );
+            assert_eq!(run(ingress, &reply_later, in_ok, 0), exp_reply_later);
+            assert_eq!(tc.maps.frag6_cache_wan.keys().count(), 1);
+        });
+    }
+}

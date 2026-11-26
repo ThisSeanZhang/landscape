@@ -95,8 +95,9 @@ struct ip6_scan_offsets {
     __u16 icmp_quote_end;
     __u8 icmp_inner_l4_protocol;
 
-    /* Reader/test observability; the NAT modify path does not consume it. */
     __u8 frag_code;
+    __u8 frag_next_header;
+    __be32 frag_id;
 };
 
 /*
@@ -212,6 +213,8 @@ done:
     off->l4_offset = (__u16)offset;
     off->l4_protocol = cur;
     off->frag_code = frag_code;
+    off->frag_next_header = frag_nh;
+    off->frag_id = id;
     if (frag_id) *frag_id = id;
     if (frag_next) *frag_next = frag_nh;
     return 0;
@@ -297,6 +300,8 @@ done:
     off->l4_offset = (__u16)offset;
     off->l4_protocol = cur;
     off->frag_code = frag_code;
+    off->frag_next_header = frag_nh;
+    off->frag_id = id;
     if (frag_id) *frag_id = id;
     if (frag_next) *frag_next = frag_nh;
     return 0;

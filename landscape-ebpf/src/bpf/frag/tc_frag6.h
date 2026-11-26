@@ -85,6 +85,16 @@ static __always_inline void frag6_cache_store(const struct in6_addr *src_addr,
         bpf_map_update_elem(&frag6_cache_wan, &key, &value, BPF_ANY);
 }
 
+/* Store first-fragment metadata extracted by the reader only after NAT6 authorizes the flow. */
+static __always_inline void frag6_cache_store_first(const struct ip6_scan_offsets *off,
+                                                    const struct in6_addr *src_addr,
+                                                    const struct in6_addr *dst_addr, __be16 sport,
+                                                    __be16 dport, __u8 direction) {
+    if (off->frag_code == LAND_FRAG_FIRST && off->ports_valid)
+        frag6_cache_store(src_addr, dst_addr, off->frag_id, off->l4_protocol, off->frag_next_header,
+                          sport, dport, 1, direction);
+}
+
 /*
  * Restore the first fragment's metadata. A cache entry whose Fragment header
  * type does not match the current non-initial fragment is rejected; this
