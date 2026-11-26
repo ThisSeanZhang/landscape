@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 landscape-common = { path = "../landscape-common" }
 
+bincode = { workspace = true }
+serde = { workspace = true }
 quick-protobuf = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
