@@ -36,3 +36,5 @@ mod test_route_slot;
 mod test_route_wan_cache;
 #[cfg(all(test, feature = "test-misc"))]
 mod xdp_wan_intro;
+#[cfg(test)]
+mod xdp_wan_route;
