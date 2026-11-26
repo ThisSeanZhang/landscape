@@ -10,12 +10,11 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-landscape = { path = "../landscape" }
+landscape = { path = "../landscape", default-features = false }
 landscape-common = { path = "../landscape-common", features = ["openapi"] }
 landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }
 landscape-ebpf = { path = "../landscape-ebpf" }
-landscape-gateway = { path = "../landscape-gateway", optional = true }
 
 arc-swap = { workspace = true }
 
@@ -74,8 +73,12 @@ tracing = { workspace = true }
 sea-orm = { workspace = true }
 
 [features]
+# Optional additional drivers; the application storage remains SQLite-based.
+postgres-driver = ["landscape-database/postgres-driver"]
+mysql-driver = ["landscape-database/mysql-driver"]
+e2e-acme = ["landscape/e2e-acme"]
 default = ["gateway", "metric-persistent"]
-gateway = ["dep:landscape-gateway"]
+gateway = ["landscape/gateway"]
 static = ["landscape-ebpf/static"]
 metric-persistent = ["landscape/metric-persistent"]
 mem-track = ["landscape/mem-track"]

@@ -4,22 +4,25 @@
 //! whole eBPF chain lifecycle: the four root programs (XDP from-WAN /
 //! from-LAN, TC WAN-ingress / WAN-egress) registered under the link's
 //! chain id in the shared root prog arrays, the per-direction stage
-//! tables, and the link's WAN address publications in the dispatch
-//! trie.  Dropping the object tears all of that down (see [`Drop`]).
+//! tables, the link's from-LAN exit programs, and the link's WAN address
+//! publications in the dispatch trie.  Dropping the object tears all of
+//! that down (see [`Drop`]).
 //!
-//! The shared, link-independent substrate (trie, intro seed, exit
-//! skeletons, root-array shells) lives in
-//! [`crate::route_backbone::RouteBackbone`]; per-iface XDP slot
-//! arbitration lives in [`crate::xdp_attach::XdpAttach`].  The two
+//! The shared, link-independent substrate (trie, intro seed, from-WAN
+//! exit skeletons, root-array shells) lives in
+//! [`crate::route_backbone::RouteBackbone`]. The two
 //! hook planes' stage plumbing (state, root loaders, relinks,
 //! loader-facing views) lives in the [`xdp`] and [`tc`] submodules.
 
+mod from_lan;
+mod gateway_arp;
 mod tc;
 mod xdp;
 
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
+use std::os::fd::AsFd;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -29,21 +32,23 @@ use landscape_common::wan_service::nat::config::NatConfig;
 use landscape_common::wan_service::wan_chain::dataplane::PppoeEgressTmpl;
 use libbpf_rs::MapCore;
 
+use crate::bpf_error::LandscapeEbpfError;
 use crate::bpf_error::LdEbpfResult;
-use crate::chain::stage::StageTable;
-use crate::maps;
 use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
 use crate::route_backbone::RouteBackbone;
 use crate::route_backbone::pinned_map;
-use crate::xdp_attach::XdpAttach;
 
+use from_lan::WanEgressBinding;
+use gateway_arp::GatewayArpState;
 use tc::TcChainState;
 use tc::TcChainView;
 use xdp::XdpChainState;
 use xdp::XdpChainView;
 
+pub(crate) use tc::TcPppoeExitGuard;
+
 /// The skeleton-side template type generated from the BPF C header.
-type BpfPppoeTmpl = crate::pppoe::pppoe_handle::PppoeEgressTmpl;
+pub(crate) type BpfPppoeTmpl = crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 /// The common and BPF-side templates must stay layout-identical; the
 /// field-by-field conversion below relies on it.
@@ -64,26 +69,34 @@ fn to_bpf_tmpl(tmpl: &PppoeEgressTmpl) -> BpfPppoeTmpl {
     }
 }
 
-/// One recorded WAN address binding: the map key it was written under.
-/// The full payload is kept (not just the ifindex) because Phase 2
-/// bakes these values into the NAT stage's rodata at reload time.
+/// WAN address binding used for root configuration and dispatch-trie publication.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct AddrBind {
     ifindex: u32,
     addr: IpAddr,
     gateway: Option<IpAddr>,
     mask: u8,
     mac: Option<MacAddr>,
+    is_pppoe: bool,
+}
+
+#[derive(Clone, Copy)]
+enum BindKind {
+    L2,
+    NativePppoe,
+    Ppp,
 }
 
 #[derive(Default)]
 struct Inner {
     ifindex: Option<u32>,
     has_eth_header: bool,
+    is_ppp: bool,
     v4: Option<AddrBind>,
     v6: Option<AddrBind>,
     closed: bool,
+    published_egress_binding: Option<WanEgressBinding>,
+    gateway_arp: GatewayArpState,
     xdp: XdpChainState,
     tc: TcChainState,
 }
@@ -94,9 +107,11 @@ struct Inner {
 /// teardown unless [`close`](WanLinkDataplane::close) already ran.
 pub struct WanLinkDataplane {
     backbone: Arc<RouteBackbone>,
-    attach: Arc<XdpAttach>,
     id: u16,
     inner: Mutex<Inner>,
+    /// Chain-private from-LAN exits, shared by this chain's roots and stages.
+    xdp_lan_exit_map: libbpf_rs::MapHandle,
+    tc_wan_egress_exit_map: libbpf_rs::MapHandle,
 }
 
 impl WanLinkDataplane {
@@ -105,37 +120,29 @@ impl WanLinkDataplane {
     /// the pairing state (both are refreshed by later `observe` calls).
     pub fn new(
         backbone: Arc<RouteBackbone>,
-        attach: Arc<XdpAttach>,
         id: u16,
         ifindex: Option<u32>,
         has_eth_header: bool,
     ) -> LdEbpfResult<Arc<Self>> {
-        let wan_root = Self::create_wan_root(&backbone, id)?;
-        let lan_root = Self::create_lan_side_root(&backbone, id)?;
-        let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
-        let ingress_root = Self::create_ingress_root(&backbone, id, l3_offset)?;
-        let egress_root = Self::create_egress_root(&backbone, id, l3_offset)?;
-
-        let inner = Inner {
-            ifindex,
-            has_eth_header,
-            v4: None,
-            v6: None,
-            closed: false,
-            xdp: XdpChainState {
-                wan_root: Some(wan_root),
-                lan_root: Some(lan_root),
-                lan_stages: StageTable::default(),
-                wan_stages: StageTable::default(),
-            },
-            tc: TcChainState {
-                ingress_root: Some(ingress_root),
-                egress_root: Some(egress_root),
-                ingress_stages: StageTable::default(),
-                egress_stages: StageTable::default(),
-            },
-        };
-        Ok(Arc::new(Self { backbone, attach, id, inner: Mutex::new(inner) }))
+        let xdp_lan_exit_map = Self::create_xdp_lan_exit_map()?;
+        let (tc_wan_egress_exit_map, tc_plain_exit) = Self::create_tc_wan_egress_exit()?;
+        let mut inner = Inner { ifindex, has_eth_header, ..Inner::default() };
+        inner.tc.plain_exit = Some(tc_plain_exit);
+        let dp = Arc::new(Self {
+            backbone,
+            id,
+            inner: Mutex::new(inner),
+            xdp_lan_exit_map,
+            tc_wan_egress_exit_map,
+        });
+        {
+            let mut inner = dp.inner.lock().unwrap();
+            inner.xdp.wan_root = Some(Self::create_wan_root(&dp.backbone, id)?);
+            let l3_offset = if has_eth_header { 14 } else { 0 };
+            inner.tc.ingress_root = Some(Self::create_ingress_root(&dp.backbone, id, l3_offset)?);
+            dp.refresh_from_lan_roots(&mut inner)?;
+        }
+        Ok(dp)
     }
 
     /// This link's chain id.
@@ -147,8 +154,36 @@ impl WanLinkDataplane {
         &self.backbone
     }
 
-    pub(crate) fn attach(&self) -> &Arc<XdpAttach> {
-        &self.attach
+    /// Point a skeleton's from-LAN XDP exit slot at this chain's exit map.
+    pub(crate) fn reuse_xdp_lan_exit_map(
+        &self,
+        map: &mut libbpf_rs::OpenMapMut<'_>,
+    ) -> LdEbpfResult<()> {
+        map.reuse_fd(self.xdp_lan_exit_map.as_fd()).map_err(|source| LandscapeEbpfError::Context {
+            context: "reuse per-chain XDP from-LAN exit map failed".to_string(),
+            source,
+        })
+    }
+
+    /// Point a skeleton's from-LAN TC exit slot at this chain's exit map.
+    pub(crate) fn reuse_tc_wan_egress_exit_map(
+        &self,
+        map: &mut libbpf_rs::OpenMapMut<'_>,
+    ) -> LdEbpfResult<()> {
+        map.reuse_fd(self.tc_wan_egress_exit_map.as_fd()).map_err(|source| {
+            LandscapeEbpfError::Context {
+                context: "reuse per-chain TC from-LAN exit map failed".to_string(),
+                source,
+            }
+        })
+    }
+
+    fn sync_wan_binding(&self, inner: &mut Inner) {
+        inner.sync_gateway_arp_target();
+        inner.sync_gateway_ns_target();
+        if let Err(err) = self.refresh_from_lan_roots(inner) {
+            tracing::warn!(chain = self.id, error = %err, "refreshing from-LAN roots failed");
+        }
     }
 
     /// Refresh the chain ↔ ifindex pairing, tolerating re-dial churn:
@@ -156,26 +191,23 @@ impl WanLinkDataplane {
     /// entry point refreshes the pairing instead of validating it.
     pub fn observe(&self, ifindex: u32, has_eth_header: bool) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        self.observe_interface(&mut inner, ifindex, has_eth_header);
+        self.sync_wan_binding(&mut inner);
+    }
+
+    fn observe_interface(&self, inner: &mut Inner, ifindex: u32, has_eth_header: bool) {
         if has_eth_header != inner.has_eth_header
             && inner.tc.ingress_stages.is_empty()
             && inner.tc.egress_stages.is_empty()
         {
-            // No stages attached yet: rebuild the TC roots with the
-            // corrected L3 offset (hotplug case — the link object was
-            // constructed before its interface appeared).
-            let l3_offset: u32 = if has_eth_header { 14 } else { 0 };
-            match (
-                Self::create_ingress_root(&self.backbone, self.id, l3_offset),
-                Self::create_egress_root(&self.backbone, self.id, l3_offset),
-            ) {
-                (Ok(i), Ok(e)) => {
-                    inner.tc.ingress_root = Some(i);
-                    inner.tc.egress_root = Some(e);
-                }
-                (Err(err), _) | (_, Err(err)) => tracing::warn!(
-                    chain = self.id,
-                    error = %err,
-                    "rebuild tc roots after has_eth flip failed"
+            let l3_offset = if has_eth_header { 14 } else { 0 };
+            match Self::create_ingress_root(&self.backbone, self.id, l3_offset) {
+                Ok(root) => inner.tc.ingress_root = Some(root),
+                Err(err) => tracing::warn!(
+                    chain = self.id, error = %err, "rebuilding TC ingress root after link change failed"
                 ),
             }
         }
@@ -187,18 +219,12 @@ impl WanLinkDataplane {
                     ifindex,
                     "wan link rebound to a new ifindex"
                 );
-                inner.ifindex = Some(ifindex);
-                inner.has_eth_header = has_eth_header;
             }
-            Some(_) => {
-                inner.has_eth_header = has_eth_header;
-            }
-            None => {
-                tracing::debug!(chain = self.id, ifindex, "wan link bound to ifindex");
-                inner.ifindex = Some(ifindex);
-                inner.has_eth_header = has_eth_header;
-            }
+            None => tracing::debug!(chain = self.id, ifindex, "wan link bound to ifindex"),
+            _ => {}
         }
+        inner.ifindex = Some(ifindex);
+        inner.has_eth_header = has_eth_header;
     }
 
     // ── stage attach entry points ──
@@ -300,26 +326,59 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        self.observe(ifindex, mac.is_some());
-        maps::wan::add_ipv4_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
+        self.bind_ipv4(ifindex, addr, gateway, mask, mac, BindKind::L2);
+    }
+
+    /// A pppd-owned `pppX` is a point-to-point L3 link: no Ethernet header
+    /// and no gateway MAC to resolve.
+    pub fn bind_ppp_ipv4(&self, ifindex: u32, addr: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
+        self.bind_ipv4(ifindex, addr, Some(peer), mask, None, BindKind::Ppp);
+    }
+
+    /// Native PPPoE has an Ethernet header, but its session supplies the peer MAC.
+    pub fn bind_pppoe_ipv4(&self, ifindex: u32, addr: Ipv4Addr, peer: Ipv4Addr, mac: MacAddr) {
+        self.bind_ipv4(ifindex, addr, Some(peer), 32, Some(mac), BindKind::NativePppoe);
+    }
+
+    fn bind_ipv4(
+        &self,
+        ifindex: u32,
+        addr: Ipv4Addr,
+        gateway: Option<Ipv4Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+        kind: BindKind,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        inner.is_ppp = matches!(kind, BindKind::Ppp);
+        self.observe_interface(&mut inner, ifindex, mac.is_some());
         let bind = AddrBind {
             ifindex,
             addr: IpAddr::V4(addr),
             gateway: gateway.map(IpAddr::V4),
             mask,
             mac,
+            is_pppoe: matches!(kind, BindKind::NativePppoe),
         };
         self.publish_bind(&bind);
-        self.inner.lock().unwrap().v4 = Some(bind);
+        inner.v4 = Some(bind);
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn unbind_wan_ipv4(&self) {
-        if let Some(bind) = self.inner.lock().unwrap().v4.take() {
-            maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        if let Some(bind) = inner.v4.take() {
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv4 without a recorded binding");
         }
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn bind_wan_ipv6(
@@ -330,26 +389,60 @@ impl WanLinkDataplane {
         mask: u8,
         mac: Option<MacAddr>,
     ) {
-        self.observe(ifindex, mac.is_some());
-        maps::wan::add_ipv6_wan_ip(self.backbone.paths(), ifindex, addr, gateway, mask, mac);
+        self.bind_ipv6(ifindex, addr, gateway, mask, mac, false);
+    }
+
+    /// Native PPPoE v6: the session supplies the peer MAC, so the IPv6
+    /// gateway is never resolvable directly on the wire.
+    pub fn bind_pppoe_ipv6(
+        &self,
+        ifindex: u32,
+        addr: Ipv6Addr,
+        gateway: Option<Ipv6Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+    ) {
+        self.bind_ipv6(ifindex, addr, gateway, mask, mac, true);
+    }
+
+    fn bind_ipv6(
+        &self,
+        ifindex: u32,
+        addr: Ipv6Addr,
+        gateway: Option<Ipv6Addr>,
+        mask: u8,
+        mac: Option<MacAddr>,
+        is_pppoe: bool,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        self.observe_interface(&mut inner, ifindex, mac.is_some());
         let bind = AddrBind {
             ifindex,
             addr: IpAddr::V6(addr),
             gateway: gateway.map(IpAddr::V6),
             mask,
             mac,
+            is_pppoe,
         };
         self.publish_bind(&bind);
-        self.inner.lock().unwrap().v6 = Some(bind);
+        inner.v6 = Some(bind);
+        self.sync_wan_binding(&mut inner);
     }
 
     pub fn unbind_wan_ipv6(&self) {
-        if let Some(bind) = self.inner.lock().unwrap().v6.take() {
-            maps::wan::del_ipv6_wan_ip(self.backbone.paths(), bind.ifindex);
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
+        if let Some(bind) = inner.v6.take() {
             self.unpublish_bind(&bind);
         } else {
             tracing::debug!(chain = self.id, "unbind_wan_ipv6 without a recorded binding");
         }
+        self.sync_wan_binding(&mut inner);
     }
 
     /// Publish the link's WAN address binding to the dispatch trie
@@ -393,12 +486,12 @@ impl WanLinkDataplane {
         if inner.closed {
             return;
         }
+        inner.clear_gateway_macs();
+        inner.gateway_arp = GatewayArpState::default();
         if let Some(bind) = inner.v4.take() {
-            maps::wan::del_ipv4_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         }
         if let Some(bind) = inner.v6.take() {
-            maps::wan::del_ipv6_wan_ip(self.backbone.paths(), bind.ifindex);
             self.unpublish_bind(&bind);
         }
         if !inner.xdp.wan_stages.is_empty() || !inner.xdp.lan_stages.is_empty() {
@@ -486,6 +579,7 @@ mod tests {
             gateway: None,
             mask: 32,
             mac: None,
+            is_pppoe: false,
         }
     }
 
@@ -513,6 +607,7 @@ mod tests {
                 gateway: None,
                 mask: 64,
                 mac: None,
+                is_pppoe: false,
             }),
             ..Default::default()
         };

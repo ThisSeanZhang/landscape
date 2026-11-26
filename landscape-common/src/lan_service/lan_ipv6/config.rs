@@ -160,6 +160,12 @@ pub struct LanIPv6ConfigV2 {
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = false))]
     pub dhcpv6: Option<DHCPv6ServerConfig>,
+    /// When true, RA RDNSS and DHCPv6 DNS options advertise only the
+    /// interface's stable link-local address instead of dynamic PD / static GUA
+    /// subnet router addresses. Defaults to false for backward compatibility.
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub rdnss_link_local_only: bool,
 }
 
 fn default_lifetime() -> u32 {
@@ -175,8 +181,19 @@ impl LanIPv6ConfigV2 {
         self.preferred_lifetime() * 2
     }
 
+    /// Periodic unsolicited RA interval in seconds.
+    ///
+    /// Derived as `preferred_lifetime / 3` clamped to `[20, 600]` so that
+    /// clients (including Wi-Fi power-saving stations) receive ~3 RAs per
+    /// preferred lifetime (e.g. 100s for the default 300s lifetime) and ~6 RAs
+    /// per valid lifetime, avoiding deprecation/loss on a single missed frame.
     pub fn icmp_ad_interval(&self) -> u32 {
-        self.preferred_lifetime().clamp(60, 600)
+        (self.preferred_lifetime() / 3).clamp(20, 600)
+    }
+
+    /// Keep DNS usable for at least 600 seconds and three RA intervals (RFC 8106 §5.1).
+    pub fn rdnss_lifetime(&self) -> u32 {
+        (3 * self.icmp_ad_interval()).max(600)
     }
 }
 
@@ -227,3 +244,74 @@ impl ZoneAwareConfig for LanIPv6ServiceConfigV2 {
 }
 
 crate::impl_trivial_validatable!(LanIPv6ServiceConfigV2);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ra_interval_and_rdnss_lifetime_follow_configured_lifetime() {
+        let make = |lifetime| LanIPv6ConfigV2 {
+            mode: IPv6ServiceMode::Slaac,
+            ad_interval: 30,
+            lifetime,
+            ra_flag: ra_flag_default(),
+            prefix_groups: vec![],
+            dhcpv6: None,
+            rdnss_link_local_only: false,
+        };
+
+        for (lifetime, interval, dns_lifetime) in [
+            (60, 20, 600),
+            (90, 30, 600),
+            (300, 100, 600),
+            (900, 300, 900),
+            (1800, 600, 1800),
+            (3600, 600, 1800),
+        ] {
+            let config = make(lifetime);
+            assert_eq!(config.icmp_ad_interval(), interval);
+            assert_eq!(config.rdnss_lifetime(), dns_lifetime);
+        }
+    }
+
+    #[test]
+    fn legacy_json_without_rdnss_link_local_only_defaults_to_false() {
+        let legacy_json = r#"{
+            "ad_interval": 300,
+            "dhcpv6": {"enable": false, "ia_na": null, "ia_pd": null},
+            "lifetime": 300,
+            "mode": "slaac",
+            "prefix_groups": [{
+                "group_id": "lan-v6",
+                "na": null,
+                "parent": {
+                    "depend_iface": "wan0",
+                    "expected_pd_len_snapshot": 60,
+                    "link_id": "00000000-0000-0000-0000-000000000001",
+                    "t": "pd"
+                },
+                "pd": null,
+                "ra": {"pool_index": 1, "preferred_lifetime": 300, "valid_lifetime": 600}
+            }],
+            "ra_flag": {
+                "home_agent": false,
+                "managed_address_config": false,
+                "nd_proxy": false,
+                "other_config": false,
+                "prf": 0,
+                "reserved": 0
+            }
+        }"#;
+
+        let cfg: LanIPv6ConfigV2 = serde_json::from_str(legacy_json).expect("legacy json parses");
+        assert!(!cfg.rdnss_link_local_only);
+    }
+
+    #[test]
+    fn explicit_rdnss_link_local_only_true_is_preserved() {
+        let json = r#"{"mode": "slaac", "lifetime": 300, "rdnss_link_local_only": true}"#;
+        let cfg: LanIPv6ConfigV2 = serde_json::from_str(json).expect("json parses");
+        assert!(cfg.rdnss_link_local_only);
+    }
+}

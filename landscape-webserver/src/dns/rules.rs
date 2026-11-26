@@ -24,7 +24,7 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &DNSRuleConfig,
 ) -> Result<(), DnsRuleError> {
-    if let Some(existing) = state.dns_rule_service.find_by_id(config.id).await?
+    if let Some(existing) = state.managed.dns_rule_service.find_by_id(config.id).await?
         && existing.flow_id != config.flow_id
     {
         return Err(DnsRuleError::CannotChangeFlow(config.id));
@@ -41,7 +41,7 @@ async fn ensure_flow_id_unchanged(
 async fn get_dns_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
-    let result = state.dns_rule_service.list().await?;
+    let result = state.managed.dns_rule_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -56,7 +56,7 @@ async fn get_flow_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<DNSRuleConfig>> {
-    let mut result = state.dns_rule_service.list_flow_configs(id).await?;
+    let mut result = state.managed.dns_rule_service.list_flow_configs(id).await?;
     result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
@@ -75,7 +75,7 @@ async fn get_dns_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DNSRuleConfig> {
-    LandscapeApiResp::success(state.dns_rule_service.find_required(id).await?)
+    LandscapeApiResp::success(state.managed.dns_rule_service.find_required(id).await?)
 }
 
 #[utoipa::path(
@@ -92,7 +92,7 @@ async fn add_many_dns_rules(
     for dns_rule in &dns_rules {
         ensure_flow_id_unchanged(&state, dns_rule).await?;
     }
-    state.dns_rule_service.checked_set_list(dns_rules).await?;
+    state.managed.dns_rule_service.checked_set_list(dns_rules).await?;
     LandscapeApiResp::success(())
 }
 
@@ -108,7 +108,7 @@ async fn add_dns_rules(
     JsonBody(dns_rule): JsonBody<DNSRuleConfig>,
 ) -> LandscapeApiResult<DNSRuleConfig> {
     ensure_flow_id_unchanged(&state, &dns_rule).await?;
-    let result = state.dns_rule_service.checked_set(dns_rule).await?;
+    let result = state.managed.dns_rule_service.checked_set(dns_rule).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -126,6 +126,6 @@ async fn del_dns_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_rule_service.delete_required(id).await?;
+    state.managed.dns_rule_service.delete_required(id).await?;
     LandscapeApiResp::success(())
 }

@@ -40,17 +40,15 @@ async fn cname_resolved_in_single_response_is_not_requeried() {
 }
 
 #[tokio::test]
-async fn cname_chain_follow_up_error_propagates() {
-    // The follow-up hop answers NXDomain: the whole lookup fails with
-    // the protocol error (old resolver chain semantics), without
-    // retrying the negative answer.
+async fn cname_chain_keeps_alias_when_follow_up_returns_nxdomain() {
     let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
     connector.push(Ok(answer_with(vec![cname_record("example.com.", "missing.example.com.")])));
     connector.push(Err(DnsConnError::Protocol(ResponseCode::NXDomain, None)));
     let pool = stream_pool(connector.clone(), 3);
 
-    let err = pool.lookup("example.com.", RecordType::A).await.unwrap_err();
-    assert!(matches!(err, UpstreamError::Protocol(ResponseCode::NXDomain, _)));
+    let answer = pool.lookup("example.com.", RecordType::A).await.unwrap();
+    assert_eq!(answer.response_code, ResponseCode::NXDomain);
+    assert_eq!(answer.records, [cname_record("example.com.", "missing.example.com.")]);
     assert_eq!(connector.queries(), 2);
 }
 

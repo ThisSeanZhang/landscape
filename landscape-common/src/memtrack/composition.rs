@@ -1,45 +1,45 @@
-//! RSS 构成统计:把“未归属差额”(RSS − Σ 子系统 live)拆成可解释的分桶。
-//!
-//! 数据源(均为按需读取,不在采样热路径):
-//! - `/proc/self/smaps`:按 VMA 归类 —— `[heap]`(brk 堆)、`[stack:tid]`
-//!   (线程栈)、有路径名的映射(代码/动态库/数据文件)、其余匿名映射
-//!   (malloc arena 的 mmap 区、libbpf mmap 的 map 等)。四桶之和 ≈ RSS。
-//! - glibc `mallinfo2()`(仅 gnu 目标):`uordblks` 为 malloc in-use 总量
-//!   (Rust 堆与 SQLite 等 C 堆同源),`fordblks` 为已释放但被 malloc 保留
-//!   的量。由此估算 C 堆占用与碎片保留。musl 无此接口,对应字段为 None。
-//!
-//! 非 Linux 平台整体返回 None,调用方自然降级。
+//! 按需读取 smaps 的 RSS/PSS 和 glibc 分配器统计。
+//! RSS 分桶可以相加；malloc 是重叠的分配器视角，不能与 RSS 相加。
+//! BPF ringbuf 的数据页双重映射会重复计入 RSS；PSS 按映射分摊共享页。
 
-/// RSS 构成分桶 + malloc 视角拆分。全部为“尽力而为”的估算值,用于解释
-/// `untracked_bytes` 的去向,不求精确到字节。
+/// RSS 分桶、PSS 与独立的 malloc 视角。不是内核 BPF 总内存统计。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct MemoryComposition {
     /// `[heap]` VMA 的 RSS(glibc brk 堆)。
     pub heap_rss_bytes: u64,
-    /// 全部 `[stack:tid]` VMA 的 RSS(线程栈已触碰页)。
+    /// 可识别的 `[stack]` / `[stack:tid]` RSS；未命名线程栈归入匿名映射。
     pub thread_stacks_rss_bytes: u64,
     /// 文件映射 RSS(二进制代码、动态库、mmap 的数据文件)。
     pub file_backed_rss_bytes: u64,
-    /// 其余匿名映射 RSS(malloc arena 的 mmap 区、libbpf mmap 的 map 等)。
+    /// BPF map 映射 RSS，含 ringbuf 双重映射造成的重复计数。
+    #[serde(default)]
+    pub bpf_rss_bytes: u64,
+    /// 全进程 PSS，共享物理页按映射数分摊，不等于独占内存。
+    pub pss_bytes: Option<u64>,
+    /// BPF map 映射 PSS，不包括未映射进程的内核 map 内存。
+    pub bpf_pss_bytes: Option<u64>,
+    /// 其余匿名映射 RSS(malloc arena、未命名线程栈等)。
     pub other_anon_rss_bytes: u64,
     /// malloc in-use 总量(Rust 堆 + SQLite 等 C 堆同源;仅 glibc, musl 为 None)。
     pub malloc_in_use_bytes: Option<u64>,
     /// malloc 已保留的空闲量(已释放未归还 OS,即碎片/保留;仅 glibc)。
     pub malloc_free_held_bytes: Option<u64>,
-    /// mem-track 头部开销估算(存活分配事件 × 32B;未启用跟踪为 0)。
+    /// mem-track 头部开销估算(存活分配事件 × 32B;未启用跟踪为 None)。
     pub header_overhead_bytes: Option<u64>,
-    /// C 库堆估算 = malloc in-use − Σ(live) − 头开销(SQLite 等;仅 glibc)。
+    /// 分配器差额估算，含 C 分配、对齐和统计时差；不能精确归属 C 库。
+    /// 保留字段名兼容 API；未启用 mem-track 时为 None。
     pub c_heap_estimated_bytes: Option<u64>,
 }
 
 impl MemoryComposition {
-    /// smaps 四桶合计(≈ RSS,交叉校验用)。
+    /// smaps RSS 分桶合计(≈ RSS,交叉校验用)。
     pub fn total_rss_bytes(&self) -> u64 {
         self.heap_rss_bytes
             .saturating_add(self.thread_stacks_rss_bytes)
             .saturating_add(self.file_backed_rss_bytes)
             .saturating_add(self.other_anon_rss_bytes)
+            .saturating_add(self.bpf_rss_bytes)
     }
 }
 
@@ -65,14 +65,14 @@ struct SmapsAccumulator {
     thread_stacks_rss: u64,
     file_backed_rss: u64,
     other_anon_rss: u64,
+    bpf_rss: u64,
+    pss: Option<u64>,
+    bpf_pss: u64,
     current: Option<&'static str>,
 }
 
 impl SmapsAccumulator {
-    /// VMA header 行格式:`<start>-<end> <perms> <offset> <dev> <inode> [pathname]`,
-    /// pathname 可能含空格(smaps 规定不转义),因此按空白切分后取第 6 个字段
-    /// 起的剩余部分拼接。第 7 列及以后(kernel 5.11+ 新增的 `VmFlags` 前的
-    /// 附加字段除外)不属于路径,这里只依据“第 6 字段是否存在”归类,足够。
+    /// 路径从第六个字段开始；分类只需路径前缀。
     fn begin_vma(&mut self, header: &str) {
         let mut fields = header.split_whitespace();
         for _ in 0..5 {
@@ -81,6 +81,8 @@ impl SmapsAccumulator {
         let pathname = fields.next().unwrap_or("");
         self.current = Some(match pathname {
             "" => "other_anon",
+            p if p.starts_with("anon_inode:bpf-map") => "bpf",
+            p if p.starts_with("anon_inode:") => "other_anon",
             "[heap]" => "heap",
             p if p.starts_with("[stack") => "thread_stacks",
             // [vvar]/[vdso]/[vsyscall] 等内核伪映射,量级 KB 内,并入匿名。
@@ -91,6 +93,7 @@ impl SmapsAccumulator {
 
     fn add_rss(&mut self, kb: u64) {
         let bucket = match self.current {
+            Some("bpf") => &mut self.bpf_rss,
             Some("heap") => &mut self.heap_rss,
             Some("thread_stacks") => &mut self.thread_stacks_rss,
             Some("file_backed") => &mut self.file_backed_rss,
@@ -101,6 +104,9 @@ impl SmapsAccumulator {
 
     fn finish(self) -> Option<MemoryComposition> {
         Some(MemoryComposition {
+            bpf_rss_bytes: self.bpf_rss,
+            pss_bytes: self.pss,
+            bpf_pss_bytes: self.pss.map(|_| self.bpf_pss),
             heap_rss_bytes: self.heap_rss,
             thread_stacks_rss_bytes: self.thread_stacks_rss,
             file_backed_rss_bytes: self.file_backed_rss,
@@ -128,12 +134,22 @@ fn parse_smaps(content: &str) -> SmapsAccumulator {
             .and_then(|v| v.parse::<u64>().ok())
         {
             acc.add_rss(kb);
+        } else if let Some(kb) = line
+            .strip_prefix("Pss:")
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            let bytes = kb.saturating_mul(1024);
+            acc.pss = Some(acc.pss.unwrap_or(0).saturating_add(bytes));
+            if acc.current == Some("bpf") {
+                acc.bpf_pss = acc.bpf_pss.saturating_add(bytes);
+            }
         }
     }
     acc
 }
 
-/// glibc `mallinfo2`:`uordblks`(in-use,含 Rust 堆与 C 堆)/ `fordblks`
+/// glibc `mallinfo2`:`uordblks + hblkhd`(arena 在用和独立 mmap 分配)/ `fordblks`
 /// (free 但被 malloc 保留)。musl 与非 Linux 无此接口。
 pub(crate) fn read_mallinfo2() -> Option<(u64, u64)> {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -141,7 +157,7 @@ pub(crate) fn read_mallinfo2() -> Option<(u64, u64)> {
         // mallinfo2 遍历全部 arena 需持锁,仅在 API 查询边界调用(3s 级频率),
         // 开销可接受。
         let info = unsafe { libc::mallinfo2() };
-        Some((info.uordblks as u64, info.fordblks as u64))
+        Some(((info.uordblks as u64).saturating_add(info.hblkhd as u64), info.fordblks as u64))
     }
     #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
     {
@@ -149,11 +165,8 @@ pub(crate) fn read_mallinfo2() -> Option<(u64, u64)> {
     }
 }
 
-/// 组装完整构成:在 smaps 四桶之上叠加 mallinfo2 拆分与派生量。
-///
-/// - `header_overhead_bytes`:mem-track 开启时按“存活分配事件 × 32B 头”估算。
-/// - `c_heap_estimated_bytes`:malloc in-use − Σ(live) − 头开销 ≈ SQLite 等
-///   C 库堆(saturating,统计口径差异可能为负归零)。
+/// 组合两个独立视角；malloc 数字包含尚未驻留的分配，不能与 RSS 相加。
+/// 差额含对齐、C 分配及采样时差，不代表某个 C 库的实际占用。
 pub(crate) fn build_composition(
     total_live_bytes: u64,
     live_alloc_events: u64,
@@ -166,8 +179,10 @@ pub(crate) fn build_composition(
         let rust_tracked = total_live_bytes.saturating_add(header_overhead);
         composition.malloc_in_use_bytes = Some(in_use);
         composition.malloc_free_held_bytes = Some(free_held);
-        composition.header_overhead_bytes = Some(header_overhead);
-        composition.c_heap_estimated_bytes = Some(in_use.saturating_sub(rust_tracked));
+        if cfg!(feature = "mem-track") {
+            composition.header_overhead_bytes = Some(header_overhead);
+            composition.c_heap_estimated_bytes = Some(in_use.saturating_sub(rust_tracked));
+        }
     }
     Some(composition)
 }
@@ -209,8 +224,41 @@ Rss:                   4 kB
     }
 
     #[test]
+    fn bpf_double_mapping_is_separate_from_files_and_has_pss() {
+        let sample = "1000-3000 rw-s 00000000 00:00 0 anon_inode:bpf-map
+Rss: 8 kB
+Pss: 4 kB
+3000-4000 rw-p 00000000 00:00 0 [anon:worker stack]
+Rss: 4 kB
+Pss: 4 kB
+4000-5000 r-xp 00000000 08:01 123 /bin/server
+Rss: 4 kB
+Pss: 2 kB
+";
+        let comp = parse_smaps(sample).finish().unwrap();
+        assert_eq!(comp.bpf_rss_bytes, 8192);
+        assert_eq!(comp.bpf_pss_bytes, Some(4096));
+        assert_eq!(comp.file_backed_rss_bytes, 4096);
+        assert_eq!(comp.other_anon_rss_bytes, 4096);
+        assert_eq!(comp.total_rss_bytes(), 16384);
+        assert_eq!(comp.pss_bytes, Some(10240));
+        assert_eq!(parse_smaps(SAMPLE).finish().unwrap().pss_bytes, None);
+    }
+
+    #[test]
+    fn older_snapshots_without_bpf_or_pss_fields_still_deserialize() {
+        let comp: MemoryComposition = serde_json::from_str(
+            r#"{"heap_rss_bytes":1024,"thread_stacks_rss_bytes":0,"file_backed_rss_bytes":4096,"other_anon_rss_bytes":0}"#,
+        ).unwrap();
+        assert_eq!(comp.bpf_rss_bytes, 0);
+        assert_eq!(comp.pss_bytes, None);
+        assert_eq!(comp.bpf_pss_bytes, None);
+        assert_eq!(comp.total_rss_bytes(), 5120);
+    }
+
+    #[test]
     fn composition_without_mallinfo_keeps_buckets() {
-        // build_composition 在 mallinfo2 不可用(musl/非 gnu)时仍返回四桶;
+        // build_composition 在 mallinfo2 不可用(musl/非 gnu)时仍返回 RSS 分桶;
         // gnu 环境下 mallinfo 字段有值,断言二选一。
         let composition = build_composition(1000, 10);
         assert!(composition.is_some());

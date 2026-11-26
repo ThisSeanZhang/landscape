@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::cert::account::CertAccountConfig;
 use crate::cert::order::CertConfig;
-use crate::config::settings::LandscapeConfig;
 use crate::config_service::enrolled_device::EnrolledDevice;
 use crate::config_service::geo::{GeoIpSourceConfig, GeoSiteSourceConfig};
 use crate::config_service::iface::NetworkIfaceConfig;
@@ -20,6 +19,7 @@ use crate::lan_service::ap::WifiServiceConfig;
 use crate::lan_service::lan_dhcpv4::config::DHCPv4ServiceConfig;
 use crate::lan_service::lan_ipv6::LanIPv6ServiceConfigV2;
 use crate::lan_service::lan_route::RouteLanServiceConfig;
+use crate::sys_config::LandscapeConfig;
 use crate::sys_service::gateway::HttpUpstreamRuleConfig;
 use crate::wan_link::WanLinkConfig;
 use crate::wan_service::firewall::FirewallRuleConfig;

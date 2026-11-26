@@ -1,5 +1,14 @@
 export default {
+  "time.invalid_servers":
+    "请至少填写一个 NTP 服务器的主机名或 IP 地址。为 IPv6 地址指定端口时，请用方括号括住地址。",
+  "self_monitor.invalid_retention": "内存历史记录至少保留一天。",
+  "metric.sqlite_unavailable": "当前构建未启用 SQLite 指标存储。",
+  "metric.invalid_db_max_mb":
+    "{field} 必须为 0（不限制）或介于 16～1048576 MB 之间，当前为 {value}",
+  "metric.invalid_cleanup_time_budget":
+    "cleanup_time_budget_secs 必须介于 1～60 秒之间，当前为 {value}",
   "init_config.file_not_found": "上传中未找到 Init 文件",
+  "init_config.export_serialization_failed": "导出配置序列化失败",
   "init_config.file_read_error": "Init 文件读取失败",
   "init_config.invalid": "Init 文件格式无效: {reason}",
   "init_config.version_mismatch":

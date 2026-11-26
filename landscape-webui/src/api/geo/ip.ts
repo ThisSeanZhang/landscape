@@ -23,8 +23,6 @@ import type {
   GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoIpLookupResult, GeoTaskProgress };
-
 export async function lookup_geo_ip_address(
   ip: string,
 ): Promise<GeoIpLookupResult[]> {
@@ -79,13 +77,16 @@ export async function search_geo_ip_cache(
   return searchGeoIpCache({
     name: query.name ?? undefined,
     key: query.key ?? undefined,
+    q: query.q ?? undefined,
+    limit: query.limit ?? undefined,
   });
 }
 
 export async function get_geo_ip_cache_detail(
   key: GeoFileCacheKey,
+  signal?: AbortSignal,
 ): Promise<GeoIpConfig> {
-  return getGeoIpCacheDetail(key);
+  return getGeoIpCacheDetail({ name: key.name, key: key.key }, { signal });
 }
 
 export async function update_geo_ip_by_upload(

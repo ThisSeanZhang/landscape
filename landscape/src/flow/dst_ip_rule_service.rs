@@ -92,6 +92,7 @@ impl DstIpRuleService {
         };
         update_flow_dst_ip_map(self.geo_ip_service.clone(), self.dataplane.clone(), flow_id, rules)
             .await;
+        self.dataplane.invalidate_lan_cache();
     }
 
     async fn apply_configs(&self, configs: Vec<WanIpRuleConfig>) {
@@ -141,8 +142,13 @@ impl ConfigStoreController for DstIpRuleService {
 
     async fn notify_changed(&self, changes: Vec<Change<Self::Config>>) {
         if changes.len() == 1 {
-            let flow_id = changes[0].new.flow_id;
-            self.refresh_flow(flow_id).await;
+            let new_flow_id = changes[0].new.flow_id;
+            if let Some(old) = &changes[0].old
+                && old.flow_id != new_flow_id
+            {
+                self.refresh_flow(old.flow_id).await;
+            }
+            self.refresh_flow(new_flow_id).await;
         } else {
             self.apply_configs(changes.into_iter().map(|c| c.new).collect()).await;
         }

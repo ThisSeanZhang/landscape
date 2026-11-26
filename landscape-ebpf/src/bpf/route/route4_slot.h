@@ -10,12 +10,12 @@ struct route4_slot_key {
 
 struct route4_target_info {
     u32 ifindex;
-    __be32 gate_addr;
     u8 has_mac;
     u8 is_docker;
-    u8 mac[6];
     __u16 link_chain_id;
 };
+
+_Static_assert(sizeof(struct route4_target_info) == 8, "route4_target_info must be 8 bytes");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);

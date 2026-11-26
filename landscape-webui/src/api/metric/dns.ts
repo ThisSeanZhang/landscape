@@ -1,7 +1,6 @@
+import type { LandscapeApiOptions } from "@landscape-router/types/mutator";
 import type {
-  DnsMetric,
   DnsHistoryResponse,
-  DnsStatEntry,
   DnsSummaryResponse,
   DnsLightweightSummaryResponse,
   GetDnsHistoryParams,
@@ -14,24 +13,18 @@ import {
   getDnsLightweightSummary as _getDnsLightweightSummary,
 } from "@landscape-router/types/api/metric/metric";
 
-export type {
-  DnsMetric,
-  DnsHistoryResponse,
-  DnsStatEntry,
-  DnsSummaryResponse,
-  DnsLightweightSummaryResponse,
-};
-
 export async function get_dns_history(
   params: GetDnsHistoryParams = {},
+  options?: LandscapeApiOptions,
 ): Promise<DnsHistoryResponse> {
-  return _getDnsHistory(params);
+  return _getDnsHistory(params, options);
 }
 
 export async function get_dns_summary(
   params: GetDnsSummaryParams,
+  options?: LandscapeApiOptions,
 ): Promise<DnsSummaryResponse> {
-  return _getDnsSummary(params);
+  return _getDnsSummary(params, options);
 }
 
 export async function get_dns_lightweight_summary(
@@ -39,3 +32,5 @@ export async function get_dns_lightweight_summary(
 ): Promise<DnsLightweightSummaryResponse> {
   return _getDnsLightweightSummary(params);
 }
+
+export { getDnsLiveDashboard } from "@landscape-router/types/api/metric/metric";

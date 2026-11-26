@@ -13,7 +13,6 @@ impl From<IfaceObserverAction> for FrontendEvent {
         match action {
             IfaceObserverAction::Up(name) => FrontendEvent::IfaceUp(name),
             IfaceObserverAction::Down(name) => FrontendEvent::IfaceDown(name),
-            IfaceObserverAction::CarrierUp(name) => FrontendEvent::IfaceUp(name),
         }
     }
 }

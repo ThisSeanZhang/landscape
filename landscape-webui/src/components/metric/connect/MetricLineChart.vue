@@ -46,6 +46,7 @@ interface MetricSeries {
 }
 
 interface Props {
+  compact?: boolean;
   series: MetricSeries[];
   xAxisTitle: string;
   yAxisTitle: string;
@@ -89,22 +90,26 @@ const timeFormatter = computed(
 
 const option = computed<ECOption>(() => ({
   animation: false,
-  color: [themeVars.value.successColor, themeVars.value.infoColor],
+  color: [
+    themeVars.value.successColor,
+    themeVars.value.infoColor,
+    themeVars.value.warningColor,
+    themeVars.value.errorColor,
+  ],
   textStyle: {
     color: themeVars.value.textColor2,
   },
   grid: {
-    top: 52,
-    right: 24,
-    bottom: 32,
-    left: 16,
+    ...(props.compact
+      ? { top: 34, right: 4, bottom: 2, left: 2 }
+      : { top: 52, right: 24, bottom: 32, left: 16 }),
     outerBoundsMode: "same",
     outerBoundsContain: "all",
   },
   legend: {
     type: "scroll",
-    top: 8,
-    left: 16,
+    top: props.compact ? 0 : 8,
+    left: props.compact ? 0 : 16,
     right: 112,
     textStyle: {
       color: themeVars.value.textColor2,
@@ -120,8 +125,8 @@ const option = computed<ECOption>(() => ({
     valueFormatter: (value) => props.valueFormatter(Number(value)),
   },
   toolbox: {
-    top: 4,
-    right: 16,
+    top: props.compact ? 0 : 4,
+    right: props.compact ? 0 : 16,
     itemSize: 16,
     itemGap: 10,
     iconStyle: {
@@ -156,7 +161,7 @@ const option = computed<ECOption>(() => ({
     type: "time",
     name: props.xAxisTitle,
     nameLocation: "middle",
-    nameGap: 26,
+    nameGap: props.compact ? 22 : 26,
     nameTextStyle: {
       color: themeVars.value.textColor2,
     },
@@ -183,7 +188,7 @@ const option = computed<ECOption>(() => ({
     type: "value",
     name: props.yAxisTitle,
     nameLocation: "middle",
-    nameGap: 54,
+    nameGap: props.compact ? 38 : 54,
     nameTextStyle: {
       color: themeVars.value.textColor2,
     },

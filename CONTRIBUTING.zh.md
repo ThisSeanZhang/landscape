@@ -62,6 +62,8 @@ pnpm --filter landscape-webui run format:check
 pnpm --filter landscape-webui build
 ```
 
+涉及网络行为或测试环境的改动，按影响范围运行相关 Containerlab 用例。[E2E 用例选择说明](tests/e2e/containerlab/README.md#按改动范围选择用例)
+
 ## 代码规范
 
 ### 通用

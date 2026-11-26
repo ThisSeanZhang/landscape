@@ -29,7 +29,7 @@ pub fn get_dns_redirect_config_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_dns_redirects(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DNSRedirectRule>> {
-    let result = state.dns_redirect_service.list().await?;
+    let result = state.managed.dns_redirect_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -47,7 +47,7 @@ async fn get_dns_redirect(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<DNSRedirectRule> {
-    let result = state.dns_redirect_service.find_by_id(id).await?;
+    let result = state.managed.dns_redirect_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -66,7 +66,7 @@ async fn add_many_dns_redirects(
     State(state): State<LandscapeApp>,
     JsonBody(dns_redirects): JsonBody<Vec<DNSRedirectRule>>,
 ) -> LandscapeApiResult<()> {
-    state.dns_redirect_service.checked_set_list(dns_redirects).await?;
+    state.managed.dns_redirect_service.checked_set_list(dns_redirects).await?;
     LandscapeApiResp::success(())
 }
 
@@ -79,7 +79,7 @@ async fn add_many_dns_redirects(
 async fn get_dynamic_dns_redirects(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<DynamicDnsRedirectBatch>> {
-    let result = state.dns_redirect_service.list_dynamic_batches().await;
+    let result = state.managed.dns_redirect_service.list_dynamic_batches().await;
     LandscapeApiResp::success(result)
 }
 
@@ -94,7 +94,7 @@ async fn set_dynamic_dns_redirect_batch(
     State(state): State<LandscapeApp>,
     JsonBody(batch): JsonBody<DynamicDnsRedirectBatch>,
 ) -> LandscapeApiResult<DynamicDnsRedirectBatch> {
-    let result = state.dns_redirect_service.set_dynamic_batch(batch).await;
+    let result = state.managed.dns_redirect_service.set_dynamic_batch(batch).await;
     LandscapeApiResp::success(result)
 }
 
@@ -109,7 +109,7 @@ async fn add_dns_redirects(
     State(state): State<LandscapeApp>,
     JsonBody(dns_redirect): JsonBody<DNSRedirectRule>,
 ) -> LandscapeApiResult<DNSRedirectRule> {
-    let result = state.dns_redirect_service.checked_set(dns_redirect).await?;
+    let result = state.managed.dns_redirect_service.checked_set(dns_redirect).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -127,6 +127,6 @@ async fn del_dns_redirects(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dns_redirect_service.delete(id).await?;
+    state.managed.dns_redirect_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

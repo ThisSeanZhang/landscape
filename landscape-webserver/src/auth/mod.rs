@@ -18,7 +18,7 @@ use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
 use landscape_common::args::LAND_HOME_PATH;
 use landscape_common::auth::LoginInfo;
 use landscape_common::auth::LoginResult;
-use landscape_common::config::AuthRuntimeConfig;
+use landscape_common::sys_config::AuthRuntimeConfig;
 use once_cell::sync::Lazy;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;

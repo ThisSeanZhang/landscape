@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.28.0"
+version = "0.28.3"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/ThisSeanZhang/landscape"
@@ -164,7 +164,7 @@ quick-xml = { version = "0.42.0", features = ["serialize"] }
 # Database & Storage
 # ============================================================================
 sea-orm = { version = "1.1.20" }
-sea-orm-migration = { version = "1.1.20" }
+sea-orm-migration = { version = "1.1.20", default-features = false }
 # Pinned to 0.8.x for compatibility with sea-orm 1.x; do not bump to sqlx
 # 0.10+/sea-orm 2.x until the sea-orm migration is planned
 sqlx = { version = "0.8.6", default-features = false, features = [
@@ -230,4 +230,17 @@ panic = "abort"
 strip = "symbols"
 debug = false
 incremental = false
+overflow-checks = false
+
+# Fast local validation profile: skip size optimizations to minimize compile time.
+[profile.fast]
+inherits = "release"
+opt-level = 0
+lto = false
+codegen-units = 256
+panic = "unwind"
+strip = false
+debug = false
+debug-assertions = false
+incremental = true
 overflow-checks = false

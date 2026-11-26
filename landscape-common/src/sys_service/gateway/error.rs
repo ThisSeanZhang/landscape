@@ -5,6 +5,30 @@ use crate::config::ConfigId;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum GatewayError {
+    #[error("Gateway health check durations and thresholds must be positive and representable")]
+    #[api_error(id = "gateway.invalid_health_check", status = 400)]
+    InvalidHealthCheck,
+    #[error("Invalid gateway upstream address or port")]
+    #[api_error(id = "gateway.invalid_upstream_endpoint", status = 400)]
+    InvalidUpstreamEndpoint,
+    #[error("gateway is not supported on this target architecture")]
+    #[api_error(id = "gateway.unsupported_target", status = 501)]
+    Unsupported,
+    #[error("Gateway did not stop within {timeout_ms}ms; the previous server is still retained")]
+    #[api_error(id = "gateway.stop_timeout", status = 504)]
+    StopTimeout { timeout_ms: u64 },
+    #[error("Failed to stop gateway: {reason}")]
+    #[api_error(id = "gateway.stop_failed", status = 500)]
+    StopFailed { reason: String },
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Database(#[from] crate::database::error::DbError),
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Certificate(#[from] crate::cert::CertError),
+    #[error("Stored gateway rule '{id}' is invalid: {reason}")]
+    #[api_error(id = "gateway.invalid_stored_rule", status = 500)]
+    InvalidStoredRule { id: ConfigId, reason: String },
     #[error("Gateway rule '{0}' not found")]
     #[api_error(id = "gateway.rule_not_found", status = 404)]
     NotFound(ConfigId),

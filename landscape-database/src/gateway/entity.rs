@@ -1,5 +1,7 @@
 use crate::repository::UpdateActiveModel;
-use landscape_common::sys_service::gateway::{HttpUpstreamMatchRule, HttpUpstreamRuleConfig};
+use landscape_common::sys_service::gateway::{
+    GatewayError, HttpUpstreamConfig, HttpUpstreamMatchRule, HttpUpstreamRuleConfig,
+};
 use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -38,17 +40,39 @@ impl ActiveModelBehavior for ActiveModel {
     }
 }
 
+impl Model {
+    /// Decode using the rule's compatibility format, without panicking on a
+    /// malformed JSON column or exposing configured header values in errors.
+    pub fn into_config_checked(self) -> Result<HttpUpstreamRuleConfig, GatewayError> {
+        let id = self.id;
+        let upstream = self.upstream.clone();
+        serde_json::from_value(json!({
+            "id": self.id,
+            "name": self.name,
+            "enable": self.enable,
+            "match_rule": self.match_rule,
+            "upstream": self.upstream,
+            "update_at": self.update_at,
+        }))
+        .map_err(|_| {
+            let field = if serde_json::from_value::<HttpUpstreamConfig>(upstream).is_err() {
+                "upstream"
+            } else {
+                "match_rule"
+            };
+            GatewayError::InvalidStoredRule {
+                id,
+                reason: format!("invalid '{field}' configuration"),
+            }
+        })
+    }
+}
+
 impl From<Model> for HttpUpstreamRuleConfig {
     fn from(entity: Model) -> Self {
-        serde_json::from_value(json!({
-            "id": entity.id,
-            "name": entity.name,
-            "enable": entity.enable,
-            "match_rule": entity.match_rule,
-            "upstream": entity.upstream,
-            "update_at": entity.update_at,
-        }))
-        .unwrap()
+        // Generic writers retain their infallible repository contract. Gateway
+        // service reads use the checked decoder before attempting a mutation.
+        entity.into_config_checked().expect("invalid persisted gateway rule")
     }
 }
 

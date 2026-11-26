@@ -31,7 +31,8 @@ pub(crate) struct PoolSettings {
     pub attempts: Option<u8>,
     /// Maximum number of upstream endpoints queried concurrently per attempt
     /// (each IP is queried once; plaintext uses UDP, encrypted modes use the
-    /// stream connection). Excess endpoints rotate in on later attempts.
+    /// stream connection). When capped, prefer responsive endpoints and
+    /// periodically sample the others. Retries prefer untried endpoints.
     pub max_fanout: Option<u8>,
     /// Send QUIC keep-alives so the connection survives idle periods instead
     /// of silently dying on the negotiated idle timeout (quinn defaults to
@@ -110,7 +111,12 @@ const FANOUT_LOWER: u8 = 1;
 const FANOUT_UPPER: u8 = 8;
 
 /// Default number of endpoints queried concurrently per attempt.
-pub(crate) const DEFAULT_FANOUT: usize = 4;
+///
+/// Two keeps a second endpoint in flight for tail-latency recovery without
+/// multiplying every lookup across four upstreams. The bench target shows
+/// fan-out 4 roughly halving throughput versus fan-out 2 on the same
+/// topology; callers that need more resilience can raise it explicitly.
+pub(crate) const DEFAULT_FANOUT: usize = 2;
 
 /// An explicit negative answer (NXDomain/NoData) waits this long for a
 /// positive answer from another concurrently queried endpoint before being

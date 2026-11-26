@@ -1,10 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
-
-use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::{
     ConnectGlobalStats, ConnectHistoryQueryParams, ConnectHistoryResponse, ConnectKey,
@@ -12,264 +5,121 @@ use landscape_common::metric::connect::{
     MetricResolution,
 };
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
     DnsSummaryQueryParams, DnsSummaryResponse,
 };
+use std::{path::PathBuf, sync::Arc};
 
-use landscape_common::metric::connect::ConnectMetric;
-use landscape_common::metric::dns::DnsMetricEvent;
-use landscape_common::utils::time::now_ms;
+use crate::{ConnectMetricEngine, DnsMetricEngine};
+use landscape_common::metric::{connect::ConnectMetric, dns::DnsMetricEvent};
+use landscape_common::sys_config::{
+    ConnectMetricRuntimeConfig, DnsMetricConfig, RuntimeConfigSource,
+};
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
-use super::MetricSink;
-use crate::agg::dns_bucket::{DnsBucketRow, DnsSummaryParts};
-use crate::agg::{self, Batch, FlowCache, IfaceRealtimeCache};
-
-/// 内存 sink:不落盘,丢弃聚合批次;历史查询返回空/默认值。
-/// 实时查询(connect_infos / ip / iface / second 点)由聚合层内存态直接服务,
-/// 因此内存模式仍具备完整实时能力,只是没有历史数据。
-#[derive(Clone, Default)]
-pub(crate) struct MemoryMetricSink;
-
-#[async_trait::async_trait]
-impl MetricSink for MemoryMetricSink {
-    async fn apply_connect_batch(&self, _batch: &Batch) -> bool {
-        true
-    }
-
-    async fn apply_dns_batch(&self, _metrics: Vec<DnsMetric>) -> bool {
-        true
-    }
-
-    async fn apply_dns_bucket_rows(&self, _rows: Vec<DnsBucketRow>) -> bool {
-        true
-    }
-
-    async fn cleanup_connect(&self, _config: &MetricRuntimeConfig) {}
-
-    async fn cleanup_dns(&self, _config: &MetricRuntimeConfig) {}
-
-    async fn close(&self) {}
-
-    async fn query_metric_by_key(
-        &self,
-        _key: ConnectKey,
-        _resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
-        Vec::new()
-    }
-
-    async fn history_summaries_complex(
-        &self,
-        _params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
-        ConnectHistoryResponse::default()
-    }
-
-    async fn history_src_ip_stats(&self, _params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        Vec::new()
-    }
-
-    async fn history_dst_ip_stats(&self, _params: ConnectHistoryQueryParams) -> Vec<IpHistoryStat> {
-        Vec::new()
-    }
-
-    async fn get_global_stats(&self, _force_refresh: bool) -> Result<ConnectGlobalStats, DbError> {
-        Ok(ConnectGlobalStats::default())
-    }
-
-    async fn query_dns_history(&self, _params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        DnsHistoryResponse::default()
-    }
-
-    async fn get_dns_summary(&self, _params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        DnsSummaryResponse::default()
-    }
-
-    async fn get_dns_lightweight_summary(
-        &self,
-        _params: DnsSummaryQueryParams,
-    ) -> DnsLightweightSummaryResponse {
-        DnsLightweightSummaryResponse::default()
-    }
-
-    async fn get_dns_summary_parts(
-        &self,
-        _start_ms: u64,
-        _end_ms: u64,
-        _flow_id: Option<u32>,
-    ) -> DnsSummaryParts {
-        DnsSummaryParts::default()
-    }
-}
-
-/// Compatibility facade for the pre-pipeline public API.
+/// Compatibility facade backed by the same in-memory engines as MetricService.
 #[derive(Clone)]
 pub struct MemoryMetricStore {
-    connect_tx: mpsc::Sender<ConnectMetric>,
-    dns_tx: mpsc::Sender<DnsMetricEvent>,
-    shutdown: CancellationToken,
-    flow_cache: FlowCache,
-    iface_realtime: IfaceRealtimeCache,
-    second_window_ms: u64,
-    _worker: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    connect: Arc<ConnectMetricEngine>,
+    dns: Arc<DnsMetricEngine>,
 }
 
 impl MemoryMetricStore {
-    pub async fn new(_base_path: PathBuf, config: MetricRuntimeConfig) -> Self {
-        let (connect_tx, mut connect_rx) = mpsc::channel(agg::CHANNEL_CAPACITY);
-        let (dns_tx, mut dns_rx) = mpsc::channel(agg::CHANNEL_CAPACITY);
-        let shutdown = CancellationToken::new();
-        let flow_cache: FlowCache = Arc::new(RwLock::new(HashMap::new()));
-        let iface_realtime: IfaceRealtimeCache = Arc::new(RwLock::new(HashMap::new()));
-        let worker_shutdown = shutdown.clone();
-        let worker_flow = flow_cache.clone();
-        let worker_iface = iface_realtime.clone();
-        let second_window_ms = agg::second_window_ms(&config);
-        let second_ring_cap = agg::second_ring_capacity(&config);
-        let cleanup_interval = Duration::from_secs(config.cleanup_interval_secs.max(1));
-        let worker = spawn_task(task_label::task::METRIC_MEM_SINK_WORKER, async move {
-            let mut cleanup_tick = tokio::time::interval(cleanup_interval);
-            cleanup_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            cleanup_tick.tick().await;
-            let mut connect_closed = false;
-            let mut dns_closed = false;
-            loop {
-                tokio::select! {
-                    _ = worker_shutdown.cancelled() => break,
-                    _ = cleanup_tick.tick() => {
-                        let now = now_ms();
-                        let _ = agg::cleanup_flow_cache(&worker_flow, &worker_iface, now, second_window_ms);
-                    }
-                    msg = connect_rx.recv(), if !connect_closed => match msg {
-                        Some(metric) => {
-                            let _ = agg::process_connect_metric(&worker_flow, &worker_iface, metric, second_window_ms, second_ring_cap);
-                        }
-                        None => connect_closed = true,
-                    },
-                    msg = dns_rx.recv(), if !dns_closed => match msg {
-                        Some(_) => {}
-                        None => dns_closed = true,
-                    },
-                }
-                if connect_closed && dns_closed {
-                    break;
-                }
-            }
-        });
-
+    pub async fn new(_base_path: PathBuf, config: ConnectMetricRuntimeConfig) -> Self {
+        let dns = DnsMetricConfig::default().build_runtime();
         Self {
-            connect_tx,
-            dns_tx,
-            shutdown,
-            flow_cache,
-            iface_realtime,
-            second_window_ms,
-            _worker: Arc::new(Mutex::new(Some(worker))),
+            connect: Arc::new(ConnectMetricEngine::off().start(config)),
+            dns: Arc::new(DnsMetricEngine::off().start(dns)),
         }
     }
 
     pub fn get_connect_msg_channel(&self) -> mpsc::Sender<ConnectMetric> {
-        self.connect_tx.clone()
+        self.connect.get_connect_msg_channel().expect("active memory engine")
     }
 
     pub fn get_dns_msg_channel(&self) -> mpsc::Sender<DnsMetricEvent> {
-        self.dns_tx.clone()
+        self.dns.get_dns_msg_channel().expect("active memory engine")
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.cancel();
+        self.connect.workers.stop.cancel();
+        self.dns.workers.stop.cancel();
     }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
-        agg::collect_connect_infos(&self.flow_cache, now_ms())
+        self.connect.connect_infos().await
     }
 
     pub async fn get_realtime_ip_stats(&self, is_src: bool) -> Vec<IpRealtimeStat> {
-        agg::collect_realtime_ip_stats(&self.flow_cache, now_ms(), is_src)
+        self.connect.get_realtime_ip_stats(is_src).await
     }
 
     pub async fn get_realtime_iface_stats(&self) -> Vec<IfaceRealtimeStat> {
-        agg::collect_realtime_iface_stats(&self.iface_realtime, now_ms())
+        self.connect.get_realtime_iface_stats().await
     }
 
     pub async fn query_metric_by_key(
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
-        if resolution != MetricResolution::Second {
-            return Vec::new();
-        }
-        let cutoff = now_ms().saturating_sub(self.second_window_ms);
-        agg::second_points_by_key(&self.flow_cache, &key, cutoff)
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
+        self.connect.query_metric_by_key(key, resolution).await
     }
 
     pub async fn history_summaries_complex(
         &self,
-        _params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
-        ConnectHistoryResponse::default()
+        params: ConnectHistoryQueryParams,
+    ) -> Result<ConnectHistoryResponse, DbError> {
+        self.connect.history_summaries_complex(params).await
     }
     pub async fn history_src_ip_stats(
         &self,
-        _params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
-        Vec::new()
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        self.connect.history_src_ip_stats(params).await
     }
     pub async fn history_dst_ip_stats(
         &self,
-        _params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
-        Vec::new()
+        params: ConnectHistoryQueryParams,
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        self.connect.history_dst_ip_stats(params).await
     }
     pub async fn get_global_stats(
         &self,
-        _force_refresh: bool,
+        force_refresh: bool,
     ) -> Result<ConnectGlobalStats, DbError> {
-        Ok(ConnectGlobalStats::default())
+        self.connect.get_global_stats(force_refresh).await
     }
-    pub async fn query_dns_history(&self, _params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        DnsHistoryResponse::default()
+    pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
+        self.dns.query_dns_history(params).await
     }
-    pub async fn get_dns_summary(&self, _params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        DnsSummaryResponse::default()
+    pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
+        self.dns.get_dns_summary(params).await
     }
     pub async fn get_dns_lightweight_summary(
         &self,
-        _params: DnsSummaryQueryParams,
+        params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
-        DnsLightweightSummaryResponse::default()
+        self.dns.get_dns_lightweight_summary(params).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use landscape_common::config::MetricMode;
     use landscape_common::metric::connect::{ConnectKey, ConnectMetric, ConnectStatusType};
+    use landscape_common::utils::time::now_ms;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::time::Duration;
 
-    fn test_config() -> MetricRuntimeConfig {
-        MetricRuntimeConfig {
-            mode: MetricMode::Memory,
-            connect_second_window_minutes: 5,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 1,
-            connect_1d_retention_days: 1,
-            connect_summary_retention_days: 1,
-            connect_summary_max_rows: 0,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 1,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 16,
-            write_flush_interval_secs: 1,
-            cleanup_interval_secs: 3600,
-            cleanup_time_budget_ms: 1000,
-            cleanup_slice_window_secs: 60,
-        }
+    fn test_config() -> ConnectMetricRuntimeConfig {
+        use landscape_common::sys_config::{ConnectMetricConfig, RuntimeConfigSource};
+        let mut config = ConnectMetricConfig::default().build_runtime();
+        config.second_window_minutes = 5;
+        config.write_batch_size = 16;
+        config.store.cleanup_interval_secs = 3600;
+        config.store.write_flush_interval_secs = 1;
+        config
     }
 
     fn test_metric(report_time: u64) -> (ConnectMetric, ConnectKey) {
@@ -315,23 +165,24 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
-        let points = store.query_metric_by_key(key, MetricResolution::Second).await;
+        let points = store.query_metric_by_key(key, MetricResolution::Second).await.unwrap();
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].ingress_bytes, 100);
         store.shutdown();
     }
 
-    /// 回归:store 未调用 shutdown 而被直接 drop 时,两个通道随之关闭,
-    /// worker 必须通过 both-closed 分支退出;修复前若 recv 的 None 未被处理,
-    /// select! 会反复立即完成导致空转占满 CPU。
+    /// Dropping the final facade releases both ingress channels even with live senders.
     #[tokio::test]
     async fn facade_worker_exits_when_both_channels_close() {
         let store = MemoryMetricStore::new(PathBuf::new(), test_config()).await;
-        let handle = store._worker.lock().unwrap().take().expect("facade worker handle");
+        let connect = store.get_connect_msg_channel();
+        let dns = store.get_dns_msg_channel();
         drop(store);
 
-        let _ = tokio::time::timeout(Duration::from_secs(5), handle)
-            .await
-            .expect("facade worker must exit when both channels close");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(connect.closed(), dns.closed());
+        })
+        .await
+        .expect("facade worker must exit when both channels close");
     }
 }

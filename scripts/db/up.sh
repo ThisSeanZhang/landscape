@@ -1,2 +1,3 @@
 #!/bin/sh
-sea-orm-cli migrate up -d ./landscape-database/migration
+set -eu
+cargo run --locked --manifest-path ./landscape-database/migration/Cargo.toml --features cli -- up "$@"

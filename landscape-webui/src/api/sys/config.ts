@@ -1,32 +1,26 @@
 import type {
-  GetDnsConfigResponse,
-  GetDnsConfigResponse as GetDnsConfigFastResponse,
+  GetTimeConfigResponse,
+  UpdateTimeConfigRequest,
   GetGatewayConfigResponse,
   GetLanHostnameConfigResponse,
-  GetMetricConfigResponse,
   LandscapeGatewayConfig,
   LandscapeLanHostnameConfig,
-  GetUIConfigResponse,
-  LandscapeDnsConfig,
+  GetUiConfigResponse,
   LandscapeMetricConfig,
-  LandscapeUIConfig,
+  LandscapeUiConfig,
   UpdateGatewayConfigRequest,
   UpdateLanHostnameConfigRequest,
-  UpdateMetricConfigRequest,
-  UpdateUIConfigRequest,
+  UpdateUiConfigRequest,
 } from "@landscape-router/types/api/schemas";
 import {
+  getTimeConfig,
+  updateTimeConfig,
   exportInitConfig,
   importInitConfig,
   getUiConfigFast,
   getUiConfig,
   updateUiConfig,
   getMetricConfigFast,
-  getMetricConfig,
-  updateMetricConfig,
-  getDnsConfigFast,
-  getDnsConfig,
-  updateDnsConfig,
   getLanHostnameConfigFast,
   getLanHostnameConfig,
   updateLanHostnameConfig,
@@ -36,11 +30,18 @@ import {
 } from "@landscape-router/types/api/system-config/system-config";
 import i18n from "@/i18n";
 
-/** Local type -- backend accepts serde_json::Value, so no ORVAL-generated request type exists. */
-interface UpdateDnsConfigRequest {
-  new_dns: LandscapeDnsConfig;
-  expected_hash: string;
-}
+export {
+  getConnectMetricConfig,
+  updateConnectMetricConfig,
+  getDnsMetricConfig,
+  updateDnsMetricConfig,
+  getSelfMonitorConfig,
+  updateSelfMonitorConfig,
+  getDnsCacheConfig,
+  updateDnsCacheConfig,
+  getDohConfig,
+  updateDohConfig,
+} from "@landscape-router/types/api/system-config/system-config";
 
 export async function get_init_config(): Promise<void> {
   try {
@@ -67,46 +68,22 @@ export async function import_init_config(file: File, upload_only: boolean) {
   return await importInitConfig({ file }, { upload_only });
 }
 
-export async function get_ui_config(): Promise<LandscapeUIConfig> {
+export async function get_ui_config(): Promise<LandscapeUiConfig> {
   return await getUiConfigFast();
 }
 
-export async function get_ui_config_edit(): Promise<GetUIConfigResponse> {
+export async function get_ui_config_edit(): Promise<GetUiConfigResponse> {
   return await getUiConfig();
 }
 
 export async function update_ui_config(
-  payload: UpdateUIConfigRequest,
+  payload: UpdateUiConfigRequest,
 ): Promise<void> {
   await updateUiConfig(payload);
 }
 
 export async function get_metric_config(): Promise<LandscapeMetricConfig> {
   return await getMetricConfigFast();
-}
-
-export async function get_metric_config_edit(): Promise<GetMetricConfigResponse> {
-  return await getMetricConfig();
-}
-
-export async function update_metric_config(
-  payload: UpdateMetricConfigRequest,
-): Promise<void> {
-  await updateMetricConfig(payload);
-}
-
-export async function get_dns_config(): Promise<GetDnsConfigFastResponse> {
-  return await getDnsConfigFast();
-}
-
-export async function get_dns_config_edit(): Promise<GetDnsConfigResponse> {
-  return await getDnsConfig();
-}
-
-export async function update_dns_config(
-  payload: UpdateDnsConfigRequest,
-): Promise<void> {
-  await updateDnsConfig(payload);
 }
 
 export async function get_lan_hostname_config(): Promise<LandscapeLanHostnameConfig> {
@@ -135,4 +112,14 @@ export async function update_gateway_config(
   payload: UpdateGatewayConfigRequest,
 ): Promise<void> {
   await updateGatewayConfig(payload);
+}
+
+export async function get_time_config_edit(): Promise<GetTimeConfigResponse> {
+  return await getTimeConfig();
+}
+
+export async function update_time_config(
+  payload: UpdateTimeConfigRequest,
+): Promise<void> {
+  await updateTimeConfig(payload);
 }

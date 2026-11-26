@@ -374,6 +374,22 @@ pub(super) fn build_message(query: &Query, options: &DnsRequestOptions) -> Messa
     message
 }
 
+/// Validate the DNS header and the echoed question after the transport has
+/// correlated the response by ID or stream. Error replies may omit the question.
+fn validate_reply(message: &Message, expected: &[Query]) -> Result<(), &'static str> {
+    if message.message_type != hickory_proto::op::MessageType::Response
+        || message.op_code != hickory_proto::op::OpCode::Query
+    {
+        return Err("invalid DNS response header");
+    }
+    let empty_error = message.queries.is_empty()
+        && !matches!(message.response_code, ResponseCode::NoError | ResponseCode::NXDomain);
+    if !empty_error && message.queries != expected {
+        return Err("upstream question does not match the request");
+    }
+    Ok(())
+}
+
 /// Mirrors the old `DnsError::from_response` semantics: explicit error codes
 /// are surfaced as `Protocol`, empty NXDomain/NoError answers as `Protocol`
 /// with their code preserved (the caller maps NXDomain -> NxDomain etc.) and
@@ -400,6 +416,7 @@ pub(super) fn classify_message(message: Message) -> Result<Message, DnsConnError
         | code @ BADALG
         | code @ BADTRUNC
         | code @ BADCOOKIE => Err(DnsConnError::Protocol(code, None)),
+        NXDomain if !message.answers.is_empty() => Ok(message),
         code @ NXDomain | code @ NoError if !contains_answer(&message) && !message.truncation => {
             // The SOA (negative TTL) survives so negative answers can be
             // cached per RFC 2308 instead of degenerating to a bare code.
@@ -460,6 +477,29 @@ mod tests {
         let mut message = Message::response(0, OpCode::Query);
         message.metadata.response_code = code;
         message
+    }
+
+    #[test]
+    fn reply_checks_header_and_echoed_question() {
+        let query = Query::query(Name::from_ascii("example.com.").unwrap(), RecordType::A);
+        let mut message = coded_message(ResponseCode::NoError);
+        message.add_query(query.clone());
+        assert!(validate_reply(&message, std::slice::from_ref(&query)).is_ok());
+        message.metadata.message_type = hickory_proto::op::MessageType::Query;
+        assert!(validate_reply(&message, std::slice::from_ref(&query)).is_err());
+        message.metadata.message_type = hickory_proto::op::MessageType::Response;
+        message.metadata.op_code = OpCode::Update;
+        assert!(validate_reply(&message, std::slice::from_ref(&query)).is_err());
+        message.metadata.op_code = OpCode::Query;
+        message.queries = vec![Query::query(query.name().clone(), RecordType::AAAA)];
+        assert!(validate_reply(&message, std::slice::from_ref(&query)).is_err());
+        message.queries.clear();
+        for code in [ResponseCode::NoError, ResponseCode::NXDomain] {
+            message.metadata.response_code = code;
+            assert!(validate_reply(&message, std::slice::from_ref(&query)).is_err());
+        }
+        message.metadata.response_code = ResponseCode::FormErr;
+        assert!(validate_reply(&message, std::slice::from_ref(&query)).is_ok());
     }
 
     #[test]

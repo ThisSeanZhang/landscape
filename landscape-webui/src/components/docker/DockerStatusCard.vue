@@ -4,7 +4,7 @@ import { computed, ref } from "vue";
 import { DotMark } from "@vicons/carbon";
 import { useThemeVars } from "naive-ui";
 
-import { ServiceStatusType, get_service_status_color } from "@/lib/services";
+import { get_service_status_color } from "@/lib/network/services";
 import { useDockerStore } from "@/stores/status_docker";
 import { useI18n } from "vue-i18n";
 
@@ -18,8 +18,8 @@ const { t } = useI18n();
 
 const is_down = computed(() => {
   return (
-    dockerStatus.docker_status.t == ServiceStatusType.Stop ||
-    dockerStatus.docker_status.t == ServiceStatusType.Failed
+    dockerStatus.docker_status.t == "stop" ||
+    dockerStatus.docker_status.t == "failed"
   );
 });
 

@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 
 #include "route/flow4_maps.h"
 #include "route/route4_cache.h"
@@ -21,13 +20,7 @@
 
 static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
-                                                               struct route4_context *context,
-                                                               bool is_lan) {
-    // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below. Its only
-    // production caller (tc_route4_wan_ingress) passes false, so that branch
-    // is currently dead code; the LAN-ingress variant (tc_route4_lan_redirect_check_in_lan)
-    // inlines the is_lan=true behaviour instead. Revisit before dedup.
-
+                                                               struct route4_context *context) {
     int ret;
     struct route4_lan_key lan_search_key = {0};
     struct mac_key_v4 mac_key_search = {0};
@@ -46,21 +39,12 @@ static __always_inline int tc_route4_lan_redirect_check_in_wan(struct __sk_buff 
             // redirect to lan_info->ifindex. F2 (in_lan) and F3
             // (in_wan_egress) both return TC_ACT_OK here instead. Locked as
             // current behaviour by tests test_route4/6_lan_redirect_check_in_wan
-            // (WAN-other row). No WanReachable entry producer exists today, so
-            // this branch is dormant; revisit before any dedup refactor.
+            // (WAN-other row). Current WanReachable producers only publish host
+            // routes (/32, addr == daddr), so this branch stays dormant;
+            // revisit before any dedup refactor.
         }
         // is LAN Packet, redirect to lan
         if (unlikely(lan_info->ifindex == skb->ifindex)) {
-            if (is_lan && lan_info->has_mac && lan_info->addr != 0 &&
-                lan_info->addr != context->daddr) {
-                mac_key_search.addr = context->daddr;
-                mac_value = bpf_map_lookup_elem(&ip_mac_v4, &mac_key_search);
-                if (mac_value) {
-                    if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                        return bpf_redirect(lan_info->ifindex, 0);
-                    }
-                }
-            }
             // current iface
             return TC_ACT_UNSPEC;
         }
@@ -219,7 +203,7 @@ static __always_inline int tc_route4_lan_redirect_check_in_lan(struct __sk_buff 
 }
 
 // ── tc_route4/6_lan_redirect_check_in_wan_egress: adapted from
-// tc_route4/6_lan_redirect_check_in_wan (no is_lan) ──
+// tc_route4/6_lan_redirect_check_in_wan ──
 
 static __always_inline int
 tc_route4_lan_redirect_check_in_wan_egress(struct __sk_buff *skb, u32 current_l3_offset,
@@ -383,107 +367,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route4_pick_wan_and_send_by_flow_id(struct __sk_buff *skb,
-                                                               u32 current_l3_offset,
-                                                               const struct route4_context *context,
-                                                               const u32 flow_id) {
-    int ret;
-    const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route4_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route4_target_slot(context->daddr),
-    };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
-
-    // 找不到转发的 target 按照原有计划进行处理
-    if (target_info == NULL) {
-        if (resolved_flow_id == 0) {
-            // Default flow PASS
-            return TC_ACT_UNSPEC;
-        } else {
-            ld_from_lan_log("DROP flow_id v4: %d, ip: %pI4", resolved_flow_id, &context->saddr);
-            // Other DROP
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->ifindex == skb->ifindex) {
-        // Belongs to the current ifindex No redirection required
-        return TC_ACT_UNSPEC;
-    }
-
-    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
-    // chain through these flags; without them the skb carries stale cb from
-    // recycled sk_buffs and dies at the WAN egress root tail call.
-    tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (current_l3_offset == 0 && target_info->has_mac) {
-        if (prepend_dummy_mac(skb) != 0) {
-            ld_from_lan_log("add dummy_mac fail");
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->is_docker) {
-        ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-        if (ret) {
-            ld_from_lan_log("bpf_skb_vlan_push error");
-        }
-        ret = bpf_redirect(target_info->ifindex, 0);
-        if (ret != 7) {
-            ld_from_lan_log("bpf_redirect docker error: %d", ret);
-        }
-        return ret;
-    }
-
-    bool target_has_mac = target_info->has_mac;
-
-    if (!target_has_mac) {
-        return bpf_redirect(target_info->ifindex, 0);
-    } else {
-        struct mac_value_v4 *mac_value = bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
-        if (mac_value) {
-            ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
-            if (!ret) {
-                return bpf_redirect(target_info->ifindex, 0);
-            }
-        }
-    }
-
-    // ld_from_lan_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
-    // ld_from_lan_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET;
-
-    param.ipv6_nh[0] = target_info->gate_addr;
-    ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (ret != 7) {
-        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
-    }
-    return ret;
-}
-
-static __always_inline int route4_is_current_wan_packet(struct __sk_buff *skb,
-                                                        u32 current_l3_offset,
-                                                        struct route4_context *context) {
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = skb->ingress_ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info != NULL) {
-        // Check if the current DST IP is the IP that enters the WAN network card
-        // ld_from_wan_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
-        if (wan_ip_info->addr.in6_u.u6_addr32[0] == context->daddr) {
-            return TC_ACT_UNSPEC;
-        }
-    }
-
-    return TC_ACT_OK;
-}
-
 static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route4_cache_value *target) {
@@ -497,7 +380,7 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
     tc_cb_mark_forwarded(skb, target->link_chain_id);
 
     if (current_l3_offset == 0 && target->has_mac) {
-        if (prepend_dummy_mac(skb) != 0) {
+        if (prepend_dummy_mac(skb, target->is_docker) != 0) {
             return TC_ACT_SHOT;
         }
     }
@@ -511,83 +394,33 @@ static __always_inline int route4_redirect_by_cached_target(struct __sk_buff *sk
         return ret;
     }
 
-    if (!target->has_mac) {
-        return bpf_redirect(target->ifindex, 0);
-    } else {
-        struct mac_value_v4 *mac_value = bpf_map_lookup_elem(&ip_mac_v4, &target->gate_addr);
-        if (mac_value) {
-            int ret = store_mac_v4(skb, mac_value->mac, target->mac);
-            if (!ret) {
-                return bpf_redirect(target->ifindex, 0);
-            }
-        }
-    }
-
-    ld_from_lan_log("CACHED-TGT neigh fallback: if %u gate %pI4", target->ifindex,
-                    &target->gate_addr);
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET;
-    param.ipv6_nh[0] = target->gate_addr;
-    return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
+    // The target WAN link's from-LAN root owns the Ethernet rewrite and
+    // neighbour fallback; this cache fast path only selects the link.
+    return bpf_redirect(target->ifindex, 0);
 }
 
 static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route4_context *context,
                                                       u32 *flow_mark) {
-    int ret = 0;
     u32 key = WAN_CACHE;
     struct route4_cache_key search_key = {0};
-    struct mac_value_v4 *mac_value = NULL;
     search_key.local_addr = context->saddr;
     search_key.remote_addr = context->daddr;
 
-    // Fist WAN
+    // First WAN
     void *wan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (wan_cache) {
         struct route4_cache_value *target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
-            struct wan_ip_info_key wan_search_key = {0};
-            wan_search_key.ifindex = target->ifindex;
-            wan_search_key.l3_protocol = LANDSCAPE_IPV4_TYPE;
-
-            struct wan_ip_info_value *wan_ip_info =
-                bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-            if (wan_ip_info != NULL) {
-                bool target_has_mac = target->has_mac;
-                tc_cb_mark_forwarded(skb, target->link_chain_id);
-
-                if (!target_has_mac) {
-                    return bpf_redirect(target->ifindex, 0);
-                } else {
-                    mac_value = bpf_map_lookup_elem(&ip_mac_v4, &search_key.remote_addr);
-                    if (mac_value) {
-                        // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
-                        //            &search_key.remote_addr, target->ifindex);
-                        if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                            return bpf_redirect(target->ifindex, 0);
-                        }
-                    } else {
-                        mac_value = bpf_map_lookup_elem(&ip_mac_v4,
-                                                        &wan_ip_info->gateway.in6_u.u6_addr32[0]);
-                        if (mac_value) {
-                            // ld_from_lan_log("find ip: %pI4 mac, send to ifindex: %d",
-                            //            &wan_ip_info->gateway.in6_u.u6_addr32[0],
-                            //            target->ifindex);
-                            if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                                return bpf_redirect(target->ifindex, 0);
-                            }
-                        }
-                    }
-                }
-
-                struct bpf_redir_neigh param;
-                param.nh_family = AF_INET;
-
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
-                ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
-                return ret;
+            if (target->ifindex == 0) {
+                return TC_ACT_SHOT;
             }
+            if (current_l3_offset == 0 && target->has_mac &&
+                prepend_dummy_mac(skb, target->is_docker))
+                return TC_ACT_SHOT;
+            tc_cb_mark_forwarded(skb, target->link_chain_id);
+            return bpf_redirect(target->ifindex, 0);
         }
     }
 
@@ -595,13 +428,9 @@ static __always_inline int route4_search_cache_in_lan(struct __sk_buff *skb,
     void *lan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (lan_cache) {
         struct route4_cache_value *target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
-                return route4_redirect_by_cached_target(skb, current_l3_offset, target);
-            }
-            return route4_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
-                                                       target->mark_value);
+            return route4_redirect_by_cached_target(skb, current_l3_offset, target);
         }
     }
 
@@ -650,13 +479,6 @@ static __always_inline int route4_set_cache_in_wan(const struct route4_context *
             new_target_cache.ifindex = ifindex;
             new_target_cache.xdp_redirect_able = xdp_redirect_target_able(ifindex) ? 1 : 0;
             new_target_cache.link_chain_id = link_chain_id;
-            // if (new_target_cache.has_mac) {
-            //     struct wan_ip_info_value *wan_ip = bpf_map_lookup_elem(wan_cache, &search_key);
-            //     if (wan_ip) {
-
-            //         __builtin_memcpy(match_key.mac.mac, mac, 6);
-            //     }
-            // }
             bpf_map_update_elem(wan_cache, &search_key, &new_target_cache, BPF_ANY);
             // ld_from_wan_log("wan_cache new new_target_cache.ifindex: %d",
             // new_target_cache.ifindex);
@@ -697,7 +519,7 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
     void *lan_cache = bpf_map_lookup_elem(&rt4_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             target->mark_value = flow_mark;
         } else {
             const u32 resolved_flow_id = get_flow_id(flow_mark);
@@ -707,16 +529,15 @@ static __always_inline int route4_set_cache_in_lan(const struct route4_context *
             };
             struct route4_target_info *slot_target = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
 
+            // The slot can disappear after pick_wan. Do not cache an unresolved target.
+            if (slot_target == NULL || slot_target->ifindex == 0) return TC_ACT_OK;
+
             struct route4_cache_value new_target_cache = {0};
             new_target_cache.mark_value = flow_mark;
-            if (slot_target != NULL) {
-                new_target_cache.ifindex = slot_target->ifindex;
-                new_target_cache.has_mac = slot_target->has_mac;
-                new_target_cache.is_docker = slot_target->is_docker;
-                new_target_cache.gate_addr = slot_target->gate_addr;
-                __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
-                new_target_cache.link_chain_id = slot_target->link_chain_id;
-            }
+            new_target_cache.ifindex = slot_target->ifindex;
+            new_target_cache.has_mac = slot_target->has_mac;
+            new_target_cache.is_docker = slot_target->is_docker;
+            new_target_cache.link_chain_id = slot_target->link_chain_id;
             new_target_cache.xdp_redirect_able =
                 xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
             bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);

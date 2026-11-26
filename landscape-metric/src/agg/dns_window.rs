@@ -1,19 +1,18 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use hdrhistogram::Histogram;
-use landscape_common::metric::dns::{DnsMetric, DnsOutcome};
+use landscape_common::metric::dns::{
+    DnsLatencyBand, DnsLiveDashboard, DnsMetric, DnsMetricEvent, DnsMinutePoint, DnsOutcome,
+};
 
 #[cfg(test)]
 use landscape_common::metric::dns::DnsLightweightSummaryResponse;
 
 #[cfg(test)]
 use super::dns_bucket::minute_end;
-use super::dns_bucket::{DnsCounters, DnsSummaryParts, MINUTE_MS, minute_start};
+use super::dns_bucket::{DnsSummaryParts, MINUTE_MS, clean_ip_string, minute_start};
 
-/// DNS 内存窗口时长(5 分钟)。仅服务首页 DnsStatusCard(其默认查询范围同为 5min);
-/// 仪表盘状态卡 DNSDashboard(默认 10min)直接查 DB,不走窗口。
-/// 窗口纯内存:只由采集方向 ingest 驱动,不落库、不与 DB 合并,重启后为空。
+/// Recent in-memory window shared by the homepage summary and the live dashboard.
 pub(crate) const DNS_RECENT_WINDOW_SECS: u64 = 5 * 60;
 
 fn read_or_recover<'a, T>(lock: &'a RwLock<T>) -> RwLockReadGuard<'a, T> {
@@ -34,9 +33,31 @@ fn write_or_recover<'a, T>(lock: &'a RwLock<T>) -> RwLockWriteGuard<'a, T> {
 struct DnsMinuteBucket {
     flow_id: u32,
     minute_start: u64,
-    counts: DnsCounters,
-    /// 仅记录有效查询(Normal/NxDomain)的 duration_ms;block/filter/error/local/hit 不计入。
-    latency: Histogram<u64>,
+    parts: DnsSummaryParts,
+}
+
+// Bound distinct ranking candidates per dimension, flow and minute. Compact in batches
+// so a stream of unique names does not trigger an allocation and sort on every event.
+const RANK_CANDIDATES: usize = 256;
+
+fn compact_candidates<V: Copy, K: Ord>(entries: &mut HashMap<String, V>, score: impl Fn(V) -> K) {
+    if entries.len() <= 2 * RANK_CANDIDATES {
+        return;
+    }
+    let mut candidates: Vec<_> = entries.drain().collect();
+    candidates.select_nth_unstable_by(RANK_CANDIDATES, |(a, av), (b, bv)| {
+        score(*bv).cmp(&score(*av)).then_with(|| a.cmp(b))
+    });
+    entries.extend(candidates.into_iter().take(RANK_CANDIDATES));
+}
+
+fn count_key(map: &mut HashMap<String, u64>, key: &str) {
+    if let Some(count) = map.get_mut(key) {
+        *count += 1;
+    } else {
+        map.insert(key.to_owned(), 1);
+        compact_candidates(map, |count| count);
+    }
 }
 
 impl DnsMinuteBucket {
@@ -44,25 +65,29 @@ impl DnsMinuteBucket {
         Self {
             flow_id,
             minute_start,
-            counts: DnsCounters::default(),
-            latency: Histogram::<u64>::new(3).expect("create dns latency histogram"),
+            parts: DnsSummaryParts::default(),
         }
     }
 
     fn ingest(&mut self, metric: &DnsMetric) {
-        self.counts.record(metric);
-
-        // 仅 Normal/NxDomain 计入延迟。注意 NxDomain 中包含大量本地/缓存秒回的查询
-        // (拦截 TLD、缓存命中的 NXDOMAIN、被类型过滤且缓存为 NXDOMAIN 的查询等),
-        // 其耗时通常为 0~1ms,0ms 会被上方 max(1) 钳为 1ms;当这类查询在窗口内占多数时,
-        // p50/p95/p99 可能显示 1ms,这是正常现象,并非 block/filter/error/local/hit 被计入。
+        let parts = &mut self.parts;
+        parts.counts.record(metric);
+        count_key(&mut parts.top_domains, &metric.domain);
+        count_key(&mut parts.top_clients, &clean_ip_string(&metric.src_ip));
+        if metric.status == DnsOutcome::Block {
+            count_key(&mut parts.top_blocked, &metric.domain);
+        }
         if matches!(metric.status, DnsOutcome::Normal | DnsOutcome::NxDomain) {
-            let _ = self.latency.record(metric.duration_ms.max(1) as u64);
+            let _ = parts.latency.record(metric.duration_ms.max(1) as u64);
+            let sample = parts.slowest.entry(metric.domain.clone()).or_default();
+            sample.0 += 1;
+            sample.1 += u64::from(metric.duration_ms);
+            compact_candidates(&mut parts.slowest, |(count, sum)| (count >= 3, sum / count, count));
         }
     }
 }
 
-/// DNS 最近 5 分钟预聚合窗口(首页 DnsStatusCard 专用)。
+/// DNS 最近 5 分钟预聚合窗口。
 ///
 /// 以 (flow_id × 分钟) 桶滚动维护计数与 duration 分位数 sketch。
 /// 数据流约定:窗口是纯内存实时结构,唯一数据源是采集方向(worker ingest);
@@ -86,6 +111,13 @@ impl DnsRecentWindow {
     /// 窗口数据下界(分钟对齐):保留该值所在分钟及之后的所有分钟桶。
     fn window_start(now_ms: u64) -> u64 {
         minute_start(Self::cutoff(now_ms))
+    }
+
+    /// Update live state before handing the event to the optional history buffer.
+    pub(crate) fn record_event(&self, event: DnsMetricEvent, now_ms: u64) -> DnsMetric {
+        let metric = event.into_metric();
+        self.ingest(&metric, now_ms);
+        metric
     }
 
     /// 将一条 DNS 指标归入对应 (flow_id, 分钟) 桶;其分钟桶完全落在窗口外时直接丢弃。
@@ -159,10 +191,56 @@ impl DnsRecentWindow {
             if bucket.minute_start >= end_ms {
                 continue;
             }
-            parts.counts.merge(&bucket.counts);
-            let _ = parts.latency.add(&bucket.latency);
+            parts.counts.merge(&bucket.parts.counts);
+            let _ = parts.latency.add(&bucket.parts.latency);
         }
         parts
+    }
+
+    pub(crate) fn dashboard(&self, now_ms: u64, flow: Option<u32>) -> DnsLiveDashboard {
+        let start = Self::window_start(now_ms);
+        let current = minute_start(now_ms);
+        let mut minutes: Vec<_> = (start..=current)
+            .step_by(MINUTE_MS as usize)
+            .map(|start_ms| DnsMinutePoint {
+                start_ms,
+                queries: 0,
+                hits: 0,
+                blocks: 0,
+                errors: 0,
+            })
+            .collect();
+        let mut parts = DnsSummaryParts::default();
+        {
+            let buckets = read_or_recover(&self.inner);
+            for bucket in buckets.iter().filter(|b| {
+                (start..=current).contains(&b.minute_start) && flow.is_none_or(|id| id == b.flow_id)
+            }) {
+                let point = &mut minutes[((bucket.minute_start - start) / MINUTE_MS) as usize];
+                let counts = &bucket.parts.counts;
+                point.queries += counts.total_queries;
+                point.hits += counts.cache_hit_count;
+                point.blocks += counts.block_count;
+                point.errors += counts.error_count;
+                parts.merge(&bucket.parts);
+            }
+        }
+        let limits = [10, 50, 100, 500, 1000];
+        let mut latency: Vec<_> = limits
+            .into_iter()
+            .map(Some)
+            .chain([None])
+            .map(|upper_ms| DnsLatencyBand { upper_ms, count: 0 })
+            .collect();
+        for sample in parts.latency.iter_recorded() {
+            let band = limits.partition_point(|&limit| limit < sample.value_iterated_to());
+            latency[band].count += sample.count_since_last_iteration();
+        }
+        DnsLiveDashboard {
+            summary: parts.into_summary_response(),
+            minutes,
+            latency,
+        }
     }
 
     #[cfg(test)]
@@ -198,6 +276,53 @@ mod tests {
     }
 
     const NOW_MS: u64 = 100_000_000_000;
+
+    #[test]
+    fn dashboard_uses_one_window_for_rankings_latency_and_minute_counts() {
+        let window = DnsRecentWindow::new();
+        let minute = minute_start(NOW_MS);
+        for duration in [10, 50, 1001] {
+            window.ingest(
+                &dns_metric(1, minute - MINUTE_MS, "A", DnsOutcome::Normal, duration),
+                NOW_MS,
+            );
+        }
+        window.ingest(&dns_metric(1, minute, "A", DnsOutcome::Block, 8), NOW_MS);
+        window.ingest(&dns_metric(2, minute, "A", DnsOutcome::Hit, 8), NOW_MS);
+        let live = window.dashboard(NOW_MS, Some(1));
+        assert_eq!(live.summary.total_queries, 4);
+        assert_eq!(live.summary.top_domains[0].count, 4);
+        assert_eq!(live.summary.top_clients[0].name, "127.0.0.1");
+        assert_eq!(live.summary.top_blocked[0].count, 1);
+        assert_eq!(live.summary.slowest_domains[0].count, 3);
+        assert_eq!(
+            live.minutes.iter().map(|point| point.queries).collect::<Vec<_>>(),
+            vec![0, 0, 0, 0, 3, 1]
+        );
+        assert_eq!(
+            live.latency.iter().map(|band| band.count).collect::<Vec<_>>(),
+            vec![1, 1, 0, 0, 0, 1]
+        );
+        assert_eq!(window.dashboard(NOW_MS, None).summary.total_queries, 5);
+        assert!(window.dashboard(NOW_MS + 7 * MINUTE_MS, None).summary.top_domains.is_empty());
+    }
+
+    #[test]
+    fn high_cardinality_compaction_keeps_hot_keys_and_exact_totals() {
+        let window = DnsRecentWindow::new();
+        let mut event = dns_metric(1, NOW_MS, "A", DnsOutcome::Block, 0);
+        for _ in 0..10 {
+            window.ingest(&event, NOW_MS);
+        }
+        for i in 0..2 * RANK_CANDIDATES {
+            event.domain = format!("key-{i}");
+            window.ingest(&event, NOW_MS);
+        }
+        let data = window.dashboard(NOW_MS, None);
+        assert_eq!(data.summary.total_queries, 10 + 2 * RANK_CANDIDATES);
+        assert_eq!(data.summary.top_blocked[0].count, 10);
+        assert_eq!(read_or_recover(&window.inner)[0].parts.top_domains.len(), RANK_CANDIDATES);
+    }
 
     #[test]
     fn counts_and_effective_semantics_match_sql() {
@@ -333,7 +458,7 @@ mod tests {
         let buckets = window.inner.read().expect("dns recent window poisoned");
         let starts: Vec<_> = buckets.iter().map(|bucket| bucket.minute_start).collect();
         assert_eq!(starts, vec![minute - 2 * MINUTE_MS, minute - MINUTE_MS, minute]);
-        assert_eq!(buckets[0].counts.total_queries, 2);
+        assert_eq!(buckets[0].parts.counts.total_queries, 2);
     }
 
     #[test]

@@ -3,6 +3,18 @@ use landscape_macro::LdApiError;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum InitConfigError {
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Database(#[from] crate::database::error::DbError),
+
+    #[error(transparent)]
+    #[api_error(transparent)]
+    Gateway(#[from] crate::sys_service::gateway::GatewayError),
+
+    #[error("Failed to serialize the exported configuration")]
+    #[api_error(id = "init_config.export_serialization_failed", status = 500)]
+    ExportSerialization(#[from] toml::ser::Error),
+
     #[error("Init config file not found in upload")]
     #[api_error(id = "init_config.file_not_found", status = 400)]
     FileNotFound,

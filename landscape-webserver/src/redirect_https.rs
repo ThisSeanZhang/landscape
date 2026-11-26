@@ -8,7 +8,7 @@ use axum::{
 };
 use axum_extra::extract::TypedHeader;
 use headers::Host;
-use landscape_common::config::WebRuntimeConfig;
+use landscape_common::sys_config::WebRuntimeConfig;
 
 #[allow(dead_code)]
 pub async fn redirect_http_to_https(web_config: WebRuntimeConfig) {

@@ -6,7 +6,6 @@
 #include <bpf/bpf_core_read.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 #include "base/dummy.h"
 
 #include "chain/xdp_meta.h"
@@ -31,30 +30,6 @@
 #include "neigh/neigh_ip6.h"
 
 char LICENSE[] SEC("license") = "GPL";
-
-// ── is_current_wan_packet: skb->ingress_ifindex → ctx->ingress_ifindex ──
-
-static __always_inline int xdp_route4_is_current_wan_packet(struct xdp_md *ctx,
-                                                            struct route4_context *context) {
-    struct wan_ip_info_key key = {};
-    key.ifindex = ctx->ingress_ifindex;
-    key.l3_protocol = LANDSCAPE_IPV4_TYPE;
-
-    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &key);
-    if (wan_info != NULL && wan_info->addr.in6_u.u6_addr32[0] == context->daddr) return XDP_PASS;
-    return 0;
-}
-
-static __always_inline int xdp_route6_is_current_wan_packet(struct xdp_md *ctx,
-                                                            struct route6_context *context) {
-    struct wan_ip_info_key key = {};
-    key.ifindex = ctx->ingress_ifindex;
-    key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-    struct wan_ip_info_value *wan_info = bpf_map_lookup_elem(&wan_ip_binding, &key);
-    if (wan_info != NULL && ip_addr_equal_x(&wan_info->addr, &context->daddr)) return XDP_PASS;
-    return 0;
-}
 
 // ── lan_redirect_check_in_wan: lan_map lookup with MAC resolution via cache or FIB ──
 
@@ -311,9 +286,6 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         if (unlikely(is_broadcast_ip4(context.daddr))) {
             return XDP_PASS;
         }
-
-        ret = xdp_route4_is_current_wan_packet(ctx, &context);
-        if (ret) return ret;
         xdp_get_meta(ctx, &meta);
 
         ret = xdp_route4_lan_redirect_check_in_wan(ctx, &context, &meta);
@@ -331,8 +303,6 @@ int xdp_wan_route_ingress(struct xdp_md *ctx) {
         if (unlikely(is_broadcast_ip6(context.daddr.in6_u.u6_addr8))) {
             return XDP_PASS;
         }
-        ret = xdp_route6_is_current_wan_packet(ctx, &context);
-        if (ret) return ret;
         xdp_get_meta(ctx, &meta);
         ret = xdp_route6_lan_redirect_check_in_wan(ctx, &context, &meta);
         if (ret && (ret != XDP_PASS || meta.mark == XDP_HANDOFF_TC_REDIRECT_MAGIC)) {

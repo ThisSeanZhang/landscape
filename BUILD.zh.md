@@ -4,13 +4,11 @@
 
 ## 该用什么命令
 
-- 日常 Rust 开发使用 `cargo build --workspace` 和 `cargo test --workspace`
-- eBPF 集成测试使用 `cargo test -p landscape-ebpf --features bpf-test`（需要 root）
-- 前端开发优先使用 `./web.sh`
-- 前端命令使用 `pnpm`。如果你没有全局安装 `pnpm`，再使用 `corepack pnpm`
-- 只有在整仓联调或发布式构建时才使用 `bash ./build.sh -t <arch>`
+在仓库中运行 `just --list` 查看可用任务。Debian 13 可用 `sudo apt install just` 安装。
 
-不要把 `build.sh` 当作日常开发入口。它会重建前端、按需确保 API 类型产物存在、整理 release 用静态资源，并产出 release 级别的构建结果。
+- 首次开发运行 `just init`，日常后端开发使用 `just build` 和 `just test`，前端开发服务器用 `./web.sh` 启动。
+- 格式化使用 `just fmt`，可传入 `--rust` 等选项。Containerlab 端到端测试按改动范围选跑，例如 Gateway 模块可运行 `just e2e-gateway`。[E2E 用例选择说明](tests/e2e/containerlab/README.md#按改动范围选择用例)
+- 整仓联调或发布使用 `./build.sh -t <arch>`。它会重建前端、整理静态资源并构建后端。
 
 ## 环境要求
 
@@ -47,25 +45,24 @@ corepack pnpm --version
 安装工作区依赖并生成 TypeScript client：
 
 ```bash
-pnpm install --frozen-lockfile
-./gen_ts_bindings.sh
+just init
 ```
 
-如果你使用 Corepack，请把 `pnpm` 替换成 `corepack pnpm`。
+单独安装依赖可运行 `just pnpm install --frozen-lockfile`。
 
-修改后端 OpenAPI 路由或 schema 后，需要重新执行 `./gen_ts_bindings.sh`。`build.sh` 和 `./web.sh` 会以 `--if-stale` 调用它：只有当 `landscape-types/openapi.json`、`landscape-types/src/api/schemas/index.ts` 和 `landscape-types/.bindings.lock` 都存在时才跳过生成。
+修改后端 OpenAPI 路由或 schema 后，需要重新执行 `just bindings`。`build.sh` 和 `./web.sh` 会以 `--if-stale` 调用它：只有当 `landscape-types/openapi.json`、`landscape-types/src/api/schemas/index.ts` 和 `landscape-types/.bindings.lock` 都存在时才跳过生成。
 
 ## 日常开发
 
 ### 后端
 
 ```bash
-cargo build --workspace
-cargo test --workspace                              # 单元测试
-cargo test -p landscape-ebpf --features bpf-test    # eBPF 集成测试（需要 root）
+just build
+just test        # 单元测试
+just test-bpf    # eBPF 集成测试（需要 root）
 ```
 
-`cargo tt` 和 `cargo ttb` 是上述两条测试命令的别名。BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可用 `BPF_BUILD_JOBS` 限制 clang 并行度。
+`cargo tt` 和 `cargo ttb` 是上述两个任务对应的 Cargo 别名。BPF skeleton 会并行编译并按内容哈希缓存；内存受限的机器可用 `BPF_BUILD_JOBS` 限制 clang 并行度。
 
 ### 前端
 
@@ -75,29 +72,33 @@ cargo test -p landscape-ebpf --features bpf-test    # eBPF 集成测试（需要
 
 `./web.sh` 会在启动 `landscape-webui` 开发模式前执行同样的基于 lock 的 API 类型检查。
 
-等价原生命令：
+如需直接启动已生成绑定的前端：
 
 ```bash
-pnpm --filter landscape-webui dev
+just pnpm --filter landscape-webui dev
 ```
 
 如果前端报 `@landscape-router/types/...` 缺失，先重新生成 `openapi.json` 和 `landscape-types`。
 
-`pnpm --filter landscape-webui build` 只负责构建前端应用本身。后端实际服务的 Scalar 静态资源整理属于 release-style 打包流程，由 `bash ./build.sh -t <arch>` 负责。
+`just web` 只负责构建前端应用本身。后端实际服务的 Scalar 静态资源整理属于 release-style 打包流程，由 `./build.sh -t <arch>` 负责。
 
 ## 整仓构建
 
 需要跑完整链路时执行：
 
 ```bash
-bash ./build.sh -t x86_64
+./build.sh -t x86_64
 ```
 
-`build.sh` 会安装前端依赖，只在生成产物或 lock 文件缺失时重新生成 API 类型，构建 Web UI、把 Scalar 静态资源整理到 `output/static`，然后再构建 release 后端二进制。
+`build.sh` 会安装前端依赖，只在生成产物或 lock 文件缺失时重新生成 API 类型，构建 Web UI、把 Scalar 静态资源整理到 `output/static`，然后再构建后端二进制。默认使用 `fast` Cargo profile（关闭体积优化以换取最快编译速度）。需要正式 release 产物时使用：
+
+```bash
+./build.sh -t x86_64 --release
+```
 
 ## `sudo`
 
-依赖安装、格式化、类型生成、普通前端构建和普通 Rust 编译都不需要 `sudo`。
+pnpm 依赖安装、格式化、类型生成、普通前端构建和普通 Rust 编译都不需要 `sudo`。
 
 只有在真实主机上运行 `landscape-webserver`、挂载 eBPF、操作真实网卡，或验证真实路由与 packet path 行为时才使用 `sudo`。
 

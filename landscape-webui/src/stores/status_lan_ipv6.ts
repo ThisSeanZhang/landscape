@@ -1,25 +1,7 @@
-import { get_all_lan_ipv6_status } from "@/api/service_lan_ipv6";
-import { ServiceStatus } from "@/lib/services";
-import { defineStore } from "pinia";
-import { computed, ComputedRef, ref } from "vue";
+import { get_all_lan_ipv6_status } from "@/api/services/lan_ipv6";
+import { defineInterfaceStatusStore } from "./interfaceStatus";
 
-export const useLanIPv6Store = defineStore("status_lan_ipv6", () => {
-  const status = ref<Map<string, ServiceStatus>>(
-    new Map<string, ServiceStatus>(),
-  );
-
-  async function UPDATE_INFO() {
-    status.value = await get_all_lan_ipv6_status();
-  }
-
-  function GET_STATUS_BY_IFACE_NAME(
-    name: string,
-  ): ComputedRef<ServiceStatus | undefined> {
-    return computed(() => status.value.get(name));
-  }
-
-  return {
-    UPDATE_INFO,
-    GET_STATUS_BY_IFACE_NAME,
-  };
-});
+export const useLanIPv6Store = defineInterfaceStatusStore(
+  "status_lan_ipv6",
+  get_all_lan_ipv6_status,
+);

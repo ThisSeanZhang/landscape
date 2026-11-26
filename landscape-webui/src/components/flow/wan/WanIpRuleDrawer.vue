@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { WanIpRuleConfig } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import WanRuleEditModal from "./WanRuleEditModal.vue";
 import WanRuleCard from "./WanRuleCard.vue";
@@ -26,7 +27,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const show = defineModel<boolean>("show", { required: true });
 
-const rules = ref<any>([]);
+const rules = ref<WanIpRuleConfig[]>([]);
 async function read_rules() {
   rules.value = await get_flow_dst_ip_rules(props.flow_id);
 }
@@ -80,7 +81,11 @@ const title = computed(() => {
     width="500px"
     placement="right"
   >
-    <n-drawer-content :title="title" closable>
+    <n-drawer-content
+      :title="title"
+      closable
+      body-content-style="height: 100%; padding: 14px 16px"
+    >
       <n-flex style="height: 100%" vertical>
         <n-flex>
           <n-button style="flex: 1" @click="show_create_modal = true">
@@ -99,12 +104,15 @@ const title = computed(() => {
           </n-popconfirm>
         </n-flex>
 
-        <n-scrollbar>
+        <n-scrollbar
+          class="drawer-scroll-gutter"
+          content-class="drawer-scroll-content"
+        >
           <n-flex vertical>
             <WanRuleCard
               @refresh="read_rules()"
               v-for="rule in rules"
-              :key="rule.index"
+              :key="rule.id ?? rule.index"
               :rule="rule"
             >
             </WanRuleCard>

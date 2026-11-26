@@ -4,6 +4,9 @@ export default {
   mode_static: "Static IP",
   mode_pppoe_native: "PPPoE (Native)",
   mode_dhcp_client: "DHCP Client",
+  pppoe_native_warn_1:
+    "Please confirm whether the current interface supports native XDP.",
+  pppoe_native_warn_2: "If not, use pppd mode for higher performance",
   static_ip: "Static IP",
   set_default_route: "Set default route",
   yes: "Yes",
@@ -25,7 +28,7 @@ export default {
     "Changing zone will reset all services running on this interface and delete its PPPoE dial-up configs",
   change_zone_warning_2:
     "It is recommended to set the IP configuration method in `/etc/network/interfaces` to manual",
-  zone_undefined: "Undefined",
+  zone_undefined: "Unassigned",
   console_parse_bitmask_failed: "Failed to parse bitmask:",
   console_get_config_failed: "Failed to get config:",
   console_save_config_failed: "Failed to save config:",

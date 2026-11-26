@@ -10,13 +10,16 @@ import {
   mergeVerdictBatchResults,
   type TraceSourceAddresses,
   type VerdictPlan,
-} from "@/lib/route_trace";
+} from "@/lib/flow/route_trace";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
-import type { FlowMatchResult } from "@/api/route/trace";
-import type { FlowVerdictResult } from "@/api/route/trace";
-import type { SingleVerdictResult } from "@landscape-router/types/api/schemas";
+import type {
+  FlowMatchResult,
+  FlowVerdictResult,
+  SingleVerdictResult,
+} from "@landscape-router/types/api/schemas";
+
 import { useI18n } from "vue-i18n";
 
 const show = defineModel<boolean>("show", { required: true });

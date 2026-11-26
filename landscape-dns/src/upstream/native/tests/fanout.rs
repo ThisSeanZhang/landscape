@@ -244,7 +244,7 @@ async fn fanout_truncated_answer_wins_over_negative() {
     assert_eq!(tcp.dials(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn fanout_truncated_answer_wins_over_negative_during_grace() {
     // Same preference while other legs are still in flight: IP2's
     // negative opens the grace window, IP3 is still dialing, and the
@@ -254,6 +254,7 @@ async fn fanout_truncated_answer_wins_over_negative_during_grace() {
     let udp3 = MockConnector::new([10, 0, 0, 3], DnsTransport::Udp);
     let tcp = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
     let mut config = PoolConfig::for_mode(&DnsUpstreamMode::Plaintext);
+    config.fanout = 3;
     config.attempts = 3;
     config.query_timeout = Duration::from_millis(500);
     let pool = UpstreamPool::with_connectors(
@@ -264,12 +265,15 @@ async fn fanout_truncated_answer_wins_over_negative_during_grace() {
     udp2.push(Err(DnsConnError::Protocol(ResponseCode::NXDomain, None)));
     // IP3 is still dialing when the grace window expires, so its leg is
     // aborted before it can answer.
-    udp3.set_dial_delay_ms(150);
-    udp3.push_after(Duration::from_millis(400), Ok(ok_answer()));
+    let dial_delay = pool_config::NEGATIVE_GRACE * 2;
+    udp3.set_dial_delay_ms(dial_delay.as_millis() as u64);
     tcp.push(Ok(ok_answer()));
 
+    let started = tokio::time::Instant::now();
     let records = pool.lookup("example.com.", RecordType::A).await.unwrap();
-    assert_eq!(records.len(), 1);
+    assert_eq!(records.records, ok_answer().answers);
+    assert_eq!([udp1.queries(), udp2.queries(), udp3.dials()], [1, 1, 1]);
+    assert!((pool_config::NEGATIVE_GRACE..dial_delay).contains(&started.elapsed()));
     assert_eq!(tcp.queries(), 1);
     // IP3's leg was aborted mid-dial; it never got to query.
     assert_eq!(udp3.queries(), 0);
@@ -390,6 +394,72 @@ async fn fanout_rotates_legs_across_attempts_and_recovers() {
 }
 
 #[tokio::test]
+async fn busy_preferred_endpoint_retries_an_untried_ip_in_the_same_lookup() {
+    let backup = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let preferred = MockConnector::new([10, 0, 0, 2], DnsTransport::Stream);
+    let mut config =
+        PoolConfig::for_mode(&DnsUpstreamMode::Tls { domain: "ns.example.com".into() });
+    config.fanout = 1;
+    config.attempts = 2;
+    let pool = UpstreamPool::with_connectors(vec![backup.clone(), preferred.clone()], config);
+    let name = Name::from_str("example.com.").unwrap();
+
+    // Give the backup a worse score without depending on wall-clock timings.
+    backup.push(Err(DnsConnError::Protocol(ResponseCode::ServFail, None)));
+    let first = pool.lookup_name(name.clone(), RecordType::A).await;
+    assert!(matches!(first, Err(UpstreamError::Protocol(ResponseCode::ServFail, _))));
+
+    preferred.push(Err(DnsConnError::NoConnections));
+    let expected = ok_answer();
+    backup.push(Ok(expected.clone()));
+    let answer = pool.lookup_name(name, RecordType::A).await.unwrap();
+    assert_eq!(answer.records, expected.answers);
+    assert_eq!(preferred.queries(), 1);
+    assert_eq!(backup.queries(), 2);
+}
+
+#[tokio::test]
+async fn doh_503_retries_an_untried_endpoint() {
+    let a = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let b = MockConnector::new([10, 0, 0, 2], DnsTransport::Stream);
+    let c = MockConnector::new([10, 0, 0, 3], DnsTransport::Stream);
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Https {
+        domain: "ns.example.com".into(),
+        http_endpoint: None,
+    });
+    let pool = UpstreamPool::with_connectors(vec![a.clone(), b.clone(), c.clone()], config);
+    for endpoint in [&a, &b] {
+        endpoint.push(Err(DnsConnError::Response("DoH returned HTTP 503".into())));
+    }
+    c.push(Ok(ok_answer()));
+    pool.lookup("example.com.", RecordType::A).await.unwrap();
+    assert_eq!([a.queries(), b.queries(), c.queries()], [1, 1, 1]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn doh_503_retries_the_endpoint_blocked_by_the_stream_cap() {
+    let primary = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let backup = MockConnector::new([10, 0, 0, 2], DnsTransport::Stream);
+    let mut config = PoolConfig::for_mode(&DnsUpstreamMode::Https {
+        domain: "ns.example.com".into(),
+        http_endpoint: None,
+    });
+    config.max_conns = 1;
+    config.fanout = 2;
+    config.attempts = 2;
+    let pool = UpstreamPool::with_connectors(vec![primary.clone(), backup.clone()], config);
+    pool.warm_up_to_min().await;
+    // Both endpoints are selected while the only connection is serving the primary.
+    primary.push_after(Duration::from_millis(20), Err(DnsConnError::Response("HTTP 503".into())));
+    let answer = ok_answer();
+    backup.push(Ok(answer.clone()));
+    let records = pool.lookup("example.com.", RecordType::A).await.unwrap();
+    assert_eq!(records.records, answer.answers);
+    assert_eq!([primary.queries(), backup.queries()], [1, 1]);
+    assert_eq!(pool.conn_count(), 1);
+}
+
+#[tokio::test]
 async fn multi_ip_connectors_iterated_with_per_ip_reuse() {
     let a_udp = MockConnector::new([10, 0, 0, 1], DnsTransport::Udp);
     let a_tcp = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
@@ -481,4 +551,26 @@ async fn fanout_panicked_leg_does_not_poison_selection() {
     assert_eq!(records.len(), 1);
     assert_eq!(healthy.queries(), 1);
     assert_eq!(pool.conn_count(), 1);
+}
+
+#[tokio::test]
+async fn default_doh_pool_reaches_fifth_address_after_four_http_errors() {
+    let endpoints: Vec<_> =
+        (1..=5).map(|ip| MockConnector::new([10, 0, 0, ip], DnsTransport::Stream)).collect();
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Https {
+        domain: "ns.example".into(),
+        http_endpoint: None,
+    });
+    let cap = usize::from(config.max_conns);
+    let pool = UpstreamPool::with_connectors(
+        endpoints.iter().cloned().map(|ep| ep as Arc<dyn DnsConnector>).collect(),
+        config,
+    );
+    for ep in &endpoints[..4] {
+        ep.push(Err(DnsConnError::Response("503".into())));
+    }
+    endpoints[4].push(Ok(ok_answer()));
+    assert_eq!(pool.lookup("example.com.", RecordType::A).await.unwrap().records.len(), 1);
+    assert!(endpoints.iter().all(|ep| ep.queries() == 1));
+    assert!(pool.conn_count() <= cap);
 }

@@ -1,0 +1,44 @@
+[config.time]
+enabled = false
+
+[config.gateway]
+enable = true
+
+[[ifaces]]
+name = "wan0"
+zone_type = "wan"
+
+[[ifaces]]
+name = "lan0"
+zone_type = "lan"
+
+# Let Landscape configure the directly connected LAN prefix for its TC routes.
+[[dhcpv4_services]]
+iface_name = "lan0"
+enable = true
+[dhcpv4_services.config]
+server_ip_addr = "192.0.2.1"
+network_mask = 24
+ip_range_start = "192.0.2.100"
+ip_range_end = "192.0.2.150"
+address_lease_time = 600
+
+[[wan_links]]
+name = "gateway-wan"
+attach_iface_name = "wan0"
+[wan_links.v4]
+enable = true
+[wan_links.v4.model]
+t = "static"
+ipv4 = "198.51.100.2"
+ipv4_mask = 24
+default_router = true
+default_router_ip = "198.51.100.1"
+
+[[route_lans]]
+iface_name = "lan0"
+enable = true
+
+[[route_wans]]
+iface_name = "wan0"
+enable = true

@@ -11,10 +11,12 @@ workspace = true
 
 [features]
 default = ["pool-native"]
-pool-exp = []
 pool-native = ["dep:rand", "dep:webpki-roots", "dep:rustls-platform-verifier"]
+# Manual native-upstream benchmark harness; not part of production builds.
+bench = ["pool-native", "dep:hdrhistogram"]
 
 [dependencies]
+hdrhistogram = { workspace = true, optional = true }
 landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-protobuf = { path = "../landscape-protobuf" }
@@ -69,3 +71,8 @@ hickory-server = { workspace = true, features = ["https-ring", "quic-ring"] }
 homedir = { workspace = true }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+
+[[bench]]
+name = "native_upstream"
+harness = false
+required-features = ["bench"]

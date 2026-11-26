@@ -6,14 +6,12 @@ pub(crate) mod test_route {
 mod packet;
 
 #[cfg(test)]
-mod pppoe_skb_fallback;
-#[cfg(test)]
 mod tc_lan_ingress;
 #[cfg(test)]
 mod tc_lan_ingress_v6;
 #[cfg(test)]
 mod tc_wan_egress;
-mod tc_wan_egress_host_direct;
+mod tc_wan_egress_skip_route;
 #[cfg(test)]
 mod tc_wan_egress_v6;
 #[cfg(test)]
@@ -28,6 +26,8 @@ mod tc_wan_ingress_v6;
 mod test_lan_redirect_check;
 #[cfg(test)]
 mod test_route_docker;
+#[cfg(test)]
+mod test_route_lan_cache;
 #[cfg(test)]
 mod test_route_search;
 #[cfg(test)]

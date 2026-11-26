@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { WifiMode } from "@/lib/dev";
-import { ServiceExhibitSwitch } from "@/lib/services";
+import { WifiMode } from "@landscape-router/types/api/schemas";
+
+import { ServiceExhibitSwitch } from "@/lib/network/services";
 import { change_wifi_mode } from "@/api/network";
 import { SpatialAudioOutlined } from "@vicons/material";
 import { Wifi } from "@vicons/carbon";
-import { stop_and_del_iface_wifi } from "@/api/service_wifi";
+import { stop_and_del_iface_wifi } from "@/api/services/wifi";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -20,15 +20,9 @@ const props = defineProps<{
 }>();
 
 async function change_mode() {
-  let change_mode = WifiMode.Undefined;
-
-  if (props.show_switch.wifi) {
-    change_mode = WifiMode.Client;
-  } else {
-    change_mode = WifiMode.AP;
-  }
+  const mode = props.show_switch.wifi ? WifiMode.client : WifiMode.ap;
   await stop_and_del_iface_wifi(props.iface_name);
-  await change_wifi_mode(props.iface_name, change_mode);
+  await change_wifi_mode(props.iface_name, mode);
   emit("refresh");
 }
 </script>

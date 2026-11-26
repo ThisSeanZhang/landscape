@@ -55,7 +55,7 @@ fi
 
     # 1. Generate OpenAPI spec → landscape-types/openapi.json
     echo "Exporting OpenAPI spec..."
-    cargo test -p landscape-webserver export_openapi_json -- --nocapture
+    cargo test -p landscape-webserver export_openapi_json -- --ignored --nocapture
 
     # 2. Full clean generated dir
     echo "Cleaning generated API clients and schemas..."

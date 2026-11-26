@@ -1,5 +1,9 @@
 export default {
   common: {
+    search_key: "Search by source or key",
+    refine_search:
+      "Showing up to {count} matches. Type more to narrow the search.",
+    search_failed: "Search failed. Reopen to retry.",
     source_type: "Source Type",
     source_url: "Download URL",
     source_url_mode: "Download from URL",
@@ -17,6 +21,14 @@ export default {
     key: "Key",
   },
   geo_ip: {
+    entries: "GeoIP keys",
+    select_entry: "Select a GeoIP key to view its networks",
+    matched_rules: "Matching networks",
+    all_rules: "All networks",
+    no_rules: "No networks in this key",
+    load_failed: "Could not load GeoIP networks",
+    view_key: "View GeoIP details for {name}/{key}",
+    lookup_address: "Find GeoIP matches for {ip}",
     title: "Edit Geo IP Source",
     ip_list: "IP List",
     ip_placeholder: "IP Address",
@@ -24,6 +36,13 @@ export default {
     add_ip: "Add IP",
   },
   geo_site: {
+    entries: "GeoSite keys",
+    select_entry: "Select a GeoSite key to view its rules",
+    matched_rules: "Matching rules",
+    all_rules: "All rules",
+    no_rules: "No rules in this key",
+    load_failed: "Could not load GeoSite rules",
+    view_key: "View GeoSite details for {name}/{key}",
     title: "Edit Geo Site Source",
     domain_list: "Domain List",
     domain_placeholder: "Domain",
@@ -83,18 +102,14 @@ export default {
     rule_details: "Rule Details",
   },
   lookup: {
+    domain_notice_positive: "Query {domain}",
     site_action: "Lookup Domain",
     ip_action: "Lookup IP",
-    site_title: "GeoSite Domain Lookup",
     ip_title: "GeoIP Address Lookup",
     site_placeholder: "Enter a domain, e.g. example.com",
     ip_placeholder: "Enter an IPv4 or IPv6 address",
     action: "Lookup",
     no_result: "No matching Geo rules",
-    domain_notice_title: "Domain Format Notice",
-    domain_notice_content:
-      "GeoSite lookup requires a full domain name (e.g. {example}). Do you want to query {suggested}?",
-    domain_notice_positive: "Query {domain}",
   },
   geo_ip_name_select: {
     select_geo_ip_name: "Select Geo IP Name",

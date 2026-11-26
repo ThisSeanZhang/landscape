@@ -188,34 +188,29 @@ async fn fresh_connection_does_not_race() {
     assert_eq!(connector.queries(), 1);
 }
 
-#[tokio::test]
-async fn stale_race_old_transport_failure_keeps_dialed_fresh_conn() {
-    // The stale conn fails at the transport level while the raced fresh
-    // dial has already completed (its query is still running and gets
-    // cancelled): the healthy fresh conn must be kept for the retry
-    // instead of being shut down and re-dialed.
+#[tokio::test(start_paused = true)]
+async fn stale_timeout_waits_for_the_in_flight_replacement_answer() {
     let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
-    let pool = race_pool(connector.clone(), 3);
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Plaintext);
+    let clock = TestClock::new(1_000);
+    let stale_ms = config.stale_conn_age.as_millis() as u64;
+    let pool = UpstreamPool::with_connectors_and_clock(
+        vec![connector.clone()],
+        config,
+        Arc::new(clock.clone()),
+    );
+    drop(pool.acquire(connector.as_ref()).await.unwrap().unwrap());
+    clock.advance(stale_ms + 1);
 
-    pool.acquire(connector.as_ref()).await.unwrap();
-    age_all(&pool);
-
-    // The raced fresh dial is polled first (`biased;`), so it takes the
-    // first (slow) outcome; the stale conn takes the second (a fast
-    // transport failure), deciding the race while the fresh query is still
-    // in flight and gets cancelled.
-    connector.push_after(Duration::from_millis(500), Ok(ok_answer()));
+    // The replacement is polled first. Its reply arrives after the old
+    // connection fails, within the same attempt.
+    connector.push_after(Duration::from_millis(100), Ok(ok_answer()));
     connector.push(Err(DnsConnError::Timeout));
-    connector.push(Ok(ok_answer()));
-
     let records = pool.lookup("example.com.", RecordType::A).await.unwrap();
     assert_eq!(records.len(), 1);
-    // 1 initial + 2 raced dials (the retry races again). The raced conn
-    // from the first race was pooled instead of being shut down, so the
-    // pool holds the stale conn plus it; the second race's fresh conn was
-    // closed because the stale conn answered successfully.
-    assert_eq!(connector.dials(), 3);
-    assert_eq!(pool.conn_count(), 2);
+    assert_eq!(connector.dials(), 2);
+    assert_eq!(connector.queries(), 2);
+    assert_eq!(pool.conn_count(), 1);
     assert_eq!(connector.shutdowns(), 1);
 }
 
@@ -371,11 +366,6 @@ async fn stale_connection_race_both_fail_then_redials_fresh() {
     let mut config = PoolConfig::for_mode(&DnsUpstreamMode::Plaintext);
     config.attempts = 3;
     config.stale_conn_age = Duration::from_millis(1);
-    // A frozen clock pins the raced-fresh conn's later staleness check: it
-    // is pooled at `now` and re-examined at the same `now`, so a
-    // millisecond boundary under the real clock cannot flip it stale and
-    // spawn a spurious extra race (the historical under-load flake made
-    // the dial/query counts wander).
     let pool = UpstreamPool::with_connectors_and_clock(
         vec![connector.clone()],
         config,
@@ -385,32 +375,15 @@ async fn stale_connection_race_both_fail_then_redials_fresh() {
     pool.acquire(connector.as_ref()).await.unwrap();
     age_all(&pool);
 
-    // Both legs fail: the raced fresh dial of attempt 1 pops the delayed
-    // outcome (the biased select polls the fresh leg first, so both raced
-    // dials provably start) and is still sleeping when the stale conn's
-    // instant Timeout wins the race; attempt 2 repeats this on the LRU
-    // stale conn, whose second failure retires it. The conn survives one
-    // failure (stream threshold 2) but is retired on the second. The
-    // raced fresh conn of attempt 1 was kept (its query was cancelled,
-    // the conn is healthy), so the final attempt reuses it instead of
-    // dialing again.
     connector.push_after(Duration::from_millis(100), Err(DnsConnError::Timeout));
     connector.push(Err(DnsConnError::Timeout));
-
     let err = pool.lookup("example.com.", RecordType::A).await.unwrap_err();
     assert!(matches!(err, UpstreamError::Timeout));
-    // Deterministic under the frozen clock: setup dial + the two raced
-    // dials (attempt 1 and attempt 2), nothing else — the final attempt
-    // reuses the kept fresh conn.
-    assert_eq!(connector.dials(), 3, "dials");
-    // Stale conn ×2 (attempts 1-2), raced fresh of attempt 1 (cancelled),
-    // raced fresh of attempt 2 (transport failure), kept conn (final
-    // attempt, queue empty → instant Timeout).
-    assert_eq!(connector.queries(), 5, "queries");
-    // The attempt-2 raced fresh dial (transport failure, never pooled) and
-    // the twice-failed stale conn retired by the final attempt's purge.
-    assert_eq!(connector.shutdowns(), 2, "shutdowns");
-    // The pool holds the kept fresh connection.
+    // Both replacement queries failed. After two failures on the stale
+    // stream, the third attempt dials a new connection.
+    assert_eq!(connector.dials(), 4);
+    assert_eq!(connector.queries(), 5);
+    assert_eq!(connector.shutdowns(), 3);
     assert_eq!(pool.conn_count(), 1);
 }
 
@@ -528,10 +501,12 @@ async fn retire_and_pool_shuts_down_the_retired_connection() {
 
     let old = pool.acquire(connector.as_ref()).await.unwrap().unwrap();
     let fresh = connector.connect().await.unwrap();
-    let winner = pool.retire_and_pool(&old, fresh);
+    let winner = pool.retire_and_pool(&old, Arc::new(PooledConn::new(fresh, pool.clock.now_ms())));
 
     assert!(!Arc::ptr_eq(&old, &winner));
     assert_eq!(pool.conn_count(), 1);
+    assert_eq!(connector.shutdowns(), 0);
+    drop(old);
     assert_eq!(connector.shutdowns(), 1);
 }
 
@@ -1029,7 +1004,7 @@ async fn maintain_does_not_reap_an_in_flight_borrow() {
     // Age the entry past the idle timeout, then borrow it again: the borrow
     // renews the stamp (the query starts here and runs for a while).
     clock.advance(100);
-    let _borrowed = pool.acquire(connector.as_ref()).await.unwrap().unwrap();
+    let borrowed = pool.acquire(connector.as_ref()).await.unwrap().unwrap();
     assert_eq!(pool.conn_count(), 1);
 
     // The query is in flight for 10ms (well under the idle timeout) when
@@ -1039,6 +1014,10 @@ async fn maintain_does_not_reap_an_in_flight_borrow() {
     assert_eq!(pool.conn_count(), 1, "an in-flight borrow must not be reaped");
     assert_eq!(connector.shutdowns(), 0, "the borrowed connection must not be closed");
 
+    clock.advance(100);
+    pool.maintain().await;
+    assert_eq!(pool.conn_count(), 1, "a long-running query still owns its lease");
+    drop(borrowed);
     // Without another use the entry ages out normally.
     clock.advance(100);
     pool.maintain().await;
@@ -1101,5 +1080,137 @@ async fn scale_up_dials_survive_a_panicking_connector() {
             0,
             "the slot's dial counter must restore after every dial (including a panicking one)"
         );
+    }
+}
+
+#[tokio::test]
+async fn cancelled_lookup_releases_its_lease_for_idle_reaping() {
+    let endpoint = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let clock = TestClock::new(1_000);
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Plaintext);
+    let idle_ms = config.idle_timeout.as_millis() as u64;
+    let pool = UpstreamPool::with_connectors_and_clock(
+        vec![endpoint.clone()],
+        config,
+        Arc::new(clock.clone()),
+    );
+    endpoint.push_after(Duration::from_secs(1), Ok(ok_answer()));
+    let mut lookup = Box::pin(pool.lookup("example.com.", RecordType::A));
+    assert!(futures_util::poll!(&mut lookup).is_pending());
+    assert_eq!(endpoint.queries(), 1);
+    drop(lookup);
+
+    clock.advance(idle_ms + 1);
+    pool.maintain().await;
+    assert_eq!(pool.conn_count(), 0);
+    assert_eq!(endpoint.shutdowns(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_leases_prefer_the_less_loaded_stream() {
+    let endpoint = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let pool = stream_pool(endpoint.clone(), 1);
+    let first = pool.acquire(endpoint.as_ref()).await.unwrap().unwrap();
+    assert!(pool.pool_fresh(Arc::new(PooledConn::new(
+        endpoint.connect().await.unwrap(),
+        pool.clock.now_ms()
+    ))));
+    let second = pool.acquire(endpoint.as_ref()).await.unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&first, &second));
+    drop(first);
+    let next = pool.acquire(endpoint.as_ref()).await.unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&next, &second));
+    assert_eq!(endpoint.dials(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stale_stream_replacement_waits_for_other_lookups_before_shutdown() {
+    let endpoint = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Quic { domain: "ns.example.com".into() });
+    let stale_ms = config.stale_conn_age.as_millis() as u64;
+    let clock = TestClock::new(1_000);
+    let pool = UpstreamPool::with_connectors_and_clock(
+        vec![endpoint.clone()],
+        config,
+        Arc::new(clock.clone()),
+    );
+    drop(pool.acquire(endpoint.as_ref()).await.unwrap().unwrap());
+    // One lookup borrows the old connection just before it becomes stale.
+    clock.advance(stale_ms - 1);
+    endpoint.push_after(Duration::from_millis(100), Ok(ok_answer()));
+    let mut pending = Box::pin(pool.lookup("example.com.", RecordType::A));
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    assert_eq!(endpoint.queries(), 1);
+    // The next lookup races a fresh connection while the first is still pending.
+    clock.advance(2);
+    tokio::time::advance(Duration::from_millis(2)).await;
+    endpoint.push(Ok(ok_answer()));
+    pool.lookup("example.com.", RecordType::A).await.unwrap();
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    assert_eq!(endpoint.dials(), 2);
+    assert_eq!(endpoint.shutdowns(), 0, "retired stream closed before the other lookup finished");
+    pending.await.unwrap();
+    assert_eq!(endpoint.shutdowns(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_stale_queries_share_one_replacement_dial_and_release_it_on_cancel() {
+    let ep = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    let config = PoolConfig::for_mode(&DnsUpstreamMode::Quic { domain: "ns.example".into() });
+    let clock = TestClock::new(1_000);
+    let stale_ms = config.stale_conn_age.as_millis() as u64;
+    let pool =
+        UpstreamPool::with_connectors_and_clock(vec![ep.clone()], config, Arc::new(clock.clone()));
+    drop(pool.acquire(ep.as_ref()).await.unwrap().unwrap());
+    clock.advance(stale_ms + 1);
+    ep.set_dial_delay_ms(30);
+    let mut pending = vec![];
+    for _ in 0..5 {
+        ep.push_after(Duration::from_millis(60), Ok(ok_answer()));
+        let mut query = Box::pin(pool.lookup("example.com.", RecordType::A));
+        assert!(futures_util::poll!(&mut query).is_pending());
+        pending.push(query);
+    }
+    assert_eq!(ep.queries(), 5);
+    assert_eq!(ep.dials(), 2);
+    drop(pending);
+    ep.push_after(Duration::from_millis(60), Ok(ok_answer()));
+    let mut next = Box::pin(pool.lookup("example.com.", RecordType::A));
+    assert!(futures_util::poll!(&mut next).is_pending());
+    assert_eq!(ep.dials(), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stale_timeout_preserves_fresh_response_in_either_completion_order() {
+    for fresh_first in [false, true] {
+        let ep = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+        let mut config = PoolConfig::for_mode(&DnsUpstreamMode::Https {
+            domain: "ns.example".into(),
+            http_endpoint: None,
+        });
+        config.attempts = 1;
+        let clock = TestClock::new(1_000);
+        let stale_ms = config.stale_conn_age.as_millis() as u64;
+        let pool = UpstreamPool::with_connectors_and_clock(
+            vec![ep.clone()],
+            config,
+            Arc::new(clock.clone()),
+        );
+        drop(pool.acquire(ep.as_ref()).await.unwrap().unwrap());
+        clock.advance(stale_ms + 1);
+        // The dial delay gives the first scripted outcome to the old stream.
+        ep.set_dial_delay_ms(10);
+        ep.push_after(
+            Duration::from_millis(if fresh_first { 30 } else { 5 }),
+            Err(DnsConnError::Timeout),
+        );
+        ep.push(Err(DnsConnError::Response("503".into())));
+        assert!(
+            matches!(pool.lookup("example.com.", RecordType::A).await, Err(UpstreamError::Response(msg)) if msg == "503")
+        );
+        assert_eq!(ep.shutdowns(), 1);
+        ep.push(Ok(ok_answer()));
+        pool.lookup("example.com.", RecordType::A).await.unwrap();
+        assert_eq!(ep.dials(), 2);
     }
 }

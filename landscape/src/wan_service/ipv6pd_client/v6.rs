@@ -1,3 +1,6 @@
+mod host_routes;
+use host_routes::WanHostRoutes;
+
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     pin::Pin,
@@ -18,7 +21,7 @@ use uuid::Uuid;
 
 use crate::netlink::address::get_existing_linklocal;
 use crate::{
-    netlink::ipv6::{del_iface_ip, deprecate_iface_ip, set_iface_ip},
+    netlink::ipv6::{del_iface_ip, deprecate_iface_ip},
     sys_service::route::IpRouteService,
 };
 use landscape_common::flow::mark::{MarkType, SocketMark};
@@ -274,10 +277,11 @@ fn create_pd_socket(
     socket.bind(&(*socket_addr).into())?;
     socket.set_nonblocking(true)?;
     // All sends (Solicit / Renew / Release) carry the session's chain in
-    // the HostDirect mark: the WAN egress entry hands the packet to the
-    // link's chain root directly and every policy stage self-skips on
-    // this mark, so the control plane rides the PPP terminal unfiltered.
-    socket.set_mark(u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0)))?;
+    // the SkipRouteAndStage mark: the WAN egress entry hands the packet to
+    // the link's chain root directly and the root bypasses the policy
+    // stages on this mark, so the control plane rides the PPP terminal
+    // unfiltered.
+    socket.set_mark(u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id }, 0)))?;
     UdpSocket::from_std(socket.into())
 }
 
@@ -330,7 +334,7 @@ pub async fn dhcp_v6_pd_client(
     ifindex: u32,
     // session's IPv6CP link-local (SessionIface::v6_linklocal); kept
     // bound on the iface as a stable DHCPv6 source (chain steering is
-    // the HostDirect SO_MARK above, not the address)
+    // the SkipRouteAndStage SO_MARK above, not the address)
     session_ll: Option<Ipv6Addr>,
     // for ebpf map setting
     mac_addr: Option<MacAddr>,
@@ -386,6 +390,7 @@ pub async fn dhcp_v6_pd_client(
     let (message_tx, mut message_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(1024);
 
     // 接收数据
+    let is_pppoe_session = session_ll.is_some();
     service_status.spawn_task(task_label::task::WAN_IPV6PD_CLIENT_RENEW, async move {
         // 超时重发定时器
 
@@ -428,6 +433,7 @@ pub async fn dhcp_v6_pd_client(
 
     let mut active_send = Box::pin(tokio::time::sleep(Duration::from_secs(0)));
 
+    let mut host_routes = WanHostRoutes::new(&route_service, &iface_name, ifindex, mac_addr);
     let mut current_wan_addr: Option<Ipv6Addr> = None;
     let mut status = IpV6PdState::init_status();
     swap_if_changed(&pd_runtime, pd_runtime_projection(&status, current_wan_addr));
@@ -441,6 +447,9 @@ pub async fn dhcp_v6_pd_client(
         let status_before = state_label(&status);
 
         tokio::select! {
+            _ = host_routes.wait_for_expiry() => {
+                host_routes.expire(Instant::now()).await;
+            },
             // 超时激发重发
             _ = active_send.as_mut() => {
                 #[cfg(debug_assertions)]
@@ -481,6 +490,7 @@ pub async fn dhcp_v6_pd_client(
                             &prefix_map,
                             &prefix_sender,
                             &mut current_wan_addr,
+                            &mut host_routes,
                             &link_state,
                         )
                         .await;
@@ -521,8 +531,10 @@ pub async fn dhcp_v6_pd_client(
                             &mac_addr,
                             shared_wan_iid.as_ref(),
                             &mut current_wan_addr,
+                            &mut host_routes,
                             &prefix_sender,
                             expected_pd_len,
+                            is_pppoe_session,
                             &link_state,
                         )
                         .await;
@@ -559,9 +571,11 @@ pub async fn dhcp_v6_pd_client(
                     &prefix_map,
                     &prefix_sender,
                     &mut current_wan_addr,
+                    &mut host_routes,
                     &link_state,
                 )
                 .await;
+                host_routes.clear_on_stop().await;
                 cleaned_up = true;
                 if let Some((service_id, iapd, server_unicast)) = status.into_release()
                     && let Some(send_msg) = gen_release(&client_id, service_id, iapd)
@@ -597,9 +611,11 @@ pub async fn dhcp_v6_pd_client(
             &prefix_map,
             &prefix_sender,
             &mut current_wan_addr,
+            &mut host_routes,
             &link_state,
         )
         .await;
+        host_routes.clear_on_stop().await;
     }
     tracing::info!("DHCP V6 Client Stop: {:#?}", service_status);
 
@@ -622,6 +638,7 @@ async fn clear_active_pd_prefix(
     prefix_map: &IAPrefixMap,
     prefix_sender: &IAPrefixEventSender,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    host_routes: &mut WanHostRoutes<'_>,
     link_state: &LinkStateHandle,
 ) {
     let removed = prefix_map.remove(&link_id);
@@ -643,9 +660,12 @@ async fn clear_active_pd_prefix(
 
     route_service.remove_ipv6_link_route(link_id).await;
     chain_dataplane.unbind_wan_ipv6();
+    // Forget the confirmation so a re-acquisition of the same prefix probes again.
+    chain_dataplane.clear_gateway_ns();
     link_state.clear_v6_prefix();
     if let Some(wan_addr) = current_wan_addr.take() {
         del_iface_ip(wan_addr, 128, iface_name);
+        host_routes.remove(wan_addr).await;
     }
 
     if removed.is_some() {
@@ -747,6 +767,7 @@ fn plan_wan_addr_deprecation(
 }
 
 fn deprecate_previous_pd_address(
+    host_routes: &mut WanHostRoutes<'_>,
     previous_wan_addr: Option<Ipv6Addr>,
     new_wan_addr: Option<Ipv6Addr>,
     previous_remaining: Duration,
@@ -758,7 +779,11 @@ fn deprecate_previous_pd_address(
         return;
     };
     let valid_lifetime = grace.as_secs().clamp(1, u32::MAX as u64) as u32;
-    deprecate_iface_ip(wan_addr, 128, iface_name, valid_lifetime);
+    if !deprecate_iface_ip(wan_addr, 128, iface_name, valid_lifetime) {
+        return;
+    }
+    host_routes
+        .deprecate_until(wan_addr, Instant::now() + Duration::from_secs(valid_lifetime.into()));
     tracing::info!(
         iface = iface_name,
         %wan_addr,
@@ -1044,8 +1069,10 @@ async fn handle_packet(
     mac_addr: &Option<MacAddr>,
     shared_wan_iid: &u64,
     current_wan_addr: &mut Option<Ipv6Addr>,
+    host_routes: &mut WanHostRoutes<'_>,
     prefix_sender: &IAPrefixEventSender,
     expected_pd_len: u8,
+    is_pppoe_session: bool,
     link_state: &LinkStateHandle,
 ) -> bool {
     let IpAddr::V6(ipv6addr) = msg_addr.ip() else {
@@ -1247,13 +1274,13 @@ async fn handle_packet(
                             // before the replacement is ready.
                             let mut info = wan_route_info.clone();
                             if let Some(wan_addr) = wan_addr {
-                                set_iface_ip(
-                                    wan_addr,
-                                    128,
-                                    iface_name,
-                                    Some(ia_prefix.valid_lifetime),
-                                    Some(ia_prefix.preferred_lifetime),
-                                );
+                                host_routes
+                                    .install(
+                                        wan_addr,
+                                        ia_prefix.valid_lifetime,
+                                        ia_prefix.preferred_lifetime,
+                                    )
+                                    .await;
                                 info.iface_ip = IpAddr::V6(wan_addr);
                             }
                             info.gateway_ip = IpAddr::V6(ipv6addr);
@@ -1269,6 +1296,7 @@ async fn handle_packet(
                                 iface_name,
                                 ifindex,
                                 mac_addr,
+                                is_pppoe_session,
                                 chain_dataplane,
                             );
                             let wan_v6_prefix = WanV6Prefix {
@@ -1283,6 +1311,7 @@ async fn handle_packet(
                             *current_wan_addr = wan_addr;
                             let _ = prefix_sender.send(IAPrefixEvent::Updated { link_id }).await;
                             deprecate_previous_pd_address(
+                                host_routes,
                                 previous_wan_addr,
                                 wan_addr,
                                 previous_remaining,
@@ -1320,6 +1349,7 @@ fn replace_ip_route(
     iface_name: &str,
     ifindex: u32,
     mac: &Option<MacAddr>,
+    is_pppoe: bool,
     chain_dataplane: &WanLinkDataplane,
 ) {
     let result = std::process::Command::new("ip")
@@ -1339,7 +1369,23 @@ fn replace_ip_route(
         ])
         .output();
 
-    chain_dataplane.bind_wan_ipv6(ifindex, iapd.prefix_ip, Some(route_ip), iapd.prefix_len, *mac);
+    if is_pppoe {
+        chain_dataplane.bind_pppoe_ipv6(
+            ifindex,
+            iapd.prefix_ip,
+            Some(route_ip),
+            iapd.prefix_len,
+            *mac,
+        );
+    } else {
+        chain_dataplane.bind_wan_ipv6(
+            ifindex,
+            iapd.prefix_ip,
+            Some(route_ip),
+            iapd.prefix_len,
+            *mac,
+        );
+    }
     match result {
         Ok(output) if output.status.success() => {
             tracing::info!(
@@ -1596,6 +1642,11 @@ mod tests {
         assert!(matches!(pd_runtime_projection(&rebind, Some(wan_ip)), PdRuntime::Rebinding(_)));
 
         assert!(matches!(pd_runtime_projection(&IpV6PdState::Stop, None), PdRuntime::Stopped));
+    }
+
+    #[test]
+    fn pd_longer_than_a_64_has_no_wan_host_address() {
+        assert!(derive_wan_pd_addr(&prefix("2001:db8:1000::", 80), 0x42).is_none());
     }
 
     #[test]

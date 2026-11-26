@@ -9,7 +9,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import FlowMatchRule from "./match/FlowMatchRule.vue";
-import { flow_config_default } from "@/lib/default_value";
+import { flow_config_default } from "@/lib/flow/default_value";
 import type {
   ApiFlowConfig as FlowConfig,
   FlowEntryRule,

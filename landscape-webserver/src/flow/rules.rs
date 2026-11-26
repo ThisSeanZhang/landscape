@@ -32,7 +32,7 @@ async fn get_flow_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<ApiFlowConfig>> {
     let mut result: Vec<ApiFlowConfig> =
-        state.flow_rule_service.list().await?.into_iter().map(Into::into).collect();
+        state.managed.flow_rule_service.list().await?.into_iter().map(Into::into).collect();
     result.sort_by_key(|a| a.flow_id);
     LandscapeApiResp::success(result)
 }
@@ -51,7 +51,7 @@ async fn get_flow_rule_by_flow_id(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<ApiFlowConfig> {
-    let result = state.flow_rule_service.list_flow_configs(id).await?;
+    let result = state.managed.flow_rule_service.list_flow_configs(id).await?;
     if let Some(config) = result.into_iter().next() {
         LandscapeApiResp::success(config.into())
     } else {
@@ -73,7 +73,7 @@ async fn get_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<ApiFlowConfig> {
-    let result = state.flow_rule_service.find_by_id(id).await?;
+    let result = state.managed.flow_rule_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config.into())
     } else {
@@ -92,7 +92,7 @@ async fn add_flow_rule(
     State(state): State<LandscapeApp>,
     JsonBody(flow_rule): JsonBody<ApiFlowConfig>,
 ) -> LandscapeApiResult<ApiFlowConfig> {
-    let result = state.flow_rule_service.checked_set(flow_rule.into()).await?;
+    let result = state.managed.flow_rule_service.checked_set(flow_rule.into()).await?;
     LandscapeApiResp::success(result.into())
 }
 
@@ -110,6 +110,6 @@ async fn del_flow_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.flow_rule_service.delete_flow_cascade(id).await?;
+    state.managed.flow_rule_service.delete_flow_cascade(id).await?;
     LandscapeApiResp::success(())
 }

@@ -30,10 +30,11 @@ async fn check_iface_validity(
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Vec<EnrolledDevice>> {
     // 获取该网卡的 DHCP 范围用于校验
-    let config = app.dhcp_v4_server_service.get_config_by_name(iface_name.clone()).await;
+    let config = app.managed.dhcp_v4_server_service.get_config_by_name(iface_name.clone()).await;
 
     if let Some(c) = config {
         let invalid = app
+            .managed
             .enrolled_device_service
             .find_out_of_range_bindings(iface_name, c.config.server_ip_addr, c.config.network_mask)
             .await
@@ -59,6 +60,7 @@ async fn handle_validate_ip(
     JsonBody(payload): JsonBody<ValidateIpPayload>,
 ) -> LandscapeApiResult<bool> {
     let result = app
+        .managed
         .enrolled_device_service
         .validate_ip_range(payload.iface_name, payload.ipv4)
         .await
@@ -75,7 +77,7 @@ async fn handle_validate_ip(
 async fn list_enrolled_devices(
     State(app): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<EnrolledDevice>> {
-    let result = app.enrolled_device_service.list().await;
+    let result = app.managed.enrolled_device_service.list().await;
     LandscapeApiResp::success(result)
 }
 
@@ -90,7 +92,7 @@ async fn get_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<Option<EnrolledDevice>> {
-    let result = app.enrolled_device_service.get(id).await;
+    let result = app.managed.enrolled_device_service.get(id).await;
     LandscapeApiResp::success(result)
 }
 
@@ -105,7 +107,11 @@ async fn push_enrolled_device(
     State(app): State<LandscapeApp>,
     JsonBody(payload): JsonBody<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
-    app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
+    app.managed
+        .enrolled_device_service
+        .push(payload)
+        .await
+        .map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
@@ -123,7 +129,11 @@ async fn update_enrolled_device(
     JsonBody(mut payload): JsonBody<EnrolledDevice>,
 ) -> LandscapeApiResult<()> {
     payload.id = id;
-    app.enrolled_device_service.push(payload).await.map_err(EnrolledDeviceError::InvalidData)?;
+    app.managed
+        .enrolled_device_service
+        .push(payload)
+        .await
+        .map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }
 
@@ -141,6 +151,10 @@ async fn delete_enrolled_device(
     State(app): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    app.enrolled_device_service.delete(id).await.map_err(EnrolledDeviceError::InvalidData)?;
+    app.managed
+        .enrolled_device_service
+        .delete(id)
+        .await
+        .map_err(EnrolledDeviceError::InvalidData)?;
     LandscapeApiResp::success(())
 }

@@ -152,6 +152,9 @@ pub enum LandscapeAction {
 
     /// Generate a landscape_init.toml from high-level deployment options
     Config(Box<crate::config::cli::ConfigCliArgs>),
+
+    /// Geo source pipeline: fetch raw sources, build snapshots, inspect them
+    Geo(crate::geo_cli::GeoArgs),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -159,23 +162,6 @@ pub enum DbAction {
     /// Interactively roll back the database to a registered release boundary
     #[command(visible_alias = "rb")]
     Rollback,
-}
-
-#[derive(Debug, Clone)]
-pub struct WebConfig {
-    pub web_root: PathBuf,
-
-    pub port: u16,
-
-    pub address: IpAddr,
-}
-
-#[derive(Debug, Clone)]
-pub struct LogConfig {
-    pub log_path: PathBuf,
-    pub debug: bool,
-    pub log_output_in_terminal: bool,
-    pub max_log_files: usize,
 }
 
 #[cfg(test)]

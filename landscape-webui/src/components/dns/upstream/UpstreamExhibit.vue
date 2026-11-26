@@ -1,42 +1,46 @@
 <script lang="ts" setup>
 import { get_dns_upstream } from "@/api/dns_rule/upstream";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
-import { onMounted, watch, ref } from "vue";
+import { watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
-
-type Props = {
-  rule_id: string;
-};
-
-const props = defineProps<Props>();
-
-onMounted(async () => {
-  await refresh();
-});
-
+const props = defineProps<{ rule_id: string }>();
+const rule = ref<DnsUpstreamConfig>();
+const pending = ref(false);
 watch(
   () => props.rule_id,
-  async () => {
-    await refresh();
+  async (id, _, onCleanup) => {
+    let current = true;
+    onCleanup(() => {
+      current = false;
+    });
+    rule.value = undefined;
+    pending.value = Boolean(id);
+    if (!id) return;
+    try {
+      const upstream = await get_dns_upstream(id);
+      if (current) rule.value = upstream;
+    } catch {
+      // The API client reports the error. Keep the configured ID visible.
+    } finally {
+      if (current) pending.value = false;
+    }
   },
+  { immediate: true },
 );
-
-const rule = ref<DnsUpstreamConfig>();
-async function refresh() {
-  rule.value = await get_dns_upstream(props.rule_id);
-}
 </script>
+
 <template>
-  <n-popover v-if="rule" trigger="hover">
+  <n-skeleton v-if="pending" text width="7em" />
+  <n-popover v-else-if="rule" trigger="hover">
     <template #trigger>
-      {{ [rule.name?.trim(), rule.remark?.trim()].filter(Boolean).join(" - ") }}
+      <span>{{
+        [rule.name?.trim(), rule.remark?.trim()].filter(Boolean).join(" - ") ||
+        t("common.unnamed")
+      }}</span>
     </template>
-    <DnsUpstreamCard :show_action="false" :rule="rule"></DnsUpstreamCard>
-    <!-- <span>{{ rule }}</span> -->
+    <DnsUpstreamCard :show_action="false" :rule="rule" />
   </n-popover>
-  <n-flex v-else>
-    {{ t("dns.upstream_card.no_upstream", { rule_id: rule_id }) }}</n-flex
-  >
+  <span v-else>{{ t("dns.upstream_card.no_upstream", { rule_id }) }}</span>
 </template>

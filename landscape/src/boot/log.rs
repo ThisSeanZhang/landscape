@@ -1,6 +1,6 @@
 use std::{fmt::Write as _, io};
 
-use landscape_common::config::LogRuntimeConfig;
+use landscape_common::sys_config::LogRuntimeConfig;
 use landscape_ebpf::setting_libbpf_log;
 use tracing::field::Visit;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};

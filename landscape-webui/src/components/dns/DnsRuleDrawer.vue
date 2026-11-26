@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import type { DNSRuleConfig } from "@landscape-router/types/api/schemas";
 import DnsRuleCard from "@/components/dns/DnsRuleCard.vue";
 import {
   getFlowDnsRules,
@@ -23,7 +24,7 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const show = defineModel<boolean>("show", { required: true });
-const rules = ref<any>([]);
+const rules = ref<DNSRuleConfig[]>([]);
 
 async function read_rules() {
   rule_loading_spin.value = true;
@@ -113,7 +114,10 @@ const rule_loading_spin = ref(false);
               </template>
               {{ t("dns.rule_drawer.confirm_import") }}
             </n-popconfirm>
-            <n-button @click="show_query_modal = true">
+            <n-button
+              :aria-label="t('dns.check_domain.run_query')"
+              @click="show_query_modal = true"
+            >
               <template #icon>
                 <n-icon>
                   <SearchLocate />
@@ -121,12 +125,15 @@ const rule_loading_spin = ref(false);
               </template>
             </n-button>
           </n-flex>
-          <n-scrollbar>
+          <n-scrollbar
+            class="drawer-scroll-gutter"
+            content-class="drawer-scroll-content"
+          >
             <n-flex vertical>
               <DnsRuleCard
                 @refresh="read_rules()"
                 v-for="rule in rules"
-                :key="rule.index"
+                :key="rule.id ?? rule.index"
                 :rule="rule"
               >
               </DnsRuleCard>
@@ -143,6 +150,7 @@ const rule_loading_spin = ref(false);
       <CheckDomainDrawer
         v-model:show="show_query_modal"
         :flow_id="flow_id"
+        @rules-changed="read_rules"
       ></CheckDomainDrawer>
     </n-drawer-content>
   </n-drawer>

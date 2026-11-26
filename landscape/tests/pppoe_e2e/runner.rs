@@ -109,7 +109,6 @@ pub(super) fn start_client(
                 route_service,
                 landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
                     ebpf_rt.backbone().clone(),
-                    ebpf_rt.xdp_attach().clone(),
                     1,
                     None,
                     false,

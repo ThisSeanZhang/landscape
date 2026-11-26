@@ -6,12 +6,12 @@ import ConfigModal from "@/components/common/ConfigModal.vue";
 import IpEdit from "../IpEdit.vue";
 import CustomDhcpOptionEditor from "./options/CustomDhcpOptionEditor.vue";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
-import { DHCPv4ServiceConfig, get_dhcp_range } from "@/lib/dhcp_v4";
+import { createDhcpV4Config, get_dhcp_range } from "@/lib/network/dhcp_v4";
 import { useDHCPv4ConfigStore } from "@/stores/status_dhcp_v4";
 import {
   get_iface_dhcp_v4_config,
   update_dhcp_v4_config,
-} from "@/api/service_dhcp_v4";
+} from "@/api/services/dhcp_v4";
 import { check_iface_enrolled_devices_validity } from "@/api/enrolled_device";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
@@ -38,23 +38,17 @@ const iface_info = defineProps<{
 }>();
 const origin_service_enable = ref(false);
 
-const service_config = ref<DHCPv4ServiceConfig>(
-  new DHCPv4ServiceConfig({
-    iface_name: iface_info.iface_name,
-  }),
-);
+const service_config = ref(createDhcpV4Config(iface_info.iface_name));
 
 async function on_modal_enter() {
   try {
     let config = await get_iface_dhcp_v4_config(iface_info.iface_name);
     console.log(config);
     // iface_service_type.value = config.t;
-    service_config.value = config;
+    service_config.value = createDhcpV4Config(iface_info.iface_name, config);
     origin_service_enable.value = config.enable;
   } catch (e) {
-    service_config.value = new DHCPv4ServiceConfig({
-      iface_name: iface_info.iface_name,
-    });
+    service_config.value = createDhcpV4Config(iface_info.iface_name);
     origin_service_enable.value = false;
   }
 }

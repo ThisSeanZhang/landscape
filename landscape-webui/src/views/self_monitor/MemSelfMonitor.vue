@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
 import { useThemeVars } from "naive-ui";
 import { Renew } from "@vicons/carbon";
 import { HelpCircleOutline } from "@vicons/ionicons5";
@@ -25,8 +26,6 @@ const themeVars = useThemeVars();
 const capabilityStore = useCapabilityStore();
 const prefStore = usePreferenceStore();
 
-const SNAPSHOT_POLL_MS = 3000;
-const LIVE_CHART_POLL_MS = 5000;
 const DEFAULT_TOP_N = 3;
 
 const hasPersistent = computed(() => capabilityStore.HAS("metric_persistent"));
@@ -55,21 +54,30 @@ const fetchSnapshot = async () => {
 };
 
 const fetchLiveSeries = async () => {
-  liveLoading.value = true;
   try {
     liveResp.value = await get_memory_modules_history({
       limit: liveWindow.value,
     });
   } catch (e) {
     console.error(e);
+  }
+};
+
+const refreshLive = async () => {
+  if (liveLoading.value) return;
+  liveLoading.value = true;
+  try {
+    await Promise.all([fetchSnapshot(), fetchLiveSeries()]);
   } finally {
     liveLoading.value = false;
   }
 };
 
-const refreshLive = async () => {
-  await Promise.all([fetchSnapshot(), fetchLiveSeries()]);
-};
+useMetricAutoRefresh(
+  refreshLive,
+  liveLoading,
+  () => activeTab.value === "live" && hasMemTrack.value,
+);
 
 const meta = computed(() => snapshot.value?.meta);
 
@@ -103,6 +111,17 @@ const compositionRows = computed(() => {
       value: formatSize(comp.other_anon_rss_bytes),
     },
   ];
+  rows.push({
+    label: t("self_monitor.mem.comp_bpf"),
+    value: formatSize(comp.bpf_rss_bytes ?? 0),
+  });
+  return rows;
+});
+
+const allocatorRows = computed(() => {
+  const comp = snapshot.value?.meta?.composition;
+  if (!comp) return [];
+  const rows: Array<{ label: string; value: string }> = [];
   if (comp.malloc_in_use_bytes != null) {
     rows.push({
       label: t("self_monitor.mem.comp_malloc_in_use"),
@@ -287,53 +306,15 @@ watch(customTimeRange, () => {
 });
 
 watch(activeTab, (tab) => {
+  if (tab === "live") refreshLive();
   if (tab === "history" && hasPersistent.value && !historyLoaded.value) {
     fetchHistory();
   }
 });
 
-let snapshotTimer: ReturnType<typeof setInterval> | null = null;
-let liveTimer: ReturnType<typeof setInterval> | null = null;
-
-const startTimers = () => {
-  if (!snapshotTimer) {
-    snapshotTimer = setInterval(fetchSnapshot, SNAPSHOT_POLL_MS);
-  }
-  if (!liveTimer) {
-    liveTimer = setInterval(fetchLiveSeries, LIVE_CHART_POLL_MS);
-  }
-};
-
-const stopTimers = () => {
-  if (snapshotTimer) {
-    clearInterval(snapshotTimer);
-    snapshotTimer = null;
-  }
-  if (liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-  }
-};
-
-const handleVisibilityChange = () => {
-  if (document.hidden) {
-    stopTimers();
-  } else {
-    startTimers();
-    refreshLive();
-  }
-};
-
 onMounted(() => {
   capabilityStore.LOAD();
   refreshLive();
-  startTimers();
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-});
-
-onUnmounted(() => {
-  stopTimers();
-  document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 </script>
 
@@ -440,6 +421,30 @@ onUnmounted(() => {
                 <span>{{ row.label }}</span>
                 <span style="font-weight: 600">{{ row.value }}</span>
               </n-flex>
+              <n-divider style="margin: 4px 0" />
+              <div v-if="meta?.composition?.pss_bytes != null">
+                {{ t("self_monitor.mem.comp_pss") }}:
+                {{ formatSize(meta.composition.pss_bytes) }}
+              </div>
+              <div v-if="meta?.composition?.bpf_pss_bytes != null">
+                {{ t("self_monitor.mem.comp_bpf_pss") }}:
+                {{ formatSize(meta.composition.bpf_pss_bytes) }}
+              </div>
+              <span>{{ t("self_monitor.mem.comp_pss_tip") }}</span>
+              <template v-if="allocatorRows.length > 0">
+                <n-divider style="margin: 4px 0" />
+                <strong>{{ t("self_monitor.mem.allocator") }}</strong>
+                <span>{{ t("self_monitor.mem.allocator_tip") }}</span>
+                <n-flex
+                  v-for="row in allocatorRows"
+                  :key="row.label"
+                  justify="space-between"
+                  size="large"
+                >
+                  <span>{{ row.label }}</span>
+                  <strong>{{ row.value }}</strong>
+                </n-flex>
+              </template>
             </template>
           </n-flex>
         </n-tooltip>
@@ -469,7 +474,8 @@ onUnmounted(() => {
               :options="liveWindowOptions"
               size="small"
               style="width: 140px"
-              @update:value="fetchLiveSeries"
+              :disabled="liveLoading"
+              @update:value="refreshLive"
             />
             <n-button size="small" :loading="liveLoading" @click="refreshLive">
               <template #icon>
@@ -532,13 +538,12 @@ onUnmounted(() => {
         </n-flex>
       </n-tab-pane>
 
-      <n-tab-pane name="history" :tab="t('self_monitor.mem.history')">
-        <n-empty
-          v-if="!hasPersistent"
-          :description="t('self_monitor.mem.need_persistent')"
-          style="height: 360px; justify-content: center"
-        />
-        <n-flex v-else vertical :size="12" style="flex: 1; min-height: 0">
+      <n-tab-pane
+        v-if="hasPersistent"
+        name="history"
+        :tab="t('self_monitor.mem.history')"
+      >
+        <n-flex vertical :size="12" style="flex: 1; min-height: 0">
           <n-flex align="center" :wrap="true" size="small">
             <n-select
               v-model:value="timeRange"

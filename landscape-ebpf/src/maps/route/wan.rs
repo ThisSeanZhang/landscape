@@ -72,7 +72,6 @@ fn build_slot_indices(weights: &[u32]) -> Vec<usize> {
     slots
 }
 
-#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
@@ -97,24 +96,13 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = Route4SlotKey::default();
-        key.flow_id = flow_id;
-        key.slot = slot as u32;
-
-        let mut value = Route4TargetInfo::default();
-        value.ifindex = target.info.ifindex;
-        value.is_docker = u8::from(target.info.is_docker);
-        value.link_chain_id = target.link_chain_id;
-        if let IpAddr::V4(ipv4_addr) = target.info.gateway_ip {
-            value.gate_addr = ipv4_addr.to_bits().to_be();
-        }
-        match target.info.mac {
-            Some(mac) => {
-                value.has_mac = 1;
-                value.mac = mac.octets();
-            }
-            None => value.has_mac = 0,
-        }
+        let key = Route4SlotKey { flow_id, slot: slot as u32 };
+        let value = Route4TargetInfo {
+            ifindex: target.info.ifindex,
+            has_mac: u8::from(target.info.mac.is_some()),
+            is_docker: u8::from(target.info.is_docker),
+            link_chain_id: target.link_chain_id,
+        };
 
         keys.extend_from_slice(key.as_bytes());
         values.extend_from_slice(value.as_bytes());
@@ -127,7 +115,6 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     }
 }
 
-#[allow(clippy::field_reassign_with_default)]
 pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     rt_target_map: &T,
     flow_id: FlowId,
@@ -152,24 +139,13 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
 
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
-        let mut key = Route6SlotKey::default();
-        key.flow_id = flow_id;
-        key.slot = slot as u32;
-
-        let mut value = Route6TargetInfo::default();
-        value.ifindex = target.info.ifindex;
-        value.is_docker = u8::from(target.info.is_docker);
-        value.link_chain_id = target.link_chain_id;
-        if let IpAddr::V6(ipv6_addr) = target.info.gateway_ip {
-            value.gate_addr = ipv6_addr.to_bits().to_be_bytes();
-        }
-        match target.info.mac {
-            Some(mac) => {
-                value.has_mac = 1;
-                value.mac = mac.octets();
-            }
-            None => value.has_mac = 0,
-        }
+        let key = Route6SlotKey { flow_id, slot: slot as u32 };
+        let value = Route6TargetInfo {
+            ifindex: target.info.ifindex,
+            has_mac: u8::from(target.info.mac.is_some()),
+            is_docker: u8::from(target.info.is_docker),
+            link_chain_id: target.link_chain_id,
+        };
 
         keys.extend_from_slice(key.as_bytes());
         values.extend_from_slice(value.as_bytes());

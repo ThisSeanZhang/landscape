@@ -4,10 +4,10 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use landscape_common::{
-    config::DnsRuntimeConfig,
-    dns::{CacheRuntimeConfig, rule::DNSRuleConfig},
+    dns::rule::DNSRuleConfig,
     flow::{NoopDnsResultSink, NoopFlowSocketRegistrar},
-    sys_service::lan_hostname::LanHostnameConfig,
+    sys_config::CacheRuntimeConfig,
+    sys_config::LanHostnameRuntimeConfig,
 };
 use landscape_core::{
     geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry},
@@ -60,14 +60,13 @@ fn run_async_test(test: impl std::future::Future<Output = ()>) {
 async fn test_coordinator(source: Arc<dyn DnsConfigSource>) -> Arc<DnsCoordinator> {
     let server = LandscapeDnsServer::new(DnsServiceDeps {
         listen_port: 0,
-        tcp_enabled: false,
-        msg_tx: None,
+        metric_reporter: Default::default(),
         cache_runtime: CacheRuntimeConfig::default(),
         doh: None,
         local_answer_provider: None,
         doh_advertise_provider: None,
         lan_device_directory: LanDeviceDirectory::new_for_test(),
-        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default())),
+        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
         result_sink: Arc::new(NoopDnsResultSink),
         socket_registrar: Arc::new(NoopFlowSocketRegistrar),
     });
@@ -78,23 +77,20 @@ async fn test_coordinator(source: Arc<dyn DnsConfigSource>) -> Arc<DnsCoordinato
 }
 
 #[test]
-fn apply_runtime_config_updates_cache_settings() {
+fn apply_cache_config_updates_cache_settings() {
     run_async_test(async {
         let source = Arc::new(FakeSource { flow_rules: HashMap::new() });
         let coordinator = test_coordinator(source).await;
 
         coordinator
-            .apply_runtime_config(DnsRuntimeConfig {
+            .apply_cache_config(CacheRuntimeConfig {
                 cache_capacity: 32,
                 cache_ttl: 90,
                 negative_cache_ttl: 15,
-                doh_listen_port: 443,
-                doh_http_endpoint: "/dns-query".to_string(),
-                tcp_enabled: true,
             })
             .await;
 
-        let (cache, _) = coordinator.server().current_live_runtime_config();
+        let cache = coordinator.server().cache_config();
         assert_eq!(cache.cache_capacity, 32);
         assert_eq!(cache.cache_ttl, 90);
         assert_eq!(cache.negative_cache_ttl, 15);
@@ -112,4 +108,28 @@ fn refresh_all_loads_configs_and_tracks_flows() {
         assert_eq!(count, 1);
         assert_eq!(coordinator.server().tracked_flow_ids().await, HashSet::from([1]));
     });
+}
+
+#[tokio::test]
+async fn udp_bind_failure_recovers_without_a_config_change() {
+    use std::time::Duration;
+    let held_port = tokio::net::UdpSocket::bind("[::]:0").await.unwrap();
+    let addr = held_port.local_addr().unwrap();
+    let mut coordinator =
+        test_coordinator(Arc::new(FakeSource { flow_rules: HashMap::from([(1, Vec::new())]) }))
+            .await;
+    Arc::get_mut(&mut coordinator).unwrap().server.udp_listener_addr = addr;
+    let (_events, receiver) = tokio::sync::mpsc::channel(1);
+    coordinator.spawn_event_loop(receiver);
+    coordinator.refresh_all(FlowRuntimeRefreshKind::Full).await.unwrap();
+    assert_eq!(coordinator.server.failed_flow_ids().await, vec![1]);
+    drop(held_port);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !coordinator.server.has_live_flow_runtime().await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    coordinator.server.stop_service().await;
 }

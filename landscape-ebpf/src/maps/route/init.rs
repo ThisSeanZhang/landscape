@@ -28,7 +28,7 @@ const LAN_ROUTE_MAX_ENTRIES: u32 = 1024;
 const TARGET_SLOT_MAX_ENTRIES: u32 = 4096;
 const ROUTE_CACHE_MAX_ENTRIES: u32 = 65536;
 /// Outer ARRAY_OF_MAPS capacity (indexed by cache type WAN/LAN).
-const ROUTE_CACHE_OUTER_ENTRIES: u32 = 4;
+const ROUTE_CACHE_OUTER_ENTRIES: u32 = 2;
 
 /// Pin 文件名 = C map 符号名（见 `route4_lan.h` / `route4_slot.h` 等）。
 pub(crate) const RT4_LAN_MAP_PIN: &str = "rt4_lan_map";
@@ -63,7 +63,7 @@ pub(crate) const RT6_LAN_MAP_SPEC: MapCreateSpec = MapCreateSpec {
 };
 
 /// `rt4_slot_map`: `BPF_MAP_TYPE_HASH`, key
-/// `route4_slot_key` (8), value `route4_target_info` (20), 4096
+/// `route4_slot_key` (8), value `route4_target_info` (8), 4096
 /// entries, `BPF_F_NO_PREALLOC`.
 pub(crate) const RT4_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::Hash,
@@ -76,7 +76,7 @@ pub(crate) const RT4_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
 };
 
 /// `rt6_slot_map`: `BPF_MAP_TYPE_HASH`, key
-/// `route6_slot_key` (8), value `route6_target_info` (32), 4096
+/// `route6_slot_key` (8), value `route6_target_info` (8), 4096
 /// entries, `BPF_F_NO_PREALLOC`.
 pub(crate) const RT6_SLOT_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::Hash,
@@ -108,7 +108,7 @@ pub(crate) const EACH_V6_CACHE: InnerMapSpec = InnerMapSpec {
     map_flags: 0,
 };
 
-/// `rt4_cache_map`: `BPF_MAP_TYPE_ARRAY_OF_MAPS`, key `u32` cache type, 4
+/// `rt4_cache_map`: `BPF_MAP_TYPE_ARRAY_OF_MAPS`, key `u32` cache type, 2
 /// entries, inner `rt4_each_cache`.
 pub(crate) const RT4_CACHE_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::ArrayOfMaps,
@@ -120,7 +120,7 @@ pub(crate) const RT4_CACHE_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     inner: Some(EACH_V4_CACHE),
 };
 
-/// `rt6_cache_map`: `BPF_MAP_TYPE_ARRAY_OF_MAPS`, key `u32` cache type, 4
+/// `rt6_cache_map`: `BPF_MAP_TYPE_ARRAY_OF_MAPS`, key `u32` cache type, 2
 /// entries, inner `rt6_each_cache`.
 pub(crate) const RT6_CACHE_MAP_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::ArrayOfMaps,

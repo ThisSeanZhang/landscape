@@ -8,6 +8,8 @@ export default {
   reconnect: "Reconnect",
   switch_to_right: "Switch to right",
   switch_to_bottom: "Switch to bottom",
+  fullscreen: "Full screen",
+  exit_fullscreen: "Exit full screen",
   dock_mode: "Dock Mode",
   float_mode: "Float Mode",
 };

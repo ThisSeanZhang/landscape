@@ -1,44 +1,78 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
-import type { LandscapeDnsConfig } from "@landscape-router/types/api/schemas";
-import { get_dns_config_edit, update_dns_config } from "@/api/sys/config";
+import { reactive } from "vue";
+import {
+  getDnsCacheConfig,
+  updateDnsCacheConfig,
+  getDohConfig,
+  updateDohConfig,
+} from "@/api/sys/config";
 
 export const useDnsConfigStore = defineStore("dns_config", () => {
-  const cacheCapacity = ref<number | undefined>(undefined);
-  const cacheTtl = ref<number | undefined>(undefined);
-  const cacheNegativeTtl = ref<number | undefined>(undefined);
-  const expectedHash = ref<string>("");
+  const cache = reactive({
+    capacity: null as number | null,
+    ttl: null as number | null,
+    negativeTtl: null as number | null,
+    hash: null as string | null,
+    saving: false,
+  });
+  const doh = reactive({
+    listenPort: null as number | null,
+    httpEndpoint: "",
+    hash: null as string | null,
+    saving: false,
+  });
 
-  async function loadDnsConfig() {
-    const { dns, hash } = await get_dns_config_edit();
-    cacheCapacity.value = dns.cache_capacity ?? undefined;
-    cacheTtl.value = dns.cache_ttl ?? undefined;
-    cacheNegativeTtl.value = dns.negative_cache_ttl ?? undefined;
-    expectedHash.value = hash;
+  async function loadCache() {
+    cache.hash = null;
+    const response = await getDnsCacheConfig();
+    cache.capacity = response.cache.capacity ?? null;
+    cache.ttl = response.cache.ttl ?? null;
+    cache.negativeTtl = response.cache.negative_ttl ?? null;
+    cache.hash = response.hash;
   }
 
-  async function saveDnsConfig() {
-    const new_dns: LandscapeDnsConfig = {
-      cache_capacity: cacheCapacity.value || undefined,
-      cache_ttl: cacheTtl.value || undefined,
-      negative_cache_ttl: cacheNegativeTtl.value || undefined,
-    };
-    await update_dns_config({
-      new_dns,
-      expected_hash: expectedHash.value,
-    });
-
-    // Refresh hash after save
-    const { hash } = await get_dns_config_edit();
-    expectedHash.value = hash;
+  async function saveCache() {
+    if (cache.hash === null || cache.saving) return;
+    cache.saving = true;
+    try {
+      await updateDnsCacheConfig({
+        new_cache: {
+          capacity: cache.capacity ?? undefined,
+          ttl: cache.ttl ?? undefined,
+          negative_ttl: cache.negativeTtl ?? undefined,
+        },
+        expected_hash: cache.hash,
+      });
+      await loadCache();
+    } finally {
+      cache.saving = false;
+    }
   }
 
-  return {
-    cacheCapacity,
-    cacheTtl,
-    cacheNegativeTtl,
-    expectedHash,
-    loadDnsConfig,
-    saveDnsConfig,
-  };
+  async function loadDoh() {
+    doh.hash = null;
+    const response = await getDohConfig();
+    doh.listenPort = response.doh.listen_port ?? null;
+    doh.httpEndpoint = response.doh.http_endpoint ?? "";
+    doh.hash = response.hash;
+  }
+
+  async function saveDoh() {
+    if (doh.hash === null || doh.saving) return;
+    doh.saving = true;
+    try {
+      await updateDohConfig({
+        new_doh: {
+          listen_port: doh.listenPort ?? undefined,
+          http_endpoint: doh.httpEndpoint.trim() || undefined,
+        },
+        expected_hash: doh.hash,
+      });
+      await loadDoh();
+    } finally {
+      doh.saving = false;
+    }
+  }
+
+  return { cache, doh, loadCache, loadDoh, saveCache, saveDoh };
 });

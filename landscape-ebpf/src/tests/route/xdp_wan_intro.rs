@@ -35,10 +35,10 @@ use libbpf_rs::{
 };
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 
+use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, v4_entry, v6_entry, wan_trie_publish,
 };
-use crate::maps::wan_trie::dispatcher::cast_arena_tbl;
 use crate::skel::xdp_wan_intro::{XdpWanIntroSkel, XdpWanIntroSkelBuilder};
 use crate::tests::helper::net::VethPair;
 use crate::tests::pkt::{
@@ -65,8 +65,11 @@ const ETH_P_IPV4_BE: [u8; 2] = [0x08, 0x00];
 const ETH_P_IPV6_BE: [u8; 2] = [0x86, 0xDD];
 
 fn publish(intro: &mut XdpWanIntroSkel<'_>, entries: &[PrefixEntry]) {
-    let data = intro.maps.wan_trie_arena_data.as_mut().expect("wan_trie arena mmap data");
-    wan_trie_publish(cast_arena_tbl(&mut data.wan_trie_tbl), entries).expect("publish trie");
+    wan_trie_publish(
+        mapped_table(&mut intro.maps.wan_trie_arena).expect("owned trie arena mapping"),
+        entries,
+    )
+    .expect("publish trie");
 }
 
 /// One test_run: returns (retval, data_out).

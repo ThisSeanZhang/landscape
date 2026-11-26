@@ -11,7 +11,8 @@
 #include "base/tc_act.h"
 #include "base/ipv4.h"
 #include "base/mark.h"
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
+#include "chain/tc_from_wan_exit_maps.h"
 #include "frag/frag.h"
 #include "reader/tc_nat_view.h"
 #include "reader/tc_nat_read4.h"
@@ -66,8 +67,6 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
     __be16 new_port = 0;
     int rc = TC_ACT_OK;
 
-    if (!not_host_direct(skb_mark(skb))) goto chain;
-
     if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_LAN))
         goto chain;
 
@@ -110,8 +109,6 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
     __be32 new_addr = 0;
     __be16 new_port = 0;
     int rc = TC_ACT_OK;
-
-    if (!not_host_direct(skb_mark(skb))) goto chain;
 
     if (!tc_nat_read4(skb, &view, &src_addr, &dst_addr, current_l3_offset, LAND_FRAG_FROM_WAN))
         goto chain;

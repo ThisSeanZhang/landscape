@@ -1,6 +1,5 @@
 use std::net::Ipv4Addr;
 
-use crate::config::MetricMode;
 pub use landscape_macro::LdApiError;
 
 pub mod api_response;
@@ -18,6 +17,8 @@ pub mod ebpf;
 pub mod error;
 pub mod event;
 pub mod flow;
+pub mod geo_cli;
+pub mod sys_config;
 
 pub mod memtrack;
 pub mod metric;
@@ -86,7 +87,6 @@ pub const LANDSCAPE_METRIC_DIR_NAME: &str = "metric";
 pub const LANDSCAPE_METRIC_DB_VERSION: u32 = 17;
 
 // Metric Retention Defaults
-pub const DEFAULT_METRIC_MODE: MetricMode = MetricMode::Persistent;
 pub const DEFAULT_METRIC_CONNECT_1M_RETENTION_DAYS: u64 = 1;
 pub const DEFAULT_METRIC_CONNECT_1H_RETENTION_DAYS: u64 = 7;
 pub const DEFAULT_METRIC_CONNECT_1D_RETENTION_DAYS: u64 = 30;
@@ -115,8 +115,6 @@ pub const DEFAULT_DNS_NEGATIVE_CACHE_TTL: u32 = 120;
 pub const DEFAULT_DNS_DOH_LISTEN_PORT: u16 = 6053;
 /// Port shared by plain DNS/UDP and DNS/TCP.
 pub const DNS_LISTEN_PORT: u16 = 53;
-/// Plain DNS-over-TCP listener on the same port as DNS/UDP.
-pub const DEFAULT_DNS_TCP_ENABLE: bool = true;
 pub const DEFAULT_LAN_HOSTNAME_ENABLE: bool = true;
 pub const DEFAULT_DNS_LAN_SUFFIX: &str = "lan";
 

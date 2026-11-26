@@ -1,6 +1,8 @@
+use crate::app::system_config::{SystemConfigChange, SystemConfigEditor};
 use axum::extract::State;
+use landscape::sys_service::config_service::LandscapeConfigService;
 use landscape_common::api_response::LandscapeApiResp as CommonApiResp;
-use landscape_common::config::{
+use landscape_common::sys_config::{
     GetTimeConfigResponse, LandscapeTimeConfig, UpdateTimeConfigRequest,
 };
 use landscape_common::sys_service::time_sync::TimeSyncStatus;
@@ -19,7 +21,7 @@ use crate::error::LandscapeApiResult;
 pub async fn get_time_sync_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<TimeSyncStatus> {
-    LandscapeApiResp::success(state.time_service.status())
+    LandscapeApiResp::success(state.system.time_service().status())
 }
 
 #[utoipa::path(
@@ -30,7 +32,7 @@ pub async fn get_time_sync_status(
     responses((status = 200, description = "Success"))
 )]
 pub async fn sync_time_now(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
-    state.time_service.sync_now()?;
+    state.system.time_service().sync_now()?;
     LandscapeApiResp::success(())
 }
 
@@ -42,9 +44,9 @@ pub async fn sync_time_now(State(state): State<LandscapeApp>) -> LandscapeApiRes
     responses((status = 200, description = "Success", body = CommonApiResp<GetTimeConfigResponse>))
 )]
 pub async fn get_time_config(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<GetTimeConfigResponse> {
-    let (time, hash) = state.config_service.get_time_config_from_file().await;
+    let (time, hash) = config.get_time_config_from_file()?;
     LandscapeApiResp::success(GetTimeConfigResponse { time, hash })
 }
 
@@ -56,9 +58,9 @@ pub async fn get_time_config(
     responses((status = 200, description = "Success", body = CommonApiResp<LandscapeTimeConfig>))
 )]
 pub async fn get_time_config_fast(
-    State(state): State<LandscapeApp>,
+    State(config): State<LandscapeConfigService>,
 ) -> LandscapeApiResult<LandscapeTimeConfig> {
-    let time_config = state.config_service.get_time_config_from_memory();
+    let time_config = config.get_time_config_from_memory();
     LandscapeApiResp::success(time_config)
 }
 
@@ -68,16 +70,16 @@ pub async fn get_time_config_fast(
     tag = "System Config",
     operation_id = "update_time_config",
     request_body = UpdateTimeConfigRequest,
-    responses((status = 200, description = "Success"))
+    responses(
+        (status = 200, description = "Runtime configuration committed"),
+        (status = 400, description = "Invalid time server list"),
+        (status = 409, description = "Configuration changed since it was read")
+    )
 )]
 pub async fn update_time_config(
-    State(state): State<LandscapeApp>,
+    State(editor): State<SystemConfigEditor>,
     JsonBody(payload): JsonBody<UpdateTimeConfigRequest>,
 ) -> LandscapeApiResult<()> {
-    state.config_service.update_time_config(payload.new_time, payload.expected_hash).await?;
-
-    let time_runtime = state.config_service.get_time_runtime_config();
-    state.time_service.update_config(time_runtime);
-
+    editor.apply(SystemConfigChange::Time(payload)).await?;
     LandscapeApiResp::success(())
 }

@@ -17,9 +17,6 @@ pub mod neigh_update;
 #[path = "../bpf_rs/pppoe_client.skel.rs"]
 pub mod pppoe_client;
 #[rustfmt::skip]
-#[path = "../bpf_rs/pppoe_skb_fallback.skel.rs"]
-pub mod pppoe_skb_fallback;
-#[rustfmt::skip]
 #[path = "../bpf_rs/sk_dns_dispatcher.skel.rs"]
 pub mod sk_dns_dispatcher;
 #[rustfmt::skip]
@@ -41,11 +38,11 @@ pub mod tc_nat4_v4;
 #[path = "../bpf_rs/tc_nat6.skel.rs"]
 pub mod tc_nat6;
 #[rustfmt::skip]
-#[path = "../bpf_rs/tc_pppoe.skel.rs"]
-pub mod tc_pppoe;
-#[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_egress_exit.skel.rs"]
 pub mod tc_wan_egress_exit;
+#[rustfmt::skip]
+#[path = "../bpf_rs/tc_wan_egress_ppp_root.skel.rs"]
+pub mod tc_wan_egress_ppp_root;
 #[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_egress_root.skel.rs"]
 pub mod tc_wan_egress_root;
@@ -61,6 +58,9 @@ pub mod tc_wan_ingress_root;
 #[rustfmt::skip]
 #[path = "../bpf_rs/tc_wan_ingress_route.skel.rs"]
 pub mod tc_wan_ingress_route;
+#[rustfmt::skip]
+#[path = "../bpf_rs/tc_wan_pppoe_exit.skel.rs"]
+pub mod tc_wan_pppoe_exit;
 #[rustfmt::skip]
 #[path = "../bpf_rs/tproxy.skel.rs"]
 pub mod tproxy;

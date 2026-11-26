@@ -129,7 +129,7 @@ impl SystemRouteSink {
 #[async_trait::async_trait]
 impl PppRouteSink for SystemRouteSink {
     fn bind_ipv4(&self, ifindex: u32, local: Ipv4Addr, peer: Ipv4Addr, mask: u8) {
-        self.chain_dataplane.bind_wan_ipv4(ifindex, local, Some(peer), mask, None);
+        self.chain_dataplane.bind_ppp_ipv4(ifindex, local, peer, mask);
     }
 
     async fn insert_wan_route(&self, _iface: &str, info: RouteTargetInfo) {

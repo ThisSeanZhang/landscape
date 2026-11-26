@@ -1,5 +1,5 @@
 import { get_lan_devices } from "@/api/lan_device";
-import type { LanDeviceView } from "@/api/lan_device";
+import type { LanDeviceView } from "@landscape-router/types/api/schemas";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
@@ -12,8 +12,7 @@ export const useLanDeviceStore = defineStore("lan_device", () => {
 
   function GET_DEVICE_BY_MAC(mac?: string): LanDeviceView | undefined {
     if (!mac) return undefined;
-    // MacAddr is typed as string[] in the ORVAL schema but serialized as a string at runtime
-    return devices.value.find((device) => device.mac === (mac as never));
+    return devices.value.find((device) => device.mac === mac);
   }
 
   return {

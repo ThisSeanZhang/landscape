@@ -90,11 +90,19 @@ impl IcmpV6Option {
     }
 
     pub fn route_information(prefix_length: u8, prefix: Ipv6Addr) -> Self {
+        Self::route_information_with_lifetime(prefix_length, 1800, prefix)
+    }
+
+    pub fn route_information_with_lifetime(
+        prefix_length: u8,
+        route_lifetime: u32,
+        prefix: Ipv6Addr,
+    ) -> Self {
         Self::RouteInformation {
             length: 3, // (2 + 1 + 1 + 4 + 16) / 8 = 3
             prefix_length,
             flags: 0,
-            route_lifetime: 1800,
+            route_lifetime,
             prefix: prefix.octets().to_vec(),
         }
     }
@@ -553,5 +561,36 @@ mod tests {
             PrefixInformation::new(64, 600, 300, Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0));
         let opt: IcmpV6Option = pi.into();
         assert_eq!(opt.code(), 3);
+    }
+
+    #[test]
+    fn test_roundtrip_route_information_zero_lifetime() {
+        let prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x1, 0, 0, 0, 0, 0);
+        let opt = IcmpV6Option::route_information_with_lifetime(64, 0, prefix);
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buf);
+        opt.to_writer(&mut writer, ()).unwrap();
+        writer.finalize().unwrap();
+        let bytes = buf.into_inner();
+
+        assert_eq!(bytes.len(), 24);
+        let mut cursor = std::io::Cursor::new(bytes.as_slice());
+        let mut reader = Reader::new(&mut cursor);
+        let decoded = IcmpV6Option::from_reader_with_ctx(&mut reader, ()).unwrap();
+
+        match decoded {
+            IcmpV6Option::RouteInformation {
+                prefix_length,
+                route_lifetime,
+                prefix: decoded_prefix,
+                ..
+            } => {
+                assert_eq!(prefix_length, 64);
+                assert_eq!(route_lifetime, 0);
+                assert_eq!(decoded_prefix, prefix.octets().to_vec());
+            }
+            other => panic!("Expected RouteInformation, got {other:?}"),
+        }
     }
 }

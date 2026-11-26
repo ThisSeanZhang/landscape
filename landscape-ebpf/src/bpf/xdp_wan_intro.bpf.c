@@ -10,6 +10,7 @@
 
 #include "chain/xdp_meta.h"
 #include "chain/xdp_wan_maps.h"
+#include "chain/xdp_from_wan_exit_maps.h"
 #include "chain/xdp_lan_maps.h"
 #include "map/wan_trie.h"
 
@@ -20,7 +21,7 @@ char LICENSE[] SEC("license") = "GPL";
  * table. Dispatch roots are prog-array slots, indexed by the owning WAN
  * link's chain id.
  */
-WAN_TRIE_DECLARE(wan_trie_arena, wan_trie_tbl);
+WAN_TRIE_DECLARE(wan_trie_arena);
 
 static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root_index) {
     bpf_tail_call(ctx, &xdp_pipe_root_progs, root_index);
@@ -32,7 +33,7 @@ static __always_inline void wan_intro_tailcall_root(struct xdp_md *ctx, u32 root
  * v4/v6/PPP keys (with its chain id as value) before this program can
  * see its traffic. */
 static __always_inline int wan_intro_dispatch(struct xdp_md *ctx, u64 key) {
-    u32 root = wan_trie_resolve(&wan_trie_tbl, key);
+    u32 root = wan_trie_resolve(wan_trie_table(&wan_trie_arena), key);
     if (root) {
         wan_intro_tailcall_root(ctx, root);
     }
@@ -126,8 +127,8 @@ int xdp_wan_intro(struct xdp_md *ctx) {
      * frame), another operator's session, or the PADS→publish window —
      * and is passed untouched; frames we do not own are never decapped
      * and their inner IP is never consulted. */
-    u32 root =
-        wan_trie_resolve(&wan_trie_tbl, wan_trie_key_ppp(ctx->ingress_ifindex, pppoe->session_id));
+    u32 root = wan_trie_resolve(wan_trie_table(&wan_trie_arena),
+                                wan_trie_key_ppp(ctx->ingress_ifindex, pppoe->session_id));
     if (!root) {
         return XDP_PASS;
     }

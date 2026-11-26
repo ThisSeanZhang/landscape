@@ -7,9 +7,9 @@ import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { delFlowRule } from "@landscape-router/types/api/flow-rules/flow-rules";
 import FlowEntryRuleExhibit from "@/components/flow/FlowEntryRuleExhibit.vue";
-import { get_all_wan_links } from "@/api/service_wan_link";
-import { link_label } from "@/lib/wan_link";
-import type { WanLink } from "@/lib/wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
+import { link_label } from "@/lib/wan/wan_link";
+import type { WanLink } from "@/lib/wan/wan_link";
 
 import { Docker, NetworkWired } from "@vicons/fa";
 

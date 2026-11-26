@@ -1,19 +1,18 @@
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::connect::{
     ConnectKey, ConnectMetric, ConnectMetricPoint, ConnectRealtimeStatus, ConnectStatusType,
     IfaceRealtimeStat, IpAggregatedStats, IpRealtimeStat,
 };
+use landscape_common::sys_config::ConnectMetricRuntimeConfig;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use super::batch::{Batch, BucketKind};
+use super::batch::Batch;
 
 pub(crate) const CHANNEL_CAPACITY: usize = 1024;
 pub(crate) const MS_PER_MINUTE: u64 = 60 * 1000;
 pub(crate) const MS_PER_HOUR: u64 = 60 * MS_PER_MINUTE;
 pub(crate) const MS_PER_DAY: u64 = 24 * MS_PER_HOUR;
-const MS_PER_TEN_MINUTES: u64 = 10 * MS_PER_MINUTE;
 const STALE_TIMEOUT_MS: u64 = 5 * MS_PER_MINUTE;
 const DEFAULT_CONNECT_SAMPLE_INTERVAL_MS: u64 = 5 * 1000;
 
@@ -31,27 +30,11 @@ fn write_or_recover<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockWriteGuard<
     })
 }
 
-pub(crate) fn bucket_start(report_time: u64, bucket_ms: u64) -> u64 {
-    report_time / bucket_ms * bucket_ms
+pub(crate) fn second_window_ms(config: &ConnectMetricRuntimeConfig) -> u64 {
+    config.second_window_minutes.max(1).saturating_mul(MS_PER_MINUTE)
 }
 
-pub(crate) fn minute_slot(report_time: u64) -> u64 {
-    bucket_start(report_time, MS_PER_MINUTE)
-}
-
-pub(crate) fn hour_refresh_slot(report_time: u64) -> u64 {
-    bucket_start(report_time, MS_PER_TEN_MINUTES)
-}
-
-pub(crate) fn day_refresh_slot(report_time: u64) -> u64 {
-    bucket_start(report_time, MS_PER_HOUR)
-}
-
-pub(crate) fn second_window_ms(config: &MetricRuntimeConfig) -> u64 {
-    config.connect_second_window_minutes.max(1).saturating_mul(MS_PER_MINUTE)
-}
-
-pub(crate) fn second_ring_capacity(config: &MetricRuntimeConfig) -> usize {
+pub(crate) fn second_ring_capacity(config: &ConnectMetricRuntimeConfig) -> usize {
     let target_points = second_window_ms(config) / DEFAULT_CONNECT_SAMPLE_INTERVAL_MS;
     target_points.saturating_add(8).clamp(32, 4096) as usize
 }
@@ -165,15 +148,11 @@ pub(crate) struct FlowState {
     rate: FlowRateContribution,
     counted_in_iface_realtime: bool,
     second_ring: VecDeque<ConnectMetricPoint>,
-    last_minute_slot: u64,
-    last_hour_refresh_slot: u64,
-    last_day_refresh_slot: u64,
     finalized: bool,
 }
 
 impl FlowState {
     fn new(metric: ConnectMetric, window_ms: u64, ring_cap: usize) -> Self {
-        let report_time = metric.report_time;
         let mut second_ring = VecDeque::with_capacity(ring_cap.max(1));
         second_ring.push_back(metric_to_point(&metric));
 
@@ -187,9 +166,6 @@ impl FlowState {
             rate,
             counted_in_iface_realtime: false,
             second_ring,
-            last_minute_slot: minute_slot(report_time),
-            last_hour_refresh_slot: hour_refresh_slot(report_time),
-            last_day_refresh_slot: day_refresh_slot(report_time),
             finalized: false,
         };
         state.trim_second_ring(window_ms, ring_cap);
@@ -225,9 +201,9 @@ impl FlowState {
             self.realtime.status = metric.status_type();
         }
 
-        self.last_metric = metric.clone();
         self.rate = next_rate;
         self.second_ring.push_back(metric_to_point(&metric));
+        self.last_metric = metric;
         self.finalized = false;
         self.trim_second_ring(window_ms, ring_cap);
     }
@@ -333,85 +309,50 @@ fn add_state_iface_realtime(iface_realtime: &IfaceRealtimeCache, state: &mut Flo
     state.counted_in_iface_realtime = true;
 }
 
-fn finalize_state_batch(
+fn finalize_flow(
     state: &mut FlowState,
-    mark_disabled: bool,
-    batch: &mut Batch,
     iface_realtime: &IfaceRealtimeCache,
+    history: Option<&mut Batch>,
 ) {
     if state.finalized {
         return;
     }
-
     remove_state_iface_realtime(iface_realtime, state);
-
-    let mut metric = state.last_metric.clone();
-    if mark_disabled {
-        metric.status = ConnectStatusType::Disabled.into();
-        state.last_metric.status = ConnectStatusType::Disabled.into();
-        state.realtime.status = ConnectStatusType::Disabled;
-    }
-
-    batch.push_bucket(BucketKind::Minute, metric.clone(), minute_slot(metric.report_time));
-    batch.push_bucket(
-        BucketKind::Hour,
-        metric.clone(),
-        bucket_start(metric.report_time, MS_PER_HOUR),
-    );
-    batch.push_bucket(
-        BucketKind::Day,
-        metric.clone(),
-        bucket_start(metric.report_time, MS_PER_DAY),
-    );
-    batch.push_summary(metric);
+    state.last_metric.status = ConnectStatusType::Disabled.into();
+    state.realtime.status = ConnectStatusType::Disabled;
     state.finalized = true;
+    if let Some(batch) = history {
+        batch.record_final(&state.last_metric);
+    }
 }
 
-/// 聚合一条连接指标:维护 flow 状态机,产出跨分钟/小时/日边界及终结时的批次片段。
+/// 更新连接的实时状态。配置了持久化时，将历史快照追加到待写批次。
 pub(crate) fn process_connect_metric(
     flow_cache: &FlowCache,
     iface_realtime: &IfaceRealtimeCache,
     metric: ConnectMetric,
     second_window_ms: u64,
     second_ring_cap: usize,
-) -> Batch {
-    let curr_minute_slot = minute_slot(metric.report_time);
-    let curr_hour_refresh_slot = hour_refresh_slot(metric.report_time);
-    let curr_day_refresh_slot = day_refresh_slot(metric.report_time);
-
-    let mut batch = Batch::default();
+    mut history: Option<&mut Batch>,
+) {
     let mut cache = write_or_recover(flow_cache, "metric flow cache");
     match cache.entry(metric.key()) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             let state = entry.get_mut();
             if metric.report_time < state.last_metric.report_time {
-                return batch;
+                return;
             }
 
             remove_state_iface_realtime(iface_realtime, state);
 
-            let previous_minute_bucket = minute_slot(state.last_metric.report_time);
-            let previous_hour_bucket = bucket_start(state.last_metric.report_time, MS_PER_HOUR);
-            let previous_day_bucket = bucket_start(state.last_metric.report_time, MS_PER_DAY);
-
-            if curr_minute_slot > state.last_minute_slot {
-                batch.push_bucket(BucketKind::Minute, metric.clone(), previous_minute_bucket);
-                batch.push_summary(metric.clone());
-                state.last_minute_slot = curr_minute_slot;
-            }
-            if curr_hour_refresh_slot > state.last_hour_refresh_slot {
-                batch.push_bucket(BucketKind::Hour, metric.clone(), previous_hour_bucket);
-                state.last_hour_refresh_slot = curr_hour_refresh_slot;
-            }
-            if curr_day_refresh_slot > state.last_day_refresh_slot {
-                batch.push_bucket(BucketKind::Day, metric.clone(), previous_day_bucket);
-                state.last_day_refresh_slot = curr_day_refresh_slot;
+            if let Some(batch) = history.as_deref_mut() {
+                batch.record_progress(&state.last_metric, &metric);
             }
 
             let should_finalize = metric.status_type() == ConnectStatusType::Disabled;
             state.update_from_metric(metric, second_window_ms, second_ring_cap);
             if should_finalize {
-                finalize_state_batch(state, true, &mut batch, iface_realtime);
+                finalize_flow(state, iface_realtime, history);
             } else {
                 add_state_iface_realtime(iface_realtime, state);
             }
@@ -420,15 +361,13 @@ pub(crate) fn process_connect_metric(
             let should_finalize = metric.status_type() == ConnectStatusType::Disabled;
             let mut state = FlowState::new(metric, second_window_ms, second_ring_cap);
             if should_finalize {
-                finalize_state_batch(&mut state, true, &mut batch, iface_realtime);
+                finalize_flow(&mut state, iface_realtime, history);
             } else {
                 add_state_iface_realtime(iface_realtime, &mut state);
             }
             entry.insert(state);
         }
     }
-
-    batch
 }
 
 #[derive(Default)]
@@ -444,18 +383,18 @@ pub(crate) fn cleanup_flow_cache(
     iface_realtime: &IfaceRealtimeCache,
     now_ms: u64,
     second_window_ms: u64,
-) -> (FlowCacheStats, Batch) {
+    mut history: Option<&mut Batch>,
+) -> FlowCacheStats {
     let stale_cutoff = now_ms.saturating_sub(STALE_TIMEOUT_MS);
     let window_cutoff = now_ms.saturating_sub(second_window_ms);
 
     let mut cache = write_or_recover(flow_cache, "metric flow cache");
     let mut expired_keys = Vec::new();
     let mut stats = FlowCacheStats::default();
-    let mut batch = Batch::default();
 
     for (key, state) in cache.iter_mut() {
         if !state.finalized && state.realtime.last_report_time < stale_cutoff {
-            finalize_state_batch(state, true, &mut batch, iface_realtime);
+            finalize_flow(state, iface_realtime, history.as_deref_mut());
             stats.finalized_in_run += 1;
         }
 
@@ -477,7 +416,7 @@ pub(crate) fn cleanup_flow_cache(
         cache.remove(&key);
     }
 
-    (stats, batch)
+    stats
 }
 
 pub(crate) fn finalize_all_flows(
@@ -487,7 +426,7 @@ pub(crate) fn finalize_all_flows(
     let mut cache = write_or_recover(flow_cache, "metric flow cache");
     let mut batch = Batch::default();
     for state in cache.values_mut() {
-        finalize_state_batch(state, true, &mut batch, iface_realtime);
+        finalize_flow(state, iface_realtime, Some(&mut batch));
     }
     batch
 }
@@ -566,6 +505,7 @@ pub(crate) fn second_points_by_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agg::batch::BucketKind;
     use std::net::{IpAddr, Ipv4Addr};
 
     fn test_metric(
@@ -604,12 +544,14 @@ mod tests {
     #[test]
     fn process_connect_metric_creates_active_flow_without_batch() {
         let (flow, iface_realtime) = test_caches();
-        let batch = process_connect_metric(
+        let mut batch = Batch::default();
+        process_connect_metric(
             &flow,
             &iface_realtime,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            Some(&mut batch),
         );
         assert!(batch.is_empty());
 
@@ -625,7 +567,15 @@ mod tests {
         let (flow, iface_realtime) = test_caches();
         let mut metric = test_metric(1_000, 0, 60_000, 100, 200);
         metric.status = ConnectStatusType::Disabled.into();
-        let batch = process_connect_metric(&flow, &iface_realtime, metric, WINDOW_MS, RING_CAP);
+        let mut batch = Batch::default();
+        process_connect_metric(
+            &flow,
+            &iface_realtime,
+            metric,
+            WINDOW_MS,
+            RING_CAP,
+            Some(&mut batch),
+        );
 
         assert_eq!(batch.summary_metrics.len(), 1);
         assert_eq!(batch.bucket_writes.len(), 3);
@@ -641,27 +591,54 @@ mod tests {
     #[test]
     fn minute_slot_transition_emits_minute_bucket_and_summary() {
         let (flow, iface_realtime) = test_caches();
-        let first = process_connect_metric(
+        let mut first = Batch::default();
+        process_connect_metric(
             &flow,
             &iface_realtime,
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            Some(&mut first),
         );
         assert!(first.is_empty());
 
-        let second = process_connect_metric(
+        let mut second = Batch::default();
+        process_connect_metric(
             &flow,
             &iface_realtime,
             test_metric(1_000, 0, 120_000, 300, 600),
             WINDOW_MS,
             RING_CAP,
+            Some(&mut second),
         );
         assert_eq!(second.summary_metrics.len(), 1);
         assert_eq!(second.bucket_writes.len(), 1);
         assert_eq!(second.bucket_writes[0].kind, BucketKind::Minute);
         assert_eq!(second.bucket_writes[0].bucket_report_time, 60_000);
         assert_eq!(second.summary_metrics[0].ingress_bytes, 300);
+    }
+
+    #[test]
+    fn late_report_cannot_rewind_live_state_or_emit_an_extra_history_bucket() {
+        let (flow, iface_realtime) = test_caches();
+        let mut batch = Batch::default();
+        for time in [59_000, 60_000, 59_500, 61_000] {
+            process_connect_metric(
+                &flow,
+                &iface_realtime,
+                test_metric(1_000, 0, time, 100, 200),
+                WINDOW_MS,
+                RING_CAP,
+                Some(&mut batch),
+            );
+        }
+        let cache = flow.read().unwrap();
+        let state = cache.values().next().unwrap();
+        let reports: Vec<_> = state.second_ring.iter().map(|point| point.report_time).collect();
+        assert_eq!(reports, [59_000, 60_000, 61_000]);
+        assert_eq!(batch.bucket_writes.len(), 1);
+        assert_eq!(batch.summary_metrics.len(), 1);
+        assert_eq!(batch.summary_metrics[0].report_time, 60_000);
     }
 
     #[test]
@@ -673,10 +650,12 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
 
         let now_ms = 60_000 + STALE_TIMEOUT_MS + 40_000;
-        let (stats, batch) = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS);
+        let mut batch = Batch::default();
+        let stats = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS, Some(&mut batch));
         assert_eq!(stats.finalized_in_run, 1);
         assert_eq!(stats.finalized_flows, 1);
         assert_eq!(batch.bucket_writes.len(), 3);
@@ -692,10 +671,12 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
 
         let now_ms = 60_000 + 60_000;
-        let (stats, batch) = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS);
+        let mut batch = Batch::default();
+        let stats = cleanup_flow_cache(&flow, &iface_realtime, now_ms, WINDOW_MS, Some(&mut batch));
         assert_eq!(stats.finalized_in_run, 0);
         assert_eq!(stats.active_flows, 1);
         assert!(batch.is_empty());
@@ -713,6 +694,7 @@ mod tests {
                 test_metric(1_000, 0, t, 100, 200),
                 WINDOW_MS,
                 RING_CAP,
+                None,
             );
         }
 
@@ -730,6 +712,7 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
         process_connect_metric(
             &flow,
@@ -737,6 +720,7 @@ mod tests {
             test_metric(2_000, 1, 61_000, 300, 400),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
 
         let stats = collect_realtime_ip_stats(&flow, 70_000, true);
@@ -754,6 +738,7 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
         process_connect_metric(
             &flow,
@@ -761,6 +746,7 @@ mod tests {
             test_metric(2_000, 1, 61_000, 300, 400),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
 
         let stats = collect_realtime_iface_stats(&iface_realtime, 70_000);
@@ -779,54 +765,25 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
         assert_eq!(collect_realtime_iface_stats(&iface_realtime, 70_000).len(), 1);
 
         let mut closed = test_metric(1_000, 0, 61_000, 200, 400);
         closed.status = ConnectStatusType::Disabled.into();
-        process_connect_metric(&flow, &iface_realtime, closed, WINDOW_MS, RING_CAP);
+        process_connect_metric(&flow, &iface_realtime, closed, WINDOW_MS, RING_CAP, None);
 
         assert!(collect_realtime_iface_stats(&iface_realtime, 70_000).is_empty());
     }
 
-    fn test_config(window_minutes: u64) -> MetricRuntimeConfig {
-        MetricRuntimeConfig {
-            mode: landscape_common::config::MetricMode::Memory,
-            connect_second_window_minutes: window_minutes,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 7,
-            connect_1d_retention_days: 30,
-            connect_summary_retention_days: 30,
-            connect_summary_max_rows: 0,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 7,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 2,
-            write_flush_interval_secs: 3600,
-            cleanup_interval_secs: 3600,
-            cleanup_time_budget_ms: 1_000,
-            cleanup_slice_window_secs: 60,
-        }
-    }
-
-    #[test]
-    fn bucket_start_aligns_down_to_bucket_boundary() {
-        assert_eq!(bucket_start(60_000, MS_PER_MINUTE), 60_000);
-        assert_eq!(bucket_start(65_000, MS_PER_MINUTE), 60_000);
-        assert_eq!(bucket_start(59_999, MS_PER_MINUTE), 0);
-        assert_eq!(bucket_start(3_700_000, MS_PER_HOUR), 3_600_000);
-        assert_eq!(bucket_start(86_400_000, MS_PER_DAY), 86_400_000);
-        assert_eq!(bucket_start(86_400_001, MS_PER_DAY), 86_400_000);
-    }
-
-    #[test]
-    fn slot_helpers_use_expected_granularity() {
-        assert_eq!(minute_slot(61_000), 60_000);
-        assert_eq!(hour_refresh_slot(605_000), 600_000);
-        assert_eq!(hour_refresh_slot(599_999), 0);
-        assert_eq!(day_refresh_slot(3_700_000), 3_600_000);
-        assert_eq!(day_refresh_slot(7_199_999), 7_200_000 - MS_PER_HOUR);
+    fn test_config(window_minutes: u64) -> ConnectMetricRuntimeConfig {
+        use landscape_common::sys_config::{ConnectMetricConfig, RuntimeConfigSource};
+        let mut config = ConnectMetricConfig::default().build_runtime();
+        config.second_window_minutes = window_minutes;
+        config.write_batch_size = 2;
+        config.store.cleanup_interval_secs = 3600;
+        config.store.write_flush_interval_secs = 3600;
+        config
     }
 
     #[test]
@@ -852,6 +809,7 @@ mod tests {
             test_metric(1_000, 0, 60_000, 100, 200),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
         process_connect_metric(
             &flow,
@@ -859,6 +817,7 @@ mod tests {
             test_metric(2_000, 1, 61_000, 300, 400),
             WINDOW_MS,
             RING_CAP,
+            None,
         );
         assert_eq!(collect_realtime_iface_stats(&iface_realtime, 70_000).len(), 2);
 

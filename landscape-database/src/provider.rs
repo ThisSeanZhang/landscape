@@ -1,8 +1,7 @@
 use std::time::Duration;
 
 use landscape_common::{
-    config::{InitConfig, StoreRuntimeConfig},
-    database::error::DbError,
+    config::InitConfig, database::error::DbError, sys_config::StoreRuntimeConfig,
 };
 use migration::Migrator;
 use sea_orm::{
@@ -261,10 +260,11 @@ define_store!(
 
 #[cfg(test)]
 mod tests {
-    use landscape_common::config::{InitConfig, StoreRuntimeConfig};
+    use landscape_common::config::InitConfig;
     use landscape_common::config_service::iface::{IfaceZoneType, NetworkIfaceConfig};
     use landscape_common::database::error::DbError;
     use landscape_common::database::store::ConfigStore;
+    use landscape_common::sys_config::StoreRuntimeConfig;
     use landscape_common::wan_link::WanLinkConfig;
 
     use crate::provider::LandscapeDBServiceProvider;

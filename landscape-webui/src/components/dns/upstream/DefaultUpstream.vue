@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
-import { DnsUpstreamModeTsEnum } from "@/lib/dns";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -31,14 +30,14 @@ const DEFAULT_CONFIGS: Record<
 > = {
   // 阿里
   [DefaultDnsConfig.ALI_UDP]: {
-    mode: { t: DnsUpstreamModeTsEnum.Plaintext },
+    mode: { t: "plaintext" },
     ips: ["223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1"],
     port: 53,
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.ALI_DOH]: {
     mode: {
-      t: DnsUpstreamModeTsEnum.Https,
+      t: "https",
       domain: "dns.alidns.com",
       http_endpoint: null,
     },
@@ -47,13 +46,13 @@ const DEFAULT_CONFIGS: Record<
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.ALI_DOT]: {
-    mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "dns.alidns.com" },
+    mode: { t: "tls", domain: "dns.alidns.com" },
     ips: ["223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1"],
     port: 853,
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.ALI_DOQ]: {
-    mode: { t: DnsUpstreamModeTsEnum.Quic, domain: "dns.alidns.com" },
+    mode: { t: "quic", domain: "dns.alidns.com" },
     ips: ["223.5.5.5", "223.6.6.6", "2400:3200::1", "2400:3200:baba::1"],
     port: 853,
     enable_ip_validation: false,
@@ -61,7 +60,7 @@ const DEFAULT_CONFIGS: Record<
 
   // DNSPod
   [DefaultDnsConfig.DNSPOD_UDP]: {
-    mode: { t: DnsUpstreamModeTsEnum.Plaintext },
+    mode: { t: "plaintext" },
     ips: [
       "119.29.29.29",
       "119.28.28.28",
@@ -75,7 +74,7 @@ const DEFAULT_CONFIGS: Record<
   },
   [DefaultDnsConfig.DNSPOD_DOH]: {
     mode: {
-      t: DnsUpstreamModeTsEnum.Https,
+      t: "https",
       domain: "dns.pub",
       http_endpoint: null,
     },
@@ -86,14 +85,14 @@ const DEFAULT_CONFIGS: Record<
 
   // Cloudflare
   [DefaultDnsConfig.CLOUDFLARE_UDP]: {
-    mode: { t: DnsUpstreamModeTsEnum.Plaintext },
+    mode: { t: "plaintext" },
     ips: ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
     port: 53,
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.CLOUDFLARE_DOH]: {
     mode: {
-      t: DnsUpstreamModeTsEnum.Https,
+      t: "https",
       domain: "cloudflare-dns.com",
       http_endpoint: null,
     },
@@ -102,7 +101,7 @@ const DEFAULT_CONFIGS: Record<
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.CLOUDFLARE_DOT]: {
-    mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "cloudflare-dns.com" },
+    mode: { t: "tls", domain: "cloudflare-dns.com" },
     ips: ["1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"],
     port: 853,
     enable_ip_validation: false,
@@ -110,14 +109,14 @@ const DEFAULT_CONFIGS: Record<
 
   // Google
   [DefaultDnsConfig.GOOGLE_UDP]: {
-    mode: { t: DnsUpstreamModeTsEnum.Plaintext },
+    mode: { t: "plaintext" },
     ips: ["8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"],
     port: 53,
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.GOOGLE_DOH]: {
     mode: {
-      t: DnsUpstreamModeTsEnum.Https,
+      t: "https",
       domain: "dns.google",
       http_endpoint: null,
     },
@@ -126,7 +125,7 @@ const DEFAULT_CONFIGS: Record<
     enable_ip_validation: false,
   },
   [DefaultDnsConfig.GOOGLE_DOT]: {
-    mode: { t: DnsUpstreamModeTsEnum.Tls, domain: "dns.google" },
+    mode: { t: "tls", domain: "dns.google" },
     ips: ["8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"],
     port: 853,
     enable_ip_validation: false,
@@ -138,7 +137,7 @@ function replace_default(config: DefaultDnsConfig) {
     id: rule.value.id,
     name: rule.value.name ?? null,
     remark: rule.value?.remark ?? "",
-    ...DEFAULT_CONFIGS[config],
+    ...structuredClone(DEFAULT_CONFIGS[config]),
     use_experimental_pool: rule.value?.use_experimental_pool ?? false,
     update_at: rule.value.update_at,
   };

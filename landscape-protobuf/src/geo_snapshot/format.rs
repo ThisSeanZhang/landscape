@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::{
     FORMAT_VERSION, GeoSnapshotError, GeoSnapshotHash, GeoSnapshotIndex, GeoSnapshotIndexEntry,
     GeoSnapshotMetadata, GeoSnapshotSourceKind, HASH_ALGO_SHA256_PAYLOAD, HEADER_LEN, HEADER_MAGIC,
-    MAX_KEY_BYTES, MIN_INDEX_ENTRY_BYTES, TRAILER_LEN, TRAILER_MAGIC,
+    MAX_KEY_BYTES, MIN_INDEX_ENTRY_BYTES, SnapshotLayout, TRAILER_LEN, TRAILER_MAGIC,
 };
 
 pub fn geo_snapshot_hash_hex(hash: &GeoSnapshotHash) -> String {
@@ -39,9 +39,7 @@ pub(super) fn decode_header(
         return Err(GeoSnapshotError::InvalidMagic);
     }
     let format_version = u16::from_le_bytes([header[8], header[9]]);
-    if format_version != FORMAT_VERSION {
-        return Err(GeoSnapshotError::UnsupportedFormatVersion(format_version));
-    }
+    SnapshotLayout::from_version(format_version)?;
     let source_kind = GeoSnapshotSourceKind::from_u8(header[10])
         .ok_or(GeoSnapshotError::UnsupportedSourceKind(header[10]))?;
     let hash_algo = header[11];

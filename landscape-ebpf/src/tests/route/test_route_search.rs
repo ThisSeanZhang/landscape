@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, net::IpAddr};
+use std::mem::MaybeUninit;
 
 use landscape_common::net::MacAddr;
 use libbpf_rs::{
@@ -6,21 +6,18 @@ use libbpf_rs::{
     skel::{OpenSkel, SkelBuilder as _},
 };
 
-use crate::{
-    maps::wan::add_wan_ip,
-    tests::{
-        helper::map::{
-            TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr,
-            insert_ip_mac_v6, local_addr, put_rt6_cache_ifindex, remote_addr, wan_addr,
-        },
-        isolated_pin_root,
-        pkt::simple_ipv6_tcp_syn,
-        route::test_route::TestRouteSkelBuilder,
+use crate::tests::{
+    helper::map::{
+        TARGET_IFINDEX, WAN_CACHE, create_route6_cache_inner_map, gateway_addr, insert_ip_mac_v6,
+        local_addr, put_rt6_cache_ifindex, remote_addr,
     },
+    isolated_pin_root,
+    pkt::simple_ipv6_tcp_syn,
+    route::test_route::TestRouteSkelBuilder,
 };
 
 #[test]
-fn v6_search_cache_in_lan_uses_ip_mac_v6() {
+fn v6_search_cache_in_lan_ignores_remote_ip_mac() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-search");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -37,14 +34,6 @@ fn v6_search_cache_in_lan_uses_ip_mac_v6() {
         remote_addr(),
         TARGET_IFINDEX,
         true,
-    );
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        wan_addr(),
-        Some(IpAddr::V6(gateway_addr())),
-        64,
-        None,
     );
 
     let next_hop_mac = MacAddr::from_str("02:11:22:33:44:55").unwrap();
@@ -64,13 +53,11 @@ fn v6_search_cache_in_lan_uses_ip_mac_v6() {
         .expect("run test_route_v6_search_cache_in_lan");
 
     assert_eq!(result.return_value as i32, 7);
-    assert_eq!(&packet_out[0..6], &next_hop_mac.octets());
-    assert_eq!(&packet_out[6..12], &dev_mac.octets());
-    assert_eq!(&packet_out[12..14], &[0x86, 0xdd]);
+    assert_eq!(packet_out, packet, "the WAN egress root owns the Ethernet rewrite");
 }
 
 #[test]
-fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
+fn v6_search_cache_in_lan_ignores_gateway_mac() {
     let mut builder = TestRouteSkelBuilder::default();
     let pin_root = isolated_pin_root("route-helper-v6-gateway-fallback");
     builder.object_builder_mut().pin_root_path(&pin_root).unwrap();
@@ -87,14 +74,6 @@ fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
         remote_addr(),
         TARGET_IFINDEX,
         true,
-    );
-    add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        wan_addr(),
-        Some(IpAddr::V6(gateway_addr())),
-        64,
-        None,
     );
 
     let gateway_mac = MacAddr::from_str("02:66:77:88:99:aa").unwrap();
@@ -114,7 +93,5 @@ fn v6_search_cache_in_lan_falls_back_to_gateway_mac() {
         .expect("run test_route_v6_search_cache_in_lan gateway fallback");
 
     assert_eq!(result.return_value as i32, 7);
-    assert_eq!(&packet_out[0..6], &gateway_mac.octets());
-    assert_eq!(&packet_out[6..12], &dev_mac.octets());
-    assert_eq!(&packet_out[12..14], &[0x86, 0xdd]);
+    assert_eq!(packet_out, packet, "the WAN egress root resolves the gateway");
 }

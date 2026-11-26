@@ -17,13 +17,4 @@ struct {
     __uint(value_size, sizeof(u32));
 } xdp_pipe_root_progs SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
-    __uint(max_entries, 1);
-    __uint(key_size, sizeof(u32));
-    __uint(value_size, sizeof(u32));
-} xdp_pipe_exits_wan SEC(".maps");
-
-#define XDP_FROM_WAN_CHAIN_EXIT(ctx) bpf_tail_call_static((ctx), &xdp_pipe_exits_wan, 0)
-
 #endif /* __LD_XDP_WAN_MAPS_H_ */

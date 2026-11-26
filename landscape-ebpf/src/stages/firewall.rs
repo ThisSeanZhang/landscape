@@ -52,17 +52,10 @@ pub fn attach_tc_firewall(
         &mut open_skel.maps.tc_pipe_exits_wan_ingress,
         &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
+    dp.reuse_tc_wan_egress_exit_map(&mut open_skel.maps.tc_from_lan_exit_map)?;
 
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip4_map, &paths.firewall_ipv4_block)?;
     pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block)?;
-    pin_and_reuse_map(
-        &mut open_skel.maps.firewall_conn_metric_events,
-        &paths.firewall_conn_metric_events,
-    )?;
     let skel = bpf_ctx!(open_skel.load(), "load tc_firewall skeleton")?;
 
     let next_ingress_fd = skel.maps.wan_ingress_next_stage.as_fd().as_raw_fd();
@@ -137,10 +130,7 @@ pub fn init_xdp_firewall(
         ),
         "xdp_firewall pin xdp_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path(),),
-        "xdp_firewall pin xdp_pipe_exits_lan"
-    )?;
+    dp.reuse_xdp_lan_exit_map(&mut open_skel.maps.xdp_from_lan_exit_map)?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path(),),
         "xdp_firewall pin xdp_pipe_exits_wan"
@@ -160,13 +150,6 @@ pub fn init_xdp_firewall(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.firewall_block_ip6_map, &paths.firewall_ipv6_block,),
         "xdp_firewall pin firewall_block_ip6_map"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(
-            &mut open_skel.maps.firewall_conn_metric_events,
-            &paths.firewall_conn_metric_events,
-        ),
-        "xdp_firewall pin firewall_conn_metric_events"
     )?;
     open_skel.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset =
         if has_eth_header { 14 } else { 0 };

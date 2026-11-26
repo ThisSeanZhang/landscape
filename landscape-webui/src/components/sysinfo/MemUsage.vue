@@ -4,10 +4,16 @@ import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useThemeVars } from "naive-ui";
 import { ChartLine } from "@vicons/carbon";
+import SampleStatus from "./SampleStatus.vue";
+import { useFetchIntervalStore } from "@/stores/fetch_interval";
 import { useSysInfo } from "@/stores/systeminfo";
 
+import { useCapabilityStore } from "@/stores/capability";
+const capabilities = useCapabilityStore();
 const sysinfo = useSysInfo();
+const polling = useFetchIntervalStore();
 const router = useRouter();
+defineProps<{ compact?: boolean }>();
 const { t } = useI18n({ useScope: "global" });
 const themeVars = useThemeVars();
 
@@ -52,7 +58,7 @@ const getUsageColor = (percentage: number) => {
       <n-flex align="center" justify="space-between">
         <n-flex align="center" :size="4">
           <span>{{ t("sysinfo.mem") }}</span>
-          <n-tooltip trigger="hover">
+          <n-tooltip v-if="capabilities.HAS('mem_track')" trigger="hover">
             <template #trigger>
               <n-button
                 quaternary
@@ -68,97 +74,130 @@ const getUsageColor = (percentage: number) => {
             {{ t("self_monitor.mem.title") }}
           </n-tooltip>
         </n-flex>
-        <n-tag size="small" :bordered="false"> {{ memData.total }} GB </n-tag>
+        <n-tag
+          v-if="!compact && sysinfo.lastSampleAt !== undefined"
+          size="small"
+          :bordered="false"
+          >{{ memData.total }} GB</n-tag
+        >
       </n-flex>
     </template>
 
-    <!-- Memory Section -->
-    <n-flex vertical :size="8">
-      <n-flex justify="space-between" align="center">
-        <n-text depth="3" style="font-size: 13px">{{
-          t("sysinfo.memory_usage")
-        }}</n-text>
-        <n-text
-          :style="{ color: getUsageColor(memData.percentage), fontWeight: 600 }"
+    <SampleStatus
+      :failed="sysinfo.sampleFailed"
+      :updated-at="sysinfo.lastSampleAt"
+      @retry="polling.refreshNow"
+    />
+    <template v-if="sysinfo.lastSampleAt !== undefined">
+      <div v-if="compact">
+        <strong class="overview-value"
+          >{{ memData.percentage.toFixed(1) }}%</strong
         >
-          {{ memData.percentage.toFixed(1) }}%
-        </n-text>
-      </n-flex>
-
-      <!-- Memory Bar -->
-      <div class="usage-bar-container">
-        <div
-          class="usage-bar-fill"
-          :style="{
-            width: `${memData.percentage}%`,
-            backgroundColor: getUsageColor(memData.percentage),
-          }"
-        ></div>
+        <div class="overview-meter" aria-hidden="true">
+          <span
+            :style="{
+              width: memData.percentage + '%',
+              background: getUsageColor(memData.percentage),
+            }"
+          />
+        </div>
       </div>
+      <template v-else>
+        <!-- Memory Section -->
+        <n-flex vertical :size="8">
+          <n-flex justify="space-between" align="center">
+            <n-text depth="3" style="font-size: 13px">{{
+              t("sysinfo.memory_usage")
+            }}</n-text>
+            <n-text
+              :style="{
+                color: getUsageColor(memData.percentage),
+                fontWeight: 600,
+              }"
+            >
+              {{ memData.percentage.toFixed(1) }}%
+            </n-text>
+          </n-flex>
 
-      <n-flex justify="space-between">
-        <n-text depth="3" style="font-size: 12px">
-          {{ t("sysinfo.used") }}: {{ memData.used }} GB
-        </n-text>
-        <n-text depth="3" style="font-size: 12px">
-          {{ t("sysinfo.total") }}: {{ memData.total }} GB
-        </n-text>
-      </n-flex>
-    </n-flex>
+          <!-- Memory Bar -->
+          <div class="usage-bar-container">
+            <div
+              class="usage-bar-fill"
+              :style="{
+                width: `${memData.percentage}%`,
+                backgroundColor: getUsageColor(memData.percentage),
+              }"
+            ></div>
+          </div>
 
-    <n-divider style="margin: 16px 0" />
-
-    <!-- Swap Section -->
-    <n-flex vertical :size="8">
-      <n-flex justify="space-between" align="center">
-        <n-flex align="center" :size="8">
-          <n-text depth="3" style="font-size: 13px">{{
-            t("sysinfo.swap_usage")
-          }}</n-text>
-          <n-tag
-            v-if="!swapData.enabled"
-            size="tiny"
-            :bordered="false"
-            type="default"
-          >
-            Disabled
-          </n-tag>
+          <n-flex justify="space-between">
+            <n-text depth="3" style="font-size: 12px">
+              {{ t("sysinfo.used") }}: {{ memData.used }} GB
+            </n-text>
+            <n-text depth="3" style="font-size: 12px">
+              {{ t("sysinfo.total") }}: {{ memData.total }} GB
+            </n-text>
+          </n-flex>
         </n-flex>
-        <n-text
-          v-if="swapData.enabled"
-          :style="{
-            color: getUsageColor(swapData.percentage),
-            fontWeight: 600,
-          }"
-        >
-          {{ swapData.percentage.toFixed(1) }}%
-        </n-text>
-        <n-text v-else depth="3">--</n-text>
-      </n-flex>
 
-      <!-- Swap Bar -->
-      <div class="usage-bar-container" :class="{ disabled: !swapData.enabled }">
-        <div
-          v-if="swapData.enabled"
-          class="usage-bar-fill"
-          :style="{
-            width: `${swapData.percentage}%`,
-            backgroundColor: getUsageColor(swapData.percentage),
-          }"
-        ></div>
-      </div>
+        <n-divider style="margin: 16px 0" />
 
-      <n-flex justify="space-between">
-        <n-text depth="3" style="font-size: 12px">
-          {{ t("sysinfo.used") }}:
-          {{ swapData.enabled ? swapData.used + " GB" : "--" }}
-        </n-text>
-        <n-text depth="3" style="font-size: 12px">
-          {{ t("sysinfo.total") }}:
-          {{ swapData.enabled ? swapData.total + " GB" : "--" }}
-        </n-text>
-      </n-flex>
-    </n-flex>
+        <!-- Swap Section -->
+        <n-flex vertical :size="8">
+          <n-flex justify="space-between" align="center">
+            <n-flex align="center" :size="8">
+              <n-text depth="3" style="font-size: 13px">{{
+                t("sysinfo.swap_usage")
+              }}</n-text>
+              <n-tag
+                v-if="!swapData.enabled"
+                size="tiny"
+                :bordered="false"
+                type="default"
+              >
+                {{ t("sysinfo.disabled") }}
+              </n-tag>
+            </n-flex>
+            <n-text
+              v-if="swapData.enabled"
+              :style="{
+                color: getUsageColor(swapData.percentage),
+                fontWeight: 600,
+              }"
+            >
+              {{ swapData.percentage.toFixed(1) }}%
+            </n-text>
+            <n-text v-else depth="3">--</n-text>
+          </n-flex>
+
+          <!-- Swap Bar -->
+          <div
+            class="usage-bar-container"
+            :class="{ disabled: !swapData.enabled }"
+          >
+            <div
+              v-if="swapData.enabled"
+              class="usage-bar-fill"
+              :style="{
+                width: `${swapData.percentage}%`,
+                backgroundColor: getUsageColor(swapData.percentage),
+              }"
+            ></div>
+          </div>
+
+          <n-flex justify="space-between">
+            <n-text depth="3" style="font-size: 12px">
+              {{ t("sysinfo.used") }}:
+              {{ swapData.enabled ? swapData.used + " GB" : "--" }}
+            </n-text>
+            <n-text depth="3" style="font-size: 12px">
+              {{ t("sysinfo.total") }}:
+              {{ swapData.enabled ? swapData.total + " GB" : "--" }}
+            </n-text>
+          </n-flex>
+        </n-flex>
+      </template>
+    </template>
   </n-card>
 </template>
 

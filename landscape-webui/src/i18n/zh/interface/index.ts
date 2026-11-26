@@ -4,6 +4,8 @@ export default {
   mode_static: "静态IP",
   mode_pppoe_native: "PPPoE 原生拨号",
   mode_dhcp_client: "DHCP 客户端",
+  pppoe_native_warn_1: "请先确认当前网卡是否支持 native XDP,",
+  pppoe_native_warn_2: "如不支持请使用 pppd 模式, 以获得更高性能",
   static_ip: "静态 IP",
   set_default_route: "是否设置默认路由",
   yes: "是",
@@ -22,7 +24,7 @@ export default {
     "切换区域会导致在该网卡上运行的服务全部重置，并删除该网卡上的 PPPoE 拨号配置",
   change_zone_warning_2:
     "且建议将当前网卡在 `/etc/network/interfaces` 中的 IP 配置方式设置为 manual",
-  zone_undefined: "未定义",
+  zone_undefined: "未分区",
   console_parse_bitmask_failed: "解析位掩码失败:",
   console_get_config_failed: "获取配置失败:",
   console_save_config_failed: "保存配置失败:",

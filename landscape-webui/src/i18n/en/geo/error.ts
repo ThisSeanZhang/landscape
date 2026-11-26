@@ -15,6 +15,9 @@ export default {
   "geo_ip.dat_decode_error": "GeoIP DAT file decode error",
   "geo_ip.no_valid_cidr": "GeoIP TXT file contains no valid CIDR entries",
   "geo_ip.invalid_lookup_address": "Invalid GeoIP lookup address: {0}",
+  "geo.raw_dat_missing": "Geo source file not found, refresh the source first",
+  "geo.raw_dat_not_ready": "Geo source not ready, background download started",
+  "geo.raw_dat_download_running": "Geo source download already running",
   "geo_matcher.read_failed": "Failed to read geosite cache '{name}:{key}'",
   "dst_ip_rule.not_found": "Destination IP rule not found (ID: {0})",
 };

@@ -15,14 +15,13 @@ fn spec_from(cfg: &EnvConfig) -> ClientSpec {
 }
 
 /// Poll the scenario's pinned `tc_wan_egress_roots` prog array until the
-/// client iface's entry (`key = ifindex`) reaches `want_present`.  The entry
+/// client link's entry (`key = chain id`) reaches `want_present`.  The entry
 /// is created by `WanLinkDataplane::new` when the link's service starts
-/// and removed by its `close()` teardown — the chain-injected successor
-/// of the old standalone `tc_pppoe_wan_egress` TC filter's
-/// attach/detach lifecycle.
+/// and removed by its `close()` teardown — the chain-owned successor of
+/// the old standalone PPPoE TC filter's attach/detach lifecycle.
 fn wait_for_egress_root_entry(
     scenario: &str,
-    ifindex: u32,
+    chain_id: u32,
     want_present: bool,
     timeout: Duration,
 ) -> bool {
@@ -37,7 +36,7 @@ fn wait_for_egress_root_entry(
         let present = MapHandle::from_pinned_path(&path)
             .ok()
             .and_then(|map| {
-                map.lookup(&ifindex.to_ne_bytes(), libbpf_rs::MapFlags::ANY).ok().flatten()
+                map.lookup(&chain_id.to_ne_bytes(), libbpf_rs::MapFlags::ANY).ok().flatten()
             })
             .is_some();
         if present == want_present {
@@ -246,9 +245,9 @@ async fn padt_triggers_fast_redial() {
 
 /// After the session is established, the client iface's WAN egress chain
 /// root is registered (keyed by ifindex in the pinned `tc_wan_egress_roots`
-/// prog array) with the link's terminal PPPoE encap stage injected into the
-/// chain; after the client stops, the last stage's teardown removes the
-/// entry again.
+/// prog array) with the link's PPPoE session template installed in that
+/// chain's exit; after the client stops, the exit is restored and the
+/// entry removed again.
 #[tokio::test]
 #[ignore = "requires root, veth pairs and eBPF; run with --include-ignored"]
 async fn ebpf_pipeline_attaches_and_detaches() {
@@ -272,16 +271,17 @@ async fn ebpf_pipeline_attaches_and_detaches() {
         .await
         .expect("client should reach Running");
 
-    let ifindex = env.client_info().index;
+    // `runner::start_client` pins this isolated scenario's link at chain 1.
+    const CHAIN_ID: u32 = 1;
     assert!(
-        wait_for_egress_root_entry("ebpf-pipeline", ifindex, true, Duration::from_secs(5)),
-        "WAN egress chain root should be registered for ifindex {ifindex} while running"
+        wait_for_egress_root_entry("ebpf-pipeline", CHAIN_ID, true, Duration::from_secs(5)),
+        "WAN egress chain root should be registered for chain {CHAIN_ID} while running"
     );
 
     client.stop_and_join(Duration::from_secs(15)).expect("client should stop cleanly");
 
     assert!(
-        wait_for_egress_root_entry("ebpf-pipeline", ifindex, false, Duration::from_secs(5)),
+        wait_for_egress_root_entry("ebpf-pipeline", CHAIN_ID, false, Duration::from_secs(5)),
         "WAN egress chain root entry should be removed after the client stops"
     );
 

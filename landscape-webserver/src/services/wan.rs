@@ -30,7 +30,7 @@ pub fn get_route_wan_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_route_wan_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
-    LandscapeApiResp::success(state.route_wan_service.get_all_status().await)
+    LandscapeApiResp::success(state.managed.route_wan_service.get_all_status().await)
 }
 
 #[utoipa::path(
@@ -47,7 +47,7 @@ async fn get_route_wan_config(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<RouteWanServiceConfig> {
-    if let Some(iface_config) = state.route_wan_service.find_by_id(iface_name).await? {
+    if let Some(iface_config) = state.managed.route_wan_service.find_by_id(iface_name).await? {
         LandscapeApiResp::success(iface_config)
     } else {
         Err(ServiceConfigError::NotFound { service_name: "Route Wan" })?
@@ -65,7 +65,7 @@ async fn handle_route_wan_status(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<RouteWanServiceConfig>,
 ) -> LandscapeApiResult<()> {
-    state.route_wan_service.handle_service_config(config).await?;
+    state.managed.route_wan_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }
 
@@ -80,5 +80,7 @@ async fn delete_and_stop_route_wan(
     State(state): State<LandscapeApp>,
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
-    LandscapeApiResp::success(state.route_wan_service.delete_and_stop_service(iface_name).await?)
+    LandscapeApiResp::success(
+        state.managed.route_wan_service.delete_and_stop_service(iface_name).await?,
+    )
 }

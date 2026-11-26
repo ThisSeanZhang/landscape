@@ -30,6 +30,9 @@ declare -A DOCKER_ARCHS=(
 # 默认目标架构
 TARGET=""
 
+# 默认使用快速本地验证 profile，正式产物可通过 --release 切换
+BUILD_PROFILE="fast"
+
 # 打印支持的架构供用户选择
 function print_supported_archs() {
     echo "Supported architectures:"
@@ -103,6 +106,12 @@ while [[ "$#" -gt 0 ]]; do
             TARGET="$2"
             shift
             ;;
+        --fast)
+            BUILD_PROFILE="fast"
+            ;;
+        --release)
+            BUILD_PROFILE="release"
+            ;;
         --list)
             print_supported_archs
             exit 0
@@ -132,6 +141,6 @@ fi
 TARGET_ARCH="${TARGETS[$TARGET]}"
 DOCKER_ARCH="${DOCKER_ARCHS[$TARGET]}"
 
-export TARGET TARGET_ARCH DOCKER_ARCH
+export TARGET TARGET_ARCH DOCKER_ARCH BUILD_PROFILE
 
 source "$SCRIPT_DIR/scripts/pnpm_cmd.sh"

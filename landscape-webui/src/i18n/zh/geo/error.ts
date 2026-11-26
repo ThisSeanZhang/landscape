@@ -15,6 +15,9 @@ export default {
   "geo_ip.dat_decode_error": "GeoIP DAT 文件解析错误",
   "geo_ip.no_valid_cidr": "GeoIP TXT 文件中没有合法的 CIDR 条目",
   "geo_ip.invalid_lookup_address": "无效的 GeoIP 查询地址：{0}",
+  "geo.raw_dat_missing": "找不到 Geo 源文件，请先刷新该数据源",
+  "geo.raw_dat_not_ready": "Geo 源文件尚未就绪，已开始后台下载",
+  "geo.raw_dat_download_running": "Geo 源文件正在下载中",
   "geo_matcher.read_failed": "读取 geosite 缓存失败: '{name}:{key}'",
   "dst_ip_rule.not_found": "找不到目标 IP 规则 (ID: {0})",
 };

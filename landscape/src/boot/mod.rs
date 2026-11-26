@@ -2,10 +2,29 @@ use std::{fs::OpenOptions, io::Write, path::Path};
 
 use landscape_common::{
     INIT_FILE_NAME, INIT_LOCK_FILE_NAME, LAND_CONFIG, VERSION,
-    config::{InitConfig, InitConfigError, LandscapeConfig},
+    config::{InitConfig, InitConfigError},
+    sys_config::LandscapeConfig,
 };
 
 pub mod log;
+
+/// Prepare a boot/import snapshot before changing the live database or files.
+/// Callers check file versions separately; automatic initialization also uses
+/// a versionless default snapshot.
+pub async fn prepare_init_config_import(
+    mut config: InitConfig,
+) -> Result<InitConfig, InitConfigError> {
+    crate::config_service::gateway_rule_service::prepare_gateway_rules_for_import(
+        &mut config.gateway_rules,
+    )
+    .map_err(|error| InitConfigError::Invalid { reason: format!("gateway: {error}") })?;
+    landscape_database::provider::LandscapeDBServiceProvider::validate_init_config_can_import(
+        config.clone(),
+    )
+    .await
+    .map_err(|error| InitConfigError::Invalid { reason: error.to_string() })?;
+    Ok(config)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BootError {
@@ -129,7 +148,43 @@ pub fn write_config_toml<P: AsRef<Path>>(
 mod tests {
     use landscape_common::{INIT_FILE_NAME, INIT_LOCK_FILE_NAME, LAND_CONFIG, VERSION};
 
-    use crate::boot::{boot_check, write_config_toml, write_init_lock};
+    use crate::boot::{boot_check, prepare_init_config_import, write_config_toml, write_init_lock};
+
+    #[tokio::test]
+    async fn prepare_init_config_import_accepts_default_auto_init() {
+        let config = prepare_init_config_import(Default::default()).await.unwrap();
+        assert!(config.version.is_empty());
+        assert!(config.gateway_rules.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_init_config_import_retains_database_constraints() {
+        // Gateway preparation is only one part of import validation. Duplicate
+        // primary keys must still fail the trial database import.
+        let rule: landscape_common::sys_service::gateway::HttpUpstreamRuleConfig =
+            serde_json::from_value(serde_json::json!({
+                "id": "00000000-0000-4000-8000-000000000001",
+                "enable": true,
+                "name": "duplicate",
+                "domains": ["app.example.com"],
+                "match_rule": { "t": "host" },
+                "upstream": { "targets": [{ "address": "127.0.0.1", "port": 8080 }] }
+            }))
+            .unwrap();
+        let mut config = landscape_common::config::InitConfig {
+            version: VERSION.to_string(),
+            gateway_rules: vec![rule.clone(), rule],
+            ..Default::default()
+        };
+        crate::config_service::gateway_rule_service::prepare_gateway_rules_for_import(
+            &mut config.gateway_rules,
+        )
+        .unwrap();
+        assert!(matches!(
+            prepare_init_config_import(config).await,
+            Err(landscape_common::config::InitConfigError::Invalid { .. })
+        ));
+    }
 
     #[test]
     fn boot_check_reads_init_config_without_writing_files_when_version_matches() {

@@ -8,8 +8,6 @@ pub enum IfaceObserverAction {
     ///
     /// Cable removal does not produce this event.
     Down(String),
-    /// Cable insertion detected on an interface that was already admin-up.
-    CarrierUp(String),
 }
 
 // ── Sender ────────────────────────────────────────────────────

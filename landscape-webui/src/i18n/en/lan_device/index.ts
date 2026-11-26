@@ -28,5 +28,6 @@ export default {
   source_dhcpv6: "DHCPv6",
   source_slaac: "SLAAC",
   source_link_local: "Link Local",
+  no_matches: "No devices match these filters",
   empty: "No LAN devices observed yet",
 };

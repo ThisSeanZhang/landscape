@@ -31,18 +31,24 @@ pub(crate) fn disable_rp_filter(iface_name: &str) {
     }
 }
 
-async fn run_ip_cmd(args: &[String]) {
+async fn run_ip_cmd(args: &[String]) -> bool {
     match tokio::process::Command::new("ip").args(args).output().await {
         Ok(output) => {
-            if !output.status.success() {
+            if output.status.success() {
+                true
+            } else {
                 tracing::error!(
                     "ip {:?} failed: {:?}",
                     args,
                     String::from_utf8_lossy(&output.stderr)
                 );
+                false
             }
         }
-        Err(e) => tracing::error!("spawn ip command failed: {:?}", e),
+        Err(e) => {
+            tracing::error!("spawn ip command failed: {:?}", e);
+            false
+        }
     }
 }
 
@@ -52,9 +58,10 @@ pub(crate) async fn apply_lease(
     services: &DhcpV4ClientServices,
     applied: &mut Option<AppliedAddr>,
 ) {
-    if let Some(prev) = applied.take()
-        && (prev.ip != params.yiaddr || prev.prefix != params.prefix as u8)
-    {
+    let prev = applied.take();
+    let changed =
+        prev.as_ref().is_some_and(|p| p.ip != params.yiaddr || p.prefix != params.prefix as u8);
+    if changed && let Some(ref prev) = prev {
         run_ip_cmd(&build_del_args(prev.ip, prev.prefix, &config.iface_name)).await;
     }
 
@@ -68,7 +75,17 @@ pub(crate) async fn apply_lease(
     );
 
     tracing::info!("{:?}", args);
-    run_ip_cmd(&args).await;
+    if !run_ip_cmd(&args).await {
+        if changed {
+            services.route_service.remove_ipv4_link_route(config.link_id).await;
+            services.route_service.remove_ipv4_lan_route(&config.iface_name).await;
+            services.chain_dataplane.unbind_wan_ipv4();
+        } else {
+            *applied = prev;
+        }
+        return;
+    }
+
     *applied = Some(AppliedAddr { ip: params.yiaddr, prefix: params.prefix as u8 });
 
     let lan_info = LanRouteInfo {

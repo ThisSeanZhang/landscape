@@ -30,6 +30,10 @@ pub enum GeoError {
     #[api_error(id = "geo_site.dat_decode_error", status = 400)]
     SiteDatDecodeError,
 
+    #[error("Geo raw source file not found, refresh the source first")]
+    #[api_error(id = "geo.raw_dat_missing", status = 404)]
+    RawDatMissing,
+
     #[error("Geo raw dat not found, background download started")]
     #[api_error(id = "geo.raw_dat_not_ready", status = 404)]
     RawDatNotReady,

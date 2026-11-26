@@ -1,28 +1,27 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use hickory_proto::rr::RecordType;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_common::{
-    config::DnsRuntimeConfig,
     dns::error::DnsServiceError,
     dns::{DnsServiceStatus, FlowDnsStatus},
     event::dns::DnsEvent,
     flow::{DnsResultSink, FlowSocketRegistrar},
-    metric::dns::DnsMetricEvent,
+    metric::dns::DnsMetricReporter,
+    sys_config::{CacheRuntimeConfig, DohRuntimeConfig},
 };
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::{
     CheckChainDnsResult, CheckDnsReq,
     coordinator::DnsCoordinator,
-    listener::{DohTimeouts, EffectiveDohListenerConfig},
+    listener::DohSettings,
     prepare_system_dns,
     resolve::LocalDnsAnswerProvider,
     server::{DnsServiceDeps, FlowRuntimeRefreshKind, LandscapeDnsServer},
 };
-use rustls::server::ResolvesServerCert;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::dns::{
     config_source::DbDnsConfigSource, redirect_service::DNSRedirectService,
@@ -70,6 +69,7 @@ impl LocalDnsAnswerProvider for RouteLocalAnswerProvider {
 #[derive(Clone)]
 pub struct LandscapeDnsService {
     coordinator: Arc<DnsCoordinator>,
+    lifecycle: Arc<Mutex<()>>,
 }
 
 impl LandscapeDnsService {
@@ -81,50 +81,29 @@ impl LandscapeDnsService {
         geo_site_service: GeoSiteService,
         dns_upstream_service: DnsUpstreamService,
         route_service: IpRouteService,
-        dns_config: DnsRuntimeConfig,
+        mut cache_config: watch::Receiver<CacheRuntimeConfig>,
+        doh_config: watch::Receiver<DohRuntimeConfig>,
         cert_service: CertService,
-        msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
+        metric_reporter: DnsMetricReporter,
         lan_device_directory: Arc<LanDeviceDirectory>,
-        lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+        lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
         dns_result_sink: Arc<dyn DnsResultSink>,
         flow_socket_registrar: Arc<dyn FlowSocketRegistrar>,
     ) -> Self {
-        let cache_runtime = dns_config.cache_runtime();
-        let doh_runtime = dns_config.doh_runtime();
+        let cache_runtime = cache_config.borrow_and_update().clone();
         if prepare_system_dns() {
             tracing::info!("system DNS redirected to local DNS service");
         } else {
             tracing::error!("failed to redirect system DNS to local DNS service");
         }
         let api_tls_resolver = cert_service.api_tls_resolver();
-        if doh_runtime.listen_port == landscape_common::DNS_LISTEN_PORT {
-            // Port 53 belongs to DNS/UDP + DNS/TCP; one reuseport group cannot
-            // host two dispatcher programs. Refuse DoH instead of silently
-            // dropping one of the listeners.
-            tracing::error!(
-                "DoH listen_port must not be {}; DoH listener disabled for this run",
-                landscape_common::DNS_LISTEN_PORT
-            );
-        }
-        let doh = (doh_runtime.listen_port != landscape_common::DNS_LISTEN_PORT).then(|| {
-            EffectiveDohListenerConfig {
-                addr: SocketAddr::V6(SocketAddrV6::new(
-                    Ipv6Addr::UNSPECIFIED,
-                    doh_runtime.listen_port,
-                    0,
-                    0,
-                )),
-                timeouts: DohTimeouts::default(),
-                server_cert_resolver: Arc::new(api_tls_resolver.clone())
-                    as Arc<dyn ResolvesServerCert>,
-                dns_hostname: None,
-                http_endpoint: doh_runtime.http_endpoint.clone(),
-            }
+        let doh = Some(DohSettings {
+            config: doh_config,
+            cert_resolver: Arc::new(api_tls_resolver.clone()),
         });
         let server = LandscapeDnsServer::new(DnsServiceDeps {
             listen_port: landscape_common::DNS_LISTEN_PORT,
-            tcp_enabled: dns_config.dns_tcp_enabled(),
-            msg_tx,
+            metric_reporter,
             cache_runtime,
             doh,
             local_answer_provider: Some(Arc::new(RouteLocalAnswerProvider {
@@ -161,7 +140,17 @@ impl LandscapeDnsService {
         }
         coordinator.spawn_event_loop(receiver);
 
-        Self { coordinator }
+        let observer = coordinator.clone();
+        landscape_common::concurrency::spawn_task(
+            landscape_common::concurrency::task_label::task::DNS_SERVICE_OBSERVER,
+            async move {
+                while cache_config.changed().await.is_ok() {
+                    let cache = cache_config.borrow_and_update().clone();
+                    observer.apply_cache_config(cache).await;
+                }
+            },
+        );
+        Self { coordinator, lifecycle: Default::default() }
     }
 
     pub async fn get_status(&self) -> DnsServiceStatus {
@@ -178,9 +167,17 @@ impl LandscapeDnsService {
 
     /// 真启动:开启新的服务运行 → 重建各 flow 监听(停止时清空的
     /// runtime 会重新建立)→ 恢复系统解析器劫持。
-    pub async fn start_dns_service(&self) {
+    pub async fn start_dns_service(&self) -> Result<(), DnsServiceError> {
+        let _guard = self.lifecycle.lock().await;
         tracing::info!("starting DNS service");
-        self.coordinator.server().start_service();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.coordinator.server().start_service(),
+        )
+        .await
+        .map_err(|_| {
+            DnsServiceError::Internal("Previous DNS listeners are still stopping".into())
+        })?;
 
         match self.coordinator.refresh_all(FlowRuntimeRefreshKind::Full).await {
             Ok(flow_count) => {
@@ -196,23 +193,23 @@ impl LandscapeDnsService {
         } else {
             tracing::error!("failed to redirect system DNS to local DNS service");
         }
+        Ok(())
     }
 
     /// 真停:先恢复系统解析器,再取消全部 flow 监听并确定性等待其结束。
     /// 语义变更:此前 stop 仅恢复 resolv.conf,flow 监听继续运行。
-    pub async fn stop(&self) {
+    pub async fn stop(&self) -> Result<(), DnsServiceError> {
+        let _guard = self.lifecycle.lock().await;
         tracing::info!("stopping DNS service");
         landscape_dns::restore_resolver_conf();
-        self.coordinator.server().stop_service().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.coordinator.server().stop_service(),
+        )
+        .await
+        .map_err(|_| DnsServiceError::Internal("DNS listener shutdown timed out".into()))?;
         tracing::info!("DNS service stopped");
-    }
-
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
-        self.coordinator.server().update_metric_sender(msg_tx);
-    }
-
-    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
-        self.coordinator.server().update_lan_hostname_config(config);
+        Ok(())
     }
 
     pub async fn check_domain(&self, req: CheckDnsReq) -> CheckChainDnsResult {
@@ -233,7 +230,7 @@ impl LandscapeDnsService {
         self.coordinator.server().refresh_domain_cache(req).await
     }
 
-    pub async fn apply_runtime_config(&self, dns_config: DnsRuntimeConfig) {
-        self.coordinator.apply_runtime_config(dns_config).await;
+    pub fn advertised_doh(&self) -> Arc<arc_swap::ArcSwapOption<DohRuntimeConfig>> {
+        self.coordinator.server().advertised_doh()
     }
 }

@@ -23,10 +23,10 @@ pub use adguard::{
 };
 pub use geo_snapshot::{
     GeoSnapshotError, GeoSnapshotHash, GeoSnapshotIndex, GeoSnapshotIndexEntry,
-    GeoSnapshotMetadata, GeoSnapshotPayloadReader, GeoSnapshotReader, GeoSnapshotRule,
-    GeoSnapshotSourceKind, GeoSnapshotWriter, IpSnapshotCidr, IpSnapshotKeyReader,
-    IpSnapshotReader, IpSnapshotWriter, SiteSnapshotKeyReader, SiteSnapshotReader,
-    SiteSnapshotWriter, geo_snapshot_hash_hex,
+    GeoSnapshotMetadata, GeoSnapshotPayloadReader, GeoSnapshotPreparedRule, GeoSnapshotReader,
+    GeoSnapshotRule, GeoSnapshotSourceKind, GeoSnapshotWriter, IpSnapshotCidr, IpSnapshotKeyReader,
+    IpSnapshotPreparedCidr, IpSnapshotReader, IpSnapshotWriter, SiteSnapshotKeyReader,
+    SiteSnapshotReader, SiteSnapshotWriter, geo_snapshot_hash_hex,
 };
 pub use ip_stream::{GeoIpDatStream, GeoIpStreamEvent, GeoIpTxtStream};
 pub use site_stream::{GeoSiteStream, GeoSiteStreamEvent};

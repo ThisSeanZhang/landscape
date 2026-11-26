@@ -7,9 +7,7 @@
 //! divergences noted below) before any route rewrite.
 //!
 //! Baseline quirks locked here (see tc_lan_ingress_route.bpf.c):
-//!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT, i.e. the TC
-//!     worker drops even default-flow traffic, unlike the XDP/legacy twin
-//!     which passes it (DROP default flow branch);
+//!   * no slot target + default flow (mark id 0) → TC_ACT_SHOT;
 //!   * skb->mark is written only on two paths: search-cache non-OK returns
 //!     and after a OK verdict — lan_redirect and flow-verdict short returns
 //!     leave the mark untouched;
@@ -17,9 +15,12 @@
 //!     TC_CHAIN_CB_FORWARDED_OFFSET cb flag;
 //!   * a cache hit with ifindex != 0 redirects without learning but still
 //!     stamps the cb forwarded flag (route4_redirect_by_cached_target);
-//!     a cache hit with ifindex == 0 goes through pick_wan (cb set there too);
-//!   * a WAN-cache hit rewrites the full 14-byte header from the ip_mac value
-//!     (dst mac, dev mac, proto) and does NOT update the flow mark value.
+//!     a LAN-cache entry with ifindex == 0 is treated as a true cache miss
+//!     (without leaking its stale mark) and falls through to the slow path,
+//!     which rebuilds the cache entry on redirect;
+//!   * a WAN-cache hit only stamps the target chain and redirects; the WAN
+//!     link's from-LAN root owns the Ethernet rewrite and neigh fallback.  The
+//!     cache path does NOT update the flow mark value.
 //!
 //! PROG_TEST_RUN verdict mapping (verified empirically, see
 //! test_lan_redirect_check.rs): OK=0, UNSPEC=-1, SHOT=2, REDIRECT=7.
@@ -125,11 +126,11 @@ macro_rules! load_skel {
     };
 }
 
-fn run_lan_ingress(
+fn run_lan_ingress_with_cb(
     skel: &TcLanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
-) -> (i32, Vec<u8>, u32, u32) {
+) -> (i32, Vec<u8>, u32, [u32; 5]) {
     let mut out = vec![0_u8; pkt.len()];
     let mut ctx_out = TestSkb::default();
     let ret = skel
@@ -146,8 +147,17 @@ fn run_lan_ingress(
         .return_value as i32;
     // TestSkb is packed: copy the asserted fields out explicitly.
     let mark = ctx_out.mark;
-    let forwarded = ctx_out.cb[0];
-    (ret, out, mark, forwarded)
+    let cb = ctx_out.cb;
+    (ret, out, mark, cb)
+}
+
+fn run_lan_ingress(
+    skel: &TcLanIngressRouteSkel<'_>,
+    pkt: &[u8],
+    ctx: &mut TestSkb,
+) -> (i32, Vec<u8>, u32, u32) {
+    let (ret, out, mark, cb) = run_lan_ingress_with_cb(skel, pkt, ctx);
+    (ret, out, mark, cb[0])
 }
 
 /// Seed flow id 0's ip-trie with a single dst rule.
@@ -174,18 +184,6 @@ fn seed_wan_slots(
     info.gateway_ip = IpAddr::V4(wan_gateway());
     let targets = [(WanRouteTarget::link(0, info), 1)];
     replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &targets);
-}
-
-/// WAN-binding entry for the redirect target (needed by the WAN-cache path).
-fn seed_wan_binding(skel: &TcLanIngressRouteSkel<'_>) {
-    crate::maps::wan::add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        IpAddr::V4(Ipv4Addr::from_str("100.64.0.1").unwrap()),
-        Some(IpAddr::V4(wan_gateway())),
-        24,
-        None,
-    );
 }
 
 fn arp_frame() -> Vec<u8> {

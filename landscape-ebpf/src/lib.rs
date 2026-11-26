@@ -34,7 +34,6 @@ pub struct LandscapeMapPath {
     /// The bpffs directory every pin below lives under
     /// (`/sys/fs/bpf/landscape/<map space>`).
     pub root: PathBuf,
-    pub wan_ip: PathBuf,
     // NAT
     pub nat6_static_map: PathBuf,
     pub frag4_cache_lan: PathBuf,
@@ -53,7 +52,6 @@ pub struct LandscapeMapPath {
     pub dns_flow_socks: PathBuf,
 
     pub nat_metric_events: PathBuf,
-    pub firewall_conn_metric_events: PathBuf,
 
     /// route - LAN
     pub rt4_lan_map: PathBuf,
@@ -88,12 +86,11 @@ impl LandscapeMapPath {
     /// paths, skeleton pin reuse and tests all share one source of truth.
     pub fn from_root(root: &Path) -> Self {
         use crate::maps::{
-            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route, wan,
+            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route,
         };
 
         let root = root.to_path_buf();
         Self {
-            wan_ip: root.join(wan::WAN_IP_BINDING_PIN),
             // NAT
             nat6_static_map: root.join(nat::NAT6_STATIC_MAP_PIN),
             frag4_cache_lan: root.join(frag::FRAG4_CACHE_LAN_PIN),
@@ -112,7 +109,6 @@ impl LandscapeMapPath {
             dns_flow_socks: root.join(dns::DNS_FLOW_SOCKS_PIN),
 
             nat_metric_events: root.join(nat::NAT_METRIC_EVENTS_PIN),
-            firewall_conn_metric_events: root.join(firewall::FIREWALL_CONN_METRIC_EVENTS_PIN),
 
             // route - LAN
             rt4_lan_map: root.join(route::RT4_LAN_MAP_PIN),
@@ -155,20 +151,12 @@ impl LandscapeMapPath {
         self.tc_chain_base().join("tc_pipe_exits_wan_ingress")
     }
 
-    pub fn tc_pipe_exits_wan_egress_path(&self) -> PathBuf {
-        self.tc_chain_base().join("tc_pipe_exits_wan_egress")
-    }
-
     pub fn tc_wan_egress_roots_path(&self) -> PathBuf {
         self.tc_chain_base().join("tc_wan_egress_roots")
     }
 
     pub fn xdp_pipe_root_progs_path(&self) -> PathBuf {
         self.xdp_base.join("pipe_root_progs")
-    }
-
-    pub fn xdp_pipe_exits_lan_path(&self) -> PathBuf {
-        self.xdp_base.join("pipe_exits_lan")
     }
 
     pub fn xdp_pipe_exits_wan_path(&self) -> PathBuf {

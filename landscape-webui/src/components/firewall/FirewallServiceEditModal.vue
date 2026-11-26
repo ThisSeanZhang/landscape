@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
-import { default_ethernet_link, WanLink } from "@/lib/wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
+import { default_ethernet_link, WanLink } from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useI18n } from "vue-i18n";
@@ -22,7 +22,7 @@ const link = ref<WanLink>(default_ethernet_link(iface_info.iface_name));
 async function on_modal_enter() {
   await wanLinkStore.UPDATE_INFO();
   link.value =
-    wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+    wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name) ??
     default_ethernet_link(iface_info.iface_name);
 }
 

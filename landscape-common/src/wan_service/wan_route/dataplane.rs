@@ -5,7 +5,7 @@ use crate::ebpf::DataplaneGuard;
 
 /// eBPF capability for the WAN route service.
 pub trait WanRouteDataplane: Send + Sync {
-    /// Attach the XDP WAN-route program (native with SKB fallback).
+    /// Attach the XDP WAN-route program in native mode.
     /// Dropping the returned guard detaches it.
     fn install_xdp_route(
         &self,

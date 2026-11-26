@@ -23,8 +23,6 @@ import type {
   GeoTaskProgress,
 } from "@landscape-router/types/api/schemas";
 
-export type { GeoSiteLookupResult, GeoTaskProgress };
-
 export async function lookup_geo_site_domain(
   domain: string,
 ): Promise<GeoSiteLookupResult[]> {
@@ -75,13 +73,16 @@ export async function search_geo_site_cache(
   return searchGeoSiteCache({
     name: query.name ?? undefined,
     key: query.key ?? undefined,
+    q: query.q ?? undefined,
+    limit: query.limit ?? undefined,
   });
 }
 
 export async function get_geo_site_cache_detail(
   key: GeoFileCacheKey,
+  signal?: AbortSignal,
 ): Promise<GeoDomainConfig> {
-  return getGeoSiteCacheDetail(key);
+  return getGeoSiteCacheDetail({ name: key.name, key: key.key }, { signal });
 }
 
 export async function update_geo_site_by_upload(

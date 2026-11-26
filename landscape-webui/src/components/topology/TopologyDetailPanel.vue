@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Close } from "@vicons/carbon";
+import InterfaceServices from "./InterfaceServices.vue";
 import IfaceChangeZone from "@/components/iface/IfaceChangeZone.vue";
 import IfaceCpuSoftBalance from "@/components/iface/IfaceCpuSoftBalance.vue";
 import IfaceDisableGuardModal from "@/components/iface/IfaceDisableGuardModal.vue";
@@ -8,8 +10,8 @@ import {
   change_iface_status,
   delete_bridge,
 } from "@/api/network";
-import { get_wan_link_runtime_status } from "@/api/service_wan_link";
-import { DevStateType, NetDev, WifiMode, WLANTypeTag } from "@/lib/dev";
+import { get_wan_link_runtime_status } from "@/api/services/wan_link";
+import { NetDev } from "@/lib/network/dev";
 import {
   formatHealthRuntime,
   formatPdRuntime,
@@ -18,7 +20,7 @@ import {
   type RuntimeDisplay,
   type RuntimeMask,
   type RuntimeT,
-} from "@/lib/wan_runtime";
+} from "@/lib/wan/wan_runtime";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import type {
   PdLease,
@@ -27,8 +29,8 @@ import type {
 import {
   canManageBridgeAttachment,
   getBridgeAttachIssue,
-} from "@/lib/topology";
-import { ServiceExhibitSwitch } from "@/lib/services";
+} from "@/lib/network/topology";
+import { ServiceExhibitSwitch } from "@/lib/network/services";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useIfaceNodeStore } from "@/stores/iface_node";
 import { useWanLinkStore } from "@/stores/wan_link";
@@ -39,6 +41,7 @@ import { useI18n } from "vue-i18n";
 
 const props = defineProps<{
   node: NetDev;
+  inDrawer?: boolean;
 }>();
 
 const emit = defineEmits(["close"]);
@@ -312,10 +315,7 @@ const controller_hint = computed(() => {
   if (has_controller.value) {
     return "";
   }
-  if (
-    props.node.wifi_info &&
-    props.node.wifi_info.wifi_type.t !== WLANTypeTag.Ap
-  ) {
+  if (props.node.wifi_info && props.node.wifi_info.wifi_type.t !== "Ap") {
     return t("topology.panel.wifi_client_hint");
   }
   if (available_bridge_options.value.length === 0) {
@@ -327,21 +327,32 @@ const action_sections = computed(() => {
   const sections: Array<{
     key: string;
     short_label: string;
+    menuLabel: string;
     label: string;
   }> = [];
 
   if (can_manage_device_state.value) {
     sections.push({
       key: "toggle_device",
-      short_label: props.node.dev_status.t === DevStateType.Up ? "OFF" : "ON",
+      menuLabel: t(
+        props.node.dev_status.t === "up"
+          ? "topology.panel.disable_iface"
+          : "topology.panel.enable_iface",
+      ),
+      short_label: props.node.dev_status.t === "up" ? "OFF" : "ON",
       label:
-        props.node.dev_status.t === DevStateType.Up
+        props.node.dev_status.t === "up"
           ? t("topology.panel.action_toggle_off", { name: props.node.name })
           : t("topology.panel.action_toggle_on", { name: props.node.name }),
     });
 
     sections.push({
       key: "boot",
+      menuLabel: t(
+        props.node.enable_in_boot
+          ? "topology.panel.disable_boot"
+          : "topology.panel.enable_boot",
+      ),
       short_label: "BOOT",
       label: props.node.enable_in_boot
         ? t("topology.panel.action_boot_disable", { name: props.node.name })
@@ -352,6 +363,7 @@ const action_sections = computed(() => {
   if (show_switch.value.zone_type) {
     sections.push({
       key: "change_zone",
+      menuLabel: t("topology.panel.change_zone"),
       short_label: "ZONE",
       label: t("topology.panel.action_zone", {
         name: props.node.name,
@@ -361,6 +373,7 @@ const action_sections = computed(() => {
   }
   sections.push({
     key: "cpu_balance",
+    menuLabel: t("topology.node.cpu_balance"),
     short_label: "CPU",
     label: t("topology.panel.action_cpu", { name: props.node.name }),
   });
@@ -368,6 +381,7 @@ const action_sections = computed(() => {
   if (props.node.dev_kind === "bridge" && props.node.name !== "docker0") {
     sections.push({
       key: "delete_bridge",
+      menuLabel: t("topology.panel.delete_bridge"),
       short_label: "DEL",
       label: t("topology.panel.action_del_bridge", { name: props.node.name }),
     });
@@ -434,7 +448,7 @@ const panelStyle = computed(() => ({
 function isActiveAction(action_key: string) {
   switch (action_key) {
     case "toggle_device":
-      return props.node.dev_status.t === DevStateType.Up;
+      return props.node.dev_status.t === "up";
     case "boot":
       return props.node.enable_in_boot;
     default:
@@ -475,10 +489,10 @@ function displayValue(value?: string | number | null) {
 }
 
 function statusTagType(state: string) {
-  if (state === DevStateType.Up) {
+  if (state === "up") {
     return "success";
   }
-  if (state === DevStateType.Down) {
+  if (state === "down") {
     return "error";
   }
   return "warning";
@@ -525,7 +539,7 @@ function openQuickAction(action_key: string) {
         title: t("topology.panel.actions"),
         content: t("topology.node.confirm_toggle_iface", {
           action:
-            props.node.dev_status.t === DevStateType.Up
+            props.node.dev_status.t === "up"
               ? t("topology.node.action_disable")
               : t("topology.node.action_enable"),
         }),
@@ -570,7 +584,7 @@ function openQuickAction(action_key: string) {
 }
 
 async function changeDeviceStatus() {
-  if (props.node.dev_status.t === DevStateType.Up) {
+  if (props.node.dev_status.t === "up") {
     if (disable_guard_modal.value) {
       await disable_guard_modal.value.check_and_execute(async () => {
         await change_iface_status(props.node.name, false);
@@ -646,10 +660,14 @@ async function handleDeleteBridge() {
 <template>
   <div
     class="topology-detail-shell nopan nowheel"
+    :class="{ 'in-drawer': inDrawer }"
     :data-testid="`topology-detail-${node.index}`"
     :style="panelStyle"
   >
-    <div v-if="action_sections.length" class="topology-detail__rail-shell">
+    <div
+      v-if="!inDrawer && action_sections.length"
+      class="topology-detail__rail-shell"
+    >
       <div class="topology-detail__rail">
         <n-tooltip
           v-for="section in action_sections"
@@ -665,6 +683,7 @@ async function handleDeleteBridge() {
                 { 'is-active': isActiveAction(section.key) },
                 zoneActionClass(section.key),
               ]"
+              :aria-label="section.label"
               :data-testid="`topology-detail-${node.index}-action-${section.key}`"
               @click="openQuickAction(section.key)"
             >
@@ -694,10 +713,36 @@ async function handleDeleteBridge() {
             </h3>
             <div class="topology-detail__title-actions">
               <n-tag size="small" :type="zoneTagType(node.zone_type)" round>
-                {{ node.zone_type }}
+                {{
+                  node.zone_type === IfaceZoneType.undefined
+                    ? t("interface.zone_undefined")
+                    : node.zone_type.toUpperCase()
+                }}
               </n-tag>
-              <n-button quaternary circle size="small" @click="closePanel">
-                ×
+              <n-dropdown
+                v-if="inDrawer"
+                trigger="click"
+                placement="bottom-end"
+                :options="
+                  action_sections.map((section) => ({
+                    key: section.key,
+                    label: section.menuLabel,
+                  }))
+                "
+                @select="openQuickAction"
+              >
+                <n-button size="small" secondary>{{
+                  t("topology.panel.actions")
+                }}</n-button>
+              </n-dropdown>
+              <n-button
+                quaternary
+                circle
+                size="small"
+                :aria-label="t('common.close')"
+                @click="closePanel"
+              >
+                <template #icon><n-icon :component="Close" /></template>
               </n-button>
             </div>
           </div>
@@ -722,7 +767,7 @@ async function handleDeleteBridge() {
               }}
             </n-tag>
             <n-tag size="small" :type="statusTagType(node.dev_status.t)" round>
-              {{ node.dev_status.t }}
+              {{ t("topology.link_state." + node.dev_status.t) }}
             </n-tag>
             <n-tag
               size="small"
@@ -743,7 +788,20 @@ async function handleDeleteBridge() {
             <n-tag v-if="node.wifi_info" size="small" tertiary round>
               {{ node.wifi_info.wifi_type.t }}
             </n-tag>
-            <n-tooltip trigger="hover" placement="bottom-start">
+            <template v-if="inDrawer">
+              <n-tag v-if="node.mac" size="small" tertiary round>{{
+                maskValue(node.mac)
+              }}</n-tag>
+              <n-tag
+                v-if="node.perm_mac && node.perm_mac !== node.mac"
+                size="small"
+                tertiary
+                round
+                >{{ t("topology.node.perm_mac") }} ·
+                {{ maskValue(node.perm_mac) }}</n-tag
+              >
+            </template>
+            <n-tooltip v-else trigger="hover" placement="bottom-start">
               <template #trigger>
                 <n-tag size="small" tertiary round>
                   {{ maskValue(node.mac) }}
@@ -758,6 +816,13 @@ async function handleDeleteBridge() {
       <n-scrollbar class="topology-detail__content nowheel">
         <div class="topology-detail__content-inner">
           <n-flex vertical size="large">
+            <InterfaceServices
+              v-if="inDrawer"
+              :key="node.name"
+              :node="node"
+              list
+              @refresh="refreshGraph"
+            />
             <n-card
               v-if="node_link !== undefined"
               size="small"
@@ -866,8 +931,7 @@ async function handleDeleteBridge() {
                       can_attach_bridge &&
                       !has_controller &&
                       available_bridge_options.length > 0 &&
-                      (!node.wifi_info ||
-                        node.wifi_info.wifi_type.t === WLANTypeTag.Ap)
+                      (!node.wifi_info || node.wifi_info.wifi_type.t === 'Ap')
                     "
                   >
                     <n-select
@@ -1143,28 +1207,46 @@ async function handleDeleteBridge() {
   padding-top: 4px;
 }
 
-@media (max-width: 960px) {
-  .topology-detail-shell {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .topology-detail {
-    border-radius: 20px 20px 0 0;
-  }
-
-  .topology-detail__rail-shell {
-    width: 100%;
-    height: auto;
-    padding-top: 0;
-  }
-
-  .topology-detail__rail {
-    width: 100%;
-    flex-direction: row;
-    justify-content: flex-start;
-    overflow-x: auto;
-    padding: 0 2px;
-  }
+.in-drawer {
+  align-items: stretch;
+  box-sizing: border-box;
+}
+.in-drawer .topology-detail {
+  border: 0;
+  border-radius: 0;
+  background: var(--topology-panel-bg);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.in-drawer .topology-detail__header {
+  padding: 12px 16px;
+}
+.in-drawer .topology-detail__header-main {
+  gap: 6px;
+}
+.in-drawer .topology-detail__title {
+  font-size: 18px;
+}
+.in-drawer .topology-detail__content {
+  min-height: 0;
+}
+.in-drawer .topology-detail__content-inner {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.in-drawer .topology-detail__runtime-row {
+  flex-wrap: wrap;
+}
+.in-drawer .topology-detail__runtime-value {
+  max-width: 100%;
+}
+.in-drawer .topology-detail__runtime-detail,
+.in-drawer .topology-detail__runtime-tag {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.in-drawer .topology-detail__runtime-tag {
+  height: auto;
+  min-height: 22px;
+  max-width: 100%;
 }
 </style>

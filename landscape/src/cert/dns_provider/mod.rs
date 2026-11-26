@@ -60,6 +60,16 @@ pub trait DnsRecordUpdater: Send + Sync {
     ) -> Result<(), CertError>;
 }
 
+// A dependency can enable the E2E wire format without opting this service into the adapter.
+fn unsupported_solver(provider: &DnsProviderConfig, manual_message: &str) -> CertError {
+    let reason = if matches!(provider, DnsProviderConfig::Manual) {
+        manual_message
+    } else {
+        "DNS provider unavailable in this build"
+    };
+    CertError::DnsChallengeSetupFailed(reason.to_owned())
+}
+
 /// Factory: build solver from reusable DNS provider profile config.
 ///
 /// `ttl` is the configured TTL for challenge records; when `None` each
@@ -69,6 +79,10 @@ pub fn build_solver(
     ttl: Option<u32>,
 ) -> Result<Box<dyn DnsChallengeSolver>, CertError> {
     match provider {
+        #[cfg(feature = "e2e-acme")]
+        DnsProviderConfig::E2e { api_url, api_token } => Ok(Box::new(
+            cloudflare::CloudflareSolver::with_base_url(api_token.clone(), ttl, api_url),
+        )),
         DnsProviderConfig::Cloudflare { api_token } => {
             Ok(Box::new(cloudflare::CloudflareSolver::new(api_token.clone(), ttl)))
         }
@@ -89,9 +103,7 @@ pub fn build_solver(
         DnsProviderConfig::Google { service_account_json } => {
             Ok(Box::new(google::GoogleSolver::new(service_account_json.clone(), ttl)?))
         }
-        DnsProviderConfig::Manual => Err(CertError::DnsChallengeSetupFailed(
-            "manual DNS not supported for async issuance".into(),
-        )),
+        other => Err(unsupported_solver(other, "manual DNS not supported for async issuance")),
     }
 }
 
@@ -119,6 +131,12 @@ pub fn build_record_updater(
 
 pub async fn validate_provider_credentials(provider: &DnsProviderConfig) -> Result<(), CertError> {
     match provider {
+        #[cfg(feature = "e2e-acme")]
+        DnsProviderConfig::E2e { api_url, api_token } => {
+            cloudflare::CloudflareSolver::with_base_url(api_token.clone(), None, api_url)
+                .validate_credentials()
+                .await
+        }
         DnsProviderConfig::Cloudflare { api_token } => {
             cloudflare::validate_credentials(api_token).await
         }
@@ -134,8 +152,9 @@ pub async fn validate_provider_credentials(provider: &DnsProviderConfig) -> Resu
         DnsProviderConfig::Google { service_account_json } => {
             google::validate_credentials(service_account_json).await
         }
-        DnsProviderConfig::Manual => Err(CertError::DnsChallengeSetupFailed(
-            "manual DNS provider cannot be validated as a reusable profile".to_string(),
+        other => Err(unsupported_solver(
+            other,
+            "manual DNS provider cannot be validated as a reusable profile",
         )),
     }
 }
@@ -145,6 +164,12 @@ pub async fn validate_provider_zone_access(
     zone_name: &str,
 ) -> Result<(), CertError> {
     match provider {
+        #[cfg(feature = "e2e-acme")]
+        DnsProviderConfig::E2e { api_url, api_token } => {
+            cloudflare::CloudflareSolver::with_base_url(api_token.clone(), None, api_url)
+                .validate_zone_access(zone_name)
+                .await
+        }
         DnsProviderConfig::Cloudflare { api_token } => {
             cloudflare::validate_zone_access(api_token, zone_name).await
         }
@@ -160,9 +185,7 @@ pub async fn validate_provider_zone_access(
         DnsProviderConfig::Google { service_account_json } => {
             google::validate_zone_access(service_account_json, zone_name).await
         }
-        DnsProviderConfig::Manual => Err(CertError::DnsChallengeSetupFailed(
-            "manual DNS provider cannot manage hosted zones".to_string(),
-        )),
+        other => Err(unsupported_solver(other, "manual DNS provider cannot manage hosted zones")),
     }
 }
 
@@ -172,6 +195,12 @@ pub async fn validate_provider_domain_access(
 ) -> Result<(), CertError> {
     let domain = common::normalize_validation_domain(domain);
     match provider {
+        #[cfg(feature = "e2e-acme")]
+        DnsProviderConfig::E2e { api_url, api_token } => {
+            cloudflare::CloudflareSolver::with_base_url(api_token.clone(), None, api_url)
+                .validate_domain_access(&domain)
+                .await
+        }
         DnsProviderConfig::Cloudflare { api_token } => {
             cloudflare::validate_domain_access(api_token, &domain).await
         }
@@ -187,8 +216,9 @@ pub async fn validate_provider_domain_access(
         DnsProviderConfig::Google { service_account_json } => {
             google::validate_domain_access(service_account_json, &domain).await
         }
-        DnsProviderConfig::Manual => Err(CertError::DnsChallengeSetupFailed(
-            "manual DNS provider cannot manage DNS challenge domains".to_string(),
+        other => Err(unsupported_solver(
+            other,
+            "manual DNS provider cannot manage DNS challenge domains",
         )),
     }
 }

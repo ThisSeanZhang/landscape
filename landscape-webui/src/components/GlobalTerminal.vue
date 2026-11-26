@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, CSSProperties } from "vue";
+import { useResizeObserver, useWindowSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import {
   Terminal as TerminalIcon,
@@ -17,8 +18,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { storeToRefs } from "pinia";
 import "@xterm/xterm/css/xterm.css";
 
-// Constants
-const HEADER_COLOR = "rgb(72, 72, 78)";
 const HANDLE_SIZE = 8;
 
 // Store
@@ -29,8 +28,7 @@ const { t } = useI18n();
 // Terminal instance
 const drawerContentRef = ref<HTMLDivElement | null>(null);
 const dockContentRef = ref<HTMLDivElement | null>(null);
-let term: Terminal | null = null;
-let fitAddon: FitAddon | null = null;
+const dockPanel = ref<HTMLDivElement | null>(null);
 
 // UI State
 const isFullScreen = ref(false);
@@ -43,9 +41,8 @@ const dragStart = ref({ x: 0, y: 0 });
 const initialPos = ref({ x: 0, y: 0 });
 
 // Resize state
-const isResizing = ref(false);
-const startResizePos = ref(0);
-const startResizeSize = ref(0);
+let startResizePos = 0;
+let startResizeSize = 0;
 
 // --- Computed Styles ---
 
@@ -83,65 +80,29 @@ const containerStyle = computed<CSSProperties>(() => {
   };
 });
 
-const dockContainerStyle = computed<CSSProperties>(() => {
-  const base = {
-    position: "absolute" as const,
-    zIndex: 1000,
-    backgroundColor: "var(--n-color-modal)",
-    display: "flex",
-    flexDirection: "column" as const,
-  };
-
-  if (ptyStore.dockPosition === "bottom") {
-    return {
-      ...base,
-      bottom: 0,
-      left: "25px",
-      right: 0,
-      height: `${ptyStore.dockSize}px`,
-    };
-  }
-  return {
-    ...base,
-    top: "40px",
-    right: 0,
-    bottom: 0,
-    width: `${ptyStore.dockSize}px`,
-    borderLeft: `2px solid ${HEADER_COLOR}`,
-  };
+const isBottom = computed(() => ptyStore.dockPosition === "bottom");
+const { width: windowWidth, height: windowHeight } = useWindowSize({
+  type: "visual",
 });
-
-const drawerPlacement = computed(() =>
-  ptyStore.dockPosition === "right" ? "right" : "bottom",
+const drawerSizes = ref({ right: 500, bottom: 400 });
+const drawerMaxWidth = computed(() =>
+  windowWidth.value <= 768
+    ? Math.round(windowWidth.value * 0.9)
+    : windowWidth.value,
 );
-
-const drawerSize = computed(() => {
-  if (isFullScreen.value) return "100%";
-  return ptyStore.dockPosition === "right" ? 500 : 400;
-});
-
-const resizeHandleStyle = computed<CSSProperties>(() => {
-  const isBottom = ptyStore.dockPosition === "bottom";
-  return {
-    position: "absolute" as const,
-    zIndex: 1001,
-    cursor: isBottom ? "ns-resize" : "ew-resize",
-    backgroundColor: isBottom ? "transparent" : undefined,
-    ...(isBottom
-      ? {
-          top: `-${HANDLE_SIZE}px`,
-          left: 0,
-          right: 0,
-          height: `${HANDLE_SIZE}px`,
-        }
-      : {
-          left: `-${HANDLE_SIZE}px`,
-          top: 0,
-          bottom: 0,
-          width: `${HANDLE_SIZE}px`,
-        }),
-  };
-});
+const drawerWidth = computed(() =>
+  isFullScreen.value
+    ? "100%"
+    : Math.min(drawerSizes.value.right, drawerMaxWidth.value),
+);
+const drawerHeight = computed(() =>
+  isFullScreen.value
+    ? "100%"
+    : Math.min(drawerSizes.value.bottom, windowHeight.value),
+);
+const positionLabel = computed(() =>
+  t(isBottom.value ? "terminal.switch_to_right" : "terminal.switch_to_bottom"),
+);
 
 // --- Actions ---
 
@@ -150,26 +111,13 @@ function toggleDrawer() {
 }
 
 function switchViewMode(mode: "float" | "dock") {
-  if (ptyStore.viewMode === mode) return;
-  cleanupTerminal();
+  isFullScreen.value = false;
   ptyStore.setViewMode(mode);
-  remountTerminal();
 }
 
 function toggleDockPosition() {
-  const newPos = ptyStore.dockPosition === "bottom" ? "right" : "bottom";
-  if (ptyStore.viewMode === "dock" && ptyStore.isOpen) {
-    cleanupTerminal();
-    ptyStore.setDockPosition(newPos);
-    remountTerminal();
-  } else {
-    ptyStore.setDockPosition(newPos);
-  }
-}
-
-function toggleFullScreen() {
-  isFullScreen.value = !isFullScreen.value;
-  setTimeout(() => ptyStore.fit(), 300);
+  isFullScreen.value = false;
+  ptyStore.setDockPosition(isBottom.value ? "right" : "bottom");
 }
 
 function reconnect() {
@@ -179,53 +127,47 @@ function reconnect() {
 
 // --- Terminal Management ---
 
-function cleanupTerminal() {
-  if (term) {
-    ptyStore.detachTerminal(term);
-    term.dispose();
-    term = null;
-    fitAddon = null;
-  }
-}
-
-function remountTerminal() {
-  setTimeout(() => {
-    if (ptyStore.isOpen) mountTerminal();
-  }, 50);
-}
-
-function mountTerminal() {
-  ptyStore.markRead();
-  const target =
-    ptyStore.viewMode === "float"
+const terminalTarget = computed(() =>
+  ptyStore.isOpen
+    ? ptyStore.viewMode === "float"
       ? drawerContentRef.value
-      : dockContentRef.value;
-
-  if (!target) return;
-  while (target.firstChild) target.removeChild(target.firstChild);
-
-  term = new Terminal({
-    cols: 80,
-    rows: 24,
-    cursorBlink: true,
-    fontFamily:
-      '"v-mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-    allowProposedApi: true,
-  });
-
-  fitAddon = new FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(target);
-  ptyStore.attachTerminal(term, fitAddon);
-
-  if (!ptyStore.isConnected) ptyStore.connect();
-}
+      : dockContentRef.value
+    : null,
+);
 
 watch(
-  () => [ptyStore.isOpen, ptyStore.viewMode],
-  ([isOpen, mode]) => {
-    if (isOpen && mode === "dock") setTimeout(mountTerminal, 50);
-    else if (!isOpen && mode === "dock") cleanupTerminal();
+  terminalTarget,
+  (target, _, onCleanup) => {
+    if (!target) return;
+    ptyStore.markRead();
+    const term = new Terminal({
+      cols: 80,
+      rows: 24,
+      cursorBlink: true,
+      fontFamily:
+        '"v-mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+      allowProposedApi: true,
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(target);
+    ptyStore.attachTerminal(term, fit);
+    ptyStore.connect();
+    fit.fit();
+    term.focus();
+    onCleanup(() => {
+      ptyStore.detachTerminal(term);
+      term.dispose();
+    });
+  },
+  { flush: "post" },
+);
+
+useResizeObserver(terminalTarget, () => ptyStore.fit());
+watch(
+  () => ptyStore.isOpen,
+  (open) => {
+    if (!open) isFullScreen.value = false;
   },
 );
 
@@ -259,44 +201,26 @@ function onMouseUp() {
 
 // --- Resize Handlers ---
 
-function onResizeStart(e: MouseEvent) {
-  isResizing.value = true;
-  e.preventDefault();
-  startResizeSize.value = ptyStore.dockSize;
-  startResizePos.value =
-    ptyStore.dockPosition === "bottom" ? e.clientY : e.clientX;
-  document.addEventListener("mousemove", onResizeMove);
-  document.addEventListener("mouseup", onResizeEnd);
+function onResizeStart(event: PointerEvent) {
+  if (event.button !== 0 || !dockPanel.value) return;
+  const rect = dockPanel.value.getBoundingClientRect();
+  startResizeSize = isBottom.value ? rect.height : rect.width;
+  startResizePos = isBottom.value ? event.clientY : event.clientX;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  event.preventDefault();
 }
 
-function onResizeMove(e: MouseEvent) {
-  if (!isResizing.value) return;
-  const delta =
-    ptyStore.dockPosition === "bottom"
-      ? startResizePos.value - e.clientY
-      : startResizePos.value - e.clientX;
-  ptyStore.dockSize = Math.max(
-    200,
-    Math.min(1200, startResizeSize.value + delta),
-  );
-  ptyStore.fit();
-}
-
-function onResizeEnd() {
-  isResizing.value = false;
-  document.removeEventListener("mousemove", onResizeMove);
-  document.removeEventListener("mouseup", onResizeEnd);
-  ptyStore.fit();
-}
-
-// --- Drawer Hooks ---
-
-function onAfterEnter() {
-  if (ptyStore.viewMode === "float") mountTerminal();
-}
-
-function onAfterLeave() {
-  if (ptyStore.viewMode === "float") cleanupTerminal();
+function onResizeMove(event: PointerEvent) {
+  const handle = event.currentTarget as HTMLElement;
+  const workspace = dockPanel.value?.parentElement;
+  if (!workspace || !handle.hasPointerCapture(event.pointerId)) return;
+  const coordinate = isBottom.value ? event.clientY : event.clientX;
+  const available = isBottom.value
+    ? workspace.clientHeight
+    : workspace.clientWidth;
+  const maxSize = Math.min(1200, available - HANDLE_SIZE);
+  const requested = Math.round(startResizeSize + startResizePos - coordinate);
+  ptyStore.dockSize = Math.max(200, Math.min(requested, maxSize));
 }
 </script>
 
@@ -332,24 +256,31 @@ function onAfterLeave() {
   <n-drawer
     v-if="ptyStore.viewMode === 'float'"
     v-model:show="ptyStore.isOpen"
-    :placement="drawerPlacement"
-    :width="drawerPlacement === 'right' ? drawerSize : undefined"
-    :height="drawerPlacement === 'bottom' ? drawerSize : undefined"
-    :min-width="drawerPlacement === 'right' ? 300 : undefined"
-    :min-height="drawerPlacement === 'bottom' ? 200 : undefined"
-    resizable
+    class="terminal-drawer"
+    :placement="ptyStore.dockPosition"
+    :width="drawerWidth"
+    :height="drawerHeight"
+    :min-width="Math.min(300, drawerMaxWidth)"
+    :min-height="Math.min(200, windowHeight)"
+    :max-width="drawerMaxWidth"
+    :max-height="windowHeight"
+    :on-update-width="(size: number) => (drawerSizes.right = size)"
+    :on-update-height="(size: number) => (drawerSizes.bottom = size)"
+    :resizable="!isFullScreen"
     :trap-focus="false"
     :block-scroll="false"
     to="body"
     display-directive="if"
-    @after-enter="onAfterEnter"
-    @after-leave="onAfterLeave"
   >
     <n-drawer-content
       closable
-      body-content-style="padding: 0; display: flex; flex-direction: column;"
+      body-content-style="height: 100%; padding: 0; display: flex; flex-direction: column;"
       header-class="terminal-header"
-      :header-style="{ padding: '0 8px', height: '36px' }"
+      :header-style="{
+        padding: '4px 8px',
+        minHeight: '36px',
+        boxSizing: 'border-box',
+      }"
     >
       <template #header>
         <n-flex justify="space-between" align="center" style="width: 100%">
@@ -434,6 +365,7 @@ function onAfterLeave() {
                   secondary
                   type="default"
                   size="tiny"
+                  :aria-label="positionLabel"
                   @click="toggleDockPosition"
                 >
                   <template #icon
@@ -441,11 +373,7 @@ function onAfterLeave() {
                   /></template>
                 </n-button>
               </template>
-              {{
-                ptyStore.dockPosition === "bottom"
-                  ? t("terminal.switch_to_right")
-                  : t("terminal.switch_to_bottom")
-              }}
+              {{ positionLabel }}
             </n-tooltip>
 
             <n-tooltip trigger="hover">
@@ -455,6 +383,7 @@ function onAfterLeave() {
                   secondary
                   type="primary"
                   size="tiny"
+                  :aria-label="t('terminal.dock_mode')"
                   @click="switchViewMode('dock')"
                 >
                   <template #icon><n-icon :component="PushOutline" /></template>
@@ -465,7 +394,19 @@ function onAfterLeave() {
 
             <n-divider vertical style="margin: 0 4px" />
 
-            <n-button strong secondary size="tiny" @click="toggleFullScreen">
+            <n-button
+              strong
+              secondary
+              size="tiny"
+              :aria-label="
+                t(
+                  isFullScreen
+                    ? 'terminal.exit_fullscreen'
+                    : 'terminal.fullscreen',
+                )
+              "
+              @click="isFullScreen = !isFullScreen"
+            >
               <template #icon>
                 <n-icon :component="isFullScreen ? Contract : Expand" />
               </template>
@@ -481,12 +422,15 @@ function onAfterLeave() {
   <!-- Dock Mode: Split Panel -->
   <div
     v-if="ptyStore.viewMode === 'dock' && ptyStore.isOpen"
-    :style="dockContainerStyle"
+    ref="dockPanel"
+    class="terminal-dock"
+    :class="isBottom ? 'at-bottom' : 'at-right'"
+    :style="{ '--dock-size': ptyStore.dockSize + 'px' }"
   >
     <div
-      :style="resizeHandleStyle"
       class="resize-handle"
-      @mousedown="onResizeStart"
+      @pointerdown="onResizeStart"
+      @pointermove="onResizeMove"
     ></div>
 
     <div class="dock-header">
@@ -570,6 +514,7 @@ function onAfterLeave() {
                 secondary
                 type="default"
                 size="tiny"
+                :aria-label="positionLabel"
                 @click="toggleDockPosition"
               >
                 <template #icon
@@ -577,11 +522,7 @@ function onAfterLeave() {
                 /></template>
               </n-button>
             </template>
-            {{
-              ptyStore.dockPosition === "bottom"
-                ? t("terminal.switch_to_right")
-                : t("terminal.switch_to_bottom")
-            }}
+            {{ positionLabel }}
           </n-tooltip>
 
           <n-divider vertical style="margin: 0 4px" />
@@ -593,6 +534,7 @@ function onAfterLeave() {
                 secondary
                 type="primary"
                 size="tiny"
+                :aria-label="t('terminal.float_mode')"
                 @click="switchViewMode('float')"
               >
                 <template #icon
@@ -610,6 +552,7 @@ function onAfterLeave() {
             secondary
             type="error"
             size="tiny"
+            :aria-label="t('common.close')"
             @click="toggleDrawer"
           >
             <template #icon><n-icon :component="Close" /></template>
@@ -645,8 +588,30 @@ function onAfterLeave() {
   animation: breath 2s infinite ease-in-out;
 }
 
+.terminal-dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  z-index: 1000;
+  background: var(--n-color-modal);
+}
+.terminal-dock.at-bottom {
+  height: var(--dock-size);
+  max-height: calc(100% - 8px);
+}
+.terminal-dock.at-right {
+  width: var(--dock-size);
+  max-width: calc(100% - 8px);
+  border-left: 2px solid rgb(72, 72, 78);
+}
 .terminal-container {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   background-color: #000;
   overflow: hidden;
 }
@@ -654,18 +619,32 @@ function onAfterLeave() {
 /* Unified header style */
 .dock-header,
 :deep(.terminal-header) {
-  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 4px 8px;
   background-color: rgb(72, 72, 78) !important;
   border-bottom: 1px solid rgb(60, 60, 66) !important;
   color: #fff;
   flex-shrink: 0;
 }
 
-/* Resize handle - only visible in right mode */
+.at-bottom .resize-handle {
+  inset: -8px 0 auto;
+  height: 8px;
+  cursor: ns-resize;
+  background: transparent;
+}
+.at-right .resize-handle {
+  inset: 0 auto 0 -8px;
+  width: 8px;
+  cursor: ew-resize;
+}
 .resize-handle {
+  position: absolute;
+  touch-action: none;
+  user-select: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -679,7 +658,7 @@ function onAfterLeave() {
   border-radius: 2px;
 }
 
-.resize-handle[style*="ew-resize"]::after {
+.at-right .resize-handle::after {
   width: 4px;
   height: 60px;
 }

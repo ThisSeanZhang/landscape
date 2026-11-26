@@ -119,7 +119,6 @@ pub mod mac;
 pub mod nat;
 pub mod redirect_able;
 pub mod route;
-pub mod wan;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod wan_trie;
 
@@ -134,9 +133,6 @@ pub(crate) use flow_wanip::types::*;
 pub(crate) use mac::types::*;
 pub(crate) use nat::types::*;
 pub(crate) use route::types::*;
-/// Only referenced by the aggregated layout tests in this module.
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(crate) use wan::types::*;
 
 pub type RawEbpfMapEntries = HashMap<Vec<u8>, Vec<u8>>;
 
@@ -537,8 +533,9 @@ pub fn reuse_pinned_map_or_recreate(map: &mut OpenMapMut, path: &(impl AsRef<Pat
 /// while layout drifts trigger a recreate; per-boot maps
 /// (`recreate_pinned_map`) are dropped and rebuilt on every start.
 pub(crate) fn init_path(paths: &LandscapeMapPath) {
-    // WAN
-    wan::init_wan_ip_binding_map(&paths.wan_ip).expect("init wan_ip_binding failed");
+    // Retire obsolete pins left by older releases.
+    remove_pin_file(&paths.root.join("firewall_conn_metric_events"));
+    remove_pin_file(&paths.root.join("wan_ip_binding"));
     // NAT
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("init nat6_static_map failed");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("init nat_metric_events failed");
@@ -552,8 +549,6 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
         .expect("init firewall_block_ip4_map failed");
     firewall::init_firewall_block_ip6_map(&paths.firewall_ipv6_block)
         .expect("init firewall_block_ip6_map failed");
-    firewall::init_firewall_conn_metric_events(&paths.firewall_conn_metric_events)
-        .expect("init firewall_conn_metric_events failed");
 
     // flow match / dns socket map
     flow::init_flow_match_map(&paths.flow_match_map).expect("init flow_match_map failed");
@@ -597,7 +592,6 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 #[cfg(all(test, feature = "test-support"))]
 #[cfg_attr(not(feature = "bpf-test"), allow(dead_code))]
 pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
-    wan::init_wan_ip_binding_map(&paths.wan_ip).expect("test init wan_ip_binding");
     nat::init_nat6_static_map(&paths.nat6_static_map).expect("test init nat6_static_map");
     nat::init_nat_metric_events(&paths.nat_metric_events).expect("test init nat_metric_events");
     frag::init_frag4_cache_lan_map(&paths.frag4_cache_lan).expect("test init frag4_cache_lan");
@@ -608,8 +602,6 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
         .expect("test init firewall_block_ip4_map");
     firewall::init_firewall_block_ip6_map(&paths.firewall_ipv6_block)
         .expect("test init firewall_block_ip6_map");
-    firewall::init_firewall_conn_metric_events(&paths.firewall_conn_metric_events)
-        .expect("test init firewall_conn_metric_events");
     flow::init_flow_match_map(&paths.flow_match_map).expect("test init flow_match_map");
     dns::init_dns_flow_socks(&paths.dns_flow_socks).expect("test init dns_flow_socks");
 
@@ -671,7 +663,6 @@ mod tests {
         assert_default_zero!(
             MacKeyV4,
             MacKeyV6,
-            WanIpInfoKey,
             Ipv4LpmKey,
             Ipv6LpmKey,
             FlowMatchKey,
@@ -686,6 +677,7 @@ mod tests {
             Route4SlotKey,
             Route6SlotKey,
             StaticNat6MappingKey,
+            Nat6MappingKey,
             Nat6TimerKey,
         );
     }
@@ -1019,9 +1011,9 @@ mod tests {
         let open = crate::skel::tc_wan_ingress_route::TcWanIngressRouteSkelBuilder::default()
             .open(&mut obj)
             .expect("open anchor skel");
-        let spec = crate::maps::wan::WAN_IP_BINDING_SPEC;
+        let spec = crate::maps::route::RT4_LAN_MAP_SPEC;
         let wrong = MapCreateSpec { value_size: spec.value_size + 1, ..spec };
-        crate::maps::assert_skel_map_matches(&open.maps.wan_ip_binding, &wrong);
+        crate::maps::assert_skel_map_matches(&open.maps.rt4_lan_map, &wrong);
     }
 
     #[test]
@@ -1074,15 +1066,45 @@ mod tests {
     fn init_path_creates_all_maps_and_reuses_on_restart() {
         use crate::LandscapeMapPath;
         use crate::maps::{
-            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route, wan,
+            dns, firewall, flow, flow_dns, flow_wanip, frag, mac, nat, redirect_able, route,
         };
 
         let Some(_) = run_or_skip("init-path", |root| {
             let paths = LandscapeMapPath::from_root(root);
+            let legacy_pin = root.join("firewall_conn_metric_events");
+            let legacy_spec = MapCreateSpec {
+                map_type: MapType::RingBuf,
+                name: "legacy_firewall",
+                key_size: 0,
+                value_size: 0,
+                max_entries: 4096,
+                map_flags: 0,
+                inner: None,
+            };
+            drop(ensure_pinned_map(&legacy_spec, &legacy_pin).expect("legacy ringbuf"));
+            let legacy_wan_pin = root.join("wan_ip_binding");
+            let legacy_wan_spec = MapCreateSpec {
+                map_type: MapType::Hash,
+                name: "wan_ip_binding",
+                key_size: 8,
+                value_size: 48,
+                max_entries: 256,
+                map_flags: libbpf_sys::BPF_F_NO_PREALLOC,
+                inner: None,
+            };
+            drop(
+                ensure_pinned_map(&legacy_wan_spec, &legacy_wan_pin)
+                    .expect("legacy wan_ip_binding"),
+            );
+            let old_dao_spec = MapCreateSpec { max_entries: 1 << 24, ..mac::IP6_DAO_EVENTS_SPEC };
+            drop(ensure_pinned_map(&old_dao_spec, &paths.ip6_dao_events).expect("old DAO ringbuf"));
 
             init_path(&paths);
+            assert!(!legacy_pin.exists(), "obsolete firewall pin must be removed");
+            assert!(!legacy_wan_pin.exists(), "obsolete wan_ip_binding pin must be removed");
+            let dao = MapHandle::from_pinned_path(&paths.ip6_dao_events).expect("new DAO ringbuf");
+            assert_eq!(dao.max_entries(), 1 << 18);
             for name in [
-                wan::WAN_IP_BINDING_PIN,
                 nat::NAT6_STATIC_MAP_PIN,
                 firewall::FIREWALL_BLOCK_IP4_MAP_PIN,
                 firewall::FIREWALL_BLOCK_IP6_MAP_PIN,
@@ -1093,7 +1115,6 @@ mod tests {
                 frag::FRAG4_CACHE_WAN_PIN,
                 frag::FRAG6_CACHE_LAN_PIN,
                 frag::FRAG6_CACHE_WAN_PIN,
-                firewall::FIREWALL_CONN_METRIC_EVENTS_PIN,
                 route::RT4_LAN_MAP_PIN,
                 route::RT6_LAN_MAP_PIN,
                 route::RT4_SLOT_MAP_PIN,

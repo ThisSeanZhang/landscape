@@ -24,7 +24,7 @@ async fn ensure_flow_id_unchanged(
     state: &LandscapeApp,
     config: &WanIpRuleConfig,
 ) -> Result<(), DstIpRuleError> {
-    if let Ok(Some(existing)) = state.dst_ip_rule_service.find_by_id(config.id).await
+    if let Ok(Some(existing)) = state.managed.dst_ip_rule_service.find_by_id(config.id).await
         && existing.flow_id != config.flow_id
     {
         return Err(DstIpRuleError::CannotChangeFlow(config.id));
@@ -41,7 +41,7 @@ async fn ensure_flow_id_unchanged(
 async fn get_dst_ip_rules(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<WanIpRuleConfig>> {
-    let result = state.dst_ip_rule_service.list().await?;
+    let result = state.managed.dst_ip_rule_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -56,7 +56,7 @@ async fn get_flow_dst_ip_rules(
     State(state): State<LandscapeApp>,
     Path(id): Path<FlowId>,
 ) -> LandscapeApiResult<Vec<WanIpRuleConfig>> {
-    let mut result = state.dst_ip_rule_service.list_flow_configs(id).await?;
+    let mut result = state.managed.dst_ip_rule_service.list_flow_configs(id).await?;
     result.sort_by_key(|a| a.index);
     LandscapeApiResp::success(result)
 }
@@ -75,7 +75,7 @@ async fn get_dst_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
-    let result = state.dst_ip_rule_service.find_by_id(id).await?;
+    let result = state.managed.dst_ip_rule_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -97,7 +97,7 @@ async fn modify_dst_ip_rules(
     JsonBody(rule): JsonBody<WanIpRuleConfig>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
     ensure_flow_id_unchanged(&state, &rule).await?;
-    let result = state.dst_ip_rule_service.checked_set(rule).await?;
+    let result = state.managed.dst_ip_rule_service.checked_set(rule).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -113,7 +113,7 @@ async fn add_dst_ip_rules(
     JsonBody(rule): JsonBody<WanIpRuleConfig>,
 ) -> LandscapeApiResult<WanIpRuleConfig> {
     ensure_flow_id_unchanged(&state, &rule).await?;
-    let result = state.dst_ip_rule_service.checked_set(rule).await?;
+    let result = state.managed.dst_ip_rule_service.checked_set(rule).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -131,7 +131,7 @@ async fn add_many_dst_ip_rules(
     for rule in &rules {
         ensure_flow_id_unchanged(&state, rule).await?;
     }
-    state.dst_ip_rule_service.checked_set_list(rules).await?;
+    state.managed.dst_ip_rule_service.checked_set_list(rules).await?;
     LandscapeApiResp::success(())
 }
 
@@ -149,6 +149,6 @@ async fn del_dst_ip_rule(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.dst_ip_rule_service.delete(id).await?;
+    state.managed.dst_ip_rule_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

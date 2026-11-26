@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use landscape_common::dns::{CacheRuntimeConfig, gen_default_dns_rule_and_upstream};
+use landscape_common::dns::gen_default_dns_rule_and_upstream;
 use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::sys_config::CacheRuntimeConfig;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
 use landscape_core::geo_cache::{GeoCacheDatabase, SiteCacheRepository, SiteMatcherRegistry};
 use landscape_core::lan_device::LanDeviceDirectory;
 use landscape_dns::server::{DnsServiceDeps, EngineBuilder, LandscapeDnsServer};
@@ -16,14 +17,13 @@ async fn main() -> std::io::Result<()> {
     let listen_port = 54;
     let server = LandscapeDnsServer::new(DnsServiceDeps {
         listen_port,
-        tcp_enabled: true,
-        msg_tx: None,
+        metric_reporter: Default::default(),
         cache_runtime: CacheRuntimeConfig::default(),
         doh: None,
         local_answer_provider: None,
         doh_advertise_provider: None,
         lan_device_directory: LanDeviceDirectory::new_for_test(),
-        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default())),
+        lan_hostname_config: Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default())),
         result_sink: Arc::new(NoopDnsResultSink),
         socket_registrar: Arc::new(NoopFlowSocketRegistrar),
     });

@@ -1,0 +1,9 @@
+[[gateway_rules]]
+name = "backend-tls"
+enable = true
+domains = ["passthrough.lab.test"]
+[gateway_rules.match_rule]
+t = "sni_proxy"
+[gateway_rules.upstream]
+client_ip_headers = "none"
+targets = [{ address = "192.0.2.10", port = 8443 }]

@@ -1,0 +1,23 @@
+name: ${LANDSCAPE_LAB_NAME}
+mgmt:
+  skip-when-unused: true
+
+topology:
+  defaults:
+    kind: linux
+    image: landscape-e2e:${LANDSCAPE_LAB_NAME}
+    image-pull-policy: Never
+    network-mode: none
+    restart-policy: "no"
+  nodes:
+    wan:
+      exec:
+        - ip addr add 198.51.100.1/24 dev eth1
+    router:
+      privileged: true
+    backend:
+      exec:
+        - ip addr add 192.0.2.10/24 dev eth1
+  links:
+    - endpoints: ["wan:eth1", "router:wan0"]
+    - endpoints: ["router:lan0", "backend:eth1"]

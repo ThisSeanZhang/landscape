@@ -1,18 +1,17 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from "vue-router";
 
 import Landscape from "@/views/Landscape.vue";
-import MainLayout from "@/views/MainLayout.vue";
+import MainLayout from "@/layouts/MainLayout.vue";
 import Flow from "@/views/Flow.vue";
 import Docker from "@/views/Docker.vue";
-import Firewall from "@/views/Firewall.vue";
-import GeoDomain from "@/views/GeoDomain.vue";
-import GeoIp from "@/views/GeoIp.vue";
+import Firewall from "@/views/firewall/Firewall.vue";
+import GeoDatabase from "@/views/geo/GeoDatabase.vue";
 import Config from "@/views/Config.vue";
 import About from "@/views/About.vue";
 
 import Login from "@/views/Login.vue";
-import StaticNatMappingV4 from "@/views/StaticNatMappingV4.vue";
-import StaticNatMappingV6 from "@/views/StaticNatMappingV6.vue";
+import StaticNatMappingV4 from "@/views/firewall/StaticNatMappingV4.vue";
+import StaticNatMappingV6 from "@/views/firewall/StaticNatMappingV6.vue";
 import EnrolledDevice from "@/views/EnrolledDevice.vue";
 
 import DnsRedirect from "@/views/dns/DnsRedirect.vue";
@@ -77,12 +76,14 @@ const inner_zone: Array<RouteRecordRaw> = [
   {
     path: "/geo/domain",
     name: "routes.geo-domain",
-    component: GeoDomain,
+    component: GeoDatabase,
+    props: { kind: "site" },
   },
   {
     path: "/geo/ip",
     name: "routes.geo-ip",
-    component: GeoIp,
+    component: GeoDatabase,
+    props: { kind: "ip" },
   },
   {
     path: "/config",

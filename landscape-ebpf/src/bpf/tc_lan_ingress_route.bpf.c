@@ -44,11 +44,9 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
         return TC_ACT_SHOT;
     }
 
-    bool mac_stored = true;
-
     if (target_info->ifindex != skb->ingress_ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
-            if (prepend_dummy_mac(skb) != 0) {
+            if (prepend_dummy_mac(skb, target_info->is_docker) != 0) {
                 ld_from_lan_log("add dummy_mac fail");
                 return TC_ACT_SHOT;
             }
@@ -59,38 +57,13 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
             if (ret) ld_from_lan_log("bpf_skb_vlan_push error");
             return bpf_redirect(target_info->ifindex, 0);
         }
-
-        if (target_info->has_mac) {
-            struct mac_value_v4 *mac_value =
-                bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
-            if (mac_value) {
-                int ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
-                if (!ret) {
-                    mac_stored = true;
-                } else {
-                    mac_stored = false;
-                    ld_from_lan_log("store_mac_v4 err: %d", ret);
-                }
-            } else {
-                mac_stored = false;
-                ld_from_lan_log("can't find mac by: %pI4", &target_info->gate_addr);
-            }
-        }
     }
 
+    // The target link's from-LAN root owns the Ethernet rewrite and the
+    // neighbour fallback.  LAN ingress only selects the link and hands the
+    // packet to that link's egress chain.
     tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (mac_stored) {
-        return bpf_redirect(target_info->ifindex, 0);
-    }
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET;
-    param.ipv4_nh = target_info->gate_addr;
-    int neigh_ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (unlikely(neigh_ret != TC_ACT_REDIRECT))
-        ld_from_lan_log("bpf_redirect_neigh error: %d", neigh_ret);
-    return neigh_ret;
+    return bpf_redirect(target_info->ifindex, 0);
 }
 
 static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 current_l3_offset,
@@ -113,8 +86,6 @@ static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 
         return TC_ACT_SHOT;
     }
 
-    bool mac_stored = true;
-
     if (target_info->ifindex != skb->ingress_ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
             if (prepend_dummy_mac_v6(skb) != 0) {
@@ -128,36 +99,11 @@ static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 
             if (ret) ld_from_lan_log("bpf_skb_vlan_push error");
             return bpf_redirect(target_info->ifindex, 0);
         }
-
-        if (target_info->has_mac) {
-            struct mac_value_v6 *mac_value =
-                bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
-            if (mac_value) {
-                int ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-                if (!ret) {
-                    mac_stored = true;
-                } else {
-                    mac_stored = false;
-                    ld_from_lan_log("store_mac_v6 err: %d", ret);
-                }
-            } else {
-                mac_stored = false;
-                ld_from_lan_log("can't find mac by: %pI6", &target_info->gate_addr);
-            }
-        }
     }
 
+    // The target link's from-LAN root owns the Ethernet rewrite.
     tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET6;
-    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr32);
-    int neigh_ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (unlikely(neigh_ret != TC_ACT_REDIRECT))
-        ld_from_lan_log("bpf_redirect_neigh error: %d", neigh_ret);
-    return neigh_ret;
+    return bpf_redirect(target_info->ifindex, 0);
 }
 
 SEC("tc/ingress")

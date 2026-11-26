@@ -8,6 +8,8 @@ export default {
   reconnect: "重连",
   switch_to_right: "切换到右侧",
   switch_to_bottom: "切换到底部",
+  fullscreen: "全屏",
+  exit_fullscreen: "退出全屏",
   dock_mode: "停靠模式",
   float_mode: "悬浮模式",
 };

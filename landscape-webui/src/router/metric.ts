@@ -1,12 +1,9 @@
 import { RouteRecordRaw } from "vue-router";
-import DNSMetric from "@/views/metric/DNSMetric.vue";
+import DNSMetricPage from "@/views/metric/DNSMetricPage.vue";
 import LiveMetric from "@/views/metric/conn/LiveMetric.vue";
-import HistoryMetric from "@/views/metric/conn/HistoryMetric.vue";
+import ConnectHistoryPage from "@/views/metric/conn/ConnectHistoryPage.vue";
 import IfaceMetric from "@/views/metric/conn/IfaceMetric.vue";
-import SrcIpMetric from "@/views/metric/conn/SrcIpMetric.vue";
-import DstIpMetric from "@/views/metric/conn/DstIpMetric.vue";
-import HistorySrcIpMetric from "@/views/metric/conn/HistorySrcIpMetric.vue";
-import HistoryDstIpMetric from "@/views/metric/conn/HistoryDstIpMetric.vue";
+import LiveIpMetric from "@/views/metric/conn/LiveIpMetric.vue";
 
 const metric_route: Array<RouteRecordRaw> = [
   {
@@ -17,7 +14,7 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/history",
     name: "routes.connect-history",
-    component: HistoryMetric,
+    component: ConnectHistoryPage,
     meta: { capability: "metric_persistent" },
   },
   {
@@ -28,30 +25,39 @@ const metric_route: Array<RouteRecordRaw> = [
   {
     path: "/metrics/conn/src",
     name: "routes.connect-src",
-    component: SrcIpMetric,
+    component: LiveIpMetric,
+    props: { direction: "src" },
   },
   {
     path: "/metrics/conn/dst",
     name: "routes.connect-dst",
-    component: DstIpMetric,
+    component: LiveIpMetric,
+    props: { direction: "dst" },
   },
   {
     path: "/metrics/conn/history-src",
     name: "routes.connect-history-src",
-    component: HistorySrcIpMetric,
-    meta: { capability: "metric_persistent" },
+    component: ConnectHistoryPage,
+    props: { direction: "src" },
+    meta: {
+      capability: "metric_persistent",
+      activeMenu: "routes.connect-history",
+    },
   },
   {
     path: "/metrics/conn/history-dst",
     name: "routes.connect-history-dst",
-    component: HistoryDstIpMetric,
-    meta: { capability: "metric_persistent" },
+    component: ConnectHistoryPage,
+    props: { direction: "dst" },
+    meta: {
+      capability: "metric_persistent",
+      activeMenu: "routes.connect-history",
+    },
   },
   {
     path: "/metrics/dns",
     name: "routes.dns-metric",
-    component: DNSMetric,
-    meta: { capability: "metric_persistent" },
+    component: DNSMetricPage,
   },
 ];
 

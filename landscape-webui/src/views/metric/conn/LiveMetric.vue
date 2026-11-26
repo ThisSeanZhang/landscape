@@ -1,24 +1,44 @@
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { useMetricStore } from "@/stores/status_metric";
+import { get_connects_info } from "@/api/metric";
+import { useMobileLayout } from "@/composables/useMobileLayout";
+import { Filter } from "@vicons/carbon";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
+import { useAsyncState } from "@vueuse/core";
 import { useFrontEndStore } from "@/stores/front_end_config";
-import { ConnectFilter } from "@/lib/metric.rs";
+import { createConnectionFilter } from "@/lib/metric/connectionFilter";
+import type { ConnectRealtimeStatus } from "@landscape-router/types/api/schemas";
 import { formatRate, formatPackets } from "@/lib/util";
 import { useThemeVars } from "naive-ui";
-import ConnectVirtualList from "@/components/metric/connect/live/ConnectVirtualList.vue";
+import ConnectList from "@/components/metric/connect/ConnectList.vue";
 import FlowSelect from "@/components/flow/FlowSelect.vue";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 
-const metricStore = useMetricStore();
+const {
+  state: connections,
+  isLoading,
+  isReady,
+  execute: refresh,
+} = useAsyncState(get_connects_info, [], { resetOnExecute: false });
+useMetricAutoRefresh(refresh, isLoading);
+
 const frontEndStore = useFrontEndStore();
 const themeVars = useThemeVars();
 const route = useRoute();
 const { t } = useI18n();
 
 // Live filter state
-const liveFilter = reactive(new ConnectFilter());
+const liveFilter = reactive(createConnectionFilter());
+const mobile = useMobileLayout();
+const filtersOpen = ref(false);
+const filterCount = computed(
+  () =>
+    Object.values(liveFilter).filter((value) => value !== null && value !== "")
+      .length,
+);
+const showFilters = computed(() => !mobile.value || filtersOpen.value);
 
 // Protocol options
 const protocolOptions = computed(() => [
@@ -48,19 +68,10 @@ const sortKey = computed(() => frontEndStore.conn_sort_key);
 const sortOrder = computed(() => frontEndStore.conn_sort_order);
 
 const resetLiveFilter = () => {
-  Object.assign(liveFilter, new ConnectFilter());
+  Object.assign(liveFilter, createConnectionFilter());
 };
 
-const toggleSort = (key: "time" | "port" | "ingress" | "egress") => {
-  if (frontEndStore.conn_sort_key === key) {
-    frontEndStore.conn_sort_order =
-      frontEndStore.conn_sort_order === "asc" ? "desc" : "asc";
-  } else {
-    frontEndStore.conn_sort_key = key;
-    frontEndStore.conn_sort_order = "desc";
-  }
-};
-const handleSearchTuple = (conn: any) => {
+const handleSearchTuple = (conn: ConnectRealtimeStatus) => {
   liveFilter.src_ip = conn.src_ip;
   liveFilter.dst_ip = conn.dst_ip;
   liveFilter.port_start = conn.src_port;
@@ -88,23 +99,19 @@ const systemStats = computed(() => {
     egressPps: 0,
     count: 0,
   };
-  if (metricStore.firewall_info) {
-    metricStore.firewall_info.forEach((item) => {
-      stats.ingressBps += item.ingress_bps || 0;
-      stats.egressBps += item.egress_bps || 0;
-      stats.ingressPps += item.ingress_pps || 0;
-      stats.egressPps += item.egress_pps || 0;
-      stats.count++;
-    });
-  }
+  connections.value.forEach((item) => {
+    stats.ingressBps += item.ingress_bps || 0;
+    stats.egressBps += item.egress_bps || 0;
+    stats.ingressPps += item.ingress_pps || 0;
+    stats.egressPps += item.egress_pps || 0;
+    stats.count++;
+  });
   return stats;
 });
 
 // Calculate filtered and sorted connection metrics
 const filteredConnectMetrics = computed(() => {
-  if (!metricStore.firewall_info) return [];
-
-  const filtered = metricStore.firewall_info.filter((item) => {
+  const filtered = connections.value.filter((item) => {
     if (liveFilter.src_ip && !item.src_ip.includes(liveFilter.src_ip))
       return false;
     if (liveFilter.dst_ip && !item.dst_ip.includes(liveFilter.dst_ip))
@@ -135,6 +142,16 @@ const filteredConnectMetrics = computed(() => {
       const timeA = a.last_report_time || a.create_time_ms || 0;
       const timeB = b.last_report_time || b.create_time_ms || 0;
       result = timeA - timeB;
+    } else if (sortKey.value === "duration") {
+      const durationA = Math.max(
+        0,
+        (a.last_report_time || a.create_time_ms) - a.create_time_ms,
+      );
+      const durationB = Math.max(
+        0,
+        (b.last_report_time || b.create_time_ms) - b.create_time_ms,
+      );
+      result = durationA - durationB;
     } else if (sortKey.value === "port") {
       result = (a.src_port || 0) - (b.src_port || 0);
     } else if (sortKey.value === "ingress") {
@@ -155,19 +172,17 @@ const totalStats = computed(() => {
     egressPps: 0,
     count: 0,
   };
-  if (filteredConnectMetrics.value) {
-    filteredConnectMetrics.value.forEach((item) => {
-      stats.ingressBps += item.ingress_bps || 0;
-      stats.egressBps += item.egress_bps || 0;
-      stats.ingressPps += item.ingress_pps || 0;
-      stats.egressPps += item.egress_pps || 0;
-      stats.count++;
-    });
-  }
+  filteredConnectMetrics.value.forEach((item) => {
+    stats.ingressBps += item.ingress_bps || 0;
+    stats.egressBps += item.egress_bps || 0;
+    stats.ingressPps += item.ingress_pps || 0;
+    stats.egressPps += item.egress_pps || 0;
+    stats.count++;
+  });
   return stats;
 });
 
-onMounted(async () => {
+onMounted(() => {
   // Initialize filters from route query
   const srcIp = queryString(route.query.src_ip);
   const dstIp = queryString(route.query.dst_ip);
@@ -182,18 +197,11 @@ onMounted(async () => {
   if (portEnd !== null) liveFilter.port_end = portEnd;
   if (flowId !== null) liveFilter.flow_id = flowId;
   if (ifindex !== null) liveFilter.ifindex = ifindex;
-
-  metricStore.SET_ENABLE("live", true);
-  await metricStore.UPDATE_INFO();
-
-  onUnmounted(() => {
-    metricStore.SET_ENABLE("live", false);
-  });
 });
 </script>
 
 <template>
-  <n-flex vertical style="flex: 1; overflow: hidden">
+  <n-flex vertical :wrap="false" class="live-page">
     <!-- System-wide active connection stats -->
     <n-card
       size="small"
@@ -203,7 +211,7 @@ onMounted(async () => {
       <n-flex align="center" justify="space-between">
         <ConnectViewSwitcher />
 
-        <n-flex align="center" size="large">
+        <n-flex align="center" size="large" class="system-totals">
           <n-flex align="center" size="small">
             <span style="color: #888; font-size: 13px"
               >{{ $t("metric.connect.stats.total_active_conns") }}:</span
@@ -233,8 +241,27 @@ onMounted(async () => {
       </n-flex>
     </n-card>
 
-    <!-- Live mode toolbar -->
-    <n-flex align="center" :wrap="true" style="margin-bottom: 12px">
+    <n-flex v-if="mobile" align="center" size="small">
+      <n-button
+        secondary
+        :type="filterCount ? 'primary' : 'default'"
+        :aria-expanded="filtersOpen"
+        aria-controls="live-filters"
+        @click="filtersOpen = !filtersOpen"
+      >
+        <template #icon><n-icon :component="Filter" /></template>
+        {{ t("common.filters")
+        }}<template v-if="filterCount"> ({{ filterCount }})</template>
+      </n-button>
+      <n-button secondary :loading="isLoading" @click="refresh()">{{
+        t("metric.connect.stats.refresh_sample")
+      }}</n-button>
+      <n-text v-if="filterCount" depth="3"
+        >{{ t("metric.connect.stats.filter_total") }} ·
+        {{ totalStats.count }}</n-text
+      >
+    </n-flex>
+    <div v-show="showFilters" id="live-filters" class="live-filters">
       <n-input
         v-model:value="liveFilter.src_ip"
         :placeholder="$t('metric.connect.filter.src_ip')"
@@ -286,48 +313,26 @@ onMounted(async () => {
       <FlowSelect v-model="liveFilter.flow_id" width="120px" />
 
       <n-button-group>
-        <n-button @click="metricStore.UPDATE_INFO()" type="primary">{{
-          $t("metric.connect.stats.refresh_sample")
-        }}</n-button>
+        <n-button
+          v-if="!mobile"
+          @click="refresh()"
+          :loading="isLoading"
+          type="primary"
+          >{{ $t("metric.connect.stats.refresh_sample") }}</n-button
+        >
         <n-button @click="resetLiveFilter">{{
           $t("metric.connect.reset")
         }}</n-button>
       </n-button-group>
-      <n-divider vertical />
+    </div>
 
-      <n-button-group>
-        <n-button
-          :type="sortKey === 'time' ? 'primary' : 'default'"
-          @click="toggleSort('time')"
-        >
-          {{ $t("metric.connect.filter.time") }}
-          {{ sortKey === "time" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'port' ? 'primary' : 'default'"
-          @click="toggleSort('port')"
-        >
-          {{ $t("metric.connect.filter.port") }}
-          {{ sortKey === "port" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'egress' ? 'primary' : 'default'"
-          @click="toggleSort('egress')"
-        >
-          {{ $t("metric.connect.stats.filter_egress") }}
-          {{ sortKey === "egress" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-        <n-button
-          :type="sortKey === 'ingress' ? 'primary' : 'default'"
-          @click="toggleSort('ingress')"
-        >
-          {{ $t("metric.connect.stats.filter_ingress") }}
-          {{ sortKey === "ingress" ? (sortOrder === "asc" ? "↑" : "↓") : "" }}
-        </n-button>
-      </n-button-group>
-    </n-flex>
-
-    <n-grid x-gap="12" :cols="5" style="margin-bottom: 12px">
+    <n-grid
+      v-if="showFilters"
+      x-gap="8"
+      y-gap="8"
+      cols="2 480:3 820:5"
+      style="margin-bottom: 12px"
+    >
       <n-gi>
         <n-card
           size="small"
@@ -396,12 +401,64 @@ onMounted(async () => {
       </n-gi>
     </n-grid>
 
-    <ConnectVirtualList
-      v-if="filteredConnectMetrics"
-      :connect_metrics="filteredConnectMetrics"
-      @search:tuple="handleSearchTuple"
-      @search:src="(ip) => (liveFilter.src_ip = ip)"
-      @search:dst="(ip) => (liveFilter.dst_ip = ip)"
+    <ConnectList
+      mode="live"
+      :items="filteredConnectMetrics"
+      :show-empty="mobile && isReady && filteredConnectMetrics.length === 0"
+      v-model:sort-key="frontEndStore.conn_sort_key"
+      v-model:sort-order="frontEndStore.conn_sort_order"
+      @filter="handleSearchTuple"
     />
   </n-flex>
 </template>
+
+<style scoped>
+.live-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.live-page {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+@media (max-width: 768px) {
+  .live-page {
+    overflow-y: auto;
+  }
+  .live-page > * {
+    flex-shrink: 0;
+  }
+  .live-page :deep(.connection-list) {
+    min-height: 180px;
+  }
+  .system-totals {
+    display: grid !important;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px !important;
+  }
+  .system-totals > .n-flex {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+  }
+  .system-totals > .n-divider {
+    display: none;
+  }
+  .live-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .live-filters > * {
+    width: 100% !important;
+    min-width: 0;
+  }
+  .live-filters > .n-input-group {
+    grid-column: span 2;
+  }
+}
+</style>

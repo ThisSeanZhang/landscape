@@ -10,12 +10,15 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+subtle = { workspace = true }
+http = { workspace = true }
 landscape-macro = { path = "../landscape-macro" }
 
 anyhow = { workspace = true }
 serde = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
+regex = { workspace = true }
 once_cell = { workspace = true }
 sysinfo = { workspace = true }
 thiserror = { workspace = true }
@@ -53,8 +56,10 @@ md-5 = { workspace = true }
 utoipa = { workspace = true, optional = true }
 
 [features]
+e2e-acme = []
 openapi = ["utoipa"]
 mem-track = []
+metric-persistent = []
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -5,7 +5,6 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
-#include "route/wan_ip.h"
 
 #include "route/flow6_maps.h"
 #include "route/route6_cache.h"
@@ -22,11 +21,7 @@
 // TODO: split two function
 static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff *skb,
                                                                u32 current_l3_offset,
-                                                               struct route6_context *context,
-                                                               bool is_lan) {
-    // NOTE: `is_lan` gates the same-iface MAC rewrite hairpin below; its only
-    // production caller passes false (dead branch), see v4 twin comment.
-
+                                                               struct route6_context *context) {
     int ret;
     struct route6_lan_key lan_search_key = {0};
     struct mac_key_v6 mac_key_search = {0};
@@ -53,16 +48,6 @@ static __always_inline int tc_route6_lan_redirect_check_in_wan(struct __sk_buff 
 
     // is LAN Packet, redirect to lan
     if (unlikely(lan_info->ifindex == skb->ifindex)) {
-        if (is_lan && lan_info->has_mac && !ip_addr_is_zero_in6(&lan_info->addr) &&
-            !ip_addr_equal_in6(&lan_info->addr, &context->daddr)) {
-            COPY_ADDR_FROM(mac_key_search.addr.in6_u.u6_addr32, context->daddr.in6_u.u6_addr32);
-            mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key_search);
-            if (mac_value) {
-                if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                    return bpf_redirect(lan_info->ifindex, 0);
-                }
-            }
-        }
         // current iface
         return TC_ACT_UNSPEC;
     }
@@ -380,109 +365,6 @@ keep_going:
     return TC_ACT_OK;
 }
 
-static __always_inline int route6_pick_wan_and_send_by_flow_id(struct __sk_buff *skb,
-                                                               u32 current_l3_offset,
-                                                               const struct route6_context *context,
-                                                               const u32 flow_id) {
-    int ret;
-    const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route6_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route6_target_slot(&context->daddr),
-    };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
-
-    // 找不到转发的 target 按照原有计划进行处理
-    if (target_info == NULL) {
-        if (resolved_flow_id == 0) {
-            // Default flow PASS
-            return TC_ACT_UNSPEC;
-        } else {
-            ld_from_lan_log("DROP flow_id v6: %d", resolved_flow_id);
-            // Other DROP
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->ifindex == skb->ifindex) {
-        // Belongs to the current ifindex No redirection required
-        return TC_ACT_UNSPEC;
-    }
-
-    // stamp cb like pick_wan: tc_wan_egress_route enters the target link's
-    // chain through these flags; without them the skb carries stale cb from
-    // recycled sk_buffs and dies at the WAN egress root tail call.
-    tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-    if (current_l3_offset == 0 && target_info->has_mac) {
-        if (prepend_dummy_mac_v6(skb) != 0) {
-            ld_from_lan_log("add dummy_mac fail");
-            return TC_ACT_SHOT;
-        }
-    }
-
-    if (target_info->is_docker) {
-        ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, get_flow_vlan_id(resolved_flow_id));
-        if (ret) {
-            ld_from_lan_log("bpf_skb_vlan_push error");
-        }
-        ret = bpf_redirect(target_info->ifindex, 0);
-        if (ret != 7) {
-            ld_from_lan_log("bpf_redirect docker error: %d", ret);
-        }
-        return ret;
-    }
-
-    // ld_from_lan_log("wan_route_info ip: %pI4 ", target_info->gate_addr.in6_u.u6_addr8);
-    // ld_from_lan_log("wan_route_info target_info->ifindex: %d ",target_info->ifindex);
-
-    bool target_has_mac = target_info->has_mac;
-
-    if (!target_has_mac) {
-        return bpf_redirect(target_info->ifindex, 0);
-    } else {
-        struct mac_value_v6 *mac_value = bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
-        if (mac_value) {
-            ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-            if (!ret) {
-                return bpf_redirect(target_info->ifindex, 0);
-            }
-        } else {
-            ld_from_lan_log("can't find mac by: %pI6", &target_info->gate_addr);
-        }
-    }
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET6;
-
-    COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr8);
-    ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-    if (ret != 7) {
-        ld_from_lan_log("bpf_redirect_neigh error: %d", ret);
-    }
-    return ret;
-}
-
-static __always_inline int route6_is_current_wan_packet(struct __sk_buff *skb,
-                                                        u32 current_l3_offset,
-                                                        struct route6_context *context) {
-    struct wan_ip_info_key wan_search_key = {0};
-    wan_search_key.ifindex = skb->ingress_ifindex;
-    wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-    struct wan_ip_info_value *wan_ip_info = bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-    if (wan_ip_info != NULL) {
-        // Check if the current DST IP is the IP that enters the WAN network card
-        // ld_from_wan_log("wan_ip_info ip: %pI6", &wan_ip_info->addr);
-        if (ip_addr_equal_x(&wan_ip_info->addr, &context->daddr)) {
-            return TC_ACT_UNSPEC;
-        }
-    }
-
-    return TC_ACT_OK;
-}
-
 static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *skb,
                                                             u32 current_l3_offset,
                                                             struct route6_cache_value *target) {
@@ -510,87 +392,33 @@ static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *sk
         return ret;
     }
 
-    if (!target->has_mac) {
-        return bpf_redirect(target->ifindex, 0);
-    } else {
-        struct mac_value_v6 *mac_value = bpf_map_lookup_elem(&ip_mac_v6, &target->gate_addr);
-        if (mac_value) {
-            int ret = store_mac_v6(skb, mac_value->mac, target->mac);
-            if (!ret) {
-                return bpf_redirect(target->ifindex, 0);
-            }
-        }
-    }
-
-    struct bpf_redir_neigh param;
-    param.nh_family = AF_INET6;
-    COPY_ADDR_FROM(param.ipv6_nh, target->gate_addr.in6_u.u6_addr8);
-    return bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
+    // As on a slot hit, the selected WAN root owns the Ethernet header.
+    return bpf_redirect(target->ifindex, 0);
 }
 
 static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
                                                       const u32 current_l3_offset,
                                                       const struct route6_context *context,
                                                       u32 *flow_mark) {
-    int ret = 0;
     u32 key = WAN_CACHE;
     struct route6_cache_key search_key = {0};
-    struct mac_key_v6 mac_key = {0};
-    struct mac_value_v6 *mac_value = NULL;
     struct route6_cache_value *target = NULL;
 
     __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
     __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
 
-    // Fist WAN
+    // First WAN
     void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (wan_cache) {
         target = bpf_map_lookup_elem(wan_cache, &search_key);
         if (target) {
-            struct wan_ip_info_key wan_search_key = {0};
-            wan_search_key.ifindex = target->ifindex;
-            wan_search_key.l3_protocol = LANDSCAPE_IPV6_TYPE;
-
-            struct wan_ip_info_value *wan_ip_info =
-                bpf_map_lookup_elem(&wan_ip_binding, &wan_search_key);
-            if (wan_ip_info != NULL) {
-                bool target_has_mac = target->has_mac;
-                tc_cb_mark_forwarded(skb, target->link_chain_id);
-
-                // struct mac_key_v6 search_mac_key = {0};
-                // COPY_ADDR_FROM(search_mac_key.addr.in6_u.u6_addr32,
-                // wan_ip_info->gateway.in6_u.u6_addr32);
-
-                if (!target_has_mac) {
-                    return bpf_redirect(target->ifindex, 0);
-                } else {
-                    COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
-                                   search_key.remote_addr.in6_u.u6_addr8);
-                    mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                    if (mac_value) {
-                        if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                            return bpf_redirect(target->ifindex, 0);
-                        }
-                    } else {
-                        COPY_ADDR_FROM(mac_key.addr.in6_u.u6_addr8,
-                                       wan_ip_info->gateway.in6_u.u6_addr8);
-                        mac_value = bpf_map_lookup_elem(&ip_mac_v6, &mac_key);
-                        if (mac_value) {
-                            if (!bpf_skb_store_bytes(skb, 0, &mac_value->mac, 14, 0)) {
-                                return bpf_redirect(target->ifindex, 0);
-                            }
-                        }
-                    }
-                }
-
-                struct bpf_redir_neigh param;
-
-                param.nh_family = AF_INET6;
-
-                COPY_ADDR_FROM(param.ipv6_nh, wan_ip_info->gateway.in6_u.u6_addr8);
-                ret = bpf_redirect_neigh(target->ifindex, &param, sizeof(param), 0);
-                return ret;
+            if (target->ifindex == 0) {
+                return TC_ACT_SHOT;
             }
+            if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
+                return TC_ACT_SHOT;
+            tc_cb_mark_forwarded(skb, target->link_chain_id);
+            return bpf_redirect(target->ifindex, 0);
         }
     }
 
@@ -598,13 +426,9 @@ static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             *flow_mark = target->mark_value;
-            if (target->ifindex != 0) {
-                return route6_redirect_by_cached_target(skb, current_l3_offset, target);
-            }
-            return route6_pick_wan_and_send_by_flow_id(skb, current_l3_offset, context,
-                                                       target->mark_value);
+            return route6_redirect_by_cached_target(skb, current_l3_offset, target);
         }
     }
 
@@ -691,7 +515,7 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
     void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
     if (lan_cache) {
         target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target) {
+        if (target && target->ifindex != 0) {
             target->mark_value = flow_mark;
         } else {
             const u32 resolved_flow_id = get_flow_id(flow_mark);
@@ -701,17 +525,15 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
             };
             struct route6_target_info *slot_target = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
 
+            // The slot can disappear after pick_wan. Do not cache an unresolved target.
+            if (slot_target == NULL || slot_target->ifindex == 0) return TC_ACT_OK;
+
             struct route6_cache_value new_target_cache = {0};
             new_target_cache.mark_value = flow_mark;
-            if (slot_target != NULL) {
-                new_target_cache.ifindex = slot_target->ifindex;
-                new_target_cache.has_mac = slot_target->has_mac;
-                new_target_cache.is_docker = slot_target->is_docker;
-                __builtin_memcpy(new_target_cache.gate_addr.in6_u.u6_addr8,
-                                 slot_target->gate_addr.in6_u.u6_addr8, 16);
-                __builtin_memcpy(new_target_cache.mac, slot_target->mac, 6);
-                new_target_cache.link_chain_id = slot_target->link_chain_id;
-            }
+            new_target_cache.ifindex = slot_target->ifindex;
+            new_target_cache.has_mac = slot_target->has_mac;
+            new_target_cache.is_docker = slot_target->is_docker;
+            new_target_cache.link_chain_id = slot_target->link_chain_id;
             new_target_cache.xdp_redirect_able =
                 xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
             bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);

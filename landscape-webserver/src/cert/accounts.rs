@@ -29,7 +29,7 @@ pub fn get_cert_account_paths() -> OpenApiRouter<LandscapeApp> {
 async fn list_cert_accounts(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<CertAccountConfig>> {
-    let result = state.cert_account_service.list().await?;
+    let result = state.managed.cert_account_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -45,9 +45,9 @@ async fn create_cert_account(
     JsonBody(account): JsonBody<CertAccountConfig>,
 ) -> LandscapeApiResult<CertAccountConfig> {
     if account.id != ConfigId::default() {
-        state.cert_service.ensure_account_mutation_allowed(account.id).await?;
+        state.managed.cert_service.ensure_account_mutation_allowed(account.id).await?;
     }
-    let result = state.cert_account_service.checked_set(account).await?;
+    let result = state.managed.cert_account_service.checked_set(account).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -65,7 +65,7 @@ async fn get_cert_account(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertAccountConfig> {
-    let result = state.cert_account_service.find_by_id(id).await?;
+    let result = state.managed.cert_account_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -87,8 +87,8 @@ async fn delete_cert_account(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.cert_service.ensure_account_mutation_allowed(id).await?;
-    state.cert_account_service.delete(id).await?;
+    state.managed.cert_service.ensure_account_mutation_allowed(id).await?;
+    state.managed.cert_account_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 
@@ -108,8 +108,8 @@ async fn register_cert_account(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertAccountConfig> {
-    let result = state.cert_account_service.register_account(id).await?;
-    state.cert_service.sync_account_status_hint(id, &result.status).await;
+    let result = state.managed.cert_account_service.register_account(id).await?;
+    state.managed.cert_service.sync_account_status_hint(id, &result.status).await;
     LandscapeApiResp::success(result)
 }
 
@@ -128,8 +128,8 @@ async fn verify_cert_account(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertAccountConfig> {
-    let result = state.cert_account_service.verify_account(id).await?;
-    state.cert_service.sync_account_status_hint(id, &result.status).await;
+    let result = state.managed.cert_account_service.verify_account(id).await?;
+    state.managed.cert_service.sync_account_status_hint(id, &result.status).await;
     LandscapeApiResp::success(result)
 }
 
@@ -148,8 +148,8 @@ async fn deactivate_cert_account(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertAccountConfig> {
-    state.cert_service.ensure_account_mutation_allowed(id).await?;
-    let result = state.cert_account_service.deactivate_account(id).await?;
-    state.cert_service.sync_account_status_hint(id, &result.status).await;
+    state.managed.cert_service.ensure_account_mutation_allowed(id).await?;
+    let result = state.managed.cert_account_service.deactivate_account(id).await?;
+    state.managed.cert_service.sync_account_status_hint(id, &result.status).await;
     LandscapeApiResp::success(result)
 }

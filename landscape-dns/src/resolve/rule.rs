@@ -7,7 +7,8 @@ use hickory_proto::rr::{
 };
 use uuid::Uuid;
 
-use landscape_common::dns::error::DnsResult;
+use crate::resolve::answer::DnsAnswer;
+use landscape_common::dns::error::{DnsResult, DnsServiceError};
 use landscape_common::dns::redirect::DnsRedirectAnswerMode;
 use landscape_common::flow::mark::{FlowMark, SocketMark};
 use landscape_common::{
@@ -173,6 +174,13 @@ impl DNSResolveRuntime {
         })
     }
 
+    pub(crate) fn can_reuse_answers_with(&self, next: &Self) -> bool {
+        self.rule_id == next.rule_id
+            && self.filter == next.filter
+            && self.enable_ip_validation == next.enable_ip_validation
+            && Arc::ptr_eq(&self.resolver, &next.resolver)
+    }
+
     pub fn mark(&self) -> &DnsRuntimeMarkInfo {
         &self.mark
     }
@@ -199,55 +207,51 @@ impl DNSResolveRuntime {
         self.matcher.is_match(domain)
     }
 
-    pub async fn lookup(&self, domain: &str, query_type: RecordType) -> DnsResult<Vec<Record>> {
-        match self.resolver.lookup(domain, query_type).await {
-            Ok(lookup) => {
-                let result = if self.enable_ip_validation {
-                    lookup
-                        .answers()
-                        .iter()
-                        .filter(|ietm| match &ietm.data {
-                            RData::A(A(ipv4)) => is_global_ipv4(ipv4),
-                            RData::AAAA(AAAA(ipv6)) => is_global_ipv6(ipv6),
-                            _ => true,
-                        })
-                        .cloned()
-                        .collect()
-                } else {
-                    lookup.answers().to_vec()
-                };
-                Ok(result)
-            }
-            Err(e) => {
-                use landscape_common::dns::error::DnsServiceError;
-                match &e {
-                    hickory_resolver::net::NetError::Dns(
-                        hickory_resolver::net::DnsError::NoRecordsFound(no_records),
-                    ) => {
-                        tracing::warn!(
-                            flow_id = self.flow_id,
-                            rule_id = %self.rule_id,
-                            domain = %domain,
-                            response_code = ?no_records.response_code,
-                            "upstream answered an error code"
-                        );
-                        return Err(DnsServiceError::Protocol(no_records.response_code));
-                    }
-                    hickory_resolver::net::NetError::Timeout => {
-                        return Err(DnsServiceError::Timeout);
-                    }
-                    _ => {}
-                }
-                tracing::error!(
-                    "[flow_id: {}, rule: {}] DNS resolution failed for {}: {}",
-                    self.flow_id,
-                    self.rule_id,
-                    domain,
-                    e
-                );
-                Err(DnsServiceError::Internal(e.to_string()))
-            }
+    pub async fn lookup(
+        &self,
+        domain: &ParsedDomain,
+        query_type: RecordType,
+    ) -> DnsResult<Vec<Record>> {
+        let answer = self.query_upstream(domain, query_type).await?;
+        if answer.response_code != hickory_proto::op::ResponseCode::NoError
+            || answer.records.is_empty()
+        {
+            return Err(DnsServiceError::Protocol(answer.response_code));
         }
+        Ok(self.validate_answer(answer).records)
+    }
+
+    pub(crate) async fn lookup_answer(
+        &self,
+        domain: &ParsedDomain,
+        query_type: RecordType,
+    ) -> DnsResult<DnsAnswer> {
+        self.query_upstream(domain, query_type).await.map(|answer| self.validate_answer(answer))
+    }
+
+    async fn query_upstream(
+        &self,
+        domain: &ParsedDomain,
+        query_type: RecordType,
+    ) -> DnsResult<DnsAnswer> {
+        self.resolver.lookup(domain, query_type).await.map_err(|err| {
+            if matches!(err, hickory_resolver::net::NetError::Timeout) {
+                return DnsServiceError::Timeout;
+            }
+            tracing::error!(flow_id = self.flow_id, rule_id = %self.rule_id, domain = %domain.raw(), %err, "DNS resolution failed");
+            DnsServiceError::Internal(err.to_string())
+        })
+    }
+
+    fn validate_answer(&self, mut answer: DnsAnswer) -> DnsAnswer {
+        if self.enable_ip_validation {
+            answer.records.retain(|record| match &record.data {
+                RData::A(A(ipv4)) => is_global_ipv4(ipv4),
+                RData::AAAA(AAAA(ipv6)) => is_global_ipv6(ipv6),
+                _ => true,
+            });
+        }
+        answer
     }
 }
 

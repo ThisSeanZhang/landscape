@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use landscape_common::config::DnsRuntimeConfig;
+use landscape_common::sys_config::CacheRuntimeConfig;
 use landscape_core::geo_cache::SiteMatcherRegistry;
 
 use crate::server::{EngineBuilder, LandscapeDnsServer};
@@ -39,18 +39,8 @@ impl DnsCoordinator {
         &self.server
     }
 
-    pub async fn apply_runtime_config(&self, dns_config: DnsRuntimeConfig) {
-        let cache_runtime = dns_config.cache_runtime();
-        let doh_runtime = dns_config.doh_runtime();
-        let (previous_cache_runtime, startup_doh_runtime) =
-            self.server.current_live_runtime_config();
-        if startup_doh_runtime.as_ref() != Some(&doh_runtime) {
-            // Product policy: cert/SNI domains hot-reload through the shared
-            // resolver, but DoH port/path are bound at process startup.
-            tracing::warn!(
-                "DoH listen_port/http_endpoint changes require process restart to take effect"
-            );
-        }
+    pub async fn apply_cache_config(&self, cache_runtime: CacheRuntimeConfig) {
+        let previous_cache_runtime = self.server.cache_config();
         let rebuild_cache = previous_cache_runtime.cache_capacity != cache_runtime.cache_capacity
             || previous_cache_runtime.cache_ttl != cache_runtime.cache_ttl;
         self.server.update_runtime_config(cache_runtime);

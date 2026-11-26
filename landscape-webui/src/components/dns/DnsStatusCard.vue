@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
+import SampleStatus from "@/components/sysinfo/SampleStatus.vue";
+import { dnsLatencyStats } from "@/components/metric/dns/latencyStats";
 import { useI18n } from "vue-i18n";
 import {
   useThemeVars,
@@ -12,10 +14,8 @@ import {
 } from "naive-ui";
 import { Refresh, HelpCircleOutline } from "@vicons/ionicons5";
 
-import {
-  get_dns_lightweight_summary,
-  DnsLightweightSummaryResponse,
-} from "@/api/metric/dns";
+import type { DnsLightweightSummaryResponse } from "@landscape-router/types/api/schemas";
+import { get_dns_lightweight_summary } from "@/api/metric/dns";
 import DnsRuleDrawer from "@/components/dns/DnsRuleDrawer.vue";
 import WanIpRuleDrawer from "@/components/flow/wan/WanIpRuleDrawer.vue";
 const themeVars = useThemeVars();
@@ -23,27 +23,35 @@ const { t } = useI18n();
 
 const props = defineProps<{
   startTime?: number;
+  compact?: boolean;
 }>();
 
 const summary = ref<DnsLightweightSummaryResponse | null>(null);
 const loading = ref(true);
+const failed = ref(false);
+const updatedAt = ref<number>();
 
 const show_rule_drawer = ref(false);
 const show_ip_rule = ref(false);
 
+let requestId = 0;
 const loadSummary = async () => {
+  const id = ++requestId;
   loading.value = true;
   try {
-    const now = Date.now();
-    const startTime = props.startTime || now - 5 * 60 * 1000;
-    summary.value = await get_dns_lightweight_summary({
-      start_time: startTime,
-      end_time: now,
+    const result = await get_dns_lightweight_summary({
+      start_time: props.startTime ?? 0,
+      end_time: 0,
     });
-  } catch (e) {
-    console.error(e);
+    if (requestId === id) {
+      summary.value = result;
+      updatedAt.value = Date.now();
+      failed.value = false;
+    }
+  } catch {
+    if (requestId === id) failed.value = true;
   } finally {
-    loading.value = false;
+    if (requestId === id) loading.value = false;
   }
 };
 
@@ -66,40 +74,11 @@ const calculatePercent = (count: number) => {
   return Number(((count / summary.value.total_queries) * 100).toFixed(1));
 };
 
-const latencyStats = computed(() => [
-  {
-    label: t("metric.dns.dash.avg"),
-    value: summary.value?.avg_duration_ms,
-    color: themeVars.value.successColor,
-  },
-  {
-    label: t("metric.dns.dash.p50"),
-    value: summary.value?.p50_duration_ms,
-    color: themeVars.value.infoColor,
-  },
-  {
-    label: t("metric.dns.dash.p95"),
-    value: summary.value?.p95_duration_ms,
-    color: themeVars.value.warningColor,
-  },
-  {
-    label: t("metric.dns.dash.p99"),
-    value: summary.value?.p99_duration_ms,
-    color: themeVars.value.errorColor,
-  },
-  {
-    label: t("metric.dns.dash.max"),
-    value: summary.value?.max_duration_ms,
-    color: themeVars.value.primaryColor,
-  },
-]);
-
 defineExpose({ refresh: loadSummary });
 </script>
 
 <template>
   <n-card
-    :loading="loading"
     class="dns-status-card"
     content-style="display: flex; flex-direction: column; height: 100%; padding-top: 26px;"
   >
@@ -112,7 +91,7 @@ defineExpose({ refresh: loadSummary });
       </n-flex>
     </template>
 
-    <template #header-extra>
+    <template v-if="!compact" #header-extra>
       <n-flex :size="6" align="center">
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -121,6 +100,7 @@ defineExpose({ refresh: loadSummary });
               secondary
               circle
               :loading="loading"
+              :aria-label="t('common.refresh')"
               @click="loadSummary"
             >
               <template #icon>
@@ -139,8 +119,20 @@ defineExpose({ refresh: loadSummary });
       </n-flex>
     </template>
 
-    <!-- DNS Metrics Content -->
-    <n-flex vertical :size="16">
+    <SampleStatus
+      :failed="failed"
+      :updated-at="updatedAt"
+      @retry="loadSummary"
+    />
+    <div v-if="compact && summary">
+      <strong class="overview-value">{{
+        summary.total_queries.toLocaleString()
+      }}</strong>
+      <n-text depth="3" class="query-label">{{
+        t("metric.dns.dash.total_queries")
+      }}</n-text>
+    </div>
+    <n-flex v-else-if="summary" vertical :size="16">
       <n-grid :cols="3" :x-gap="12">
         <!-- Total Queries -->
         <n-gi>
@@ -264,22 +256,22 @@ defineExpose({ refresh: loadSummary });
             vertical
             align="center"
             :size="2"
-            v-for="stat in latencyStats"
-            :key="stat.label"
+            v-for="stat in dnsLatencyStats"
+            :key="stat.field"
           >
             <n-text
               depth="3"
               style="font-size: 10px; text-transform: uppercase"
-              >{{ stat.label }}</n-text
+              >{{ t(stat.label) }}</n-text
             >
             <n-text
               strong
               style="font-size: 14px"
-              :style="{ color: stat.color }"
+              :style="{ color: themeVars[stat.color] }"
             >
               <n-number-animation
                 :from="0"
-                :to="stat.value || 0"
+                :to="summary?.[stat.field] ?? 0"
                 :precision="1"
               />
             </n-text>
@@ -294,6 +286,10 @@ defineExpose({ refresh: loadSummary });
 </template>
 
 <style scoped>
+.query-label {
+  display: block;
+  font-size: 12px;
+}
 .no-data-text {
   font-size: 11px;
 }

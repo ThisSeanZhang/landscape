@@ -17,15 +17,39 @@ pub(crate) struct StaticNat6MappingValue {
     pub lan_prefix: [u8; 8],
 }
 
+/// C side `nat6_mapping_key`. Test-only today.
+#[cfg_attr(not(test), allow(dead_code))]
+#[repr(C, align(4))]
+#[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct Nat6MappingKey {
+    pub client_suffix: [u8; 8],
+    pub client_port: u16,
+    pub id_byte: u8,
+    pub l4_protocol: u8,
+}
+
 /// C side `nat6_timer_key`. Test-only today.
 #[cfg_attr(not(test), allow(dead_code))]
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Nat6TimerKey {
-    pub client_suffix: [u8; 8],
-    pub client_port: u16,
-    pub id_byte: u8,
-    pub l4_protocol: u8,
+    pub local: Nat6MappingKey,
+    pub remote_port: u16,
+    pub _pad: u16,
+    pub remote_addr: [u8; 16],
+}
+
+#[cfg(test)]
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable)]
+pub(crate) struct Nat6MappingValue {
+    pub refs: u32,
+    pub lock: u32,
+    pub client_prefix: [u8; 8],
+    pub trigger_addr: [u8; 16],
+    pub trigger_port: u16,
+    pub allow_reuse: u8,
+    pub _pad: [u8; 5],
 }
 
 /// C side `nat6_timer_value`. Test-only today.
@@ -34,17 +58,16 @@ pub(crate) struct Nat6TimerKey {
 #[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
 pub(crate) struct Nat6TimerValue {
     pub timer: [u8; 16],
-    pub server_status: u64,
-    pub client_status: u64,
+    pub tcp_flags: u64,
     pub status: u64,
-    pub trigger_addr: [u8; 16],
-    pub trigger_port: u16,
-    pub is_allow_reuse: u8,
+    pub is_trigger: u8,
+    pub allow_reuse: u8,
+    pub _pad: u8,
     pub flow_id: u8,
     pub gress: u8,
     pub is_static: u8,
     pub need_prefix_replace: u8,
-    pub _pad: u8,
+    pub delete_report_failures: u8,
     pub create_time: u64,
     pub ingress_bytes: u64,
     pub ingress_packets: u64,
@@ -53,6 +76,7 @@ pub(crate) struct Nat6TimerValue {
     pub cpu_id: u32,
     pub ifindex: u32,
     pub client_prefix: [u8; 8],
+    pub wait_deadline_ns: u64,
 }
 
 #[cfg(test)]
@@ -70,27 +94,43 @@ mod tests {
         assert_size!(StaticNat6MappingValue, share6::static_nat6_mapping_value);
         assert_field!(StaticNat6MappingValue, share6::static_nat6_mapping_value, lan_prefix);
 
+        assert_eq!(align_of::<Nat6MappingKey>(), 4);
+        assert_eq!(align_of::<Nat6TimerKey>(), 4);
         assert_size!(Nat6TimerKey, share6::nat6_timer_key);
-        assert_field!(Nat6TimerKey, share6::nat6_timer_key, client_suffix);
-        assert_field!(Nat6TimerKey, share6::nat6_timer_key, client_port);
-        assert_field!(Nat6TimerKey, share6::nat6_timer_key, id_byte);
-        assert_field!(Nat6TimerKey, share6::nat6_timer_key, l4_protocol);
-
-        assert_size!(Nat6TimerValue, share6::nat6_timer_value);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, timer);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, server_status);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, client_status);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, status);
+        assert_field!(Nat6TimerKey, share6::nat6_timer_key, local);
         assert_field_as!(
-            Nat6TimerValue,
+            Nat6TimerKey,
+            remote_addr,
+            share6::nat6_timer_key,
+            remote_addr.in6_u.u6_addr8
+        );
+        assert_field!(Nat6TimerKey, share6::nat6_timer_key, remote_port);
+        assert_size!(Nat6MappingKey, share6::nat6_mapping_key);
+        assert_field!(Nat6MappingKey, share6::nat6_mapping_key, client_suffix);
+        assert_field!(Nat6MappingKey, share6::nat6_mapping_key, client_port);
+        assert_field!(Nat6MappingKey, share6::nat6_mapping_key, id_byte);
+        assert_field!(Nat6MappingKey, share6::nat6_mapping_key, l4_protocol);
+        assert_size!(Nat6MappingValue, share6::nat6_mapping_value);
+        assert_field!(Nat6MappingValue, share6::nat6_mapping_value, refs);
+        assert_field!(Nat6MappingValue, share6::nat6_mapping_value, client_prefix);
+        assert_field_as!(
+            Nat6MappingValue,
             trigger_addr,
-            share6::nat6_timer_value,
+            share6::nat6_mapping_value,
             trigger_addr.in6_u.u6_addr8
         );
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, trigger_port);
-        assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_allow_reuse);
+        assert_field!(Nat6MappingValue, share6::nat6_mapping_value, trigger_port);
+        assert_field!(Nat6MappingValue, share6::nat6_mapping_value, allow_reuse);
+        assert_size!(Nat6TimerValue, share6::nat6_timer_value);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, timer);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, tcp_flags);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, status);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_trigger);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, allow_reuse);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, is_static);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, need_prefix_replace);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, delete_report_failures);
         assert_field!(Nat6TimerValue, share6::nat6_timer_value, client_prefix);
+        assert_field!(Nat6TimerValue, share6::nat6_timer_value, wait_deadline_ns);
     }
 }

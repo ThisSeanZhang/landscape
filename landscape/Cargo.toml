@@ -15,6 +15,8 @@ landscape-common = { path = "../landscape-common" }
 landscape-core = { path = "../landscape-core" }
 landscape-database = { path = "../landscape-database" }
 landscape-dns = { path = "../landscape-dns" }
+landscape-gateway = { path = "../landscape-gateway", optional = true }
+http = { workspace = true }
 landscape-metric = { path = "../landscape-metric" }
 landscape-protobuf = { path = "../landscape-protobuf" }
 
@@ -92,12 +94,18 @@ etherparse = { workspace = true }
 workspace = true
 
 [features]
+# Optional additional drivers; the application storage remains SQLite-based.
+postgres-driver = ["landscape-database/postgres-driver"]
+mysql-driver = ["landscape-database/mysql-driver"]
+e2e-acme = ["landscape-common/e2e-acme"]
 default = ["metric-persistent"]
+gateway = ["dep:landscape-gateway"]
 metric-persistent = ["landscape-metric/metric-persistent"]
 mem-track = ["landscape-common/mem-track", "landscape-metric/mem-track"]
 
 [dev-dependencies]
 axum = { workspace = true }
+sea-orm = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 libbpf-rs = { workspace = true }

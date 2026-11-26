@@ -24,14 +24,14 @@ const loading_key = ref(false);
 // Use a composite value to handle duplicate keys from different sources
 const compositeValue = computed({
   get() {
-    if (name.value && key.value) {
-      return `${name.value}###${key.value}`;
+    if (key.value) {
+      return JSON.stringify([name.value, key.value]);
     }
     return null;
   },
   set(val: string | null) {
     if (val) {
-      const [n, k] = val.split("###");
+      const [n, k] = JSON.parse(val);
       name.value = n;
       key.value = k;
     } else {
@@ -71,7 +71,7 @@ const geo_key_options = computed(() => {
     for (const each_key of keys.value) {
       result.push({
         label: each_key.key,
-        value: `${each_key.name}###${each_key.key}`,
+        value: JSON.stringify([each_key.name, each_key.key]),
         data: each_key,
       });
     }
@@ -147,6 +147,9 @@ function handleKeySelect() {
       :loading="loading_key"
       clearable
       remote
+      :fallback-option="
+        (value: string | number) => ({ value, label: key ?? '' })
+      "
       :render-label="renderGeoSelectLabel"
       @update:show="show_keys"
       @update:value="handleKeySelect"

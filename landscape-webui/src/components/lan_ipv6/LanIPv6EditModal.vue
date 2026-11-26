@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { ServiceKind } from "@/lib/ipv6/lan_ipv6_v2_helpers";
 import { computed, ref } from "vue";
 import { FormInst, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -7,7 +8,7 @@ import ConfigModal from "@/components/common/ConfigModal.vue";
 import {
   get_lan_ipv6_config,
   update_lan_ipv6_config,
-} from "@/api/service_lan_ipv6";
+} from "@/api/services/lan_ipv6";
 import type {
   ApiLanIPv6ServiceConfigV2 as LanIPv6ServiceConfigV2,
   ApiLanPrefixGroupConfig as LanPrefixGroupConfig,
@@ -80,7 +81,7 @@ const all_groups = computed(
   () => service_config.value?.config.prefix_groups ?? [],
 );
 
-function allowed_service_kinds_for_type(): ("ra" | "na" | "pd")[] {
+function allowed_service_kinds_for_type(): ServiceKind[] {
   const mode = service_config.value?.config.mode ?? "slaac";
   if (mode === "slaac") {
     return ["ra"];

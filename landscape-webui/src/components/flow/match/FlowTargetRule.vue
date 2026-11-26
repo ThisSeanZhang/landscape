@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { get_docker_container_summarys } from "@/api/docker";
-import { get_all_wan_links } from "@/api/service_wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
 import type {
   ApiFlowTarget as FlowTarget,
   ApiWeightedFlowTarget as WeightedFlowTarget,
 } from "@landscape-router/types/api/schemas";
-import { wan_link_options } from "@/lib/wan_link";
-import type { WanLink } from "@/lib/wan_link";
+import { wan_link_options } from "@/lib/wan/wan_link";
+import type { WanLink } from "@/lib/wan/wan_link";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 

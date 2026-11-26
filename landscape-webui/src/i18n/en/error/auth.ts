@@ -1,4 +1,6 @@
 export default {
+  "auth.password_managed_externally":
+    "Administrator password is managed by the startup arguments or environment.",
   "auth.missing_header": "Missing Authorization header",
   "auth.invalid_format": "Invalid Authorization header format",
   "auth.invalid_token": "Invalid token, please log in again",

@@ -4,6 +4,9 @@ use serde::Serialize;
 #[derive(thiserror::Error, Debug, LdApiError)]
 #[api_error(crate_path = "crate")]
 pub enum TimeSyncError {
+    #[error("Enabled time synchronization requires a nonempty list of valid server addresses")]
+    #[api_error(id = "time.invalid_servers", status = 400)]
+    InvalidServers,
     #[error("Time sync service is not enabled")]
     #[api_error(id = "time.sync_disabled", status = 409)]
     SyncDisabled,

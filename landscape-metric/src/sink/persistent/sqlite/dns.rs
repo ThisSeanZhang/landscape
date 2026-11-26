@@ -2,8 +2,8 @@ use futures_util::StreamExt;
 use hdrhistogram::serialization::{Deserializer, Serializer, V2Serializer};
 use landscape_common::metric::connect::SortOrder;
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsMetric,
-    DnsSortKey, DnsStatEntry, DnsSummaryQueryParams, DnsSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsMetric, DnsSortKey, DnsStatEntry,
+    DnsSummaryQueryParams, DnsSummaryResponse,
 };
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::agg::dns_bucket::{DnsBucketRow, DnsCounters, DnsSummaryParts};
 
 use super::clean_ip_string;
+use crate::sink::DnsWriteBatch;
 
 /// 延迟统计排除的 status;与内存窗口一致,仅 Normal/NxDomain 计入。
 /// NxDomain 含大量本地/缓存秒回查询(拦截 TLD、缓存 NXDOMAIN、被类型过滤的 NXDOMAIN),
@@ -104,7 +105,7 @@ pub(crate) async fn initialize_schema(pool: &SqlitePool) -> Result<(), sqlx::Err
     // 1m 预聚合桶(追加写):report_time 为批内最后一条 metric 的完整时间(主键),
     // bucket_time 为分钟对齐桶标识。同一 bucket_time 允许多行——多个批次贡献
     // 同一分钟各自成行(纯追加,不累加),读侧按 bucket_time 逐行合并
-    // (SUM 计数 + 直方图合并 + top union);同 report_time 冲突直接忽略。
+    // 同 flow 的多个批次在同一毫秒结束时，累加该行的计数、延迟和 top 数据。
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS dns_metrics_1m (
             flow_id INTEGER NOT NULL,
@@ -220,164 +221,196 @@ fn normalize_domain(domain: &mut String) {
     }
 }
 
-/// 批量插入 DNS 记录(单事务),answers/status 以 JSON 字符串存储。
-pub(crate) async fn insert_dns_batch(
+pub(crate) async fn write_dns_batch(
     pool: &SqlitePool,
-    metrics: &[DnsMetric],
+    batch: &DnsWriteBatch,
 ) -> Result<(), sqlx::Error> {
-    if metrics.is_empty() {
-        return Ok(());
-    }
-
-    super::run_write_tx(pool, metrics, |conn, metrics| {
+    super::run_write_tx(pool, batch, |conn, batch| {
         Box::pin(async move {
-            for metric in *metrics {
-                let mut answers = metric.answers.iter().take(64).cloned().collect::<Vec<_>>();
-                while serde_json::to_vec(&answers).map(|json| json.len()).unwrap_or(0) > 16 * 1024 {
-                    if answers.pop().is_none() {
-                        break;
-                    }
-                }
-                let answers_json =
-                    serde_json::to_string(&answers).unwrap_or_else(|_| "[]".to_string());
-                let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
-                sqlx::query(
-                    "INSERT INTO dns_metrics (
-                        flow_id, domain, query_type, response_code,
-                        report_time, duration_ms, src_ip, answers, status
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                )
-                .bind(metric.flow_id as i64)
-                .bind(metric.domain.clone())
-                .bind(metric.query_type.clone())
-                .bind(metric.response_code.clone())
-                .bind(metric.report_time as i64)
-                .bind(metric.duration_ms as i64)
-                .bind(clean_ip_string(&metric.src_ip))
-                .bind(answers_json)
-                .bind(status_json)
-                .execute(&mut *conn)
-                .await?;
-            }
-            Ok(())
+            insert_raw_rows(conn, &batch.metrics).await?;
+            insert_bucket_rows(conn, &batch.buckets).await
         })
     })
     .await
 }
 
-/// 1m 预聚合桶批量落库(单事务,追加写)。
-/// 桶行由 DNS writer 从原始行批次构建(writer 是桶的唯一数据源);同一 bucket_time
-/// 多行是设计内行为:多批次贡献同一分钟各自成行,读侧逐行合并得到正确聚合。
-/// 同 (flow_id, report_time) 冲突直接忽略(≈重复批次);top 表同键冲突同样忽略。
-pub(crate) async fn insert_dns_bucket_rows(
-    pool: &SqlitePool,
+async fn insert_raw_rows(
+    conn: &mut sqlx::SqliteConnection,
+    metrics: &[DnsMetric],
+) -> Result<(), sqlx::Error> {
+    for metric in metrics {
+        let mut answers = metric.answers.iter().take(64).cloned().collect::<Vec<_>>();
+        while serde_json::to_vec(&answers).map(|json| json.len()).unwrap_or(0) > 16 * 1024 {
+            if answers.pop().is_none() {
+                break;
+            }
+        }
+        let answers_json = serde_json::to_string(&answers).unwrap_or_else(|_| "[]".to_string());
+        let status_json = serde_json::to_string(&metric.status).unwrap_or_default();
+        sqlx::query(
+            "INSERT INTO dns_metrics (
+                flow_id, domain, query_type, response_code,
+                report_time, duration_ms, src_ip, answers, status
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        )
+        .bind(metric.flow_id as i64)
+        .bind(metric.domain.clone())
+        .bind(metric.query_type.clone())
+        .bind(metric.response_code.clone())
+        .bind(metric.report_time as i64)
+        .bind(metric.duration_ms as i64)
+        .bind(clean_ip_string(&metric.src_ip))
+        .bind(answers_json)
+        .bind(status_json)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn insert_bucket_rows(
+    conn: &mut sqlx::SqliteConnection,
     rows: &[DnsBucketRow],
 ) -> Result<(), sqlx::Error> {
-    if rows.is_empty() {
-        return Ok(());
+    for row in rows {
+        // The write transaction already owns the SQLite write lock after inserting raw rows.
+        let previous: Option<Vec<u8>> = sqlx::query_scalar(
+            "SELECT latency_histogram FROM dns_metrics_1m WHERE flow_id = ? AND report_time = ?",
+        )
+        .bind(row.flow_id as i64)
+        .bind(row.report_time as i64)
+        .fetch_optional(&mut *conn)
+        .await?;
+        let merged;
+        let latency = if let Some(blob) = previous {
+            let mut histogram = Deserializer::new()
+                .deserialize::<u64, _>(&mut &blob[..])
+                .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            histogram
+                .add(&row.latency)
+                .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+            merged = histogram;
+            &merged
+        } else {
+            &row.latency
+        };
+        let mut histogram_blob = Vec::new();
+        V2Serializer::new()
+            .serialize(latency, &mut histogram_blob)
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO dns_metrics_1m (
+                flow_id, bucket_time, report_time,
+                total_queries, total_effective_queries, cache_hit_count,
+                total_v4, hit_count_v4, total_v6, hit_count_v6,
+                total_other, hit_count_other, block_count, filter_count,
+                nxdomain_count, error_count, latency_histogram
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            ON CONFLICT (flow_id, report_time) DO UPDATE SET
+                total_queries = total_queries + excluded.total_queries,
+                total_effective_queries = total_effective_queries + excluded.total_effective_queries,
+                cache_hit_count = cache_hit_count + excluded.cache_hit_count,
+                total_v4 = total_v4 + excluded.total_v4,
+                hit_count_v4 = hit_count_v4 + excluded.hit_count_v4,
+                total_v6 = total_v6 + excluded.total_v6,
+                hit_count_v6 = hit_count_v6 + excluded.hit_count_v6,
+                total_other = total_other + excluded.total_other,
+                hit_count_other = hit_count_other + excluded.hit_count_other,
+                block_count = block_count + excluded.block_count,
+                filter_count = filter_count + excluded.filter_count,
+                nxdomain_count = nxdomain_count + excluded.nxdomain_count,
+                error_count = error_count + excluded.error_count,
+                latency_histogram = excluded.latency_histogram",
+        )
+        .bind(row.flow_id as i64)
+        .bind(row.bucket_time as i64)
+        .bind(row.report_time as i64)
+        .bind(row.counts.total_queries as i64)
+        .bind(row.counts.total_effective_queries as i64)
+        .bind(row.counts.cache_hit_count as i64)
+        .bind(row.counts.total_v4 as i64)
+        .bind(row.counts.hit_count_v4 as i64)
+        .bind(row.counts.total_v6 as i64)
+        .bind(row.counts.hit_count_v6 as i64)
+        .bind(row.counts.total_other as i64)
+        .bind(row.counts.hit_count_other as i64)
+        .bind(row.counts.block_count as i64)
+        .bind(row.counts.filter_count as i64)
+        .bind(row.counts.nxdomain_count as i64)
+        .bind(row.counts.error_count as i64)
+        .bind(histogram_blob)
+        .execute(&mut *conn)
+        .await?;
+
+        for (domain, count) in &row.top_domains {
+            sqlx::query(
+                "INSERT INTO dns_top_domains_1m (flow_id, bucket_time, report_time, domain, count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (flow_id, report_time, domain) DO UPDATE SET count = count + excluded.count",
+            )
+            .bind(row.flow_id as i64)
+            .bind(row.bucket_time as i64)
+            .bind(row.report_time as i64)
+            .bind(domain.clone())
+            .bind(*count as i64)
+            .execute(&mut *conn)
+            .await?;
+        }
+        for (client, count) in &row.top_clients {
+            sqlx::query(
+                "INSERT INTO dns_top_clients_1m (flow_id, bucket_time, report_time, src_ip, count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (flow_id, report_time, src_ip) DO UPDATE SET count = count + excluded.count",
+            )
+            .bind(row.flow_id as i64)
+            .bind(row.bucket_time as i64)
+            .bind(row.report_time as i64)
+            .bind(client.clone())
+            .bind(*count as i64)
+            .execute(&mut *conn)
+            .await?;
+        }
+        for (domain, count) in &row.top_blocked {
+            sqlx::query(
+                "INSERT INTO dns_top_blocked_1m (flow_id, bucket_time, report_time, domain, count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (flow_id, report_time, domain) DO UPDATE SET count = count + excluded.count",
+            )
+            .bind(row.flow_id as i64)
+            .bind(row.bucket_time as i64)
+            .bind(row.report_time as i64)
+            .bind(domain.clone())
+            .bind(*count as i64)
+            .execute(&mut *conn)
+            .await?;
+        }
+        for (domain, count, sum_duration) in &row.slowest {
+            sqlx::query(
+                "INSERT INTO dns_slowest_1m (
+                    flow_id, bucket_time, report_time, domain, count, sum_duration
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (flow_id, report_time, domain) DO UPDATE SET count = count + excluded.count, sum_duration = sum_duration + excluded.sum_duration",
+            )
+            .bind(row.flow_id as i64)
+            .bind(row.bucket_time as i64)
+            .bind(row.report_time as i64)
+            .bind(domain.clone())
+            .bind(*count as i64)
+            .bind(*sum_duration as i64)
+            .execute(&mut *conn)
+            .await?;
+        }
     }
+    Ok(())
+}
 
-    super::run_write_tx(pool, rows, |conn, rows| {
-        Box::pin(async move {
-            for row in *rows {
-                let mut histogram_blob = Vec::new();
-                V2Serializer::new()
-                    .serialize(&row.latency, &mut histogram_blob)
-                    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-
-                sqlx::query(
-                    "INSERT INTO dns_metrics_1m (
-                        flow_id, bucket_time, report_time,
-                        total_queries, total_effective_queries, cache_hit_count,
-                        total_v4, hit_count_v4, total_v6, hit_count_v6,
-                        total_other, hit_count_other, block_count, filter_count,
-                        nxdomain_count, error_count, latency_histogram
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
-                    ON CONFLICT (flow_id, report_time) DO NOTHING",
-                )
-                .bind(row.flow_id as i64)
-                .bind(row.bucket_time as i64)
-                .bind(row.report_time as i64)
-                .bind(row.counts.total_queries as i64)
-                .bind(row.counts.total_effective_queries as i64)
-                .bind(row.counts.cache_hit_count as i64)
-                .bind(row.counts.total_v4 as i64)
-                .bind(row.counts.hit_count_v4 as i64)
-                .bind(row.counts.total_v6 as i64)
-                .bind(row.counts.hit_count_v6 as i64)
-                .bind(row.counts.total_other as i64)
-                .bind(row.counts.hit_count_other as i64)
-                .bind(row.counts.block_count as i64)
-                .bind(row.counts.filter_count as i64)
-                .bind(row.counts.nxdomain_count as i64)
-                .bind(row.counts.error_count as i64)
-                .bind(histogram_blob)
-                .execute(&mut *conn)
-                .await?;
-
-                for (domain, count) in &row.top_domains {
-                    sqlx::query(
-                        "INSERT INTO dns_top_domains_1m (flow_id, bucket_time, report_time, domain, count)
-                         VALUES (?1, ?2, ?3, ?4, ?5)
-                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-                    )
-                    .bind(row.flow_id as i64)
-                    .bind(row.bucket_time as i64)
-                    .bind(row.report_time as i64)
-                    .bind(domain.clone())
-                    .bind(*count as i64)
-                    .execute(&mut *conn)
-                    .await?;
-                }
-                for (client, count) in &row.top_clients {
-                    sqlx::query(
-                        "INSERT INTO dns_top_clients_1m (flow_id, bucket_time, report_time, src_ip, count)
-                         VALUES (?1, ?2, ?3, ?4, ?5)
-                         ON CONFLICT (flow_id, report_time, src_ip) DO NOTHING",
-                    )
-                    .bind(row.flow_id as i64)
-                    .bind(row.bucket_time as i64)
-                    .bind(row.report_time as i64)
-                    .bind(client.clone())
-                    .bind(*count as i64)
-                    .execute(&mut *conn)
-                    .await?;
-                }
-                for (domain, count) in &row.top_blocked {
-                    sqlx::query(
-                        "INSERT INTO dns_top_blocked_1m (flow_id, bucket_time, report_time, domain, count)
-                         VALUES (?1, ?2, ?3, ?4, ?5)
-                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-                    )
-                    .bind(row.flow_id as i64)
-                    .bind(row.bucket_time as i64)
-                    .bind(row.report_time as i64)
-                    .bind(domain.clone())
-                    .bind(*count as i64)
-                    .execute(&mut *conn)
-                    .await?;
-                }
-                for (domain, count, sum_duration) in &row.slowest {
-                    sqlx::query(
-                        "INSERT INTO dns_slowest_1m (
-                            flow_id, bucket_time, report_time, domain, count, sum_duration
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                         ON CONFLICT (flow_id, report_time, domain) DO NOTHING",
-                    )
-                    .bind(row.flow_id as i64)
-                    .bind(row.bucket_time as i64)
-                    .bind(row.report_time as i64)
-                    .bind(domain.clone())
-                    .bind(*count as i64)
-                    .bind(*sum_duration as i64)
-                    .execute(&mut *conn)
-                    .await?;
-                }
-            }
-            Ok(())
-        })
-    })
-    .await
+#[cfg(test)]
+pub(crate) async fn insert_dns_batch(
+    pool: &SqlitePool,
+    metrics: &[DnsMetric],
+) -> Result<(), sqlx::Error> {
+    write_dns_batch(pool, &DnsWriteBatch::new(metrics.to_vec())).await
 }
 
 /// 桶段查询过滤器:按对齐桶时间半开区间 + 可选 flow。
@@ -806,86 +839,6 @@ fn dns_metric_from_row(row: &sqlx::sqlite::SqliteRow) -> DnsMetric {
     }
 }
 
-fn push_range_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
-    params: &DnsSummaryQueryParams,
-    has_where: &mut bool,
-) {
-    if params.start_time > 0 {
-        push_clause(qb, has_where, "report_time >= ");
-        qb.push_bind(params.start_time as i64);
-    }
-    if params.end_time > 0 {
-        push_clause(qb, has_where, "report_time < ");
-        qb.push_bind(params.end_time as i64);
-    }
-    if let Some(flow_id) = params.flow_id {
-        push_clause(qb, has_where, "flow_id = ");
-        qb.push_bind(flow_id as i64);
-    }
-}
-
-/// 轻量 summary(SQL 回退路径):仅基础计数与延迟分位数,语义与内存窗口一致。
-/// 调用方负责将时间范围规范化为分钟对齐的半开区间 [start, end)。
-pub(crate) async fn query_dns_lightweight_summary(
-    pool: &SqlitePool,
-    params: DnsSummaryQueryParams,
-) -> Result<DnsLightweightSummaryResponse, sqlx::Error> {
-    let mut base_qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT
-            COUNT(*),
-            COUNT(CASE WHEN status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'A' AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'A' AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN query_type = 'AAAA' AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type = 'AAAA' AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN query_type NOT IN ('A', 'AAAA') AND status NOT IN ('\"block\"', '\"filter\"', '\"error\"') THEN 1 END),
-            COUNT(CASE WHEN query_type NOT IN ('A', 'AAAA') AND status = '\"hit\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"block\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"filter\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"nxdomain\"' THEN 1 END),
-            COUNT(CASE WHEN status = '\"error\"' THEN 1 END),
-            AVG(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN duration_ms END),
-            MAX(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN duration_ms END),
-            COUNT(CASE WHEN status NOT IN ({LATENCY_EXCLUDE}) THEN 1 END)
-        FROM dns_metrics"
-    ));
-    let mut has_where = false;
-    push_range_filters(&mut base_qb, &params, &mut has_where);
-    let row = base_qb.build().fetch_one(pool).await?;
-    let latency_count = row.get::<i64, _>(15).max(0) as usize;
-
-    let mut duration_qb = QueryBuilder::<Sqlite>::new(format!(
-        "SELECT duration_ms FROM dns_metrics WHERE status NOT IN ({LATENCY_EXCLUDE})"
-    ));
-    let mut duration_has_where = true;
-    push_range_filters(&mut duration_qb, &params, &mut duration_has_where);
-    let [p50_duration_ms, p95_duration_ms, p99_duration_ms] =
-        stream_latency_percentiles(pool, &mut duration_qb, latency_count).await?;
-
-    Ok(DnsLightweightSummaryResponse {
-        total_queries: row.get::<i64, _>(0).max(0) as usize,
-        total_effective_queries: row.get::<i64, _>(2).max(0) as usize,
-        cache_hit_count: row.get::<i64, _>(1).max(0) as usize,
-        hit_count_v4: row.get::<i64, _>(4).max(0) as usize,
-        hit_count_v6: row.get::<i64, _>(6).max(0) as usize,
-        hit_count_other: row.get::<i64, _>(8).max(0) as usize,
-        total_v4: row.get::<i64, _>(3).max(0) as usize,
-        total_v6: row.get::<i64, _>(5).max(0) as usize,
-        total_other: row.get::<i64, _>(7).max(0) as usize,
-        block_count: row.get::<i64, _>(9).max(0) as usize,
-        filter_count: row.get::<i64, _>(10).max(0) as usize,
-        nxdomain_count: row.get::<i64, _>(11).max(0) as usize,
-        error_count: row.get::<i64, _>(12).max(0) as usize,
-        avg_duration_ms: row.get::<Option<f64>, _>(13).unwrap_or(0.0),
-        p50_duration_ms,
-        p95_duration_ms,
-        p99_duration_ms,
-        max_duration_ms: row.get::<Option<i64>, _>(14).unwrap_or(0) as f64,
-    })
-}
-
 pub(crate) async fn cleanup_old_dns(
     pool: &SqlitePool,
     cutoff: u64,
@@ -1031,6 +984,16 @@ mod tests {
         }
     }
 
+    async fn insert_dns_bucket_rows(
+        pool: &SqlitePool,
+        rows: &[DnsBucketRow],
+    ) -> Result<(), sqlx::Error> {
+        super::super::run_write_tx(pool, rows, |conn, rows| {
+            Box::pin(insert_bucket_rows(conn, rows))
+        })
+        .await
+    }
+
     async fn test_pool() -> (tempfile::TempDir, SqlitePool) {
         let dir = tempfile::tempdir().unwrap();
         let pool = open_dns_pool(&dir.path().join("dns.db"), 0).await.unwrap();
@@ -1157,54 +1120,6 @@ mod tests {
 
         let unbounded = query_dns_summary(&pool, DnsSummaryQueryParams::default()).await.unwrap();
         assert_eq!(unbounded.total_queries, metrics.len());
-    }
-
-    #[tokio::test]
-    async fn lightweight_summary_matches_counts_and_respects_range() {
-        let (_dir, pool) = test_pool().await;
-        let metrics = vec![
-            dns_metric(1, "a.com", "A", DnsOutcome::Normal, 100_000, 10),
-            dns_metric(2, "b.com", "A", DnsOutcome::Hit, 100_001, 1),
-            dns_metric(3, "c.com", "AAAA", DnsOutcome::Normal, 100_002, 30),
-            dns_metric(4, "d.com", "TXT", DnsOutcome::Block, 100_003, 5),
-            dns_metric(5, "e.com", "A", DnsOutcome::NxDomain, 100_004, 50),
-            dns_metric(6, "f.com", "A", DnsOutcome::Error, 100_005, 2),
-        ];
-        insert_dns_batch(&pool, &metrics).await.unwrap();
-
-        let summary = query_dns_lightweight_summary(
-            &pool,
-            DnsSummaryQueryParams {
-                start_time: 100_000,
-                end_time: 200_000,
-                flow_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(summary.total_queries, 6);
-        assert_eq!(summary.cache_hit_count, 1);
-        assert_eq!(summary.total_effective_queries, 4);
-        assert_eq!(summary.total_v4, 3);
-        assert_eq!(summary.hit_count_v4, 1);
-        assert_eq!(summary.total_v6, 1);
-        assert_eq!(summary.block_count, 1);
-        assert_eq!(summary.nxdomain_count, 1);
-        assert_eq!(summary.error_count, 1);
-        assert_eq!(summary.avg_duration_ms, 30.0, "only normal/nxdomain latency counted");
-        assert_eq!(summary.max_duration_ms, 50.0);
-
-        let narrowed = query_dns_lightweight_summary(
-            &pool,
-            DnsSummaryQueryParams {
-                start_time: 100_004,
-                end_time: 200_000,
-                flow_id: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(narrowed.total_queries, 2);
     }
 
     #[tokio::test]
@@ -1347,11 +1262,6 @@ mod tests {
         assert!(summary_sql.contains("report_time >= "));
         assert!(summary_sql.contains("report_time < "));
         assert!(summary_sql.contains("flow_id = "));
-
-        let mut range_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
-        let mut has_where = false;
-        push_range_filters(&mut range_qb, &params, &mut has_where);
-        assert_eq!(range_qb.sql(), summary_sql, "range filters share semantics");
 
         let mut empty_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM dns_metrics");
         let mut has_where = false;
@@ -1507,16 +1417,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bucket_duplicate_raw_key_is_ignored() {
+    async fn distinct_batches_ending_in_the_same_millisecond_both_contribute() {
         let (_dir, pool) = test_pool().await;
-        let mut row = bucket_row(1, 100_000, 100_010, DnsOutcome::Normal, 10);
-        row.top_blocked.push(("blocked.com".to_string(), 1));
-        insert_dns_bucket_rows(&pool, &[row.clone()]).await.unwrap();
-        insert_dns_bucket_rows(&pool, &[row]).await.unwrap();
+        for duration in [10, 30] {
+            insert_dns_batch(
+                &pool,
+                &[dns_metric(1, "same.com", "A", DnsOutcome::Normal, 100_010, duration)],
+            )
+            .await
+            .unwrap();
+        }
+        let parts = query_dns_summary_parts(&pool, 60_000, 120_000, Some(1)).await.unwrap();
+        assert_eq!(parts.counts.total_queries, 2);
+        assert_eq!(parts.top_domains.get("same.com"), Some(&2));
+        assert_eq!(parts.top_clients.get("10.0.0.1"), Some(&2));
+        assert_eq!(parts.slowest.get("same.com"), Some(&(2, 40)));
+        assert_eq!(parts.avg_duration_ms(), 20.0);
+        assert_eq!(query_dns_history(&pool, Default::default()).await.unwrap().total, 2);
+    }
 
-        let parts = query_dns_summary_parts(&pool, 100_000, 101_000, None).await.unwrap();
-        assert_eq!(parts.counts.total_queries, 1, "duplicate raw key dropped");
-        assert_eq!(parts.top_domains.get("example.com"), Some(&1));
+    #[tokio::test]
+    async fn late_bucket_failure_rolls_back_the_whole_dns_batch() {
+        let (_dir, pool) = test_pool().await;
+        let batch = DnsWriteBatch::new(vec![dns_metric(
+            1,
+            "example.com",
+            "A",
+            DnsOutcome::Normal,
+            100_010,
+            10,
+        )]);
+        sqlx::query("CREATE TRIGGER fail_top BEFORE INSERT ON dns_top_clients_1m BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+            .execute(&pool).await.unwrap();
+        assert!(write_dns_batch(&pool, &batch).await.is_err());
+        assert_eq!(query_dns_history(&pool, Default::default()).await.unwrap().total, 0);
+        let parts = query_dns_summary_parts(&pool, 60_000, 120_000, None).await.unwrap();
+        assert_eq!(parts.counts.total_queries, 0);
+        assert!(parts.top_domains.is_empty());
+        sqlx::query("DROP TRIGGER fail_top").execute(&pool).await.unwrap();
+        write_dns_batch(&pool, &batch).await.unwrap();
+        assert_eq!(query_dns_history(&pool, Default::default()).await.unwrap().total, 1);
+        assert_eq!(
+            query_dns_summary_parts(&pool, 60_000, 120_000, None)
+                .await
+                .unwrap()
+                .counts
+                .total_queries,
+            1
+        );
     }
 
     #[tokio::test]

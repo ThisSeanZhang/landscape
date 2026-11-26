@@ -22,6 +22,8 @@ pub enum FlowDnsPhase {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct FlowDnsStatus {
+    pub tcp_error: Option<String>,
+    pub doh_error: Option<String>,
     pub flow_id: u32,
     pub phase: FlowDnsPhase,
     #[cfg_attr(feature = "openapi", schema(required = false, nullable = true))]
@@ -44,7 +46,7 @@ pub enum DnsServicePhase {
     Idle,
     /// Every tracked flow has a live listener.
     Running,
-    /// Some flows are live while others are failed or idle.
+    /// A flow or an individual transport is unavailable while other listeners are serving.
     Degraded,
     /// No flow is live and at least one flow failed.
     Failed,
@@ -54,6 +56,7 @@ pub enum DnsServicePhase {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DnsServiceStatus {
+    pub advertised_doh: Option<crate::sys_config::DohRuntimeConfig>,
     pub phase: DnsServicePhase,
     pub total_flows: u32,
     pub running_flows: u32,

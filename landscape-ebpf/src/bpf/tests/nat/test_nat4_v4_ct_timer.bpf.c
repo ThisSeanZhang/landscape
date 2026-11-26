@@ -8,8 +8,9 @@ char LICENSE[] SEC("license") = "GPL";
 
 struct napt_ct_timer_test_input {
     struct napt_ct_key key;
+    __u64 observed_state_ref;
     __u8 force_queue_push_fail;
-    __u8 pad[3];
+    __u8 pad[7];
 };
 
 struct napt_ct_timer_test_result {
@@ -22,8 +23,7 @@ struct napt_ct_timer_test_result {
     __u8 kind;
     __u64 state_ref;
     __u64 status;
-    __u64 client_status;
-    __u64 server_status;
+    __u64 tcp_flags;
     __u32 gen;
     __u32 external_port;
 };
@@ -69,6 +69,44 @@ static __always_inline struct napt_ct_timer_test_result *napt_test_result(void) 
 }
 
 SEC("tc")
+int napt_ct_start_timer_test(struct __sk_buff *skb) {
+    (void)skb;
+    __u32 index = 0;
+    struct napt_ct_timer_test_input *input = bpf_map_lookup_elem(&napt_ct_timer_test_input, &index);
+    if (!input) return TC_ACT_SHOT;
+    struct napt_ct_value *ct = bpf_map_lookup_elem(&napt_ct, &input->key);
+    if (!ct || napt_ct_timer_init(ct) != 0) return TC_ACT_SHOT;
+    return napt_ct_timer_start(ct, 0) ? TC_ACT_OK : TC_ACT_SHOT;
+}
+
+SEC("tc")
+int napt_ct_packet_wakeup_test(struct __sk_buff *skb) {
+    (void)skb;
+    __u32 index = 0;
+    struct napt_ct_timer_test_input *input = bpf_map_lookup_elem(&napt_ct_timer_test_input, &index);
+    if (!input) return TC_ACT_SHOT;
+    struct napt_ct_value *ct = bpf_map_lookup_elem(&napt_ct, &input->key);
+    if (!ct || napt_ct_timer_init(ct) != 0) return TC_ACT_SHOT;
+    if (napt_ct_advance_pkt(input->key.proto, NAPT_TCP_PHASE_RST, NAPT_GRESS_WAN, ct) != TC_ACT_OK)
+        return TC_ACT_SHOT;
+    /* The timer started disarmed. Cancel returns 1 only if the packet armed it. */
+    return bpf_timer_cancel(&ct->timer);
+}
+
+SEC("tc")
+int napt_ct_rearm_idle_timer_test(struct __sk_buff *skb) {
+    (void)skb;
+    __u32 index = 0;
+    struct napt_ct_timer_test_input *input = bpf_map_lookup_elem(&napt_ct_timer_test_input, &index);
+    if (!input) return TC_ACT_SHOT;
+    struct napt_ct_value *ct = bpf_map_lookup_elem(&napt_ct, &input->key);
+    if (!ct) return TC_ACT_SHOT;
+    /* Resume an idle callback that selected its timeout just before the closing packet. */
+    if (ct->status == NAPT_CT_ACTIVE) napt_ct_timer_start(ct, NAPT_TCP_TIMEOUT_NS);
+    return TC_ACT_OK;
+}
+
+SEC("tc")
 int napt_ct_timer_step_test(struct __sk_buff *skb) {
     (void)skb;
     __u32 index = 0;
@@ -88,8 +126,18 @@ int napt_ct_timer_step_test(struct __sk_buff *skb) {
     int queue_push_ret = -2;
     __u64 next_timeout = 0;
 
-    result->action = napt_ct_timer_step(&input->key, value, input->force_queue_push_fail,
-                                        &queue_push_ret, &next_timeout);
+    if (input->observed_state_ref) {
+        /* Resume a release after another CT has changed the shared reference count. */
+        struct napt_from_wan_value *wan = napt_wan_lookup(input->key.proto, external_port);
+        if (value->status != NAPT_CT_RELEASE_REF || !wan || wan->generation != gen ||
+            wan->kind != NAPT_MAPPING_DYNAMIC)
+            return TC_ACT_SHOT;
+        result->action =
+            napt_ct_release_ref(&input->key, value, wan, input->observed_state_ref, &next_timeout);
+    } else {
+        result->action = napt_ct_timer_step(&input->key, value, input->force_queue_push_fail,
+                                            &queue_push_ret, &next_timeout);
+    }
     result->queue_push_ret = queue_push_ret;
     result->next_timeout = next_timeout;
     result->external_port = external_port;
@@ -99,8 +147,7 @@ int napt_ct_timer_step_test(struct __sk_buff *skb) {
     result->timer_exists = value ? 1 : 0;
     if (value) {
         result->status = value->status;
-        result->client_status = value->client_status;
-        result->server_status = value->server_status;
+        result->tcp_flags = value->tcp_flags;
     }
 
     struct napt_from_lan_value *lan =
@@ -139,8 +186,7 @@ int napt_ct_advance_test(struct __sk_buff *skb) {
 
     result->action = napt_ct_advance(&view, input->gress, value);
     result->status = value->status;
-    result->client_status = value->client_status;
-    result->server_status = value->server_status;
+    result->tcp_flags = value->tcp_flags;
     result->timer_exists = 1;
     return TC_ACT_OK;
 }

@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 
 use crate::{
     VERSION,
-    config::{InitConfig, settings::LandscapeConfig},
+    config::InitConfig,
     config_service::{
         iface::{CreateDevType, IfaceZoneType, NetworkIfaceConfig, WifiMode},
         static_nat::{
@@ -15,6 +15,7 @@ use crate::{
         lan_dhcpv4::config::{DHCPv4ServerConfig, DHCPv4ServiceConfig},
         lan_route::RouteLanServiceConfig,
     },
+    sys_config::LandscapeConfig,
     utils::{id::gen_database_uuid, time::get_f64_timestamp},
     wan_link::{
         WanLinkConfig, WanLinkFirewallConfig, WanLinkHealthCheckConfig, WanLinkKind,

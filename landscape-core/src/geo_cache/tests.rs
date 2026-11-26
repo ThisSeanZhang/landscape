@@ -802,3 +802,71 @@ async fn scoped_reconcile_only_touches_target_sources() {
     let rebuilt_b = registry.get_or_build(&keyed("B", None)).await.unwrap();
     assert!(rebuilt_b.is_match_normalized(&norm("renamed-b.example")));
 }
+
+#[tokio::test]
+async fn geo_picker_search_filters_and_ranks_before_limiting() {
+    use landscape_common::config_service::geo::QueryGeoKey;
+
+    let pool = GeoCacheDatabase::ip_mem().await;
+    for (name, key) in [
+        ("xxx", "XAAA"),
+        ("yyy", "AAA-BBB"),
+        ("yyy", "AAA"),
+        ("xxx", "AAA"),
+        ("zzz", "CCC%_"),
+        ("aaa-xxx", "BBB"),
+    ] {
+        sqlx::query("INSERT INTO geo_cache_entries(name, geo_key, content_hash, updated_at) VALUES (?, ?, '', 0)")
+            .bind(name).bind(key).execute(&pool).await.unwrap();
+    }
+    let all = QueryGeoKey { name: None, key: None, q: None, limit: None };
+    let repo = super::IpCacheRepository::new(pool);
+    let run = async |query: QueryGeoKey| {
+        repo.search_keys(&query)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| format!("{}/{}", row.name, row.key))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        run(QueryGeoKey {
+            q: Some(" aaa ".into()),
+            limit: Some(3),
+            ..all.clone()
+        })
+        .await,
+        ["xxx/AAA", "yyy/AAA", "yyy/AAA-BBB"]
+    );
+    assert_eq!(
+        run(QueryGeoKey { q: Some("YYY/aaa".into()), ..all.clone() }).await,
+        ["yyy/AAA", "yyy/AAA-BBB"]
+    );
+    assert_eq!(run(QueryGeoKey { q: Some("%_".into()), ..all.clone() }).await, ["zzz/CCC%_"]);
+    assert_eq!(
+        run(QueryGeoKey {
+            name: Some("xxx".into()),
+            key: Some("aaa".into()),
+            ..all.clone()
+        })
+        .await,
+        ["xxx/AAA", "xxx/XAAA"]
+    );
+    assert_eq!(run(QueryGeoKey { limit: Some(2), ..all.clone() }).await.len(), 2);
+    assert_eq!(run(all).await.len(), 6);
+}
+
+#[tokio::test]
+async fn geo_picker_attributes_are_distinct_and_scoped_to_the_entry() {
+    let repo = repo().await;
+    let row = |attrs: &[&str]| rule("aaa.example", DomainMatchType::Domain, attrs);
+    repo.replace_by_name("xxx", "AAA", "h1", vec![row(&["aaa", "bbb"]), row(&["bbb"]), row(&[])])
+        .await
+        .unwrap();
+    repo.replace_by_name("yyy", "AAA", "h2", vec![row(&["zzz"])]).await.unwrap();
+    let attrs = repo
+        .list_attributes(&GeoFileCacheKey { name: "xxx".into(), key: "aaa".into() })
+        .await
+        .unwrap();
+    assert_eq!(attrs, ["aaa", "bbb"]);
+}

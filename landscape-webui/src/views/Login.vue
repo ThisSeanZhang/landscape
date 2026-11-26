@@ -39,12 +39,7 @@ async function login() {
 <template>
   <n-layout position="absolute" style="height: 100%" content-style=" ">
     <n-layout-header style="height: 24px; padding: 0 10px; display: flex">
-      <n-flex style="flex: 1" justify="space-between" align="center">
-        <n-flex>Landscape</n-flex>
-        <n-flex>
-          <LanguageSetting />
-        </n-flex>
-      </n-flex>
+      <n-flex align="center">Landscape</n-flex>
     </n-layout-header>
 
     <n-layout-content

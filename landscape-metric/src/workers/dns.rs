@@ -1,26 +1,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use landscape_common::config::MetricRuntimeConfig;
 use landscape_common::metric::dns::DnsMetric;
 use landscape_common::metric::dns::DnsMetricEvent;
+use landscape_common::sys_config::DnsMetricRuntimeConfig;
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::agg::dns_bucket::dns_bucket_rows_from_batch;
 use crate::agg::dns_window::DnsRecentWindow;
-use crate::sink::MetricSink;
+use crate::sink::{DnsMetricSink, DnsWriteBatch};
 
 use super::WriteQueueStats;
 
-/// DNS writer 通道消息:原始明细行批次。1m 桶行由 writer 从同一批次内构建,
-/// 与原始行同批落库(writer 是桶的唯一数据源)。
-#[derive(Debug)]
-pub(crate) enum DnsWriteMessage {
-    Metrics(Vec<DnsMetric>),
-}
-pub(crate) type DnsBatchTx = mpsc::Sender<DnsWriteMessage>;
+pub(crate) type DnsBatchTx = mpsc::Sender<Vec<DnsMetric>>;
 
 const DNS_BATCH_MAX_ROWS: usize = 500;
 /// DNS 落库间隔上限:write_flush_interval_secs 配置更大时,DNS 仍按此值兜底,
@@ -31,178 +24,148 @@ const DNS_BATCH_FLUSH_TIMEOUT_SECS: u64 = 15;
 /// (writer 是桶的唯一数据源,桶 = 原始行的忠实分钟聚合),并按 cleanup 周期
 /// 执行 dns 清理。与 connect writer 各自独占自己的 sqlite 文件,可并行写,互不阻塞。
 pub(crate) async fn run_dns_writer(
-    sink: Arc<dyn MetricSink>,
-    mut rx: mpsc::Receiver<DnsWriteMessage>,
+    sink: Arc<dyn DnsMetricSink>,
+    mut rx: mpsc::Receiver<Vec<DnsMetric>>,
     stats: WriteQueueStats,
-    config: MetricRuntimeConfig,
+    config: DnsMetricRuntimeConfig,
 ) {
-    let cleanup_interval_duration = Duration::from_secs(config.cleanup_interval_secs.max(1));
+    let cleanup_interval_duration = Duration::from_secs(config.store.cleanup_interval_secs.max(1));
     let mut cleanup_interval = tokio::time::interval(cleanup_interval_duration);
     cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     cleanup_interval.tick().await;
 
-    let mut closed = false;
     loop {
         tokio::select! {
-            _ = cleanup_interval.tick() => {
-                sink.cleanup_dns(&config).await;
-            }
-            msg_opt = rx.recv(), if !closed => {
-                match msg_opt {
-                    Some(DnsWriteMessage::Metrics(metrics)) => {
-                        let rows = dns_bucket_rows_from_batch(&metrics);
-                        let raw_ok = sink.apply_dns_batch(metrics).await;
-                        let bucket_ok = sink.apply_dns_bucket_rows(rows).await;
-                        if !raw_ok || !bucket_ok {
-                            stats.failed();
-                        }
-                    }
-                    None => closed = true,
+            _ = cleanup_interval.tick() => sink.cleanup_dns(&config).await,
+            batch = rx.recv() => {
+                let Some(metrics) = batch else { break };
+                if !sink.apply_dns_batch(DnsWriteBatch::new(metrics)).await {
+                    stats.failed();
                 }
             }
         }
+    }
+}
 
-        if closed {
-            break;
+/// Buffers events for the history writer only when persistence is enabled.
+struct DnsHistoryBuffer<'a> {
+    writer: &'a DnsBatchTx,
+    stats: WriteQueueStats,
+    pending: Vec<DnsMetric>,
+}
+
+impl DnsHistoryBuffer<'_> {
+    fn push(&mut self, metric: DnsMetric) -> bool {
+        self.pending.push(metric);
+        self.pending.len() >= DNS_BATCH_MAX_ROWS
+    }
+
+    fn flush(&mut self) {
+        if !self.pending.is_empty()
+            && self.writer.try_send(std::mem::take(&mut self.pending)).is_err()
+        {
+            self.stats.dropped();
         }
     }
-}
 
-fn flush_dns_batch(
-    writer_tx: &Option<DnsBatchTx>,
-    stats: &WriteQueueStats,
-    batch: &mut Vec<DnsMetric>,
-) {
-    if batch.is_empty() {
-        return;
+    async fn flush_on_shutdown(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let send = self.writer.send(std::mem::take(&mut self.pending));
+        if !matches!(tokio::time::timeout(Duration::from_secs(5), send).await, Ok(Ok(()))) {
+            self.stats.dropped();
+        }
     }
-    let Some(tx) = writer_tx else {
-        batch.clear();
-        return;
-    };
-    let metrics = std::mem::take(batch);
-    if tx.try_send(DnsWriteMessage::Metrics(metrics)).is_err() {
-        stats.dropped();
-    }
-}
-
-async fn flush_dns_batch_on_shutdown(
-    writer_tx: &Option<DnsBatchTx>,
-    stats: &WriteQueueStats,
-    batch: &mut Vec<DnsMetric>,
-) {
-    if batch.is_empty() {
-        return;
-    }
-    let Some(tx) = writer_tx else {
-        batch.clear();
-        return;
-    };
-    let metrics = std::mem::take(batch);
-    let send_result =
-        tokio::time::timeout(Duration::from_secs(5), tx.send(DnsWriteMessage::Metrics(metrics)))
-            .await;
-    if !matches!(send_result, Ok(Ok(()))) {
-        stats.dropped();
-    }
-}
-
-fn ingest_dns_metric(
-    window: &Option<DnsRecentWindow>,
-    raw_batch: &mut Vec<DnsMetric>,
-    event: DnsMetricEvent,
-) {
-    // window 为 None(persistent 初始化失败回退内存)时直接丢弃,不攒批不投递。
-    let Some(window) = window else { return };
-    let metric = event.into_metric();
-    let now_ms = now_ms();
-    window.ingest(&metric, now_ms);
-    raw_batch.push(metric);
 }
 
 /// DNS 聚合 worker:更新 5min 预聚合窗口(聚合层,纯内存) + 攒批投递 dns writer
 /// (writer 同批构建 1m 桶落库)。窗口不落库、不与 DB 合并,重启后为空。
-/// window 为 None 时仅消费并丢弃(sink 为内存实现时即为丢弃语义)。
 pub(crate) async fn run_dns_worker(
     mut dns_rx: mpsc::Receiver<DnsMetricEvent>,
     writer_tx: Option<DnsBatchTx>,
     queue_stats: WriteQueueStats,
-    config: MetricRuntimeConfig,
-    window: Option<DnsRecentWindow>,
+    config: DnsMetricRuntimeConfig,
+    window: DnsRecentWindow,
     shutdown: CancellationToken,
 ) {
     let flush_interval_duration = Duration::from_secs(
-        config.write_flush_interval_secs.clamp(1, DNS_BATCH_FLUSH_TIMEOUT_SECS),
+        config.store.write_flush_interval_secs.clamp(1, DNS_BATCH_FLUSH_TIMEOUT_SECS),
     );
 
     let mut flush_interval = tokio::time::interval(flush_interval_duration);
     flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     flush_interval.tick().await;
 
-    let mut raw_batch: Vec<DnsMetric> = Vec::new();
-    let mut dns_closed = false;
+    let mut history = writer_tx.as_ref().map(|writer| DnsHistoryBuffer {
+        writer,
+        stats: queue_stats,
+        pending: Vec::new(),
+    });
+    let writer_closed = async {
+        match &writer_tx {
+            Some(tx) => tx.closed().await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(writer_closed);
 
     loop {
         tokio::select! {
-            _ = flush_interval.tick() => {
-                flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
-            }
+            biased;
             _ = shutdown.cancelled() => break,
-            msg_opt = dns_rx.recv(), if !dns_closed => {
-                match msg_opt {
-                    Some(metric) => {
-                        ingest_dns_metric(&window, &mut raw_batch, metric);
-                        if raw_batch.len() >= DNS_BATCH_MAX_ROWS {
-                            flush_dns_batch(&writer_tx, &queue_stats, &mut raw_batch);
-                        }
-                    }
-                    None => dns_closed = true,
+            _ = &mut writer_closed => break,
+            _ = flush_interval.tick(), if history.is_some() => {
+                if let Some(buffer) = &mut history { buffer.flush(); }
+            }
+            event = dns_rx.recv() => {
+                let Some(event) = event else { break };
+                let metric = window.record_event(event, now_ms());
+                if let Some(buffer) = &mut history && buffer.push(metric) {
+                    buffer.flush();
                 }
             }
-        }
-
-        if dns_closed {
-            break;
         }
     }
 
     dns_rx.close();
-    // 与 connect worker 相同:shutdown 触发后不等待外部仍持活的 Sender 释放,
-    // 立即退出收尾(flush)。
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => break,
-            msg_opt = dns_rx.recv() => match msg_opt {
-                Some(metric) => {
-                    ingest_dns_metric(&window, &mut raw_batch, metric);
-                }
-                None => break,
-            },
+    while let Ok(event) = dns_rx.try_recv() {
+        let metric = window.record_event(event, now_ms());
+        if let Some(buffer) = &mut history
+            && buffer.push(metric)
+        {
+            buffer.flush_on_shutdown().await;
         }
     }
-
-    // shutdown 收尾:窗口为纯内存结构,直接丢弃,不落库;仅 flush 剩余原始行批次
-    // (1m 桶由 writer 从该批次同批构建)。
-    flush_dns_batch_on_shutdown(&writer_tx, &queue_stats, &mut raw_batch).await;
+    if let Some(buffer) = &mut history {
+        buffer.flush_on_shutdown().await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{RecordingSink, dns_metric, dns_metric_event, test_config};
+    use super::super::testing::{RecordingSink, dns_metric, dns_metric_event};
     use super::*;
-    use landscape_common::metric::dns::DnsMetricEvent;
     use std::sync::atomic::Ordering;
+
+    fn dns_config() -> DnsMetricRuntimeConfig {
+        use landscape_common::sys_config::{DnsMetricConfig, RuntimeConfigSource};
+        let mut config = DnsMetricConfig::default().build_runtime();
+        config.store.cleanup_interval_secs = 3600;
+        config.store.write_flush_interval_secs = 3600;
+        config
+    }
 
     #[tokio::test]
     async fn run_dns_writer_applies_batches_and_counts_failures() {
         let sink = RecordingSink::default();
-        let writer_sink: Arc<dyn MetricSink> = Arc::new(sink.clone());
-        let (writer_tx, writer_rx) = mpsc::channel::<DnsWriteMessage>(16);
+        let writer_sink: Arc<dyn DnsMetricSink> = Arc::new(sink.clone());
+        let (writer_tx, writer_rx) = mpsc::channel::<Vec<DnsMetric>>(16);
         let stats = WriteQueueStats::default();
         let writer =
-            tokio::spawn(run_dns_writer(writer_sink, writer_rx, stats.clone(), test_config()));
+            tokio::spawn(run_dns_writer(writer_sink, writer_rx, stats.clone(), dns_config()));
 
-        writer_tx.send(DnsWriteMessage::Metrics(vec![dns_metric(60_000)])).await.unwrap();
+        writer_tx.send(vec![dns_metric(60_000)]).await.unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while sink.dns_batches.lock().unwrap().is_empty() {
             assert!(tokio::time::Instant::now() < deadline, "timed out waiting for dns apply");
@@ -210,7 +173,7 @@ mod tests {
         }
 
         sink.fail.store(true, Ordering::Relaxed);
-        writer_tx.send(DnsWriteMessage::Metrics(vec![dns_metric(61_000)])).await.unwrap();
+        writer_tx.send(vec![dns_metric(61_000)]).await.unwrap();
         drop(writer_tx);
         tokio::time::timeout(Duration::from_secs(5), writer).await.unwrap().unwrap();
 
@@ -223,13 +186,13 @@ mod tests {
     #[tokio::test]
     async fn dns_writer_builds_bucket_rows_from_batch() {
         let sink = RecordingSink::default();
-        let writer_sink: Arc<dyn MetricSink> = Arc::new(sink.clone());
-        let (writer_tx, writer_rx) = mpsc::channel::<DnsWriteMessage>(16);
+        let writer_sink: Arc<dyn DnsMetricSink> = Arc::new(sink.clone());
+        let (writer_tx, writer_rx) = mpsc::channel::<Vec<DnsMetric>>(16);
         let writer = tokio::spawn(run_dns_writer(
             writer_sink,
             writer_rx,
             WriteQueueStats::default(),
-            test_config(),
+            dns_config(),
         ));
 
         // 同一 flow:三个不同分钟(4 条中前两条同分钟)→ 3 个桶行,同分钟合并。
@@ -241,7 +204,7 @@ mod tests {
             dns_metric(base - 60_000),
             dns_metric(base - 120_000),
         ];
-        writer_tx.send(DnsWriteMessage::Metrics(metrics)).await.unwrap();
+        writer_tx.send(metrics).await.unwrap();
         drop(writer_tx);
         tokio::time::timeout(Duration::from_secs(5), writer).await.unwrap().unwrap();
 
@@ -262,13 +225,13 @@ mod tests {
     #[tokio::test]
     async fn dns_worker_flushes_at_max_rows() {
         let (dns_tx, dns_rx) = mpsc::channel(crate::agg::CHANNEL_CAPACITY);
-        let (writer_tx, mut writer_rx) = mpsc::channel::<DnsWriteMessage>(16);
+        let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<DnsMetric>>(16);
         let worker = tokio::spawn(run_dns_worker(
             dns_rx,
             Some(writer_tx),
             WriteQueueStats::default(),
-            test_config(),
-            Some(DnsRecentWindow::new()),
+            dns_config(),
+            DnsRecentWindow::new(),
             CancellationToken::new(),
         ));
 
@@ -279,24 +242,57 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), worker).await.unwrap().unwrap();
 
         let mut dns_batches = Vec::new();
-        while let Ok(msg) = writer_rx.try_recv() {
-            let DnsWriteMessage::Metrics(metrics) = msg;
+        while let Ok(metrics) = writer_rx.try_recv() {
             dns_batches.push(metrics.len());
         }
         assert_eq!(dns_batches, vec![DNS_BATCH_MAX_ROWS]);
     }
 
     #[tokio::test]
+    async fn saturated_history_queue_does_not_block_the_recent_window() {
+        let (tx, rx) = mpsc::channel(crate::agg::CHANNEL_CAPACITY);
+        let (writer, _reader) = mpsc::channel(1);
+        writer.try_send(Vec::new()).unwrap();
+        let stats = WriteQueueStats::default();
+        let window = DnsRecentWindow::new();
+        let worker = tokio::spawn(run_dns_worker(
+            rx,
+            Some(writer),
+            stats.clone(),
+            dns_config(),
+            window.clone(),
+            CancellationToken::new(),
+        ));
+        let timestamp = now_ms();
+        for _ in 0..DNS_BATCH_MAX_ROWS {
+            tx.send(dns_metric_event(timestamp)).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while stats.snapshot().0 == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            window.range_parts(0, u64::MAX, None).counts.total_queries,
+            DNS_BATCH_MAX_ROWS as u64
+        );
+        drop(tx);
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn dns_worker_window_is_memory_only_on_shutdown() {
         let (dns_tx, dns_rx) = mpsc::channel(crate::agg::CHANNEL_CAPACITY);
-        let (writer_tx, mut writer_rx) = mpsc::channel::<DnsWriteMessage>(16);
+        let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<DnsMetric>>(16);
         let window = DnsRecentWindow::new();
         let worker = tokio::spawn(run_dns_worker(
             dns_rx,
             Some(writer_tx),
             WriteQueueStats::default(),
-            test_config(),
-            Some(window.clone()),
+            dns_config(),
+            window.clone(),
             CancellationToken::new(),
         ));
         let now_ms = now_ms();
@@ -330,27 +326,44 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), worker).await.unwrap().unwrap();
 
         let mut raw_metrics = 0usize;
-        while let Ok(msg) = writer_rx.try_recv() {
-            let DnsWriteMessage::Metrics(metrics) = msg;
+        while let Ok(metrics) = writer_rx.try_recv() {
             raw_metrics += metrics.len();
         }
         assert_eq!(raw_metrics, 5, "raw rows flushed at shutdown, window itself not persisted");
     }
 
     #[tokio::test]
-    async fn dns_worker_discards_metrics_without_persistent_link() {
-        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricEvent>(8);
+    async fn writer_exit_closes_dns_ingress() {
+        let (tx, rx) = mpsc::channel(8);
+        let (writer, reader) = mpsc::channel(1);
+        let worker = tokio::spawn(run_dns_worker(
+            rx,
+            Some(writer),
+            WriteQueueStats::default(),
+            dns_config(),
+            DnsRecentWindow::new(),
+            CancellationToken::new(),
+        ));
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(2), tx.closed()).await.unwrap();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn memory_worker_updates_recent_window_without_a_writer() {
+        let (dns_tx, dns_rx) = mpsc::channel(crate::agg::CHANNEL_CAPACITY);
+        let window = DnsRecentWindow::new();
         let worker = tokio::spawn(run_dns_worker(
             dns_rx,
             None,
             WriteQueueStats::default(),
-            test_config(),
-            None,
+            dns_config(),
+            window.clone(),
             CancellationToken::new(),
         ));
-
-        dns_tx.send(dns_metric_event(60_000)).await.unwrap();
+        dns_tx.send(dns_metric_event(now_ms())).await.unwrap();
         drop(dns_tx);
-        tokio::time::timeout(Duration::from_secs(5), worker).await.unwrap().unwrap();
+        worker.await.unwrap();
+        assert_eq!(window.bucket_count(), 1);
     }
 }

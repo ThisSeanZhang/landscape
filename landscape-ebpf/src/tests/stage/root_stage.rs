@@ -20,6 +20,7 @@ use crate::landscape::OwnedOpenObject;
 use crate::skel::tc_firewall::TcFirewallSkelBuilder;
 use crate::skel::tc_mss::TcMssSkelBuilder;
 use crate::tests::TestSkb;
+use crate::tests::helper::map::{skip_route_and_stage_mark, skip_route_mark};
 
 const TC_SLOT_V4: u32 = 0;
 const TC_SLOT_V6: u32 = 1;
@@ -34,6 +35,9 @@ const V6_SRC: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
 const V6_DST: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
 
 // ── roots ──
+
+mod from_lan_ipv4;
+mod from_lan_xdp;
 
 struct IngressRoot {
     skel: crate::skel::tc_wan_ingress_root::TcWanIngressRootSkel<'static>,
@@ -56,12 +60,31 @@ struct EgressRoot {
 }
 
 fn load_egress_root() -> EgressRoot {
+    load_egress_root_with(Default::default())
+}
+
+fn load_egress_root_with(
+    binding: crate::skel::tc_wan_egress_root::types::wan_egress_binding,
+) -> EgressRoot {
     let (backing, object) = OwnedOpenObject::new();
     let mut open = crate::skel::tc_wan_egress_root::TcWanEgressRootSkelBuilder::default()
         .open(object)
         .unwrap();
-    open.maps.rodata_data.as_deref_mut().unwrap().current_l3_offset = L3;
+    open.maps.rodata_data.as_deref_mut().unwrap().egress_binding = binding;
     EgressRoot { skel: open.load().unwrap(), _backing: backing }
+}
+
+struct PppEgressRoot {
+    skel: crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+fn load_ppp_egress_root() -> PppEgressRoot {
+    let (backing, object) = OwnedOpenObject::new();
+    let open = crate::skel::tc_wan_egress_ppp_root::TcWanEgressPppRootSkelBuilder::default()
+        .open(object)
+        .unwrap();
+    PppEgressRoot { skel: open.load().unwrap(), _backing: backing }
 }
 
 fn wire_stage(map: &impl MapCore, slot: u32, prog: &ProgramMut<'_>) {
@@ -72,7 +95,14 @@ fn wire_stage(map: &impl MapCore, slot: u32, prog: &ProgramMut<'_>) {
 // ── runners ──
 
 fn run_prog(prog: &ProgramMut<'_>, pkt: &[u8]) -> (i32, Vec<u8>, [u32; 5]) {
-    let mut ctx = TestSkb::default();
+    run_prog_with_ctx(prog, pkt, TestSkb::default())
+}
+
+fn run_prog_with_ctx(
+    prog: &ProgramMut<'_>,
+    pkt: &[u8],
+    mut ctx: TestSkb,
+) -> (i32, Vec<u8>, [u32; 5]) {
     let mut ctx_out = TestSkb::default();
     let mut out = vec![0_u8; pkt.len()];
     let ret = prog
@@ -337,6 +367,143 @@ mod tests {
         let first = v6_frag_tcp(1460, 0, true);
         let (_, out) = run_root(root_prog, &first);
         assert_eq!(out, first, "v6 LAND_FRAG_FIRST is not clamped");
+    }
+
+    #[cfg(feature = "test-chain")]
+    #[test]
+    fn egress_root_dispatches_by_skb_protocol_over_wire_eth_proto() {
+        use crate::tests::test_tc_egress_root_proto::TestTcEgressRootProtoSkelBuilder;
+
+        const VERDICT_V4: i32 = 101;
+        const VERDICT_V6: i32 = 102;
+        const VERDICT_EXIT: i32 = 103;
+
+        let root = load_egress_root();
+        let (_shim_backing, shim_obj) = OwnedOpenObject::new();
+        let shim =
+            TestTcEgressRootProtoSkelBuilder::default().open(shim_obj).unwrap().load().unwrap();
+
+        wire_stage(&shim.maps.target_root, 0, &root.skel.progs.tc_wan_egress_root);
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &shim.progs.tc_verdict_v4,
+        );
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V6,
+            &shim.progs.tc_verdict_v6,
+        );
+        wire_stage(&root.skel.maps.tc_from_lan_exit_map, 0, &shim.progs.tc_verdict_exit);
+
+        let entry = &shim.progs.tc_rewrite_eth_proto_and_call;
+        for (skb_proto, wire_override, expected) in [
+            (0x0800_u16, 0x0000_u16, VERDICT_V4),
+            (0x86dd, 0x0000, VERDICT_V6),
+            (0x0806, 0x0000, VERDICT_EXIT),
+            (0x0800, 0x86dd, VERDICT_V4),
+            (0x0800, 0x0806, VERDICT_V4),
+            (0x86dd, 0x0800, VERDICT_V6),
+            (0x86dd, 0x0806, VERDICT_V6),
+            (0x0806, 0x0800, VERDICT_EXIT),
+            (0x0806, 0x86dd, VERDICT_EXIT),
+        ] {
+            let mut pkt = [0_u8; 64];
+            pkt[12..14].copy_from_slice(&skb_proto.to_be_bytes());
+            let ctx = TestSkb {
+                cb: [wire_override.to_be() as u32, 0, 0, 0, 0],
+                ..Default::default()
+            };
+            let (ret, out, _) = run_prog_with_ctx(entry, &pkt, ctx);
+            if wire_override != 0 {
+                assert_eq!(&out[12..14], &wire_override.to_be_bytes());
+            }
+            assert_eq!(
+                ret, expected,
+                "skb_proto={skb_proto:#06x} wire_override={wire_override:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn ppp_root_skip_route_keeps_stages_but_skip_route_and_stage_bypasses_them() {
+        let root = load_ppp_egress_root();
+        let mss = mss_skel();
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &mss.progs.tc_mss_wan_egress_v4,
+        );
+        let prog = &root.skel.progs.tc_wan_egress_ppp_root;
+        let syn = ipv4_tcp_syn_mss(1460);
+        let mss_off = L3 as usize + 20 + 20 + 2;
+
+        let (_, out, _) = run_prog_with_ctx(
+            prog,
+            &syn,
+            TestSkb { mark: skip_route_mark(3), ..Default::default() },
+        );
+        assert_eq!(
+            u16::from_be_bytes([out[mss_off], out[mss_off + 1]]),
+            1492 - 20 - 20,
+            "SkipRoute must enter the MSS stage"
+        );
+
+        let (ret, out, cb) = run_prog_with_ctx(
+            prog,
+            &syn,
+            TestSkb {
+                mark: skip_route_and_stage_mark(3),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ret, -1);
+        assert_eq!(
+            u16::from_be_bytes([out[mss_off], out[mss_off + 1]]),
+            1460,
+            "SkipRouteAndStage must bypass the MSS stage"
+        );
+        assert_eq!(cb[2], 0);
+    }
+
+    #[test]
+    fn ppp_root_forks_l3_and_skips_l2_work() {
+        let root = load_ppp_egress_root();
+        let mss = mss_skel();
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V4,
+            &mss.progs.tc_mss_wan_egress_v4,
+        );
+        wire_stage(
+            &root.skel.maps.wan_egress_root_next_stage,
+            TC_SLOT_V6,
+            &mss.progs.tc_mss_wan_egress_v6,
+        );
+        let prog = &root.skel.progs.tc_wan_egress_ppp_root;
+
+        // PROG_TEST_RUN rebuilds skb->protocol from the Ethernet header and
+        // keeps the header in the data window, so the stage uses the L2 offset.
+        let syn = ipv4_tcp_syn_mss(1460);
+        let ctx = TestSkb {
+            cb: [0, 0, 0x4e48_3450, 7, 8],
+            ..Default::default()
+        };
+        let (_, out, cb) = run_prog_with_ctx(prog, &syn, ctx);
+        let mss_v4 = L3 as usize + 20 + 20 + 2;
+        assert_eq!(u16::from_be_bytes([out[mss_v4], out[mss_v4 + 1]]), 1492 - 20 - 20);
+        assert_eq!(cb[2], 0, "ppp root clears the neighbour-pending state");
+
+        let syn6 = v6_tcp_syn_mss(1460);
+        let (_, out, cb) = run_prog_with_ctx(prog, &syn6, TestSkb::default());
+        let mss_v6 = L3 as usize + 40 + 20 + 2;
+        assert_eq!(u16::from_be_bytes([out[mss_v6], out[mss_v6 + 1]]), 1492 - 40 - 20);
+        assert_eq!(cb[2], 0);
+
+        let non_ip = [0_u8; 64];
+        let (ret, out, _) = run_prog(prog, &non_ip);
+        assert_eq!(ret, -1);
+        assert_eq!(out, non_ip, "non-IP packets are left untouched");
     }
 
     #[test]

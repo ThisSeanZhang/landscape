@@ -28,7 +28,7 @@ pub fn get_iface_pdclient_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_prefix_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, IPV6PDPrefixStatus>> {
-    LandscapeApiResp::success(state.wan_link_service.get_ipv6_prefix_statuses())
+    LandscapeApiResp::success(state.managed.wan_link_service.get_ipv6_prefix_statuses())
 }
 
 #[utoipa::path(
@@ -40,5 +40,5 @@ async fn get_all_prefix_status(
 async fn get_current_ip_prefix_info(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, Option<LDIAPrefix>>> {
-    LandscapeApiResp::success(state.wan_link_service.get_ipv6_prefix_infos())
+    LandscapeApiResp::success(state.managed.wan_link_service.get_ipv6_prefix_infos())
 }

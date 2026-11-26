@@ -7,30 +7,27 @@ use std::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use landscape_common::dns::error::DnsServiceError;
 use landscape_common::dns::{
-    CacheRuntimeConfig, DnsServicePhase, DnsServiceStatus, DohRuntimeConfig, FlowDnsDependencies,
-    FlowDnsPhase, FlowDnsStatus,
+    DnsServicePhase, DnsServiceStatus, FlowDnsDependencies, FlowDnsPhase, FlowDnsStatus,
 };
 use landscape_common::flow::{DnsResultSink, FlowSocketRegistrar};
-use landscape_common::metric::dns::DnsMetricEvent;
-use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+use landscape_common::metric::dns::DnsMetricReporter;
+use landscape_common::sys_config::LanHostnameRuntimeConfig;
+use landscape_common::sys_config::{CacheRuntimeConfig, DohRuntimeConfig};
 use landscape_core::lan_device::LanDeviceDirectory;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::{
     CheckChainDnsResult, CheckDnsReq, convert_record_type,
     domain::ParsedDomain,
-    listener::{
-        DohListenerState, EffectiveDohListenerConfig, FlowListenerPlan, start_flow_dns_listener,
-    },
+    listener::{DohReadiness, DohSettings, FlowListeners, start_flow_dns_listener},
     mdns::MdnsService,
     resolve::{
         DohAdvertiseProvider, LocalDnsAnswerProvider, engine::ResolveEngine, local::LocalResolver,
         redirect::RedirectEngine,
     },
     server::{
-        MetricSenderState,
         flow_state::{FlowDependencySelector, FlowDnsEntry, FlowDnsRuntime},
         handler::{DnsRequestHandler, HandlerDeps},
     },
@@ -56,16 +53,15 @@ pub struct LandscapeDnsServer {
     flow_dns_server: Arc<Mutex<HashMap<u32, Arc<FlowDnsEntry>>>>,
     // local answers (localhost / LAN hostname zone / PTR / DDR) shared by all flows
     pub local_resolver: Arc<LocalResolver>,
-    // shared LAN hostname config (DNS zone + DHCPv4 options 15/119)
-    lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
-    // DNS events
-    pub msg_tx: MetricSenderState,
+    // Stable DNS metric ingress, independent of engine generations
+    pub metric_reporter: DnsMetricReporter,
     // bound UDP DNS listen address
     pub udp_listener_addr: SocketAddr,
-    // plain DNS-over-TCP enabled for this process
-    tcp_enabled: bool,
+    lifecycle: Arc<tokio::sync::RwLock<()>>,
+    listener_failed: Arc<tokio::sync::Notify>,
+    doh_readiness: DohReadiness,
     cache_live_config: Arc<ArcSwap<CacheRuntimeConfig>>,
-    doh_listener: Option<DohListenerState>,
+    doh: Option<DohSettings>,
     _mdns_service: Option<Arc<MdnsService>>,
     result_sink: Arc<dyn DnsResultSink>,
     socket_registrar: Arc<dyn FlowSocketRegistrar>,
@@ -80,15 +76,13 @@ pub enum FlowRuntimeRefreshKind {
 
 pub struct DnsServiceDeps {
     pub listen_port: u16,
-    /// Serve plain DNS over TCP on `listen_port` next to DNS/UDP.
-    pub tcp_enabled: bool,
-    pub msg_tx: Option<mpsc::Sender<DnsMetricEvent>>,
+    pub metric_reporter: DnsMetricReporter,
     pub cache_runtime: CacheRuntimeConfig,
-    pub doh: Option<EffectiveDohListenerConfig>,
+    pub doh: Option<DohSettings>,
     pub local_answer_provider: Option<Arc<dyn LocalDnsAnswerProvider>>,
     pub doh_advertise_provider: Option<Arc<dyn DohAdvertiseProvider>>,
     pub lan_device_directory: Arc<LanDeviceDirectory>,
-    pub lan_hostname_config: Arc<ArcSwap<LanHostnameConfig>>,
+    pub lan_hostname_config: Arc<ArcSwap<LanHostnameRuntimeConfig>>,
     pub result_sink: Arc<dyn DnsResultSink>,
     pub socket_registrar: Arc<dyn FlowSocketRegistrar>,
 }
@@ -97,8 +91,7 @@ impl LandscapeDnsServer {
     pub fn new(deps: DnsServiceDeps) -> Self {
         let DnsServiceDeps {
             listen_port,
-            tcp_enabled,
-            msg_tx,
+            metric_reporter,
             cache_runtime,
             doh,
             local_answer_provider,
@@ -113,14 +106,13 @@ impl LandscapeDnsServer {
         } else {
             None
         };
-        let doh_listener = doh.map(DohListenerState::from_effective_config);
-        let doh_runtime = doh_listener.as_ref().map(|doh_listener| doh_listener.runtime_config());
+        let doh_readiness = DohReadiness::default();
         let local_resolver = Arc::new(LocalResolver::new(
             lan_device_directory,
-            lan_hostname_config.clone(),
+            lan_hostname_config,
             local_answer_provider,
             doh_advertise_provider,
-            doh_runtime,
+            doh_readiness.advertised.clone(),
         ));
 
         Self {
@@ -135,12 +127,13 @@ impl LandscapeDnsServer {
                 0,
                 0,
             )),
-            tcp_enabled,
-            msg_tx: Arc::new(ArcSwapOption::from(msg_tx.map(Arc::new))),
+            metric_reporter,
             cache_live_config: Arc::new(ArcSwap::from_pointee(cache_runtime)),
-            doh_listener,
+            doh,
+            doh_readiness,
+            lifecycle: Default::default(),
+            listener_failed: Default::default(),
             _mdns_service: mdns_service,
-            lan_hostname_config,
             local_resolver,
             result_sink,
             socket_registrar,
@@ -154,20 +147,35 @@ impl LandscapeDnsServer {
 
     /// 开始一次新的服务运行:创建全新的父 token 与 tracker。
     /// 此后须由上层重新 refresh 各 flow(停止时已清空的 runtime 会重建)。
-    pub fn start_service(&self) {
+    pub async fn start_service(&self) {
+        let _guard = self.lifecycle.write().await;
+        if let Some(run) = self.current_run() {
+            if !run.token.is_cancelled() {
+                return;
+            }
+            self.stop_run(&run).await;
+        }
+        self.doh_readiness.set_running(true);
         self.run.store(Some(Arc::new(DnsServiceRun {
             token: CancellationToken::new(),
             tracker: TaskTracker::new(),
         })));
     }
 
-    /// 真停:取消父 token(全体 flow 监听一并终止)→ 确定性等待全部被
-    /// 追踪任务结束 → 清空各 flow 的已死 runtime,供下一轮 refresh 重建。
     pub async fn stop_service(&self) {
-        let Some(run) = self.run.swap(None) else {
-            tracing::debug!("dns service not running, nothing to stop");
-            return;
-        };
+        // Honor stop even if a concurrent refresh takes longer than the caller's deadline.
+        if let Some(run) = self.current_run() {
+            self.doh_readiness.set_running(false);
+            run.token.cancel();
+        }
+        let _guard = self.lifecycle.write().await;
+        if let Some(run) = self.current_run() {
+            self.stop_run(&run).await;
+        }
+    }
+
+    async fn stop_run(&self, run: &DnsServiceRun) {
+        self.doh_readiness.set_running(false);
         run.token.cancel();
         run.tracker.close();
         run.tracker.wait().await;
@@ -185,23 +193,25 @@ impl LandscapeDnsServer {
                 None,
             ));
         }
+        self.run.store(None);
     }
 
     /// Aggregate DNS health derived from the per-flow state snapshots.
     pub async fn service_status(&self) -> DnsServiceStatus {
-        let running = self.current_run().is_some();
-        let phases = {
-            let flow_server = self.flow_dns_server.lock().await;
-            flow_server.values().map(|entry| entry.snapshot().effective_phase()).collect::<Vec<_>>()
+        let running = self.current_run().is_some_and(|run| !run.token.is_cancelled());
+        let statuses = {
+            let flows = self.flow_dns_server.lock().await;
+            flows.values().map(|entry| entry.snapshot().status()).collect::<Vec<_>>()
         };
-
-        let total_flows = phases.len() as u32;
+        let transport_failed =
+            statuses.iter().any(|s| s.tcp_error.is_some() || s.doh_error.is_some());
+        let total_flows = statuses.len() as u32;
         let running_flows =
-            phases.iter().filter(|phase| **phase == FlowDnsPhase::Running).count() as u32;
+            statuses.iter().filter(|s| s.phase == FlowDnsPhase::Running).count() as u32;
         let starting_flows =
-            phases.iter().filter(|phase| **phase == FlowDnsPhase::Starting).count() as u32;
+            statuses.iter().filter(|s| s.phase == FlowDnsPhase::Starting).count() as u32;
         let failed_flows =
-            phases.iter().filter(|phase| **phase == FlowDnsPhase::Failed).count() as u32;
+            statuses.iter().filter(|s| s.phase == FlowDnsPhase::Failed).count() as u32;
         let idle_flows = total_flows - running_flows - starting_flows - failed_flows;
 
         let phase = if !running {
@@ -210,7 +220,7 @@ impl LandscapeDnsServer {
             DnsServicePhase::Idle
         } else if starting_flows > 0 {
             DnsServicePhase::Starting
-        } else if running_flows == total_flows {
+        } else if running_flows == total_flows && !transport_failed {
             DnsServicePhase::Running
         } else if running_flows > 0 {
             DnsServicePhase::Degraded
@@ -221,6 +231,7 @@ impl LandscapeDnsServer {
         };
 
         DnsServiceStatus {
+            advertised_doh: self.doh_readiness.advertised.load_full().as_deref().cloned(),
             phase,
             total_flows,
             running_flows,
@@ -228,6 +239,24 @@ impl LandscapeDnsServer {
             idle_flows,
             failed_flows,
         }
+    }
+
+    pub(crate) async fn wait_for_listener_failure(&self) {
+        self.listener_failed.notified().await;
+    }
+
+    pub(crate) async fn failed_flow_ids(&self) -> Vec<u32> {
+        if self.current_run().is_none_or(|run| run.token.is_cancelled()) {
+            return Vec::new();
+        }
+        self.flow_dns_server
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(id, entry)| {
+                (entry.snapshot().effective_phase() == FlowDnsPhase::Failed).then_some(*id)
+            })
+            .collect()
     }
 
     /// Returns whether at least one flow listener runtime is still serving.
@@ -291,20 +320,12 @@ impl LandscapeDnsServer {
         }
     }
 
-    pub fn update_metric_sender(&self, msg_tx: Option<mpsc::Sender<DnsMetricEvent>>) {
-        self.msg_tx.store(msg_tx.map(Arc::new));
+    pub fn cache_config(&self) -> CacheRuntimeConfig {
+        self.cache_live_config.load_full().as_ref().clone()
     }
 
-    pub fn update_lan_hostname_config(&self, config: LanHostnameConfig) {
-        self.lan_hostname_config.store(Arc::new(config));
-    }
-
-    pub fn current_live_runtime_config(&self) -> (CacheRuntimeConfig, Option<DohRuntimeConfig>) {
-        let cache_runtime = self.cache_live_config.load();
-        let doh_runtime =
-            self.doh_listener.as_ref().map(|doh_listener| doh_listener.runtime_config());
-
-        (cache_runtime.as_ref().clone(), doh_runtime)
+    pub fn advertised_doh(&self) -> Arc<ArcSwapOption<DohRuntimeConfig>> {
+        self.doh_readiness.advertised.clone()
     }
 
     pub async fn refresh_flow_runtime(
@@ -332,6 +353,7 @@ impl LandscapeDnsServer {
         dependencies: FlowDnsDependencies,
         kind: FlowRuntimeRefreshKind,
     ) {
+        let _lifecycle = self.lifecycle.read().await;
         let entry = self.get_or_create_entry(flow_id).await;
 
         let _refresh_guard = entry.refresh_lock.lock().await;
@@ -361,18 +383,21 @@ impl LandscapeDnsServer {
             return;
         }
 
+        if let Some(previous) = &current.runtime {
+            previous.tasks.wait().await;
+        }
         let handler = DnsRequestHandler::from_engines(
             redirect_engine,
             resolve_engine,
             HandlerDeps {
                 runtime_config: self.cache_live_config.clone(),
                 flow_id,
-                msg_tx: self.msg_tx.clone(),
+                metric_reporter: self.metric_reporter.clone(),
                 local_resolver: self.local_resolver.clone(),
                 sink: self.result_sink.clone(),
             },
         );
-        let Some(run) = self.current_run() else {
+        let Some(run) = self.current_run().filter(|run| !run.token.is_cancelled()) else {
             tracing::debug!("[flow: {flow_id}]: dns service not running, skip listener build");
             entry.store(current.transition(FlowDnsPhase::Stopped, dependencies, None, None));
             return;
@@ -474,40 +499,37 @@ impl LandscapeDnsServer {
         run: &DnsServiceRun,
     ) -> Option<FlowDnsRuntime> {
         let token = run.token.child_token();
-        let started = self
-            .start_runtime_listener(flow_id, handler.clone(), &token, run.tracker.clone())
-            .await;
-        if started.is_cancelled() {
-            return None;
-        }
-
-        Some(FlowDnsRuntime { handler, token })
-    }
-
-    async fn start_runtime_listener(
-        &self,
-        flow_id: u32,
-        handler: DnsRequestHandler,
-        token: &CancellationToken,
-        tracker: TaskTracker,
-    ) -> CancellationToken {
+        let tasks = TaskTracker::new();
+        let listeners = FlowListeners {
+            doh: self.doh.clone(),
+            readiness: self.doh_readiness.clone(),
+            ..Default::default()
+        };
         start_flow_dns_listener(
             flow_id,
             self.udp_listener_addr,
-            FlowListenerPlan {
-                tcp_enabled: self.tcp_enabled,
-                doh: self.build_effective_doh_listener_config(),
-            },
-            handler,
+            listeners.clone(),
+            handler.clone(),
             self.socket_registrar.clone(),
             token.clone(),
-            tracker,
+            tasks.clone(),
         )
-        .await
-    }
-
-    fn build_effective_doh_listener_config(&self) -> Option<EffectiveDohListenerConfig> {
-        self.doh_listener.as_ref().map(|doh_listener| doh_listener.build_effective_config())
+        .await;
+        tasks.close();
+        // Keep the entire flow in the service drain, including children exiting after cancellation.
+        let drain = tasks.clone();
+        let owner = run.token.clone();
+        let listener_failed = self.listener_failed.clone();
+        run.tracker.spawn(async move {
+            drain.wait().await;
+            if !owner.is_cancelled() {
+                listener_failed.notify_one();
+            }
+        });
+        if token.is_cancelled() {
+            return None;
+        }
+        Some(FlowDnsRuntime { handler, token, tasks, listeners })
     }
 }
 
@@ -515,9 +537,9 @@ impl LandscapeDnsServer {
 mod tests {
     use super::*;
     use arc_swap::ArcSwap;
-    use landscape_common::dns::CacheRuntimeConfig;
     use landscape_common::flow::{NoopDnsResultSink, NoopFlowSocketRegistrar};
-    use landscape_common::sys_service::lan_hostname::LanHostnameConfig;
+    use landscape_common::sys_config::CacheRuntimeConfig;
+    use landscape_common::sys_config::LanHostnameRuntimeConfig;
     use landscape_core::lan_device::LanDeviceDirectory;
 
     fn run_async_test(test: impl std::future::Future<Output = ()>) {
@@ -538,12 +560,12 @@ mod tests {
             test_lan_hostname_config(),
             None,
             None,
-            None,
+            Default::default(),
         ))
     }
 
-    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameConfig>> {
-        Arc::new(ArcSwap::from_pointee(LanHostnameConfig::default()))
+    fn test_lan_hostname_config() -> Arc<ArcSwap<LanHostnameRuntimeConfig>> {
+        Arc::new(ArcSwap::from_pointee(LanHostnameRuntimeConfig::default()))
     }
 
     #[test]
@@ -556,12 +578,17 @@ mod tests {
                 HandlerDeps {
                     runtime_config: Arc::new(ArcSwap::from_pointee(test_cache_runtime_config())),
                     flow_id: 7,
-                    msg_tx: Arc::new(ArcSwapOption::new(None)),
+                    metric_reporter: DnsMetricReporter::default(),
                     local_resolver: test_local_resolver(),
                     sink: Arc::new(NoopDnsResultSink),
                 },
             );
-            let runtime = FlowDnsRuntime { handler, token: CancellationToken::new() };
+            let runtime = FlowDnsRuntime {
+                handler,
+                token: CancellationToken::new(),
+                tasks: Default::default(),
+                listeners: Default::default(),
+            };
             entry.store(entry.snapshot().transition(
                 FlowDnsPhase::Running,
                 FlowDnsDependencies::default(),
@@ -592,8 +619,7 @@ mod tests {
     fn test_dns_server() -> LandscapeDnsServer {
         let mut server = LandscapeDnsServer::new(DnsServiceDeps {
             listen_port: 53,
-            tcp_enabled: false,
-            msg_tx: None,
+            metric_reporter: DnsMetricReporter::default(),
             cache_runtime: test_cache_runtime_config(),
             doh: None,
             local_answer_provider: None,
@@ -746,6 +772,68 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn tcp_bind_failure_keeps_the_flow_running_and_is_reported_until_recovery() {
+        use std::time::Duration;
+        let occupied = tokio::net::TcpListener::bind("[::]:0").await.unwrap();
+        let mut server = test_dns_server();
+        server.udp_listener_addr = occupied.local_addr().unwrap();
+        refresh_full(&server, 1).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while server.flow_status(1).await.unwrap().tcp_error.is_none() {
+                tokio::task::yield_now().await;
+            }
+            assert!(server.has_live_flow_runtime().await);
+            assert_eq!(server.service_status().await.phase, DnsServicePhase::Degraded);
+            drop(occupied);
+            while server.flow_status(1).await.unwrap().tcp_error.is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(server.service_status().await.phase, DnsServicePhase::Running);
+        })
+        .await
+        .unwrap();
+        server.stop_service().await;
+    }
+
+    #[tokio::test]
+    async fn stopped_service_keeps_latest_doh_config_until_previous_run_has_drained() {
+        use std::time::Duration;
+        let mut server = test_dns_server();
+        let (desired, config) = tokio::sync::watch::channel(DohRuntimeConfig {
+            listen_port: 0,
+            http_endpoint: "/first".into(),
+        });
+        server.doh = Some(DohSettings {
+            config,
+            cert_resolver: Arc::new(rustls::server::ResolvesServerCertUsingSni::new()),
+        });
+        refresh_full(&server, 1).await;
+        let advertised = server.advertised_doh();
+        assert_eq!(advertised.load_full().unwrap().http_endpoint, "/first");
+
+        // Hold a run task past the caller's deadline. Stop remains effective and start
+        // must wait for it, even with consecutive writes to the desired configuration.
+        let held_task = server.current_run().unwrap().tracker.token();
+        let deadline = Duration::from_millis(20);
+        assert!(tokio::time::timeout(deadline, server.stop_service()).await.is_err());
+        assert!(advertised.load().is_none());
+        for path in ["/older", "/latest"] {
+            desired.send_replace(DohRuntimeConfig { listen_port: 0, http_endpoint: path.into() });
+        }
+        assert!(tokio::time::timeout(deadline, server.start_service()).await.is_err());
+        assert!(advertised.load().is_none());
+        drop(held_task);
+        server.stop_service().await;
+        refresh_full(&server, 1).await;
+        assert!(!server.has_live_flow_runtime().await);
+        assert!(advertised.load().is_none());
+        server.start_service().await;
+        refresh_full(&server, 1).await;
+        assert_eq!(advertised.load_full().unwrap().http_endpoint, "/latest");
+        server.stop_service().await;
+    }
+
     #[test]
     fn stop_then_start_rebuilds_listeners() {
         run_async_test(async {
@@ -763,7 +851,7 @@ mod tests {
             assert_eq!(server.service_status().await.phase, DnsServicePhase::Stopped);
 
             // 重启:refresh 重建 listener 后恢复 Running
-            server.start_service();
+            server.start_service().await;
             refresh_full(&server, 1).await;
             assert_eq!(server.service_status().await.phase, DnsServicePhase::Running);
             assert!(server.has_live_flow_runtime().await);

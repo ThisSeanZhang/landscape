@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use hickory_proto::op::{DnsRequestOptions, Message, MessageType, Query};
+use hickory_proto::op::{DnsRequestOptions, Message, Query};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio_util::codec::{FramedRead, LengthDelimitedCodec};
@@ -169,6 +169,13 @@ where
                 // receive the response); bounds the map when responses never
                 // arrive.
                 let now = Instant::now();
+                if req.reply.is_closed() {
+                    continue;
+                }
+                if req.deadline <= now {
+                    let _ = req.reply.send(Err(DnsConnError::Timeout));
+                    continue;
+                }
                 active.retain(|_, (_, deadline, _)| *deadline > now);
                 let Some(id) = next_random_id(&active) else {
                     let _ = req.reply.send(Err(DnsConnError::NoConnections));
@@ -220,21 +227,12 @@ where
                 match frame {
                     Some(Ok(bytes)) => {
                         match Message::from_vec(&bytes) {
-                            Ok(message) if message.metadata.message_type == MessageType::Response => {
+                            Ok(message) => {
                                 if let Some((reply, deadline, expected)) = active.remove(&message.metadata.id) {
-                                    // Same contract as the UDP validator
-                                    // (hickory's `validate_response`): every
-                                    // question in the response must echo the
-                                    // request. A mismatched frame (forged or
-                                    // cross-wired) must not satisfy the
-                                    // pending query: re-queue it and keep
-                                    // waiting — the caller's timeout bounds
-                                    // the wait, and the connection survives.
-                                    if !message.queries.iter().all(|q| expected.contains(q)) {
-                                        tracing::debug!(
-                                            id = message.metadata.id,
-                                            "dropping response with mismatched question"
-                                        );
+                                    // Keep the request pending when a frame belongs
+                                    // to another question. Its deadline still applies.
+                                    if let Err(reason) = super::validate_reply(&message, &expected) {
+                                        tracing::debug!(id = message.metadata.id, reason, "dropping invalid reply");
                                         active.insert(message.metadata.id, (reply, deadline, expected));
                                         continue;
                                     }
@@ -251,7 +249,6 @@ where
                                     );
                                 }
                             }
-                            Ok(_) => tracing::debug!("dropping non-response frame"),
                             Err(e) => tracing::debug!("dropping undecodable frame: {e}"),
                         }
                     }
@@ -405,35 +402,69 @@ mod tests {
     async fn concurrent_queries_get_distinct_ids() {
         let (conn, mut server) = mux_pair().await;
         let mut tasks = Vec::new();
-        for _ in 0..8 {
+        for i in 0..8 {
             let conn = conn.clone();
             tasks.push(tokio::spawn(async move {
-                let q = Query::query(Name::from_str("example.com.").unwrap(), RecordType::A);
-                conn.query(&q, &options()).await.unwrap()
+                let name = Name::from_ascii(format!("q{i}.example.")).unwrap();
+                let q = Query::query(name, RecordType::A);
+                let response = conn.query(&q, &options()).await.unwrap();
+                assert_eq!(response.queries, [q]);
             }));
         }
         let mut ids = std::collections::HashSet::new();
         let mut responses = Vec::new();
-        for _ in 0..8 {
-            let request = read_frame(&mut server).await;
-            assert!(ids.insert(request.metadata.id), "id {} reused", request.metadata.id);
-            let response = response_for(&request);
-            write_response(&mut server, &response).await;
-            responses.push(response);
-        }
-        // Every task receives the answer carrying its own random id: the
-        // mux dispatches by id, never cross-wiring responses.
-        let mut returned: Vec<u16> = Vec::new();
-        for task in tasks {
-            let message = task.await.unwrap();
-            assert!(message.answers.len() == 1);
-            returned.push(message.metadata.id);
-        }
-        returned.sort_unstable();
-        let mut expected: Vec<u16> = ids.into_iter().collect();
-        expected.sort_unstable();
-        assert_eq!(returned, expected);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for _ in 0..tasks.len() {
+                let request = read_frame(&mut server).await;
+                assert!(ids.insert(request.metadata.id));
+                responses.push(response_for(&request));
+            }
+            for response in responses.into_iter().rev() {
+                write_response(&mut server, &response).await;
+            }
+            for task in tasks {
+                task.await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
         conn.shutdown();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn writer_skips_abandoned_and_expired_queue_entries() {
+        let (conn, mut server) = mux_pair().await;
+        let abandoned = query();
+        let options = options();
+        // One poll queues the request. Dropping it before yielding ensures
+        // the receiver is gone before the connection task can write.
+        let mut canceled = Box::pin(conn.query(&abandoned, &options));
+        assert!(futures_util::poll!(&mut canceled).is_pending());
+        drop(canceled);
+
+        let (reply, expired) = oneshot::channel();
+        assert!(
+            conn.tx
+                .try_send(Request {
+                    message: build_message(&abandoned, &options),
+                    reply,
+                    deadline: Instant::now(),
+                })
+                .is_ok()
+        );
+
+        let live = Query::query(Name::from_str("live.example.").unwrap(), RecordType::A);
+        let mut lookup = Box::pin(conn.query(&live, &options));
+        assert!(futures_util::poll!(&mut lookup).is_pending());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let frame = read_frame(&mut server).await;
+            assert_eq!(frame.queries.as_slice(), std::slice::from_ref(&live));
+            write_response(&mut server, &response_for(&frame)).await;
+            assert!(lookup.await.is_ok());
+            assert!(matches!(expired.await, Ok(Err(DnsConnError::Timeout))));
+        })
+        .await
+        .unwrap();
     }
 
     /// A query whose id response never arrives times out; the id is released

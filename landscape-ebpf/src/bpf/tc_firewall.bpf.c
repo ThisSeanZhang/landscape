@@ -6,7 +6,8 @@
 #include "base/landscape.h"
 #include "base/proto_def.h"
 #include "chain/tc_stage.h"
-#include "chain/tc_wan_exit_maps.h"
+#include "chain/tc_from_lan_exit_maps.h"
+#include "chain/tc_from_wan_exit_maps.h"
 #include "firewall/firewall_share.h"
 #include "reader/tc_fw4.h"
 #include "reader/tc_fw6.h"
@@ -73,9 +74,7 @@ static __always_inline int fw_do_ingress_v6(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
-        if (unlikely(fw_do_egress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-    }
+    if (unlikely(fw_do_egress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_LAN_CHAIN_EXIT(skb);
@@ -84,9 +83,7 @@ int tc_firewall_wan_egress_v4(struct __sk_buff *skb) {
 
 SEC("tc/egress")
 int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
-        if (unlikely(fw_do_egress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-    }
+    if (unlikely(fw_do_egress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_FROM_LAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_LAN_CHAIN_EXIT(skb);
@@ -95,9 +92,7 @@ int tc_firewall_wan_egress_v6(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
-        if (unlikely(fw_do_ingress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-    }
+    if (unlikely(fw_do_ingress_v4(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V4);
     TC_FROM_WAN_CHAIN_EXIT(skb);
@@ -106,9 +101,7 @@ int tc_firewall_wan_ingress_v4(struct __sk_buff *skb) {
 
 SEC("tc/ingress")
 int tc_firewall_wan_ingress_v6(struct __sk_buff *skb) {
-    if (likely(not_host_direct(skb_mark(skb)))) {
-        if (unlikely(fw_do_ingress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
-    }
+    if (unlikely(fw_do_ingress_v6(skb) == TC_ACT_SHOT)) return TC_ACT_SHOT;
 
     TC_FROM_WAN_CHAIN_NEXT(skb, TC_SLOT_V6);
     TC_FROM_WAN_CHAIN_EXIT(skb);

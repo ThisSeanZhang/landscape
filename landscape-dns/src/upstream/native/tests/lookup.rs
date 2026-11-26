@@ -1,5 +1,4 @@
-//! Lookup retry-loop tests: error taxonomy, attempt budgets, truncation
-//! fallback, and the leg-rotation helper.
+//! Lookup retry-loop tests: error taxonomy, attempt budgets and truncation fallback.
 
 use super::*;
 
@@ -162,28 +161,6 @@ async fn force_stream_without_stream_connectors_returns_truncated_answer() {
     let records = pool.lookup("example.com.", RecordType::A).await.unwrap();
     assert_eq!(records.len(), 1);
     assert_eq!(udp.queries(), 1);
-}
-
-#[test]
-fn rotate_capped_respects_cap_and_rotates() {
-    use std::collections::HashSet;
-
-    let legs = vec![0usize, 1, 2, 3];
-    // Cap >= len: every leg exactly once.
-    let mut all = rotate_capped(&legs, 4);
-    all.sort();
-    assert_eq!(all, legs);
-    // Cap < len: exactly cap distinct legs.
-    let capped = rotate_capped(&legs, 2);
-    assert_eq!(capped.len(), 2);
-    assert!(capped.iter().all(|i| legs.contains(i)));
-    // Empty inputs.
-    assert!(rotate_capped(&[], 4).is_empty());
-    assert!(rotate_capped(&legs, 0).is_empty());
-    // Random rotation: with a cap of 1 the chosen leg varies across
-    // draws (P(all 64 draws identical) ~ (1/4)^63).
-    let seen: HashSet<usize> = (0..64).map(|_| rotate_capped(&legs, 1)[0]).collect();
-    assert!(seen.len() > 1);
 }
 
 #[tokio::test]
@@ -468,6 +445,43 @@ async fn invalid_domain_returns_internal_error() {
     assert!(matches!(err, UpstreamError::Internal(msg) if msg.contains("invalid domain")));
     assert_eq!(connector.queries(), 0);
     assert_eq!(connector.dials(), 0);
+}
+
+#[tokio::test]
+async fn lookup_name_accepts_middle_underscore_labels() {
+    // The wire name is valid DNS even though IDNA would reject the label:
+    // the pool must accept the already-parsed Name without re-validating it.
+    let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    connector.push(Ok(answer_with(vec![a_record_named("xxx_xxx.example.com.", [1, 2, 3, 4])])));
+    let pool = stream_pool(connector.clone(), 3);
+
+    let records = pool
+        .lookup_name(Name::from_ascii("xxx_xxx.example.com.").unwrap(), RecordType::A)
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(matches!(&records[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::new(1, 2, 3, 4)));
+}
+
+#[tokio::test]
+async fn facade_lookup_accepts_middle_underscore_labels() {
+    // Regression: the facade used to re-parse the canonical string through
+    // `Name::parse`, which rejects underscores anywhere but the label start.
+    use crate::domain::ParsedDomain;
+    use crate::upstream::LandscapeResolver;
+
+    let connector = MockConnector::new([10, 0, 0, 1], DnsTransport::Stream);
+    connector.push(Ok(answer_with(vec![a_record_named("xxx_xxx.example.com.", [1, 2, 3, 4])])));
+    let resolver = LandscapeResolver::Native(stream_pool(connector.clone(), 3));
+
+    let domain = ParsedDomain::from_wire_name(Name::from_ascii("xxx_xxx.example.com.").unwrap());
+    let lookup = resolver.lookup(&domain, RecordType::A).await.unwrap();
+    assert_eq!(lookup.records.len(), 1);
+    assert!(matches!(&lookup.records[0].data, RData::A(A(ip)) if *ip == Ipv4Addr::new(1, 2, 3, 4)));
+    assert_eq!(
+        connector.last_query_name(),
+        Some(Name::from_ascii("xxx_xxx.example.com.").unwrap())
+    );
 }
 
 #[test]

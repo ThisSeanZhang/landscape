@@ -19,16 +19,10 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@api/*": ["./src/api/*"],
-      "@store/*": ["./src/store/*"],
-      "@router/*": ["./src/router/*"],
-      "@lib/*": ["./src/lib/*"],
-      "@views/*": ["./src/views/*"],
-      "@components/*": ["./src/components/*"],
       "@landscape-router/types/*": ["../landscape-types/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "e2e/**/*.ts"],
   "references": [
     {
       "path": "./tsconfig.node.json"

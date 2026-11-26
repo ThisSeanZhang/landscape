@@ -66,7 +66,7 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
 
     if (target_info->ifindex != skb->ifindex) {
         if (current_l3_offset == 0 && target_info->has_mac) {
-            if (prepend_dummy_mac(skb) != 0) {
+            if (prepend_dummy_mac(skb, target_info->is_docker) != 0) {
                 ld_from_wan_log("add dummy_mac fail");
                 return TC_ACT_SHOT;
             }
@@ -78,36 +78,12 @@ static __always_inline int tc_route4_pick_wan_in_wan_egress(struct __sk_buff *sk
             return bpf_redirect(target_info->ifindex, 0);
         }
 
-        bool mac_stored = !target_info->has_mac;
-        if (target_info->has_mac) {
-            struct mac_value_v4 *mac_value =
-                bpf_map_lookup_elem(&ip_mac_v4, &target_info->gate_addr);
-            if (mac_value) {
-                ret = store_mac_v4(skb, mac_value->mac, target_info->mac);
-                if (!ret) {
-                    mac_stored = true;
-                } else {
-                    ld_from_wan_log("store_mac_v4 err: %d", ret);
-                }
-            } else {
-                ld_from_wan_log("can't find mac by: %pI4", &target_info->gate_addr);
-            }
-        }
-
+        // The target link's egress root owns the Ethernet rewrite and the
+        // neighbour fallback.  Mark the cross-link handoff and let the
+        // target egress hook enter that root.
         tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-        if (mac_stored) {
-            return bpf_redirect(target_info->ifindex, 0);
-        }
-
-        struct bpf_redir_neigh param;
-        param.nh_family = AF_INET;
-        param.ipv4_nh = target_info->gate_addr;
-        ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-        if (unlikely(ret != TC_ACT_REDIRECT)) {
-            ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
-        }
-        return ret;
+        skb->cb[0] |= TC_CB_REROUTED;
+        return bpf_redirect(target_info->ifindex, 0);
     }
 
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
@@ -150,32 +126,9 @@ static __always_inline int tc_route6_pick_wan_in_wan_egress(struct __sk_buff *sk
             return bpf_redirect(target_info->ifindex, 0);
         }
 
-        bool mac_stored = !target_info->has_mac;
-        if (target_info->has_mac) {
-            struct mac_value_v6 *mac_value =
-                bpf_map_lookup_elem(&ip_mac_v6, &target_info->gate_addr);
-            if (mac_value) {
-                ret = store_mac_v6(skb, mac_value->mac, target_info->mac);
-                if (!ret) {
-                    mac_stored = true;
-                } else {
-                    ld_from_wan_log("store_mac_v6 err: %d", ret);
-                }
-            } else {
-                ld_from_wan_log("can't find mac by: %pI6", &target_info->gate_addr);
-            }
-        }
-
+        // The target link's egress root owns the Ethernet rewrite.
         tc_cb_mark_forwarded(skb, target_info->link_chain_id);
-
-        if (mac_stored) return bpf_redirect(target_info->ifindex, 0);
-
-        struct bpf_redir_neigh param;
-        param.nh_family = AF_INET6;
-        COPY_ADDR_FROM(param.ipv6_nh, target_info->gate_addr.in6_u.u6_addr32);
-        ret = bpf_redirect_neigh(target_info->ifindex, &param, sizeof(param), 0);
-        if (unlikely(ret != TC_ACT_REDIRECT)) ld_from_wan_log("bpf_redirect_neigh error: %d", ret);
-        return ret;
+        return bpf_redirect(target_info->ifindex, 0);
     }
 
     bpf_tail_call(skb, &tc_wan_egress_roots, target_info->link_chain_id);
@@ -350,6 +303,20 @@ struct {
 
 SEC("tc/egress")
 int tc_wan_egress_route(struct __sk_buff *skb) {
+    // A neighbour-resolved frame can re-enter this same egress hook.
+    if (skb->cb[2] == TC_CB_NEIGH4_REDIRECT && skb->cb[4] == skb->ifindex) {
+        // When ARP releases a queued skb, Linux can rebuild L2 from the old
+        // dst_entry left by the original egress route. Apply the now-resolved
+        // neighbour once on this device without running policy stages again.
+        if ((skb->cb[0] & TC_CB_REROUTED) && skb->cb[3]) {
+            skb->cb[0] &= ~TC_CB_REROUTED;
+            struct bpf_redir_neigh nh = {.nh_family = AF_INET, .ipv4_nh = skb->cb[3]};
+            return bpf_redirect_neigh(skb->ifindex, &nh, sizeof(nh), 0);
+        }
+        skb->cb[2] = 0;
+        return TC_ACT_UNSPEC;
+    }
+
     // Already routed by a landscape pick_wan: enter the target link's
     // chain directly, the decision (and its chain id) travels in cb.
     if (tc_cb_forwarded(skb)) {
@@ -362,16 +329,21 @@ int tc_wan_egress_route(struct __sk_buff *skb) {
     bool is_ipv4;
     int ret;
 
-    // Host-originated control plane with a direct chain assignment:
-    // SO_MARK in the HostDirect layout (bits 0-15 = chain id), e.g. the
-    // DHCPv6-PD socket of a native PPPoE link.  The policy stages
-    // self-skip on this mark (base/mark.h), so the packet rides the
-    // chain's terminal (PPP encapsulation) and exits untouched.
+    // Host-originated traffic with a direct chain assignment: SO_MARK in a
+    // SkipRoute layout (bits 0-15 = chain id). SkipRouteAndStage also
+    // bypasses the policy stages (e.g. the DHCPv6-PD socket of a native
+    // PPPoE link); SkipRoute keeps them for WAN-link probing. Both still
+    // ride the chain's terminal (PPP encapsulation) and exit.
     u32 mark = skb_mark(skb);
-    if (unlikely(is_host_direct(mark))) {
-        u32 chain = get_host_direct_chain_id(mark);
+    if (unlikely(is_skip_all(mark))) {
+        // Raw/pre-IP control frames: bypass the whole landscape chain and
+        // let the kernel send the frame on the bound device.
+        return TC_ACT_OK;
+    }
+    if (unlikely(is_skip_route(mark))) {
+        u32 chain = get_skip_route_chain_id(mark);
         bpf_tail_call(skb, &tc_wan_egress_roots, chain);
-        ld_from_wan_log("host-direct root tail failed chain %u; passing", chain);
+        ld_from_wan_log("skip-route root tail failed chain %u; passing", chain);
         return TC_ACT_UNSPEC;
     }
 

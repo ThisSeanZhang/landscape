@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "bpf-test"), allow(unused_imports))]
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use landscape_common::flow::mark::{FlowMark, FlowMarkAction, MarkType, SocketMark};
@@ -35,10 +35,22 @@ pub(crate) fn normal_mark(action: FlowMarkAction, flow_id: u8, allow_reuse_port:
     ))
 }
 
-/// HostDirect-layout mark: the host control plane's direct chain
-/// assignment (SO_MARK on e.g. the DHCPv6-PD socket).
-pub(crate) fn host_direct_mark(chain_id: u16) -> u32 {
-    u32::from(SocketMark::new(MarkType::HostDirect { chain_id }, 0))
+/// SkipRouteAndStage mark: host-originated traffic that bypasses both the
+/// route lookup and the policy stages (SO_MARK on the DHCPv6-PD socket).
+pub(crate) fn skip_route_and_stage_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id }, 0))
+}
+
+/// SkipRoute mark: host-originated traffic that bypasses only the route
+/// lookup and keeps the policy stages (e.g. WAN-link probing).
+pub(crate) fn skip_route_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipRoute { chain_id }, 0))
+}
+
+/// SkipAll mark: raw/pre-IP control traffic that bypasses the route lookup,
+/// the policy stages and the terminal exit.
+pub(crate) fn skip_all_mark(chain_id: u16) -> u32 {
+    u32::from(SocketMark::new(MarkType::SkipAll { chain_id }, 0))
 }
 
 pub(crate) fn local_addr() -> Ipv6Addr {
@@ -51,10 +63,6 @@ pub(crate) fn remote_addr() -> Ipv6Addr {
 
 pub(crate) fn gateway_addr() -> Ipv6Addr {
     Ipv6Addr::from_str("2001:db8:ffff::1").unwrap()
-}
-
-pub(crate) fn wan_addr() -> IpAddr {
-    IpAddr::V6(Ipv6Addr::from_str("2001:db8:ffff::10").unwrap())
 }
 
 pub(crate) fn as_bytes<T>(value: &T) -> &[u8] {
@@ -113,8 +121,7 @@ pub(crate) fn make_rt4_cache_key(local: Ipv4Addr, remote: Ipv4Addr) -> Route4Cac
 }
 
 /// v4 twin of `put_rt6_cache_ifindex` (see `route4_cache_value` C layout).
-/// Full-control v4 cache insert (docker flag, gate addr, cached mac).
-/// `gate_addr`/`mac` back `route4_redirect_by_cached_target`'s rewrite branches.
+/// Full-control v4 cache insert (mark / docker flag).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn put_rt4_cache_full<T: MapCore>(
     outer_map: &T,
@@ -125,8 +132,6 @@ pub(crate) fn put_rt4_cache_full<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
     is_docker: bool,
-    gate_addr: Ipv4Addr,
-    mac: [u8; 6],
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt4_cache_key(local, remote);
@@ -135,8 +140,6 @@ pub(crate) fn put_rt4_cache_full<T: MapCore>(
         ifindex,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
-        gate_addr: gate_addr.to_bits().to_be(),
-        mac,
         ..Default::default()
     };
     inner
@@ -153,18 +156,7 @@ pub(crate) fn put_rt4_cache_value<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
 ) {
-    put_rt4_cache_full(
-        outer_map,
-        cache_index,
-        local,
-        remote,
-        ifindex,
-        has_mac,
-        mark_value,
-        false,
-        Ipv4Addr::UNSPECIFIED,
-        [0; 6],
-    );
+    put_rt4_cache_full(outer_map, cache_index, local, remote, ifindex, has_mac, mark_value, false);
 }
 
 pub(crate) fn put_rt4_cache_ifindex<T: MapCore>(
@@ -189,7 +181,7 @@ pub(crate) fn put_rt6_cache_ifindex<T: MapCore>(
     put_rt6_cache_value(outer_map, cache_index, local, remote, ifindex, has_mac, 0);
 }
 
-/// Full-control v6 cache insert (mark / docker / gate addr / cached mac),
+/// Full-control v6 cache insert (mark / docker flag),
 /// v6 twin of `put_rt4_cache_full`.
 pub(crate) fn put_rt6_cache_value<T: MapCore>(
     outer_map: &T,
@@ -200,18 +192,7 @@ pub(crate) fn put_rt6_cache_value<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
 ) {
-    put_rt6_cache_full(
-        outer_map,
-        cache_index,
-        local,
-        remote,
-        ifindex,
-        has_mac,
-        mark_value,
-        false,
-        Ipv6Addr::UNSPECIFIED,
-        [0; 6],
-    );
+    put_rt6_cache_full(outer_map, cache_index, local, remote, ifindex, has_mac, mark_value, false);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -224,8 +205,6 @@ pub(crate) fn put_rt6_cache_full<T: MapCore>(
     has_mac: bool,
     mark_value: u32,
     is_docker: bool,
-    gate_addr: Ipv6Addr,
-    mac: [u8; 6],
 ) {
     let inner = lookup_inner_map(outer_map, cache_index);
     let key = make_rt6_cache_key(local, remote);
@@ -234,8 +213,6 @@ pub(crate) fn put_rt6_cache_full<T: MapCore>(
         ifindex,
         has_mac: has_mac as u8,
         is_docker: is_docker as u8,
-        gate_addr: gate_addr.octets(),
-        mac,
         ..Default::default()
     };
     inner
@@ -453,7 +430,6 @@ pub(crate) fn init_shared_maps_for_test(root: &Path) -> TestSharedMaps {
 #[derive(Debug)]
 #[allow(dead_code)] // pinned handles exist for map-layout parity; not every test reads each one
 pub(crate) struct TestSharedMaps {
-    pub wan_ip_binding: libbpf_rs::MapHandle,
     pub rt4_lan_map: libbpf_rs::MapHandle,
     pub rt6_lan_map: libbpf_rs::MapHandle,
     pub rt4_slot_map: libbpf_rs::MapHandle,
@@ -469,7 +445,6 @@ impl TestSharedMaps {
                 .unwrap_or_else(|e| panic!("open test map at {}: {e}", path.display()))
         };
         Self {
-            wan_ip_binding: pin(&paths.wan_ip),
             rt4_lan_map: pin(&paths.rt4_lan_map),
             rt6_lan_map: pin(&paths.rt6_lan_map),
             rt4_slot_map: pin(&paths.rt4_slot_map),

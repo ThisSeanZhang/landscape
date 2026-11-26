@@ -25,21 +25,19 @@ const props = withDefaults(defineProps<Props>(), {
 
 const flowId = defineModel<number | null>();
 
-const flowRules = ref<any[]>([]);
+const flowRules = ref<Awaited<ReturnType<typeof getFlowRules>>>([]);
 const loading = ref(false);
 
-const flowOptions = computed(() => {
-  const options = flowRules.value.map((e) => ({
-    value: e.flow_id,
-    label: e.remark ? `${e.flow_id} - ${e.remark}` : `Flow ${e.flow_id}`,
-  }));
-
-  if (props.includeAll) {
-    return [{ label: t("flow.select.all"), value: null }, ...options];
-  }
-
-  return options;
-});
+const flowOptions = computed(() => [
+  ...(props.includeAll ? [{ label: t("flow.select.all"), value: null }] : []),
+  { label: `0 - ${t("flow.default_card.title")}`, value: 0 },
+  ...flowRules.value
+    .filter((rule) => rule.flow_id !== 0)
+    .map(({ flow_id, remark }) => ({
+      value: flow_id,
+      label: remark ? `${flow_id} - ${remark}` : `Flow ${flow_id}`,
+    })),
+]);
 
 async function loadFlowRules() {
   loading.value = true;

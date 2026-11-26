@@ -285,6 +285,8 @@ impl DnsConn for NativeQuicConn {
                     message.id
                 )));
             }
+            super::validate_reply(&message, std::slice::from_ref(query))
+                .map_err(|reason| DnsConnError::Response(reason.into()))?;
             classify_message(message)
         })
         .await;

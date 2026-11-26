@@ -110,7 +110,7 @@ impl Modify for SecurityAddon {
         landscape_common::config_service::geo::GeoIpConfig,
         // Auth types
         landscape_common::auth::LoginResult,
-        landscape_common::auth::ChangePasswordRequest,
+        landscape_common::sys_config::ChangePasswordRequest,
         // Schemas referenced by IntoParams but not auto-registered
         landscape_common::metric::connect::ConnectSortKey,
         landscape_common::metric::connect::SortOrder,
@@ -128,7 +128,7 @@ impl Modify for SecurityAddon {
         landscape_common::pty::PtyInMessage,
         landscape_common::pty::PtyOutMessage,
         // UI Config
-        landscape_common::config::LandscapeThemeStyleConfig,
+        landscape_common::sys_config::LandscapeThemeStyleConfig,
         // System capabilities
         landscape_common::sys_service::capability::Capability,
         // Route status view
@@ -441,6 +441,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "writes the OpenAPI schema for client generation"]
     fn export_openapi_json() {
         let openapi = build_full_openapi_spec();
         let json = openapi.to_pretty_json().expect("Failed to serialize OpenAPI spec");

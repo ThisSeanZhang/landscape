@@ -1,10 +1,8 @@
 <script setup lang="ts">
+import type { CallerIdentityResponse } from "@landscape-router/types/api/schemas";
 import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  get_iface_disable_risk_caller,
-  type IfaceDisableRiskCaller,
-} from "@/lib/iface_disable_guard";
+import { get_iface_disable_risk_caller } from "@/lib/network/iface_disable_guard";
 
 const props = withDefaults(
   defineProps<{
@@ -26,7 +24,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const show = ref(false);
-const caller = ref<IfaceDisableRiskCaller | null>(null);
+const caller = ref<CallerIdentityResponse | null>(null);
 const input_value = ref("");
 const loading = ref(false);
 const pending_action = ref<(() => Promise<void>) | null>(null);

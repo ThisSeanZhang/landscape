@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 
 use landscape_common::dns::config::DnsUpstreamConfig;
 use uuid::Uuid;
@@ -17,21 +17,11 @@ use crate::upstream::{LandscapeResolver, create_resolver};
 /// separate key component.
 type ResolverKey = (u32, Uuid);
 
-/// Global resolver pool shared across all flows. `UpstreamsChanged` triggers
-/// `invalidate()` for the affected ids, so the next flow refresh rebuilds
-/// resolvers unconditionally. Dropping an entry releases its engine: the
-/// legacy resolver or the experimental pool (idle connections close with it).
-///
-/// Known tradeoff (accepted for now): entries are ONLY dropped on upstream
-/// change (or process restart). When a rule's mark/flow changes or a rule is
-/// deleted (`RulesChanged` does a ResolveOnly refresh and never invalidates),
-/// the old `(mark, upstream)` entry stays in the map forever, keeping its
-/// connection pool alive until that upstream changes or the daemon restarts.
-/// Harmless today (lightweight, cache_size = 0) but worth a sweep that drops
-/// entries no rule references anymore if this ever becomes a problem.
+/// Index of resolvers shared across flows. Rules own their active resolver, so
+/// removing the last rule releases its connections once in-flight queries finish.
 #[derive(Debug, Default)]
 pub struct ResolvePool {
-    resolvers: RwLock<HashMap<ResolverKey, Arc<LandscapeResolver>>>,
+    resolvers: RwLock<HashMap<ResolverKey, Weak<LandscapeResolver>>>,
 }
 
 impl ResolvePool {
@@ -45,14 +35,24 @@ impl ResolvePool {
         upstream: &DnsUpstreamConfig,
     ) -> Option<Arc<LandscapeResolver>> {
         let key = (dns_mark, upstream.id);
-        if let Some(resolver) = self.resolvers.read().unwrap_or_else(|e| e.into_inner()).get(&key) {
-            return Some(resolver.clone());
+        if let Some(resolver) = self
+            .resolvers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .and_then(Weak::upgrade)
+        {
+            return Some(resolver);
         }
 
-        let resolver = Arc::new(create_resolver(flow_id, dns_mark, upstream.clone())?);
-
         let mut resolvers = self.resolvers.write().unwrap_or_else(|e| e.into_inner());
-        Some(resolvers.entry(key).or_insert_with(|| resolver.clone()).clone())
+        if let Some(resolver) = resolvers.get(&key).and_then(Weak::upgrade) {
+            return Some(resolver);
+        }
+        resolvers.retain(|_, resolver| resolver.strong_count() != 0);
+        let resolver = Arc::new(create_resolver(flow_id, dns_mark, upstream.clone())?);
+        resolvers.insert(key, Arc::downgrade(&resolver));
+        Some(resolver)
     }
 
     /// Unconditionally drops every resolver for the given upstream ids. Old
@@ -121,6 +121,18 @@ mod tests {
         let b_kept = pool.get_or_create(7, 0x8000, &upstream_b).unwrap();
         assert!(!Arc::ptr_eq(&a, &a_rebuilt));
         assert!(Arc::ptr_eq(&b, &b_kept));
+    }
+
+    #[tokio::test]
+    async fn last_rule_releases_resolver_and_a_new_mark_prunes_its_key() {
+        let pool = ResolvePool::default();
+        let upstream = DnsUpstreamConfig { use_experimental_pool: Some(true), ..upstream() };
+        let resolver = pool.get_or_create(7, 0x8007, &upstream).unwrap();
+        let old = Arc::downgrade(&resolver);
+        drop(resolver);
+        assert!(old.upgrade().is_none());
+        let _new = pool.get_or_create(8, 0x8008, &upstream).unwrap();
+        assert_eq!(pool.keys(), vec![(0x8008, upstream.id)]);
     }
 
     #[tokio::test]

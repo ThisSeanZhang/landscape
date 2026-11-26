@@ -29,7 +29,7 @@ const NAT_PORT: u16 = 40000;
 const PROTO_TCP: u8 = 6;
 const KIND_DYNAMIC: u8 = 1;
 const CT_ACTIVE: u64 = 20;
-const TCP_STATE_SYN: u64 = 1;
+const TCP_BOTH_SYN: u64 = 0b11;
 const STATE_SHIFT: u64 = 56;
 const STATE_ACTIVE: u64 = 1;
 const NAPT_FROM_WAN_TCP_BASE: u32 = 65536;
@@ -175,8 +175,7 @@ fn nat4_v4_steady_state_cost() {
         pad0: 0,
         from_wan_gen: 0,
         status: CT_ACTIVE,
-        client_status: TCP_STATE_SYN,
-        server_status: TCP_STATE_SYN,
+        tcp_flags: TCP_BOTH_SYN,
         ..Default::default()
     };
     skel.maps

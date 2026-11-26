@@ -44,6 +44,8 @@ pub(crate) enum DnsConnError {
     /// Retrying cannot succeed, so callers fail fast and never count it as a
     /// transient connectivity failure.
     Tls(String),
+    /// The peer returned an unusable response on an otherwise working connection.
+    Response(String),
     /// Anything else.
     Internal(String),
 }
@@ -56,6 +58,7 @@ impl std::fmt::Display for DnsConnError {
             DnsConnError::NoConnections => write!(f, "no usable connections"),
             DnsConnError::Protocol(code, _) => write!(f, "upstream answered {code}"),
             DnsConnError::Tls(e) => write!(f, "TLS failure: {e}"),
+            DnsConnError::Response(e) => write!(f, "invalid upstream response: {e}"),
             DnsConnError::Internal(e) => write!(f, "internal error: {e}"),
         }
     }

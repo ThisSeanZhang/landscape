@@ -4,7 +4,12 @@
 
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
+use std::os::fd::BorrowedFd;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
+use libbpf_rs::MapCore;
+use libbpf_rs::MapFlags;
 use libbpf_rs::skel::OpenSkel;
 use libbpf_rs::skel::SkelBuilder;
 
@@ -19,8 +24,11 @@ use crate::chain::stage::relink_family_stages;
 use crate::landscape::OwnedOpenObject;
 use crate::landscape::pin_and_reuse_map;
 use crate::route_backbone::RouteBackbone;
+use crate::route_backbone::create_prog_array_map;
 
 use super::WanLinkDataplane;
+use super::from_lan::WanEgressBinding;
+use super::gateway_arp::GatewayArpState;
 
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
 use crate::skel::xdp_wan_root::XdpWanRootSkelBuilder;
@@ -45,9 +53,9 @@ impl std::fmt::Debug for ChainDir {
 #[derive(Default)]
 pub(super) struct XdpChainState {
     // from-WAN direction (WAN→LAN), root of xdp_wan_root
-    pub(super) wan_root: Option<ChainRoot>,
+    pub(super) wan_root: Option<FromWanRoot>,
     // from-LAN direction (LAN→WAN), root of xdp_lan_root
-    pub(super) lan_root: Option<ChainRoot>,
+    pub(super) lan_root: Option<FromLanRoot>,
     pub(super) lan_stages: StageTable<FromLanStageType>,
     pub(super) wan_stages: StageTable<FromWanStageType>,
 }
@@ -62,29 +70,71 @@ const XDP_FROM_WAN_SLOT_V6: u32 = 3;
 const XDP_ROOT_SLOT_V4: u32 = 0;
 const XDP_ROOT_SLOT_V6: u32 = 1;
 
-pub(super) enum ChainRoot {
-    Wan {
-        _skel: crate::skel::xdp_wan_root::XdpWanRootSkel<'static>,
-        _backing: OwnedOpenObject,
-        root_next_stage_fd: i32,
-    },
-    Lan {
-        _skel: crate::skel::xdp_lan_root::XdpLanRootSkel<'static>,
-        _backing: OwnedOpenObject,
-        root_next_stage_fd: i32,
-    },
+pub(super) struct FromWanRoot {
+    skel: crate::skel::xdp_wan_root::XdpWanRootSkel<'static>,
+    _backing: OwnedOpenObject,
 }
 
-impl ChainRoot {
-    fn root_next_stage_fd(&self) -> i32 {
-        match self {
-            ChainRoot::Wan { root_next_stage_fd, .. } => *root_next_stage_fd,
-            ChainRoot::Lan { root_next_stage_fd, .. } => *root_next_stage_fd,
+pub(super) struct FromLanRoot {
+    pub(super) skel: crate::skel::xdp_lan_root::XdpLanRootSkel<'static>,
+    _backing: OwnedOpenObject,
+}
+
+impl FromLanRoot {
+    pub(super) fn sync_gateway_mac(&mut self, arp: &GatewayArpState) {
+        // A failed binding rebuild can leave the previous root installed.
+        // Pair the MAC with this root's actual interface and next hop.
+        let binding = &self.skel.maps.rodata_data.as_ref().unwrap().egress_binding;
+        let mut bytes = [0u8; 8];
+        if let Some((target, mac)) = arp.active_confirmation()
+            && binding.has_l2 != 0
+            && binding.is_pppoe == 0
+            && binding.ifindex == target.ifindex
+            && binding.gateway_ip4 == u32::from_ne_bytes(target.gateway_ip.octets())
+        {
+            bytes[..6].copy_from_slice(&mac.octets());
         }
+        let mut bytes6 = [0u8; 8];
+        if let Some((target, mac)) = arp.active_confirmation6()
+            && binding.has_l2 != 0
+            && binding.is_pppoe == 0
+            && binding.has_ipv6 != 0
+            && binding.ifindex == target.ifindex
+            && binding.gateway_ip6 == target.gateway_ip.octets()
+        {
+            bytes6[..6].copy_from_slice(&mac.octets());
+        }
+        let bss = self.skel.maps.bss_data.as_deref_mut().expect("XDP lan root .bss");
+        // The mmap lives with the skeleton. The BPF global is aligned to eight bytes
+        // and each packet reads it in one load, so it cannot see a partial MAC.
+        unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac) }
+            .store(u64::from_ne_bytes(bytes), Ordering::Relaxed);
+        unsafe { AtomicU64::from_ptr(&raw mut bss.confirmed_gateway_mac6) }
+            .store(u64::from_ne_bytes(bytes6), Ordering::Relaxed);
     }
 }
 
 impl WanLinkDataplane {
+    /// Load this chain's from-LAN XDP exit program into an unpinned exit map.
+    /// The PROG_ARRAY slot keeps the program alive after the skeleton drops.
+    pub(super) fn create_xdp_lan_exit_map() -> LdEbpfResult<libbpf_rs::MapHandle> {
+        let builder = crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder::default();
+        let (backing, obj) = OwnedOpenObject::new();
+        let open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_exit skeleton")?;
+        let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_exit skeleton")?;
+
+        let map = create_prog_array_map("xdp_from_lan_exit_map", 1)?;
+        map.update(
+            &0u32.to_ne_bytes(),
+            &skel.progs.xdp_lan_exit.as_fd().as_raw_fd().to_ne_bytes(),
+            MapFlags::ANY,
+        )?;
+
+        drop(skel);
+        drop(backing);
+        Ok(map)
+    }
+
     fn relink_xdp(&self, dir: ChainDir) -> LdEbpfResult<()> {
         let inner = self.inner.lock().unwrap();
         if inner.closed {
@@ -94,7 +144,7 @@ impl WanLinkDataplane {
         let state = &inner.xdp;
         match dir {
             ChainDir::Wan => relink_family_stages(
-                state.wan_root.as_ref().unwrap().root_next_stage_fd(),
+                state.wan_root.as_ref().unwrap().skel.maps.root_next_stage.as_fd().as_raw_fd(),
                 &state.wan_stages,
                 XDP_ROOT_SLOT_V4,
                 XDP_ROOT_SLOT_V6,
@@ -102,7 +152,7 @@ impl WanLinkDataplane {
                 XDP_FROM_WAN_SLOT_V6,
             ),
             ChainDir::Lan => relink_family_stages(
-                state.lan_root.as_ref().unwrap().root_next_stage_fd(),
+                state.lan_root.as_ref().unwrap().skel.maps.root_next_stage.as_fd().as_raw_fd(),
                 &state.lan_stages,
                 XDP_ROOT_SLOT_V4,
                 XDP_ROOT_SLOT_V6,
@@ -115,7 +165,7 @@ impl WanLinkDataplane {
     pub(super) fn create_wan_root(
         backbone: &RouteBackbone,
         link_chain_id: u16,
-    ) -> LdEbpfResult<ChainRoot> {
+    ) -> LdEbpfResult<FromWanRoot> {
         let builder = XdpWanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_wan_root")?;
@@ -125,10 +175,6 @@ impl WanLinkDataplane {
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_root_progs,
             &backbone.paths().xdp_pipe_root_progs_path(),
-        )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &backbone.paths().xdp_pipe_exits_lan_path(),
         )?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_exits_wan,
@@ -142,42 +188,48 @@ impl WanLinkDataplane {
         let skel = bpf_ctx!(open_skel.load(), "load xdp_wan_root")?;
 
         let root_prog_fd = skel.progs.xdp_wan_root.as_fd().as_raw_fd();
-        let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
 
         backbone.register_xdp_wan_root(link_chain_id, root_prog_fd)?;
 
-        Ok(ChainRoot::Wan {
-            _skel: skel,
-            _backing: backing,
-            root_next_stage_fd: root_next_fd,
-        })
+        Ok(FromWanRoot { skel, _backing: backing })
     }
 
-    /// The from-LAN direction root of the WAN link owning `link_chain_id`: an
-    /// xdp_lan_root instance (never attached) registered under the link's
-    /// link id in xdp_lan_pipe_root_progs.
-    pub(super) fn create_lan_side_root(
+    pub(super) fn build_lan_root(
         backbone: &RouteBackbone,
         link_chain_id: u16,
-    ) -> LdEbpfResult<ChainRoot> {
+        binding: &WanEgressBinding,
+        previous: Option<&FromLanRoot>,
+        exit_map: BorrowedFd<'_>,
+    ) -> LdEbpfResult<FromLanRoot> {
         let builder = XdpLanRootSkelBuilder::default();
         let (backing, obj) = OwnedOpenObject::new();
         let mut open_skel = bpf_ctx!(builder.open(obj), "open xdp_lan_root")?;
 
-        open_skel.maps.rodata_data.as_deref_mut().unwrap().current_chain = link_chain_id as u32;
+        let rodata = open_skel.maps.rodata_data.as_deref_mut().unwrap();
+        rodata.current_chain = link_chain_id as u32;
+        rodata.egress_binding = crate::skel::xdp_lan_root::types::wan_egress_binding {
+            ifindex: binding.ifindex,
+            wan_ip4: binding.wan_ip4,
+            wan_mask4: binding.wan_mask4,
+            gateway_ip4: binding.gateway_ip4,
+            source_mac: binding.source_mac,
+            has_ipv4: u8::from(binding.has_ipv4),
+            has_l2: u8::from(binding.has_l2),
+            is_pppoe: u8::from(binding.is_pppoe),
+            wan_ip6: binding.wan_ip6,
+            wan_mask6: binding.wan_mask6,
+            gateway_ip6: binding.gateway_ip6,
+            has_ipv6: u8::from(binding.has_ipv6),
+        };
+        if let Some(old) = previous {
+            open_skel.maps.root_next_stage.reuse_fd(old.skel.maps.root_next_stage.as_fd())?;
+        }
 
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_pipe_root_progs,
             &backbone.paths().xdp_pipe_root_progs_path(),
         )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_lan,
-            &backbone.paths().xdp_pipe_exits_lan_path(),
-        )?;
-        pin_and_reuse_map(
-            &mut open_skel.maps.xdp_pipe_exits_wan,
-            &backbone.paths().xdp_pipe_exits_wan_path(),
-        )?;
+        open_skel.maps.xdp_from_lan_exit_map.reuse_fd(exit_map)?;
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &backbone.paths().xdp_lan_pipe_root_progs_path(),
@@ -186,19 +238,13 @@ impl WanLinkDataplane {
             &mut open_skel.maps.xdp_redirect_able,
             &backbone.paths().xdp_redirect_able,
         )?;
+        // On-link IPv4 forwarding resolves the neighbour MAC directly from the
+        // shared map populated by ARP/traffic learning.
+        pin_and_reuse_map(&mut open_skel.maps.ip_mac_v4, &backbone.paths().ip_mac_v4)?;
 
         let skel = bpf_ctx!(open_skel.load(), "load xdp_lan_root")?;
 
-        let root_prog_fd = skel.progs.xdp_lan_root.as_fd().as_raw_fd();
-        let root_next_fd = skel.maps.root_next_stage.as_fd().as_raw_fd();
-
-        backbone.register_xdp_lan_root(link_chain_id, root_prog_fd)?;
-
-        Ok(ChainRoot::Lan {
-            _skel: skel,
-            _backing: backing,
-            root_next_stage_fd: root_next_fd,
-        })
+        Ok(FromLanRoot { skel, _backing: backing })
     }
 }
 

@@ -1,65 +1,71 @@
+use crate::health::GatewayHealth;
 use bytes::Bytes;
+use std::collections::VecDeque;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use landscape_common::sys_service::gateway::{
-    ClientIpHeaderPolicy, HttpPathGroup, HttpUpstreamConfig, HttpUpstreamMatchRule,
-    HttpUpstreamRuleConfig, HttpUpstreamTarget, LoadBalanceMethod, PathRewriteMode,
-    ProxyHeaderConflictMode, ProxyRequestHeader,
+    ClientIpHeaderPolicy, HttpUpstreamTarget, LoadBalanceMethod, PathRewriteMode,
+    ProxyHeaderConflictMode,
 };
 use pingora::http::{RequestHeader, ResponseHeader, StatusCode};
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 
-use crate::SharedRules;
+use crate::SharedGatewayRoutes;
+use crate::routes::{
+    CompiledHttpRoute, CompiledRequestHeader, CompiledUpstream, path_matches_prefix,
+};
 
 const GATEWAY_ROUTE_NOT_MATCHED: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayRouteNotMatched", 404);
 const GATEWAY_NO_UPSTREAM_TARGETS: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayNoUpstreamTargets", 503);
+const GATEWAY_NO_HEALTHY_UPSTREAMS: pingora::ErrorType =
+    pingora::ErrorType::new_code("GatewayNoHealthyUpstreams", 503);
 const GATEWAY_PATH_REWRITE_FAILED: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayPathRewriteFailed", 500);
 const GATEWAY_TRAILING_SLASH_REDIRECT: pingora::ErrorType =
     pingora::ErrorType::new_code("GatewayTrailingSlashRedirect", 308);
 
 pub struct LandscapeReverseProxy {
-    rules: SharedRules,
+    routes: SharedGatewayRoutes,
+    health: GatewayHealth,
     round_robin_counter: AtomicUsize,
 }
 
 impl LandscapeReverseProxy {
-    pub fn new(rules: SharedRules) -> Self {
-        Self { rules, round_robin_counter: AtomicUsize::new(0) }
+    pub fn new(routes: SharedGatewayRoutes) -> Self {
+        Self::with_health(routes, GatewayHealth::default())
     }
-}
 
-#[derive(Debug, Clone)]
-struct MatchedHttpRoute {
-    request_headers: Vec<ProxyRequestHeader>,
-    header_conflict_mode: ProxyHeaderConflictMode,
-    client_ip_headers: ClientIpHeaderPolicy,
-    rewrite_mode: PathRewriteMode,
-    matched_prefix: Option<String>,
-}
-
-impl MatchedHttpRoute {
-    fn from_resolved(route: &ResolvedHttpRoute<'_>) -> Self {
+    pub(crate) fn with_health(routes: SharedGatewayRoutes, health: GatewayHealth) -> Self {
         Self {
-            request_headers: route.upstream.request_headers.clone(),
-            header_conflict_mode: route.upstream.header_conflict_mode.clone(),
-            client_ip_headers: route.upstream.client_ip_headers.clone(),
-            rewrite_mode: route.rewrite_mode.clone(),
-            matched_prefix: route.matched_prefix.map(str::to_string),
+            routes,
+            health,
+            round_robin_counter: AtomicUsize::new(0),
         }
     }
-}
 
-struct ResolvedHttpRoute<'a> {
-    rule_name: &'a str,
-    upstream: &'a HttpUpstreamConfig,
-    rewrite_mode: PathRewriteMode,
-    matched_prefix: Option<&'a str>,
+    fn route_for_request(
+        &self,
+        ctx: &mut ProxyCtx,
+        host: Option<&str>,
+        path: &str,
+    ) -> pingora::Result<Arc<CompiledHttpRoute>> {
+        // Retries and later callbacks must use the same route generation as the
+        // first upstream selection, even if rules are published in between.
+        if let Some(route) = &ctx.matched_route {
+            return Ok(route.clone());
+        }
+        let route =
+            self.routes.load().match_http_route(host, path).ok_or_else(route_not_matched_error)?;
+        ctx.matched_rule_name = Some(route.rule_name.clone());
+        ctx.matched_route = Some(route.clone());
+        Ok(route)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,13 +102,14 @@ struct GatewayErrorResponse {
 }
 
 pub struct ProxyCtx {
+    remaining_peers: VecDeque<HttpPeer>,
     pub matched_rule_name: Option<String>,
     request_host: Option<String>,
     request_path: Option<String>,
     rewritten_path: Option<String>,
     redirect_location: Option<String>,
     selected_target: Option<SelectedTarget>,
-    matched_route: Option<MatchedHttpRoute>,
+    matched_route: Option<Arc<CompiledHttpRoute>>,
 }
 
 #[async_trait]
@@ -111,6 +118,7 @@ impl ProxyHttp for LandscapeReverseProxy {
 
     fn new_ctx(&self) -> Self::CTX {
         ProxyCtx {
+            remaining_peers: VecDeque::new(),
             matched_rule_name: None,
             request_host: None,
             request_path: None,
@@ -126,7 +134,9 @@ impl ProxyHttp for LandscapeReverseProxy {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let rules = self.rules.load();
+        if let Some(peer) = ctx.remaining_peers.pop_front() {
+            return Ok(Box::new(peer));
+        }
         let req = session.req_header();
         let host = extract_host(req);
         let path = req.uri.path();
@@ -139,29 +149,42 @@ impl ProxyHttp for LandscapeReverseProxy {
         ctx.redirect_location = None;
         ctx.selected_target = None;
 
-        let matched_route =
-            match_http_route(&rules, host.as_deref(), path).ok_or_else(route_not_matched_error)?;
-
-        ctx.matched_rule_name = Some(matched_route.rule_name.to_string());
-        ctx.matched_route = Some(MatchedHttpRoute::from_resolved(&matched_route));
+        let matched_route = self.route_for_request(ctx, host.as_deref(), path)?;
 
         if let Some(location) = trailing_slash_redirect_location(
             req.uri.path_and_query().map(|value| value.as_str()).unwrap_or(path),
-            matched_route.matched_prefix,
+            matched_route.matched_prefix.as_deref(),
         ) {
             ctx.redirect_location = Some(location);
             return Err(trailing_slash_redirect_error());
         }
 
-        let (peer, selected_target) = make_peer(
-            matched_route.upstream,
+        let (mut peers, selected_target) = resolve_peers(
+            &matched_route.upstream,
+            &self.health,
             &self.round_robin_counter,
             host.as_deref().unwrap_or(""),
             path,
-        )?;
+        )
+        .await?;
         ctx.selected_target = Some(selected_target);
+        let peer = peers.pop_front().ok_or_else(no_upstream_targets_error)?;
+        ctx.remaining_peers = peers;
+        Ok(Box::new(peer))
+    }
 
-        Ok(peer)
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        _peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        mut error: Box<pingora::Error>,
+    ) -> Box<pingora::Error> {
+        if !ctx.remaining_peers.is_empty() {
+            // Try the next address of this same upstream before a request has been sent.
+            error.set_retry(true);
+        }
+        error
     }
 
     async fn upstream_request_filter(
@@ -170,13 +193,14 @@ impl ProxyHttp for LandscapeReverseProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
+        ctx.remaining_peers.clear();
         let Some(matched_route) = ctx.matched_route.as_ref() else {
             return Ok(());
         };
 
         ctx.rewritten_path = apply_path_rewrite(upstream_request, matched_route)?;
 
-        if matches!(matched_route.client_ip_headers, ClientIpHeaderPolicy::Standard)
+        if matches!(matched_route.upstream.client_ip_headers, ClientIpHeaderPolicy::Standard)
             && let Some(client_addr) = session.client_addr().and_then(|addr| addr.as_inet())
         {
             apply_client_ip_headers(upstream_request, client_addr.ip())?;
@@ -184,8 +208,8 @@ impl ProxyHttp for LandscapeReverseProxy {
 
         apply_configured_headers(
             upstream_request,
-            &matched_route.request_headers,
-            &matched_route.header_conflict_mode,
+            &matched_route.upstream.request_headers,
+            &matched_route.upstream.header_conflict_mode,
         )?;
 
         Ok(())
@@ -262,149 +286,6 @@ fn is_trailing_slash_redirect_error(error: &pingora::Error) -> bool {
     error.etype() == &GATEWAY_TRAILING_SLASH_REDIRECT
 }
 
-fn match_http_route<'a>(
-    rules: &'a [HttpUpstreamRuleConfig],
-    host: Option<&str>,
-    path: &str,
-) -> Option<ResolvedHttpRoute<'a>> {
-    if let Some(host) = host {
-        if let Some(rule) = match_host_rule(rules, host, false) {
-            return Some(resolve_host_route(rule, path));
-        }
-        if let Some(rule) = match_host_rule(rules, host, true) {
-            return Some(resolve_host_route(rule, path));
-        }
-
-        if let Some(rule) = match_legacy_path_rule(rules, host, path, false) {
-            return Some(resolve_legacy_route(rule));
-        }
-        if let Some(rule) = match_legacy_path_rule(rules, host, path, true) {
-            return Some(resolve_legacy_route(rule));
-        }
-    }
-
-    match_legacy_fallback_rule(rules, path).map(resolve_legacy_route)
-}
-
-fn resolve_host_route<'a>(rule: &'a HttpUpstreamRuleConfig, path: &str) -> ResolvedHttpRoute<'a> {
-    let path_groups = match &rule.match_rule {
-        HttpUpstreamMatchRule::Host { path_groups } => path_groups,
-        _ => unreachable!("resolve_host_route called with non-host rule"),
-    };
-
-    if let Some(group) = match_path_group(path_groups, path) {
-        return ResolvedHttpRoute {
-            rule_name: &rule.name,
-            upstream: &group.upstream,
-            rewrite_mode: group.rewrite_mode.clone(),
-            matched_prefix: Some(group.prefix.as_str()),
-        };
-    }
-
-    ResolvedHttpRoute {
-        rule_name: &rule.name,
-        upstream: &rule.upstream,
-        rewrite_mode: PathRewriteMode::Preserve,
-        matched_prefix: None,
-    }
-}
-
-fn resolve_legacy_route(rule: &HttpUpstreamRuleConfig) -> ResolvedHttpRoute<'_> {
-    ResolvedHttpRoute {
-        rule_name: &rule.name,
-        upstream: &rule.upstream,
-        rewrite_mode: PathRewriteMode::Preserve,
-        matched_prefix: None,
-    }
-}
-
-fn match_host_rule<'a>(
-    rules: &'a [HttpUpstreamRuleConfig],
-    host: &str,
-    wildcard_only: bool,
-) -> Option<&'a HttpUpstreamRuleConfig> {
-    rules.iter().find(|rule| {
-        rule.enable
-            && matches!(rule.match_rule, HttpUpstreamMatchRule::Host { .. })
-            && domain_matches(&rule.domains, host, wildcard_only)
-    })
-}
-
-fn match_legacy_path_rule<'a>(
-    rules: &'a [HttpUpstreamRuleConfig],
-    host: &str,
-    path: &str,
-    wildcard_domains: bool,
-) -> Option<&'a HttpUpstreamRuleConfig> {
-    rules.iter().find(|rule| {
-        rule.enable
-            && matches!(rule.match_rule, HttpUpstreamMatchRule::LegacyPathPrefix { .. })
-            && !rule.domains.is_empty()
-            && domain_matches(&rule.domains, host, wildcard_domains)
-            && legacy_path_matches(rule, path)
-    })
-}
-
-fn match_legacy_fallback_rule<'a>(
-    rules: &'a [HttpUpstreamRuleConfig],
-    path: &str,
-) -> Option<&'a HttpUpstreamRuleConfig> {
-    rules.iter().find(|rule| {
-        rule.enable
-            && matches!(rule.match_rule, HttpUpstreamMatchRule::LegacyPathPrefix { .. })
-            && rule.domains.is_empty()
-            && legacy_path_matches(rule, path)
-    })
-}
-
-fn legacy_path_matches(rule: &HttpUpstreamRuleConfig, path: &str) -> bool {
-    match &rule.match_rule {
-        HttpUpstreamMatchRule::LegacyPathPrefix { prefix } => path_matches_prefix(path, prefix),
-        _ => false,
-    }
-}
-
-fn domain_matches(domains: &[String], host: &str, wildcard_only: bool) -> bool {
-    domains.iter().any(|domain| {
-        if wildcard_only {
-            domain.starts_with("*.") && match_wildcard(domain, host)
-        } else {
-            !domain.starts_with("*.") && domain.eq_ignore_ascii_case(host)
-        }
-    })
-}
-
-fn match_path_group<'a>(path_groups: &'a [HttpPathGroup], path: &str) -> Option<&'a HttpPathGroup> {
-    path_groups
-        .iter()
-        .filter(|group| path_matches_prefix(path, &group.prefix))
-        .max_by_key(|group| normalized_prefix_len(&group.prefix))
-}
-
-fn normalized_prefix_len(prefix: &str) -> usize {
-    normalize_prefix(prefix).len()
-}
-
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    let normalized = normalize_prefix(prefix);
-    if normalized == "/" {
-        return path.starts_with('/');
-    }
-
-    if path == normalized {
-        return true;
-    }
-
-    path.strip_prefix(&normalized)
-        .map(|rest| rest.is_empty() || rest.starts_with('/'))
-        .unwrap_or(false)
-}
-
-fn normalize_prefix(prefix: &str) -> String {
-    let trimmed = prefix.trim();
-    if trimmed == "/" { "/".to_string() } else { trimmed.trim_end_matches('/').to_string() }
-}
-
 fn extract_host(req: &RequestHeader) -> Option<String> {
     if let Some(host) = req.headers.get("host")
         && let Ok(h) = host.to_str()
@@ -420,23 +301,9 @@ fn extract_host(req: &RequestHeader) -> Option<String> {
     None
 }
 
-fn match_wildcard(pattern: &str, host: &str) -> bool {
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        let suffix_lower = suffix.to_ascii_lowercase();
-        let host_lower = host.to_ascii_lowercase();
-        if host_lower.ends_with(&suffix_lower) {
-            let prefix_len = host_lower.len() - suffix_lower.len();
-            if prefix_len > 0 && host_lower.as_bytes()[prefix_len - 1] == b'.' {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn apply_path_rewrite(
     upstream_request: &mut RequestHeader,
-    matched_route: &MatchedHttpRoute,
+    matched_route: &CompiledHttpRoute,
 ) -> pingora::Result<Option<String>> {
     if !matches!(matched_route.rewrite_mode, PathRewriteMode::StripPrefix) {
         return Ok(None);
@@ -468,13 +335,13 @@ fn rewrite_path_and_query(path_and_query: &str, prefix: &str) -> String {
         return path_and_query.to_string();
     }
 
-    let normalized_prefix = normalize_prefix(prefix);
+    let normalized_prefix = prefix;
     let stripped_path = if normalized_prefix == "/" {
         path.to_string()
     } else if path == normalized_prefix {
         "/".to_string()
     } else {
-        let remainder = path.strip_prefix(&normalized_prefix).unwrap_or(path);
+        let remainder = path.strip_prefix(normalized_prefix).unwrap_or(path);
         if remainder.is_empty() {
             "/".to_string()
         } else if remainder.starts_with('/') {
@@ -492,8 +359,8 @@ fn trailing_slash_redirect_location(
     matched_prefix: Option<&str>,
 ) -> Option<String> {
     let prefix = matched_prefix?;
-    let normalized_prefix = normalize_prefix(prefix);
-    if normalized_prefix == "/" || path_and_query.starts_with(&(normalized_prefix.clone() + "/")) {
+    let normalized_prefix = prefix;
+    if normalized_prefix == "/" {
         return None;
     }
 
@@ -542,7 +409,7 @@ fn forwarded_for_value(client_ip: &str) -> String {
 
 fn apply_configured_headers(
     upstream_request: &mut RequestHeader,
-    headers: &[ProxyRequestHeader],
+    headers: &[CompiledRequestHeader],
     mode: &ProxyHeaderConflictMode,
 ) -> pingora::Result<()> {
     for header in headers {
@@ -563,69 +430,69 @@ fn apply_configured_headers(
     Ok(())
 }
 
-fn make_peer(
-    upstream: &HttpUpstreamConfig,
+async fn resolve_peers(
+    upstream: &CompiledUpstream,
+    health: &GatewayHealth,
     counter: &AtomicUsize,
     host: &str,
     path: &str,
-) -> pingora::Result<(Box<HttpPeer>, SelectedTarget)> {
-    let targets = &upstream.targets;
-    if targets.is_empty() {
-        return Err(no_upstream_targets_error());
+) -> pingora::Result<(VecDeque<HttpPeer>, SelectedTarget)> {
+    let seed = match upstream.load_balance {
+        LoadBalanceMethod::RoundRobin if upstream.targets.len() > 1 => {
+            counter.fetch_add(1, Ordering::Relaxed) as u64
+        }
+        LoadBalanceMethod::Random => fnv1a_hash(host, path),
+        _ => fnv1a_hash(host, ""),
+    };
+    let target = health.select(upstream, seed).ok_or_else(|| {
+        if upstream.targets.is_empty() {
+            no_upstream_targets_error()
+        } else {
+            pingora::Error::new(GATEWAY_NO_HEALTHY_UPSTREAMS)
+        }
+    })?;
+    let timeout = std::time::Duration::from_secs(10);
+    let connection_host = target.connection_host();
+    // An IPv6 zone selects the socket interface. Certificates identify the IP itself.
+    let tls_name = match connection_host.split_once('%') {
+        Some((ip, _)) if ip.contains(':') => ip,
+        _ => connection_host,
+    };
+    let addresses =
+        tokio::time::timeout(timeout, tokio::net::lookup_host((connection_host, target.port)))
+            .await
+            .map_err(|_| pingora::Error::new_up(pingora::ErrorType::ConnectTimedout))?
+            .map_err(|error| {
+                pingora::Error::because(
+                    pingora::ErrorType::ConnectError,
+                    "resolving gateway upstream",
+                    error,
+                )
+                .into_up()
+            })?;
+    let peers: VecDeque<_> = addresses
+        .map(|address| {
+            // Construct the peer from a resolved socket address; DNS errors stay recoverable.
+            let mut peer = HttpPeer::new(address, target.tls, tls_name.to_owned());
+            if target.tls && target.skip_cert_verify {
+                peer.options.verify_cert = false;
+                peer.options.verify_hostname = false;
+            }
+            peer.options.connection_timeout = Some(timeout);
+            peer
+        })
+        .collect();
+    if peers.is_empty() {
+        return Err(pingora::Error::explain(
+            pingora::ErrorType::ConnectError,
+            "upstream has no addresses",
+        )
+        .into_up());
     }
-
-    let target = select_target(targets, &upstream.load_balance, counter, host, path);
-    let mut peer =
-        HttpPeer::new((target.address.as_str(), target.port), target.tls, target.address.clone());
-    if target.tls && target.skip_cert_verify {
-        peer.options.verify_cert = false;
-        peer.options.verify_hostname = false;
-    }
-    peer.options.connection_timeout = Some(std::time::Duration::from_secs(10));
-    Ok((Box::new(peer), SelectedTarget::from_target(target)))
+    Ok((peers, SelectedTarget::from_target(target)))
 }
 
-fn select_target<'a>(
-    targets: &'a [HttpUpstreamTarget],
-    method: &LoadBalanceMethod,
-    counter: &AtomicUsize,
-    host: &str,
-    path: &str,
-) -> &'a HttpUpstreamTarget {
-    if targets.len() == 1 {
-        return &targets[0];
-    }
-
-    match method {
-        LoadBalanceMethod::RoundRobin => {
-            let idx = counter.fetch_add(1, Ordering::Relaxed) % targets.len();
-            &targets[idx]
-        }
-        LoadBalanceMethod::Random => {
-            let idx = fnv1a_hash(host, path) % targets.len();
-            &targets[idx]
-        }
-        LoadBalanceMethod::Consistent => weighted_select(targets, fnv1a_hash(host, "")),
-    }
-}
-
-fn weighted_select(targets: &[HttpUpstreamTarget], seed: usize) -> &HttpUpstreamTarget {
-    let total_weight: u32 = targets.iter().map(|t| t.weight).sum();
-    if total_weight == 0 {
-        return &targets[0];
-    }
-    let pick = (seed as u32) % total_weight;
-    let mut acc = 0u32;
-    for target in targets {
-        acc += target.weight;
-        if pick < acc {
-            return target;
-        }
-    }
-    targets.last().unwrap()
-}
-
-fn fnv1a_hash(host: &str, path: &str) -> usize {
+fn fnv1a_hash(host: &str, path: &str) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
@@ -633,10 +500,17 @@ fn fnv1a_hash(host: &str, path: &str) -> usize {
         hash ^= b as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-    hash as usize
+    hash
 }
 
 fn classify_proxy_error(error: &pingora::Error) -> GatewayErrorResponse {
+    if error.etype() == &GATEWAY_NO_HEALTHY_UPSTREAMS {
+        return GatewayErrorResponse {
+            status_code: 503,
+            reason_code: "no_healthy_upstreams",
+            user_message: "The matched route has no healthy upstream targets.",
+        };
+    }
     if error.etype() == &GATEWAY_ROUTE_NOT_MATCHED {
         return GatewayErrorResponse {
             status_code: 404,
@@ -881,8 +755,19 @@ mod tests {
     use super::*;
 
     use landscape_common::sys_service::gateway::{
-        ClientIpHeaderPolicy, HttpUpstreamConfig, ProxyHeaderConflictMode,
+        ClientIpHeaderPolicy, HttpPathGroup, HttpUpstreamConfig, HttpUpstreamMatchRule,
+        HttpUpstreamRuleConfig, ProxyHeaderConflictMode, ProxyRequestHeader,
     };
+
+    use crate::routes::CompiledGatewayRoutes;
+
+    fn match_http_route(
+        rules: &[HttpUpstreamRuleConfig],
+        host: Option<&str>,
+        path: &str,
+    ) -> Option<Arc<CompiledHttpRoute>> {
+        CompiledGatewayRoutes::compile(rules).unwrap().match_http_route(host, path)
+    }
 
     fn target(address: &str, port: u16, weight: u32) -> HttpUpstreamTarget {
         HttpUpstreamTarget {
@@ -918,6 +803,40 @@ mod tests {
             match_rule,
             upstream: upstream_config(),
             update_at: 0.0,
+        }
+    }
+
+    #[tokio::test]
+    async fn ipv6_upstreams_keep_the_scope_on_the_socket_and_use_the_ip_for_tls() {
+        use pingora::upstreams::peer::Peer;
+
+        for (host, tls_name, socket) in [
+            ("[::1]", "::1", "[::1]:8443"),
+            ("::1", "::1", "[::1]:8443"),
+            ("[fe80::1%1]", "fe80::1", "[fe80::1%1]:8443"),
+            ("fe80::1%1", "fe80::1", "[fe80::1%1]:8443"),
+        ] {
+            let mut rule = rule(
+                "ipv6",
+                &["test.example"],
+                HttpUpstreamMatchRule::Host { path_groups: vec![] },
+            );
+            rule.upstream.targets = vec![target(host, 8443, 1)];
+            rule.upstream.targets[0].tls = true;
+            let route = match_http_route(&[rule], Some("test.example"), "/").unwrap();
+            let (peers, _) = resolve_peers(
+                &route.upstream,
+                &GatewayHealth::default(),
+                &AtomicUsize::new(0),
+                "test.example",
+                "/",
+            )
+            .await
+            .unwrap();
+            assert_eq!(peers.len(), 1);
+            assert_eq!(peers[0].sni, tls_name);
+            assert!(rustls::pki_types::ServerName::try_from(peers[0].sni.as_str()).is_ok());
+            assert_eq!(peers[0].address().to_string(), socket);
         }
     }
 
@@ -962,7 +881,7 @@ mod tests {
         )];
 
         let matched = match_http_route(&rules, Some("api.example.com"), "/api/v1/users").unwrap();
-        assert_eq!(matched.matched_prefix, Some("/api/v1"));
+        assert_eq!(matched.matched_prefix.as_deref(), Some("/api/v1"));
         assert!(matches!(matched.rewrite_mode, PathRewriteMode::StripPrefix));
     }
 
@@ -998,6 +917,190 @@ mod tests {
     }
 
     #[test]
+    fn legacy_domains_must_not_normalize_into_a_hostless_fallback() {
+        let invalid = rule(
+            "legacy",
+            &[" ", "."],
+            HttpUpstreamMatchRule::LegacyPathPrefix { prefix: "/api".to_string() },
+        );
+        assert!(matches!(
+            CompiledGatewayRoutes::compile(&[invalid]),
+            Err(landscape_common::sys_service::gateway::GatewayError::DomainsRequired { .. })
+        ));
+    }
+
+    #[test]
+    fn compiled_routes_normalize_domains_and_path_groups() {
+        let rules = vec![rule(
+            "normalized",
+            &[" API.Example.Com. "],
+            HttpUpstreamMatchRule::Host {
+                path_groups: vec![HttpPathGroup {
+                    prefix: " /api/ ".to_string(),
+                    rewrite_mode: PathRewriteMode::StripPrefix,
+                    upstream: upstream_config(),
+                }],
+            },
+        )];
+        let routes = CompiledGatewayRoutes::compile(&rules).unwrap();
+        let route = routes.match_http_route(Some("Api.Example.Com."), "/api/items").unwrap();
+        assert_eq!(route.matched_prefix.as_deref(), Some("/api"));
+        let mut request = RequestHeader::build("GET", b"/api/items?q=1", None).unwrap();
+        assert_eq!(
+            apply_path_rewrite(&mut request, &route).unwrap().as_deref(),
+            Some("/items?q=1")
+        );
+        assert_eq!(
+            trailing_slash_redirect_location("/api?q=1", route.matched_prefix.as_deref())
+                .as_deref(),
+            Some("/api/?q=1")
+        );
+        assert!(
+            routes
+                .match_http_route(Some("api.example.com"), "/apix")
+                .unwrap()
+                .matched_prefix
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn compile_failure_keeps_the_published_http_and_sni_routes() {
+        use landscape_common::sys_service::gateway::GatewayError;
+        let http =
+            rule("http", &["api.example.com"], HttpUpstreamMatchRule::Host { path_groups: vec![] });
+        let sni = rule("sni", &["tls.example.com"], HttpUpstreamMatchRule::SniProxy);
+        let initial = CompiledGatewayRoutes::compile(&[http.clone(), sni.clone()]).unwrap();
+        let shared = Arc::new(crate::routes::GatewayRoutes::new(initial));
+        let before = shared.load_full();
+        let mut invalid = http;
+        invalid.upstream.request_headers.push(ProxyRequestHeader {
+            name: "X-Test".to_string(),
+            value: "bad\r\nvalue".to_string(),
+        });
+        let result = CompiledGatewayRoutes::compile(&[invalid.clone(), sni]);
+        assert!(matches!(result, Err(GatewayError::InvalidHeaderValue { .. })));
+        assert!(Arc::ptr_eq(&before, &shared.load_full()));
+        assert_eq!(
+            before.match_http_route(Some("api.example.com"), "/").unwrap().rule_name,
+            "http"
+        );
+        assert_eq!(before.match_sni_route("tls.example.com").unwrap().rule_name, "sni");
+
+        invalid.upstream.request_headers[0].name = "bad name".to_string();
+        invalid.upstream.request_headers[0].value = "valid".to_string();
+        assert!(matches!(
+            CompiledGatewayRoutes::compile(&[invalid]),
+            Err(GatewayError::InvalidHeaderName { .. })
+        ));
+    }
+
+    #[test]
+    fn compilation_rejects_invalid_and_duplicate_path_groups() {
+        use landscape_common::sys_service::gateway::GatewayError;
+        let group = |prefix: &str| HttpPathGroup {
+            prefix: prefix.to_string(),
+            rewrite_mode: PathRewriteMode::Preserve,
+            upstream: upstream_config(),
+        };
+        let invalid = rule(
+            "bad",
+            &["example.com"],
+            HttpUpstreamMatchRule::Host { path_groups: vec![group("api")] },
+        );
+        assert!(matches!(
+            CompiledGatewayRoutes::compile(&[invalid]),
+            Err(GatewayError::InvalidPathPrefix { .. })
+        ));
+        let duplicate = rule(
+            "duplicate",
+            &["example.com"],
+            HttpUpstreamMatchRule::Host { path_groups: vec![group("/api"), group(" /api/ ")] },
+        );
+        assert!(matches!(
+            CompiledGatewayRoutes::compile(&[duplicate]),
+            Err(GatewayError::DuplicatePathGroupPrefix { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn request_pins_route_across_reload_and_retry() {
+        let mut upstream = upstream_config();
+        upstream.targets.push(target("127.0.0.2", 8080, 1));
+        upstream.request_headers.push(ProxyRequestHeader {
+            name: "X-Version".to_string(),
+            value: "old".to_string(),
+        });
+        let mut old = rule(
+            "old",
+            &["api.example.com"],
+            HttpUpstreamMatchRule::Host {
+                path_groups: vec![HttpPathGroup {
+                    prefix: "/api".to_string(),
+                    rewrite_mode: PathRewriteMode::StripPrefix,
+                    upstream,
+                }],
+            },
+        );
+        let shared = Arc::new(crate::routes::GatewayRoutes::new(
+            CompiledGatewayRoutes::compile(&[old.clone()]).unwrap(),
+        ));
+        let proxy = LandscapeReverseProxy::new(shared.clone());
+        let mut ctx = proxy.new_ctx();
+        let selected =
+            proxy.route_for_request(&mut ctx, Some("api.example.com"), "/api/items").unwrap();
+        let (_, first_target) = resolve_peers(
+            &selected.upstream,
+            &proxy.health,
+            &proxy.round_robin_counter,
+            "api.example.com",
+            "/api/items",
+        )
+        .await
+        .unwrap();
+        assert_eq!(first_target.address, "127.0.0.1");
+
+        old.name = "new".to_string();
+        old.match_rule = HttpUpstreamMatchRule::Host { path_groups: vec![] };
+        old.upstream.targets = vec![target("127.0.0.3", 8080, 1), target("127.0.0.4", 8080, 1)];
+        old.upstream.request_headers.push(ProxyRequestHeader {
+            name: "X-Version".to_string(),
+            value: "new".to_string(),
+        });
+        shared.store(Arc::new(CompiledGatewayRoutes::compile(&[old]).unwrap()));
+
+        let retry =
+            proxy.route_for_request(&mut ctx, Some("api.example.com"), "/api/items").unwrap();
+        assert!(Arc::ptr_eq(&selected, &retry));
+        let mut request = RequestHeader::build("GET", b"/api/items?q=1", None).unwrap();
+        apply_path_rewrite(&mut request, ctx.matched_route.as_ref().unwrap()).unwrap();
+        apply_configured_headers(
+            &mut request,
+            &retry.upstream.request_headers,
+            &retry.upstream.header_conflict_mode,
+        )
+        .unwrap();
+        assert_eq!(request.uri.path_and_query().unwrap().as_str(), "/items?q=1");
+        assert_eq!(request.headers.get("x-version").unwrap(), "old");
+
+        let next = proxy
+            .route_for_request(&mut proxy.new_ctx(), Some("api.example.com"), "/api/items")
+            .unwrap();
+        assert_eq!(next.rule_name, "new");
+        let (_, next_target) = resolve_peers(
+            &next.upstream,
+            &proxy.health,
+            &proxy.round_robin_counter,
+            "api.example.com",
+            "/api/items",
+        )
+        .await
+        .unwrap();
+        // Updating configuration must not reset the long-lived proxy's counter.
+        assert_eq!(next_target.address, "127.0.0.4");
+    }
+
+    #[test]
     fn path_matches_prefix_uses_segment_boundaries() {
         assert!(path_matches_prefix("/api", "/api"));
         assert!(path_matches_prefix("/api/users", "/api"));
@@ -1017,7 +1120,7 @@ mod tests {
             trailing_slash_redirect_location("/ai?mode=demo", Some("/ai")),
             Some("/ai/?mode=demo".to_string())
         );
-        assert_eq!(trailing_slash_redirect_location("/ai", Some("/ai/")), Some("/ai/".to_string()));
+        assert_eq!(trailing_slash_redirect_location("/ai", Some("/ai")), Some("/ai/".to_string()));
     }
 
     #[test]
@@ -1051,9 +1154,9 @@ mod tests {
 
         apply_configured_headers(
             &mut request,
-            &[ProxyRequestHeader {
-                name: "X-Test".to_string(),
-                value: "new".to_string(),
+            &[CompiledRequestHeader {
+                name: "X-Test".parse().unwrap(),
+                value: "new".parse().unwrap(),
             }],
             &ProxyHeaderConflictMode::Set,
         )
@@ -1070,9 +1173,9 @@ mod tests {
 
         apply_configured_headers(
             &mut request,
-            &[ProxyRequestHeader {
-                name: "X-Test".to_string(),
-                value: "new".to_string(),
+            &[CompiledRequestHeader {
+                name: "X-Test".parse().unwrap(),
+                value: "new".parse().unwrap(),
             }],
             &ProxyHeaderConflictMode::Append,
         )

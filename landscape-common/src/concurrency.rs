@@ -16,10 +16,8 @@ pub mod thread_name {
     pub mod fixed {
         /// Dedicated NTP/system clock synchronization thread.
         pub const TIME_SYNC: &str = "ld-time";
-        /// Pingora gateway supervisor thread for the main HTTP proxy loop.
+        /// Thread that owns the gateway listener runtime.
         pub const GATEWAY_MAIN: &str = "ld-gw-main";
-        /// Driver thread that owns the secondary HTTPS gateway runtime.
-        pub const GATEWAY_HTTPS_DRIVER: &str = "ld-gwh-drv";
         /// Single SQLite metric writer thread.
         pub const METRIC_DB_WRITER: &str = "ld-mdb";
         /// eBPF neighbor update listener thread.
@@ -29,8 +27,8 @@ pub mod thread_name {
     pub mod prefix {
         /// Primary webserver/control-plane Tokio runtime threads.
         pub const CORE_RUNTIME: &str = "ld-core";
-        /// Secondary Tokio runtime for gateway HTTPS accept/IO work.
-        pub const GATEWAY_HTTPS_RUNTIME: &str = "ld-gwh";
+        /// Gateway HTTP and HTTPS connection workers.
+        pub const GATEWAY_RUNTIME: &str = "ld-gwh";
         /// Firewall eBPF worker threads keyed by interface.
         pub const FIREWALL: &str = "ld-fw";
         /// NAT eBPF worker threads keyed by interface.
@@ -72,6 +70,8 @@ pub mod task_label {
         pub const WS_DOCKER_TASKS: &str = "ws.docker.tasks";
         /// Long-lived packet dump websocket loop.
         pub const WS_DUMP_SESSION: &str = "ws.dump.session";
+        /// TCP health probe for a configured gateway upstream.
+        pub const GATEWAY_HEALTH_PROBE: &str = "gateway.health.probe";
         /// Gateway copy task for downstream client to upstream target traffic.
         pub const GATEWAY_SNI_CLIENT_TO_UPSTREAM: &str = "gateway.sni.client_to_upstream";
         /// Gateway copy task for upstream target to downstream client traffic.
@@ -179,8 +179,12 @@ pub mod task_label {
         pub const WAN_IPV6PD_CLIENT_RENEW: &str = "wan.ipv6pd_client.rx";
         /// WAN link service listener reacting to attach-iface events.
         pub const WAN_LINK_OBSERVER: &str = "wan.link.observer";
+        /// Persists WAN link changes and completes their runtime handoff.
+        pub const WAN_LINK_CONFIG: &str = "wan.link.config";
         /// WAN link environment supervisor (carrier + config fan-in).
         pub const WAN_LINK_ENV: &str = "wan.link.env";
+        /// Resolves the current Ethernet WAN gateway for one link.
+        pub const WAN_LINK_GATEWAY_ARP: &str = "wan.link.gateway_arp";
         /// WAN link config watch deregistration on link exit.
         pub const WAN_LINK_CLEANUP: &str = "wan.link.cleanup";
         /// WAN link v4 acquisition supervisor (per-run restart driver).
@@ -225,6 +229,8 @@ pub mod task_label {
         pub const DOCKER_IMAGE_OP: &str = "docker.image.op";
 
         // ── metric 引擎内部 ─────────────────────────────────────────
+        pub const METRIC_CONNECT_SERVICE: &str = "metric.connect.service";
+        pub const METRIC_DNS_SERVICE: &str = "metric.dns.service";
         /// Metric connect aggregation worker.
         pub const METRIC_CONNECT_WORKER: &str = "metric.connect.worker";
         /// Metric DNS aggregation worker.

@@ -23,7 +23,6 @@ pub async fn main() {
         println!("Starting firewall on ifindex: {:?}", iface.index);
         let dp = landscape_ebpf::chain::wan_link::WanLinkDataplane::new(
             rt.backbone().clone(),
-            rt.xdp_attach().clone(),
             1,
             Some(iface.index),
             iface.mac.is_some(),

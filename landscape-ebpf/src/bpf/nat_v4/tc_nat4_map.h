@@ -85,8 +85,8 @@ struct napt_ct_value {
     __u8 pad0;
     __u32 from_wan_gen;
     __u64 status;
-    __u64 client_status;
-    __u64 server_status;
+    __u64 tcp_flags;        /* A reconnect replaces both directions' flags in one CAS. */
+    __u64 wait_deadline_ns; /* Monotonic deadline owned by the timer. */
     struct bpf_timer timer;
     __u64 create_time;
     __u64 ingress_bytes;
@@ -97,7 +97,8 @@ struct napt_ct_value {
     __u32 ifindex;
     __u8 gress;
     __u8 flow_id;
-    __u16 pad1;
+    __u16 delete_report_failures;
+    __u32 cleanup_retry_ns;
 };
 
 _Static_assert(sizeof(struct napt_port_slot) == 8, "napt_port_slot must be 8 bytes");
@@ -194,12 +195,12 @@ static __always_inline int napt_wan_publish(__u8 proto, __be16 external_port,
 }
 
 /* Array slots cannot be deleted; FREE is a zeroed value. */
-static __always_inline void napt_wan_clear(__u8 proto, __be16 external_port) {
+static __always_inline int napt_wan_clear(__u8 proto, __be16 external_port) {
     __u32 index;
     struct napt_from_wan_value free_value = {};
 
-    if (!napt_wan_index(proto, external_port, &index)) return;
-    bpf_map_update_elem(&napt_from_wan, &index, &free_value, BPF_ANY);
+    if (!napt_wan_index(proto, external_port, &index)) return -1;
+    return bpf_map_update_elem(&napt_from_wan, &index, &free_value, BPF_ANY);
 }
 
 static __always_inline int napt_wan_can_create_ct(const struct napt_from_wan_value *value) {
@@ -220,25 +221,6 @@ static __always_inline int napt_wan_ref_inc(struct napt_from_wan_value *value) {
         if (prev == old) return 0;
     }
     return -1;
-}
-
-static __always_inline int napt_wan_ref_dec(struct napt_from_wan_value *value) {
-    for (int i = 0; i < 8; i++) {
-        __u64 old = value->state_ref;
-        if (napt_state_get(old) != NAPT_WAN_STATE_ACTIVE) return -1;
-        __u64 refs = napt_state_refs(old);
-        if (refs <= 1) return -1;
-        __u64 next = napt_state_make(NAPT_WAN_STATE_ACTIVE, refs - 1);
-        __u64 prev = __sync_val_compare_and_swap(&value->state_ref, old, next);
-        if (prev == old) return 0;
-    }
-    return -1;
-}
-
-static __always_inline int napt_wan_close_last(struct napt_from_wan_value *value) {
-    __u64 old = napt_state_make(NAPT_WAN_STATE_ACTIVE, 1);
-    __u64 next = napt_state_make(NAPT_WAN_STATE_CLOSED, 1);
-    return __sync_val_compare_and_swap(&value->state_ref, old, next) == old ? 0 : -1;
 }
 
 static __always_inline void napt_lan_key_init(struct napt_from_lan_key *key, __be32 internal_addr,

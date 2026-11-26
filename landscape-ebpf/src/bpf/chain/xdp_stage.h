@@ -64,7 +64,7 @@ struct {
  *   from-LAN chain (pkts received on a LAN if):
  *     root → root_next_stage[V4]=mss_lan_v4_fd   (and [V6]=mss_lan_v6_fd)
  *     mss → next_stage[FROM_LAN_V4]=fw_lan_v4_fd (and _V6 twin)
- *     (fallback: xdp_pipe_exits_lan)
+ *     (fallback: this chain's from-LAN exit map)
  *   from-WAN chain (pkts received on the WAN if):
  *     root → root_next_stage[V4]=mss_wan_v4_fd   (and [V6]=mss_wan_v6_fd)
  *     mss → next_stage[FROM_WAN_V4]=fw_wan_v4_fd (and _V6 twin)
@@ -86,8 +86,10 @@ struct {
  *
  * Each chain direction has its own fallback PROG_ARRAY (single-slot,
  * family-agnostic):
- *   xdp_pipe_exits_lan  — simple forward (bpf_redirect to target_ifindex)
- *   xdp_pipe_exits_wan  — full routing (bpf_redirect / bpf_redirect_neigh)
+ *   xdp_from_lan_exit_map  — per-chain, unpinned: simple forward
+ *                         (bpf_redirect to target_ifindex)
+ *   xdp_pipe_exits_wan  — shared across chains: full routing
+ *                         (bpf_redirect / bpf_redirect_neigh)
  *
  * Meta:
  *   root initializes meta.mark.  Each node may read and modify meta

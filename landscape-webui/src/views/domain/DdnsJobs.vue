@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { get_current_ip_prefix_info } from "@/api/service_ipv6pd";
+import { get_current_ip_prefix_info } from "@/api/services/ipv6pd";
 import {
   cancel_ddns_job_sync,
   delete_ddns_job,
@@ -10,7 +10,7 @@ import {
   sync_ddns_job,
 } from "@/api/domain/ddns";
 import { get_dns_provider_profiles } from "@/api/domain/provider_profile";
-import { get_all_wan_links } from "@/api/service_wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
 import { useWindowSize } from "@vueuse/core";
 import type {
   ApiDdnsJob as DdnsJob,
@@ -34,8 +34,8 @@ import {
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useEnrolledDeviceStore } from "@/stores/enrolled_device";
-import { link_label, wan_link_options } from "@/lib/wan_link";
-import type { WanLink } from "@/lib/wan_link";
+import { link_label, wan_link_options } from "@/lib/wan/wan_link";
+import type { WanLink } from "@/lib/wan/wan_link";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();

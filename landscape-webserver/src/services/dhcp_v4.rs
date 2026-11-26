@@ -31,7 +31,7 @@ pub fn get_dhcp_v4_service_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_all_iface_service_status(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<HashMap<String, ServiceStatus>> {
-    LandscapeApiResp::success(state.dhcp_v4_server_service.get_all_status().await)
+    LandscapeApiResp::success(state.managed.dhcp_v4_server_service.get_all_status().await)
 }
 
 #[utoipa::path(
@@ -50,7 +50,7 @@ async fn get_iface_service_config(
     Path(service_name): Path<String>,
 ) -> LandscapeApiResult<DHCPv4ServiceConfig> {
     if let Some(iface_config) =
-        state.dhcp_v4_server_service.get_config_by_name(service_name.clone()).await
+        state.managed.dhcp_v4_server_service.get_config_by_name(service_name.clone()).await
     {
         LandscapeApiResp::success(iface_config)
     } else {
@@ -70,7 +70,7 @@ async fn handle_service_config(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<DHCPv4ServiceConfig>,
 ) -> LandscapeApiResult<()> {
-    state.dhcp_v4_server_service.handle_service_config(config).await?;
+    state.managed.dhcp_v4_server_service.handle_service_config(config).await?;
     LandscapeApiResp::success(())
 }
 
@@ -87,6 +87,6 @@ async fn delete_and_stop_iface_service(
     Path(iface_name): Path<String>,
 ) -> LandscapeApiResult<Option<ServiceStatus>> {
     LandscapeApiResp::success(
-        state.dhcp_v4_server_service.delete_and_stop_service(iface_name).await?,
+        state.managed.dhcp_v4_server_service.delete_and_stop_service(iface_name).await?,
     )
 }

@@ -1,5 +1,8 @@
 export default {
   common: {
+    search_key: "输入来源或关键词",
+    refine_search: "最多显示 {count} 项，可继续输入以缩小范围",
+    search_failed: "查询失败，重新打开可重试",
     source_type: "来源类型",
     source_url: "下载 URL",
     source_url_mode: "URL 下载",
@@ -16,6 +19,14 @@ export default {
     key: "Key",
   },
   geo_ip: {
+    entries: "GeoIP 条目",
+    select_entry: "请选择一个 GeoIP 条目查看网段",
+    matched_rules: "命中该 IP 的网段",
+    all_rules: "全部网段",
+    no_rules: "这个条目中没有网段",
+    load_failed: "GeoIP 网段加载失败",
+    view_key: "查看 {name}/{key} 的 GeoIP 详情",
+    lookup_address: "查看 {ip} 命中的 GeoIP 条目",
     title: "编辑 Geo IP 规则来源",
     ip_list: "IP 列表",
     ip_placeholder: "IP 地址",
@@ -23,6 +34,13 @@ export default {
     add_ip: "添加 IP",
   },
   geo_site: {
+    entries: "GeoSite 条目",
+    select_entry: "请选择一个 GeoSite 条目查看详情",
+    matched_rules: "命中该域名的规则",
+    all_rules: "全部规则",
+    no_rules: "这个条目中没有规则",
+    load_failed: "GeoSite 规则加载失败",
+    view_key: "查看 {name}/{key} 的 GeoSite 详情",
     title: "编辑 Geo Site",
     domain_list: "域名列表",
     domain_placeholder: "域名",
@@ -81,18 +99,14 @@ export default {
     rule_details: "规则细节",
   },
   lookup: {
+    domain_notice_positive: "查询 {domain}",
     site_action: "查询域名归属",
     ip_action: "查询 IP 归属",
-    site_title: "GeoSite 域名反向查询",
     ip_title: "GeoIP 地址反向查询",
     site_placeholder: "输入域名，例如 example.com",
     ip_placeholder: "输入 IPv4 或 IPv6 地址",
     action: "查询",
     no_result: "没有匹配的 Geo 规则",
-    domain_notice_title: "域名格式提示",
-    domain_notice_content:
-      "GeoSite 反查基于完整域名匹配（例如：{example}），是否查询 {suggested}？",
-    domain_notice_positive: "查询 {domain}",
   },
   geo_ip_name_select: {
     select_geo_ip_name: "选择 geo ip 名称",

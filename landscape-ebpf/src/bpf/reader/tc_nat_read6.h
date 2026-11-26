@@ -33,6 +33,7 @@ tc_nat_read6_icmp_error(struct __sk_buff *skb, __u32 l3_offset, __u32 l4_offset,
 
     off->icmp_error_l3_offset = (__u16)meta.inner_l3_offset;
     off->icmp_inner_l4_offset = (__u16)meta.inner_l4_offset;
+    off->icmp_quote_end = meta.quote_end;
     off->icmp_inner_l4_protocol = meta.proto;
     off->l4_protocol = meta.proto;
     off->tcp_phase = meta.tcp_phase;
@@ -108,7 +109,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
 
     if (pull_len > packet_end) pull_len = packet_end;
     if (pull_len > skb->len) pull_len = skb->len;
-    if (bpf_skb_pull_data(skb, pull_len) != 0) return 0;
+    if (ip6_skb_may_pull(skb, pull_len) != 0) return 0;
 
     data = ip6_skb_data(skb);
     data_end = ip6_skb_data_end(skb);

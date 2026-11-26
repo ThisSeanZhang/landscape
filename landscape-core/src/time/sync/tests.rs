@@ -292,6 +292,64 @@ async fn config_change_wakes_pending_interval() {
     service.stop().await;
 }
 
+type NtpReply = tokio::sync::oneshot::Sender<io::Result<NtpQueryResult>>;
+struct PendingNtp(tokio::sync::mpsc::UnboundedSender<(String, NtpReply)>);
+
+#[async_trait]
+impl NtpClient for PendingNtp {
+    async fn query(&self, servers: &[String], _: StdDuration, _: u8) -> io::Result<NtpQueryResult> {
+        let (reply, result) = tokio::sync::oneshot::channel();
+        self.0.send((servers[0].clone(), reply)).unwrap();
+        result.await.unwrap()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn changing_servers_cancels_the_old_query_and_disabling_discards_a_ready_reply() {
+    let (calls, mut queries) = tokio::sync::mpsc::unbounded_channel();
+    let clock = FakeClock::new(false);
+    let service =
+        SyncTimeService::start_with(Arc::new(PendingNtp(calls)), clock.clone(), test_config());
+    let (first, old_reply) =
+        tokio::time::timeout(StdDuration::from_secs(1), queries.recv()).await.unwrap().unwrap();
+    assert_eq!(first, test_config().servers[0]);
+    service.update_config(test_config());
+    settle().await;
+    assert!(!old_reply.is_closed());
+    assert!(queries.try_recv().is_err());
+
+    let mut config = test_config();
+    config.servers = vec!["new.pool".into()];
+    service.update_config(config);
+    let (second, new_reply) =
+        tokio::time::timeout(StdDuration::from_secs(1), queries.recv()).await.unwrap().unwrap();
+    assert!(old_reply.is_closed());
+    assert_eq!(second, "new.pool");
+
+    // Both the reply and config change are ready at the worker's next poll.
+    service.update_config(disabled_config());
+    new_reply.send(ntp_ok(1.0)).unwrap();
+    settle().await;
+    assert_eq!(service.status().sync_stage, TimeSyncStage::Disabled);
+    assert_eq!(clock.set_calls(), 0);
+    assert!(queries.try_recv().is_err());
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn identical_config_preserves_failure_backoff() {
+    let ntp = FakeNtpClient::new(vec![ntp_err(), ntp_ok(1.0)]);
+    let service = start_service(ntp.clone(), FakeClock::new(false));
+    run_until(|| service.status().last_action == TimeSyncAction::FallbackSystem).await;
+    service.update_config(test_config());
+    tokio::time::advance(StdDuration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(ntp.query_count(), 1);
+    run_until(|| service.status().last_success_at.is_some()).await;
+    assert_eq!(ntp.query_count(), 2);
+    service.stop().await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn stop_cancels_and_no_further_queries_happen() {
     let ntp = FakeNtpClient::new(vec![ntp_ok(5.0)]);
@@ -365,5 +423,39 @@ async fn sync_now_clears_failure_backoff() {
     assert_eq!(ntp.query_count(), 2);
     assert_eq!(service.status().last_action, TimeSyncAction::InitialStep);
 
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn direct_start_normalizes_zero_runtime_before_querying() {
+    let ntp = FakeNtpClient::new(vec![ntp_ok(12.5)]);
+    let config = TimeRuntimeConfig {
+        sync_interval_secs: 0,
+        timeout_secs: 0,
+        samples_per_server: 0,
+        ..test_config()
+    };
+    let service = SyncTimeService::start_with(ntp.clone(), FakeClock::new(false), config);
+    // FakeNtpClient also asserts that timeout and samples are positive.
+    run_until(|| service.status().last_action == TimeSyncAction::InitialStep).await;
+    assert_eq!(service.inner.config_tx.borrow().sync_interval_secs, 1);
+    run_until(|| service.status().next_attempt_in_secs == Some(1)).await;
+    service.stop().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn direct_update_normalizes_zero_runtime_before_reenabling() {
+    let ntp = FakeNtpClient::new(vec![ntp_ok(12.5)]);
+    let service =
+        SyncTimeService::start_with(ntp.clone(), FakeClock::new(false), disabled_config());
+    service.update_config(TimeRuntimeConfig {
+        sync_interval_secs: 0,
+        timeout_secs: 0,
+        samples_per_server: 0,
+        ..test_config()
+    });
+    run_until(|| service.status().last_action == TimeSyncAction::InitialStep).await;
+    assert_eq!(service.inner.config_tx.borrow().sync_interval_secs, 1);
+    run_until(|| service.status().next_attempt_in_secs == Some(1)).await;
     service.stop().await;
 }

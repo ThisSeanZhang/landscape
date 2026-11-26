@@ -12,9 +12,7 @@
 //! and locks the current behaviour before any route rewrite.
 //!
 //! Baseline quirks locked here (see tc_wan_egress_route.bpf.c):
-//!   * no slot target + default flow → TC_ACT_SHOT (same divergence as the
-//!     lan worker; the legacy route4_pick_wan_and_send_by_flow_id twin passes
-//!     default-flow traffic instead);
+//!   * no slot target + default flow → TC_ACT_SHOT (same as the TC LAN worker);
 //!   * a slot target on the egress device itself (ifindex == skb->ifindex)
 //!     tail-calls into tc_wan_egress_roots[target chain]; with the root map
 //!     empty (no chain assembled) the packet is dropped — root assembly is
@@ -25,9 +23,8 @@
 //!
 //! PROG_TEST_RUN verdict mapping: OK=0, UNSPEC=-1, SHOT=2, REDIRECT=7.
 //! ctx.ifindex = 1 (loopback) so no real device is required; the
-//! redirect-neigh fallback still returns REDIRECT under PROG_TEST_RUN
-//! (verified empirically, see test_lan_redirect_check.rs) and is asserted
-//! directly by the `falls_to_neigh` tests below.
+//! cross-link redirected handoffs leave L2 to the target link root; the
+//! worker only stamps the forwarded cb and redirects.
 
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -143,7 +140,7 @@ fn run_wan_egress(
         .return_value as i32;
     // TestSkb is packed: copy the asserted fields out explicitly.
     let mark = ctx_out.mark;
-    let forwarded = ctx_out.cb[0];
+    let forwarded = ctx_out.cb[0] & 1;
     let chain_id = ctx_out.cb[1] >> 16;
     (ret, out, mark, forwarded, chain_id)
 }
@@ -241,24 +238,25 @@ fn wan_egress_flow_redirect_sets_forwarded_cb() {
 }
 
 #[test]
-fn wan_egress_slot_with_mac_rewrites_header() {
+fn wan_egress_slot_with_mac_defers_header_rewrite_to_root() {
     load_skel!("tc-wan-eg-flow-mac", skel);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
     let target_mac = MacAddr::from_str("02:22:33:44:55:66").unwrap();
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, Some(target_mac), 0);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, Some(target_mac), 9);
 
+    // Even with a resolvable gateway MAC, the route worker must leave L2 to
+    // the target link's from-LAN egress root.
     let gw_mac = MacAddr::from_str("02:55:66:77:88:99").unwrap();
     let gw_dev = MacAddr::from_str("02:aa:bb:cc:dd:f0").unwrap();
     insert_ip_mac_v4(&skel.maps.ip_mac_v4, wan_gateway(), gw_mac, gw_dev, TARGET_IFINDEX);
 
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
-    let (ret, out, _mark, _forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
+    let (ret, out, _mark, forwarded, chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    // store_mac_v4(dst = ip_mac[gate_addr].mac, src = slot target mac)
-    assert_eq!(&out[0..6], &gw_mac.octets());
-    assert_eq!(&out[6..12], &target_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "the route worker must not rewrite Ethernet");
+    assert_eq!(forwarded, 1, "cross-link handoff must enter the target root");
+    assert_eq!(chain_id, 9, "target link chain id rides the forwarded cb");
 }
 
 #[test]
@@ -316,7 +314,7 @@ fn run_wan_egress_entry(
         .expect("run tc_wan_egress_route")
         .return_value as i32;
     let mark = ctx_out.mark;
-    let forwarded = ctx_out.cb[0];
+    let forwarded = ctx_out.cb[0] & 1;
     let chain_id = ctx_out.cb[1] >> 16;
     (ret, out, mark, forwarded, chain_id)
 }
@@ -371,6 +369,35 @@ fn wan_egress_entry_forwarded_with_empty_chain_shots() {
     let (ret, _out, _mark, _forwarded, _chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
 
     assert_eq!(ret, RET_SHOT, "empty egress root map → tail call falls through to SHOT");
+}
+
+#[test]
+fn wan_egress_entry_neigh_redirect_reentry_passes_through() {
+    // bpf_redirect_neigh() may re-enter this egress hook while resolving the
+    // neighbour.  The forwarded cb from the first pass must not cause a
+    // second root/fallback loop; the re-entry returns UNSPEC and lets the
+    // kernel carry the now-resolved skb.
+    load_skel!("tc-wan-eg-entry-neigh-reentry", skel);
+
+    let mut ctx = TestSkb {
+        ifindex: LOOPBACK_IFINDEX,
+        cb: [1, 9 << 16, 0x4e483452, u32::from_ne_bytes(wan_gateway().octets()), LOOPBACK_IFINDEX],
+        ..Default::default()
+    };
+    let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
+    let (ret, out, _mark, forwarded, chain_id) = run_wan_egress_entry(&skel, &pkt, &mut ctx);
+
+    assert_eq!(ret, RET_UNSPEC, "neigh-redirect re-entry bypasses the chain");
+    assert_eq!(out, pkt);
+    assert_eq!(forwarded, 1);
+    assert_eq!(chain_id, 9);
+
+    ctx.cb[4] = TARGET_IFINDEX;
+    assert_eq!(
+        run_wan_egress_entry(&skel, &pkt, &mut ctx).0,
+        RET_SHOT,
+        "another interface must dispatch to its chain"
+    );
 }
 
 #[test]
@@ -800,13 +827,13 @@ fn wan_egress_flow_match_by_src_ip_selects_flow() {
 
 #[test]
 fn wan_egress_preserves_mark_type_tag() {
-    // A host-direct tagged mark (MARK_TYPE_HOST_DIRECT tag, chain id in the
-    // low 16 bits) must pass the egress verdict untouched: with no rule
-    // matching, the verdict keeps the input mark and the tag bit survives.
+    // A SkipRouteAndStage tag (chain id in the low 16 bits) must pass the
+    // egress verdict untouched: with no rule matching, the verdict keeps
+    // the input mark and the tag bits survive.
     load_skel!("tc-wan-eg-flow-tagkeep", skel);
     assert_no_route_cache(&skel);
 
-    let tag_mark = u32::from(SocketMark::new(MarkType::HostDirect { chain_id: 0x1234 }, 0));
+    let tag_mark = u32::from(SocketMark::new(MarkType::SkipRouteAndStage { chain_id: 0x1234 }, 0));
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
     let mut ctx = TestSkb {
         ifindex: LOOPBACK_IFINDEX,
@@ -822,27 +849,27 @@ fn wan_egress_preserves_mark_type_tag() {
 }
 
 // ---------------------------------------------------------------------------
-// pick_wan has_mac + gateway-miss fallback
+// pick_wan has_mac + gateway-miss deferral
 // ---------------------------------------------------------------------------
 
 #[test]
-fn wan_egress_slot_with_mac_gateway_miss_falls_to_neigh() {
-    // pick_wan has_mac slot whose gate address has no ip_mac_v4 entry: the
-    // forwarded cb flag is already stamped when the neigh fallback runs
-    // (tc_wan_egress_route.bpf.c:89 before :95-102).
+fn wan_egress_slot_with_mac_gateway_miss_defers_to_root() {
+    // A missing gateway MAC is no longer resolved at the route worker; the
+    // target link's root retries the lookup and arms NEIGH_FALLBACK if needed.
     load_skel!("tc-wan-eg-flow-gwmiss", skel);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
     let target_mac = MacAddr::from_str("02:22:33:44:55:66").unwrap();
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, Some(target_mac), 0);
+    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, Some(target_mac), 9);
     // no ip_mac_v4 entry for the slot gate address
 
     let pkt = simple_ipv4_tcp(local_addr(), remote_wan_addr());
-    let (ret, out, mark, forwarded, _chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
+    let (ret, out, mark, forwarded, chain_id) = run_wan_egress(&skel, &pkt, &mut egress_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "the route worker must not rewrite Ethernet");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-    assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
+    assert_eq!(forwarded, 1, "the cb flag must target the link root");
+    assert_eq!(chain_id, 9);
 }
 
 // ---------------------------------------------------------------------------

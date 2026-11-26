@@ -40,15 +40,8 @@ pub(crate) fn spawn_doh_listener(
     handler: DnsRequestHandler,
     shutdown: CancellationToken,
     tracker: TaskTracker,
-) {
-    let tls_acceptor = match build_tls_acceptor(config.server_cert_resolver.clone()) {
-        Ok(acceptor) => acceptor,
-        Err(e) => {
-            tracing::error!("[flow: {flow_id}]: create DoH TLS acceptor error: {e}");
-            return;
-        }
-    };
-
+) -> io::Result<()> {
+    let tls_acceptor = build_tls_acceptor(config.server_cert_resolver.clone())?;
     spawn_tracked(&tracker, task_label::task::DNS_DOH_HANDLER, async move {
         let handler = Arc::new(handler);
         let mut connection_tasks = JoinSet::new();
@@ -61,8 +54,6 @@ pub(crate) fn spawn_doh_listener(
                     Err(e) => {
                         tracing::debug!("[flow: {flow_id}]: accept DoH connection error: {e}");
                         if is_unrecoverable_socket_error(&e) {
-                            // 同生共死:DoH 监听不可恢复错误取消整个 flow
-                            // token(UDP 一并退出),由上层 refresh 整体重建
                             shutdown.cancel();
                             break;
                         }
@@ -106,6 +97,7 @@ pub(crate) fn spawn_doh_listener(
         while connection_tasks.join_next().await.is_some() {}
         tracing::info!("[flow: {flow_id}]: DoH listener down");
     });
+    Ok(())
 }
 
 fn build_tls_acceptor(

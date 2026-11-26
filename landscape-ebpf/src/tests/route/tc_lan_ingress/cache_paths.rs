@@ -1,6 +1,6 @@
 //! Cache fast-path matrix of the v4 LAN-ingress worker
-//! (`route4_search_cache_in_lan`): LAN-cache hits (including the
-//! zero-ifindex legacy pick_wan handoff) and reply-learned WAN-cache hits.
+//! (`route4_search_cache_in_lan`): LAN-cache hits, zero-ifindex true-miss
+//! fallback/rebuild, and reply-learned WAN-cache hits.
 
 use super::*;
 
@@ -39,39 +39,55 @@ fn lan_ingress_lan_cache_hit_short_circuits_without_learning() {
 }
 
 #[test]
-fn lan_ingress_lan_cache_hit_with_zero_ifindex_falls_back_to_pick_wan() {
-    load_skel!("tc-lan-flow-cache-zero-if", skel);
-    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr(),
-        0,
-        false,
-        0x0305,
-    );
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None);
+fn lan_ingress_lan_cache_zero_ifindex_misses_and_rebuilds_like_empty_cache() {
+    // Both flows have usable slots. With no overriding rule, only the packet's
+    // own mark A should determine the redirect and the rebuilt cache entry.
+    const MARK_A: u32 = FLOW_REDIRECT_MARK; // flow 5
+    const MARK_B: u32 = 0x0306; // action REDIRECT, flow 6
+    const IFINDEX_A: u32 = TARGET_IFINDEX;
+    const IFINDEX_B: u32 = TARGET_IFINDEX + 1;
 
-    let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, _out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let run_case = |pin: &str, seed_zero_ifindex: bool| {
+        load_skel!(pin, skel);
+        create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
+        if seed_zero_ifindex {
+            put_rt4_cache_value(
+                &skel.maps.rt4_cache_map,
+                LAN_CACHE,
+                client_addr(),
+                remote_wan_addr(),
+                0,
+                false,
+                MARK_B,
+            );
+        }
+        seed_wan_slots(&skel, 5, IFINDEX_A, false, None);
+        seed_wan_slots(&skel, 6, IFINDEX_B, false, None);
 
-    assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-    assert_eq!(forwarded, 1, "the legacy pick_wan stamps the cb forwarded flag itself");
+        let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
+        let mut ctx = TestSkb { mark: MARK_A, ..lan_ctx() };
+        let (ret, _out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut ctx);
+        let cache = lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr(),
+        )
+        .expect("slow-path redirect must populate/rebuild the LAN cache entry");
+        let learned = lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_some();
+        (ret, mark, forwarded, cache.ifindex, cache.mark_value, learned)
+    };
 
-    let cache = lookup_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr(),
-    )
-    .expect("cache entry must survive");
-    assert_eq!(cache.ifindex, 0, "cache-hit fast path must not touch the ifindex");
-    assert_eq!(
-        cache.mark_value, 0x0305,
-        "set_cache_in_lan only runs after a fresh pick_wan, so the entry is untouched"
-    );
+    let empty = run_case("tc-lan-flow-cache-empty-ref", false);
+    let zero_if = run_case("tc-lan-flow-cache-zero-if", true);
+
+    assert_eq!(zero_if, empty, "zero-ifindex entry must match empty-cache slow path");
+    assert_eq!(zero_if.0, RET_REDIRECT);
+    assert_eq!(zero_if.1, normal_mark(FlowMarkAction::Redirect, 5, false));
+    assert_eq!(zero_if.2, 1);
+    assert_eq!(zero_if.3, IFINDEX_A, "cache entry must be rebuilt to target A's ifindex");
+    assert_eq!(zero_if.4, MARK_A, "cache entry must be rebuilt to mark A, not stale mark B");
+    assert!(zero_if.5, "true cache miss must run slow-path neighbour learning");
 }
 
 #[test]
@@ -99,12 +115,12 @@ fn lan_ingress_lan_cache_same_ifindex_entry_hands_to_stack() {
 }
 
 #[test]
-fn lan_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
-    // route4_redirect_by_cached_target has_mac branch: dst mac comes from
-    // ip_mac_v4[gate_addr], src mac from the cached entry.
+fn lan_ingress_lan_cache_has_mac_entry_defers_rewrite_to_root() {
+    // The cached target is a WAN link.  Even with has_mac set on the cached
+    // target and a resolvable ip_mac_v4 entry, LAN ingress must only hand the
+    // packet to that link's root, which owns the single Ethernet rewrite.
     load_skel!("tc-lan-flow-cache-gwmac", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    let entry_mac = [0x02, 0x44, 0x55, 0x66, 0x77, 0x88];
     put_rt4_cache_full(
         &skel.maps.rt4_cache_map,
         LAN_CACHE,
@@ -114,25 +130,22 @@ fn lan_ingress_lan_cache_has_mac_entry_rewrites_from_gate_ip_mac() {
         true,
         0x0305,
         false,
-        wan_gateway(),
-        entry_mac,
     );
     let gw_mac = MacAddr::from_str("02:55:66:77:88:99").unwrap();
     let gw_dev = MacAddr::from_str("02:aa:bb:cc:dd:f0").unwrap();
     insert_ip_mac_v4(&skel.maps.ip_mac_v4, wan_gateway(), gw_mac, gw_dev, TARGET_IFINDEX);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gw_mac.octets(), "dst = ip_mac[gate_addr].mac");
-    assert_eq!(&out[6..12], &entry_mac, "src = cached entry mac");
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "LAN ingress must not rewrite Ethernet on a WAN cache hit");
+    assert_eq!(forwarded, 1, "the target link root owns the rewrite");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
 }
 
 #[test]
-fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_falls_to_neigh() {
+fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_defers_to_root() {
     load_skel!("tc-lan-flow-cache-gwmiss", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     put_rt4_cache_full(
@@ -144,16 +157,15 @@ fn lan_ingress_lan_cache_has_mac_entry_without_ip_mac_falls_to_neigh() {
         true,
         0x0305,
         false,
-        wan_gateway(),
-        [0x02, 0x44, 0x55, 0x66, 0x77, 0x88],
     );
-    // no ip_mac_v4 entries at all → bpf_redirect_neigh(gate_addr) fallback
+    // Leave the neighbour map empty to exercise the handoff on a miss.
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, out, _mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened: the neigh lookup resolves later");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "no rewrite happens at LAN ingress");
+    assert_eq!(forwarded, 1, "the target link root owns lookup and fallback");
 }
 
 #[test]
@@ -169,8 +181,6 @@ fn lan_ingress_lan_cache_docker_entry_pushes_vlan_and_redirects() {
         false,
         0x0305,
         true,
-        Ipv4Addr::UNSPECIFIED,
-        [0; 6],
     );
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
@@ -183,10 +193,15 @@ fn lan_ingress_lan_cache_docker_entry_pushes_vlan_and_redirects() {
 }
 
 #[test]
-fn lan_ingress_lan_cache_zero_ifindex_same_device_slot_passes() {
-    // pick_wan resolved through the cached flow id, but the slot target is the
-    // incoming device itself: no redirect needed → UNSPEC.
-    load_skel!("tc-lan-flow-cache-sameslot", skel);
+fn lan_ingress_lan_cache_zero_ifindex_default_flow_without_slot_drops() {
+    // A zero-ifindex LAN-cache entry with a stale non-zero mark B (whose slot
+    // B is provisioned) must still miss to the TC slow path: with no matching
+    // rule and no default-flow (flow 0) slot, the packet drops with mark 0
+    // rather than redirecting via stale mark B or passing via a legacy path.
+    const MARK_B: u32 = 0x0306; // action REDIRECT, flow 6
+    const IFINDEX_B: u32 = TARGET_IFINDEX + 1;
+
+    load_skel!("tc-lan-flow-cache-zero-if-drop", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     put_rt4_cache_value(
         &skel.maps.rt4_cache_map,
@@ -195,97 +210,84 @@ fn lan_ingress_lan_cache_zero_ifindex_same_device_slot_passes() {
         remote_wan_addr(),
         0,
         false,
-        0x0305,
+        MARK_B,
     );
-    seed_wan_slots(&skel, 5, LOOPBACK_IFINDEX, false, None);
-
-    let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
-
-    assert_eq!(ret, RET_UNSPEC, "slot on the incoming device must pass");
-    assert_eq!(out, pkt);
-    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-}
-
-#[test]
-fn lan_ingress_lan_cache_zero_ifindex_without_slot_drops() {
-    // pick_wan slot-miss with flow_id != 0 → SHOT (the cached flow's slots
-    // were never provisioned).
-    load_skel!("tc-lan-flow-cache-noslot", skel);
-    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr(),
-        0,
-        false,
-        0x0305,
-    );
-    // rt4_slot_map intentionally left empty for flow 5
+    seed_wan_slots(&skel, 6, IFINDEX_B, false, None);
+    // rt4_slot_map intentionally left empty for default flow 0
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
     let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_SHOT, "non-zero cached flow without slots must drop");
-    assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-}
-
-#[test]
-fn lan_ingress_lan_cache_zero_ifindex_default_flow_passes() {
-    // Legacy pick_wan twin (route4_pick_wan_and_send_by_flow_id) reached via
-    // a cache entry with ifindex == 0 and a DEFAULT-flow mark: a flow id 0
-    // slot-miss passes (TC_ACT_UNSPEC) — unlike the TC first-packet wrapper
-    // which drops the default flow.
-    load_skel!("tc-lan-flow-cache-default-pass", skel);
-    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_value(
-        &skel.maps.rt4_cache_map,
-        LAN_CACHE,
-        client_addr(),
-        remote_wan_addr(),
-        0,
-        false,
-        0, // mark_value 0 → resolved flow id 0 (default flow)
-    );
-    // rt4_slot_map intentionally left empty for flow 0
-
-    let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
-
-    assert_eq!(ret, RET_UNSPEC, "legacy pick_wan passes default-flow traffic");
-    assert_eq!(out, pkt);
+    assert_eq!(ret, RET_SHOT, "zero-ifindex miss with empty default-flow slots must drop");
     assert_eq!(
         mark,
         normal_mark(FlowMarkAction::KeepGoing, 0, false),
-        "wrapper keeps the zero mark on the search-cache return"
+        "stale cached mark B must not leak onto the packet"
+    );
+    assert!(
+        lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_some(),
+        "true cache miss must run slow-path neighbour learning"
     );
 }
 
+fn put_wan_cache_with_chain(
+    skel: &TcLanIngressRouteSkel<'_>,
+    ifindex: u32,
+    has_mac: bool,
+    link_chain_id: u16,
+) {
+    let val = skel
+        .maps
+        .rt4_cache_map
+        .lookup(&WAN_CACHE.to_ne_bytes(), MapFlags::ANY)
+        .unwrap()
+        .expect("WAN_CACHE inner map missing");
+    let map_id = u32::from_ne_bytes(val[..4].try_into().unwrap());
+    let inner = libbpf_rs::MapHandle::from_map_id(map_id).expect("open WAN_CACHE inner map");
+    let key = crate::maps::Route4CacheKey {
+        local_addr: client_addr().to_bits().to_be(),
+        remote_addr: remote_wan_addr().to_bits().to_be(),
+    };
+    let entry = crate::maps::Route4CacheValue {
+        ifindex,
+        has_mac: u8::from(has_mac),
+        link_chain_id,
+        ..Default::default()
+    };
+    inner.update(as_bytes(&key), as_bytes(&entry), MapFlags::ANY).unwrap();
+}
+
 #[test]
-fn lan_ingress_set_cache_skipped_when_wan_cache_has_entry() {
-    // route4_set_cache_in_lan checks the WAN cache first: a stale entry there
-    // (inert during the search, no binding) suppresses the LAN cache write
-    // even after a fresh redirect.
+fn lan_ingress_wan_cache_hit_short_circuits_without_writing_lan_cache() {
+    // A WAN-cache hit pins return traffic to the original WAN link and
+    // short-circuits before slow-path learning, flow verdict, pick_wan, and
+    // LAN-cache population — even when a competing flow rule and alternative
+    // WAN slot are available.
+    const ORIG_CHAIN: u16 = 7;
+    const ALT_IFINDEX: u32 = TARGET_IFINDEX + 1;
+
     load_skel!("tc-lan-flow-setcache-wanexist", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_ifindex(
-        &skel.maps.rt4_cache_map,
-        WAN_CACHE,
-        client_addr(),
-        remote_wan_addr(),
-        TARGET_IFINDEX,
-        true,
-    );
-    // no wan binding → the WAN-cache entry is inert during the search
+    put_wan_cache_with_chain(&skel, TARGET_IFINDEX, true, ORIG_CHAIN);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
-    seed_wan_slots(&skel, 5, TARGET_IFINDEX, false, None);
+    seed_wan_slots(&skel, 5, ALT_IFINDEX, false, None);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, _out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, _out, mark, cb) = run_lan_ingress_with_cb(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
+    assert_eq!(cb[0], 1, "WAN-cache hit stamps the cb forwarded flag");
+    assert_eq!(cb[1] >> 16, u32::from(ORIG_CHAIN), "WAN-cache hit must keep the original chain");
+    assert_eq!(
+        mark,
+        normal_mark(FlowMarkAction::KeepGoing, 0, false),
+        "WAN-cache hit must not run flow verdict"
+    );
+    assert!(
+        lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none(),
+        "WAN-cache hit must skip slow-path neighbour learning"
+    );
     assert!(
         lookup_rt4_cache_value(
             &skel.maps.rt4_cache_map,
@@ -294,7 +296,7 @@ fn lan_ingress_set_cache_skipped_when_wan_cache_has_entry() {
             remote_wan_addr()
         )
         .is_none(),
-        "a WAN-cache entry must suppress the LAN cache write"
+        "a WAN-cache hit must not populate the LAN cache"
     );
 }
 
@@ -312,11 +314,35 @@ fn seed_wan_cache(skel: &TcLanIngressRouteSkel<'_>) {
         TARGET_IFINDEX,
         true,
     );
-    seed_wan_binding(skel);
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
+fn wan_cache_raw_ipv4_prepends_a_unicast_header_for_neighbour_fallback() {
+    load_skel!("tc-lan-cache-raw4", skel, 0);
+    seed_wan_cache(&skel);
+    let frame = simple_ipv4_tcp(client_addr(), remote_wan_addr());
+    let ip = &frame[14..];
+    let mut ctx = lan_ctx();
+    let mut out = vec![0; frame.len()];
+    let result = skel
+        .progs
+        .tc_route4_lan_ingress
+        .test_run(ProgramInput {
+            data_in: Some(ip),
+            data_out: Some(&mut out),
+            context_in: Some(ctx.as_mut_bytes()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(result.return_value as i32, RET_REDIRECT);
+    let packet = result.data.unwrap();
+    assert_eq!(packet[0] & 1, 0);
+    assert_eq!(packet[12..14], [8, 0]);
+    assert_eq!(&packet[14..], ip);
+}
+
+#[test]
+fn lan_ingress_wan_cache_hit_defers_header_rewrite_to_link_root() {
     load_skel!("tc-lan-flow-wan-cache", skel);
     seed_wan_cache(&skel);
 
@@ -328,11 +354,9 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
     let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    // The WAN-cache path stores the full 14-byte ip_mac value: dst mac, dev
-    // mac, then the proto field as ethertype.
-    assert_eq!(&out[0..6], &next_hop.octets());
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    // LAN ingress only selects the target link.  The target link's from-LAN
+    // root owns the Ethernet rewrite using its own source MAC.
+    assert_eq!(out, pkt, "LAN ingress must not rewrite the Ethernet header");
     assert_eq!(
         mark,
         normal_mark(FlowMarkAction::KeepGoing, 0, false),
@@ -342,7 +366,7 @@ fn lan_ingress_wan_cache_hit_rewrites_header_from_remote_ip_mac() {
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
+fn lan_ingress_wan_cache_hit_does_not_resolve_gateway_mac() {
     load_skel!("tc-lan-flow-wan-cache-gw", skel);
     seed_wan_cache(&skel);
 
@@ -354,23 +378,20 @@ fn lan_ingress_wan_cache_hit_falls_back_to_gateway_mac() {
     let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    assert_eq!(&out[0..6], &gateway_mac.octets(), "must fall back to the wan gateway mac");
-    assert_eq!(&out[6..12], &dev_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "gateway MAC resolution belongs to the target link root");
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_without_any_ip_mac_falls_to_neigh() {
-    // has_mac WAN-cache entry with neither the remote nor the gateway in
-    // ip_mac_v4 → bpf_redirect_neigh(gateway) fallback, no rewrite.
+fn lan_ingress_wan_cache_hit_without_any_ip_mac_defers_to_root() {
+    // The reverse cache still selects a WAN when its neighbour is unknown.
     load_skel!("tc-lan-flow-wan-cache-neigh", skel);
     seed_wan_cache(&skel);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
     let (ret, out, _mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened: the neigh lookup resolves later");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "no rewrite happened at LAN ingress");
 }
 
 #[test]
@@ -387,7 +408,6 @@ fn lan_ingress_wan_cache_no_mac_entry_redirects_directly() {
         TARGET_IFINDEX,
         false, // !has_mac
     );
-    seed_wan_binding(&skel);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
     let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
@@ -403,33 +423,31 @@ fn lan_ingress_wan_cache_no_mac_entry_redirects_directly() {
 }
 
 #[test]
-fn lan_ingress_wan_cache_hit_without_wan_binding_is_inert() {
-    // The WAN-cache fast path requires wan_ip_binding[target->ifindex]; a
-    // stale cache entry without a binding must not redirect.
-    load_skel!("tc-lan-flow-wan-cache-nobind", skel);
+fn lan_ingress_wan_cache_zero_ifindex_drops_without_rerouting_to_alternative() {
+    const ALT_IFINDEX: u32 = TARGET_IFINDEX + 1;
+
+    load_skel!("tc-lan-flow-wan-cache-zeroif", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
-    put_rt4_cache_ifindex(
+    put_wan_cache_with_chain(&skel, 0, true, 7);
+    put_rt4_cache_value(
         &skel.maps.rt4_cache_map,
-        WAN_CACHE,
+        LAN_CACHE,
         client_addr(),
         remote_wan_addr(),
-        TARGET_IFINDEX,
+        ALT_IFINDEX,
         true,
+        FLOW_REDIRECT_MARK,
     );
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+    seed_wan_slots(&skel, 0, ALT_IFINDEX, false, None);
+    seed_wan_slots(&skel, 5, ALT_IFINDEX, false, None);
 
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
-    let (ret, _out, mark, _forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
+    let (ret, _out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_SHOT, "no binding → WAN-cache entry is inert → default drop");
+    assert_eq!(ret, RET_SHOT, "zero-ifindex WAN-cache hit must drop without rerouting");
+    assert_eq!(forwarded, 0);
     assert_eq!(mark, normal_mark(FlowMarkAction::KeepGoing, 0, false));
-    assert!(
-        lookup_rt4_cache_value(
-            &skel.maps.rt4_cache_map,
-            LAN_CACHE,
-            client_addr(),
-            remote_wan_addr()
-        )
-        .is_none()
-    );
+    assert!(lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none());
 }

@@ -6,7 +6,7 @@
 struct route4_cache_key {
     __be32 local_addr;
     __be32 remote_addr;
-} _route4_cache_key;
+};
 
 struct route4_cache_value {
     __u32 mark_value;
@@ -15,11 +15,14 @@ struct route4_cache_value {
     u8 xdp_redirect_able;
     u8 _pad;
     __u32 ifindex;
-    __be32 gate_addr;
-    u8 mac[6];
-    u8 l2_data[8];
     __u16 link_chain_id;
-} _route4_cache_value;
+    u8 _pad_tail[2];
+};
+
+_Static_assert(sizeof(struct route4_cache_key) == 8, "route4_cache_key must be 8 bytes");
+_Static_assert(sizeof(struct route4_cache_value) == 16, "route4_cache_value must be 16 bytes");
+_Static_assert(__builtin_offsetof(struct route4_cache_value, link_chain_id) == 12,
+               "route4_cache_value link_chain_id must be at offset 12");
 
 // 缓存
 struct route4_each_cache {
@@ -32,7 +35,7 @@ struct route4_each_cache {
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
     __type(key, u32);
-    __uint(max_entries, 4);
+    __uint(max_entries, 2);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
     __array(values, struct route4_each_cache);
 } rt4_cache_map SEC(".maps");

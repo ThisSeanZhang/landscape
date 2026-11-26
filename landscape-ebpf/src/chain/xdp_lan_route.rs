@@ -54,14 +54,6 @@ pub fn init_xdp_lan_route(
         "xdp_lan_route pin xdp_pipe_root_progs"
     )?;
     crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path(),),
-        "xdp_lan_route pin xdp_pipe_exits_lan"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path(),),
-        "xdp_lan_route pin xdp_pipe_exits_wan"
-    )?;
-    crate::bpf_ctx!(
         pin_and_reuse_map(
             &mut open_skel.maps.xdp_lan_pipe_root_progs,
             &paths.xdp_lan_pipe_root_progs_path(),
@@ -72,10 +64,6 @@ pub fn init_xdp_lan_route(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.flow_match_map, &paths.flow_match_map),
         "xdp_lan_route pin flow_match_map"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut open_skel.maps.wan_ip_binding, &paths.wan_ip),
-        "xdp_lan_route pin wan_ip_binding"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
@@ -150,10 +138,6 @@ pub fn init_xdp_lan_route(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut intro_open_skel.maps.flow_match_map, &paths.flow_match_map),
         "tc_lan_ingress_route pin flow_match_map"
-    )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut intro_open_skel.maps.wan_ip_binding, &paths.wan_ip),
-        "tc_lan_ingress_route pin wan_ip_binding"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut intro_open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),

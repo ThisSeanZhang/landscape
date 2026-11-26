@@ -798,17 +798,29 @@ fn collect_refresh_multiple_flows_independent() {
 // Kernel default-route sync
 // ─────────────────────────────────────────────────────────────────────────
 
-/// No-op dataplane recording every `sync_kernel_default_ipv4` payload;
-/// `set_fail_next` makes the next sync report failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LanRouteOp {
+    Add(LanRouteInfo),
+    Del(LanRouteInfo),
+}
+
+/// No-op dataplane recording every `sync_kernel_default_ipv4` payload and
+/// `add_lan_route`/`del_lan_route` call; `set_fail_next` makes the next
+/// kernel-default sync report failure.
 #[derive(Default)]
 struct RecordingRouteDataplane {
     calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
+    lan_ops: std::sync::Mutex<Vec<LanRouteOp>>,
     fail_next: std::sync::atomic::AtomicBool,
 }
 
 impl RecordingRouteDataplane {
     fn calls(&self) -> Vec<Vec<RouteTargetInfo>> {
         self.calls.lock().unwrap().clone()
+    }
+
+    fn take_lan_ops(&self) -> Vec<LanRouteOp> {
+        std::mem::take(&mut *self.lan_ops.lock().unwrap())
     }
 
     fn set_fail_next(&self) {
@@ -820,9 +832,13 @@ impl RecordingRouteDataplane {
 impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplane
     for RecordingRouteDataplane
 {
-    fn add_lan_route(&self, _info: LanRouteInfo) {}
+    fn add_lan_route(&self, info: LanRouteInfo) {
+        self.lan_ops.lock().unwrap().push(LanRouteOp::Add(info));
+    }
 
-    fn del_lan_route(&self, _info: LanRouteInfo) {}
+    fn del_lan_route(&self, info: LanRouteInfo) {
+        self.lan_ops.lock().unwrap().push(LanRouteOp::Del(info));
+    }
 
     fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
 
@@ -1003,5 +1019,306 @@ fn kernel_default_burst_converges_in_single_reconcile() {
 
         assert_eq!(dataplane.calls().len(), 1);
         assert_eq!(dataplane.calls()[0].len(), 2);
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// IPv4 WanReachable host /32 publication, ownership and withdrawal
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn ipv4_wan_reachable_subnet_publishes_and_withdraws_host_32_preserving_api_and_local_addrs() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let wan_subnet =
+            ipv4_lan_route(2, "wan0", Ipv4Addr::new(192, 0, 2, 10), 24, LanRouteMode::WanReachable);
+        let wan_host = LanRouteInfo { prefix: 32, ..wan_subnet.clone() };
+
+        service.insert_ipv4_lan_route("wan0", wan_subnet.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Add(wan_subnet.clone()), LanRouteOp::Add(wan_host.clone())]
+        );
+
+        // Stored API state preserves the single subnet record without duplicating /32,
+        // and Reachable-only local address snapshots remain unaffected.
+        let stored = service.get_all_ipv4_lan_routes().await;
+        assert_eq!(stored.get("wan0"), Some(&vec![wan_subnet.clone()]));
+        assert!(service.local_addr_view().load_ipv4_addrs().is_empty());
+
+        // Identical re-publish is a no-op.
+        service.insert_ipv4_lan_route("wan0", wan_subnet.clone()).await;
+        assert!(dataplane.take_lan_ops().is_empty());
+
+        service.remove_ipv4_lan_route("wan0").await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Del(wan_subnet), LanRouteOp::Del(wan_host)]
+        );
+    });
+}
+
+#[test]
+fn ipv6_later_lan_host_route_cannot_shadow_owned_wan_host() {
+    run_async_test(async {
+        let dp = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let routes = IpRouteService::new(dp.clone());
+        let addr = "2001:db8::10".parse().unwrap();
+        let key = |iface: &str| LanIPv6RouteKey {
+            iface_name: iface.into(),
+            subnet: addr,
+            prefix_len: 128,
+        };
+        let wan = ipv6_lan_route(6, "wan", addr, 128, LanRouteMode::WanReachable);
+        let lan = ipv6_lan_route(
+            7,
+            "lan",
+            addr,
+            128,
+            LanRouteMode::NextHop { next_hop_ip: "2001:db8::1".parse().unwrap() },
+        );
+        routes.insert_ipv6_lan_route(key("wan"), wan.clone()).await;
+        routes.insert_ipv6_lan_route(key("lan"), lan.clone()).await;
+        assert_eq!(dp.take_lan_ops().last(), Some(&LanRouteOp::Add(wan)));
+        routes.remove_ipv6_lan_route_by_key(&key("wan")).await;
+        assert_eq!(dp.take_lan_ops(), vec![LanRouteOp::Add(lan)]);
+    });
+}
+
+#[test]
+fn ipv4_wan_reachable_32_does_not_duplicate_dataplane_ops() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let ppp_host = ipv4_lan_route(
+            7,
+            "ppp0",
+            Ipv4Addr::new(203, 0, 113, 5),
+            32,
+            LanRouteMode::WanReachable,
+        );
+
+        service.insert_ipv4_lan_route("ppp0", ppp_host.clone()).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(ppp_host.clone())]);
+
+        service.remove_ipv4_lan_route("ppp0").await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Del(ppp_host)]);
+    });
+}
+
+#[test]
+fn ipv4_wan_reachable_updates_withdraw_old_host_32_and_preserve_unrelated_bucket_routes() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let unrelated =
+            ipv4_lan_route(2, "eth0", Ipv4Addr::new(10, 0, 0, 1), 24, LanRouteMode::Reachable);
+        let wan_a =
+            ipv4_lan_route(2, "eth0", Ipv4Addr::new(192, 0, 2, 10), 24, LanRouteMode::WanReachable);
+        let wan_a_host = LanRouteInfo { prefix: 32, ..wan_a.clone() };
+        let wan_a2 =
+            ipv4_lan_route(2, "eth0", Ipv4Addr::new(192, 0, 2, 20), 24, LanRouteMode::WanReachable);
+        let wan_a2_host = LanRouteInfo { prefix: 32, ..wan_a2.clone() };
+        let wan_b = ipv4_lan_route(
+            2,
+            "eth0",
+            Ipv4Addr::new(198, 51, 100, 30),
+            24,
+            LanRouteMode::WanReachable,
+        );
+        let wan_b_host = LanRouteInfo { prefix: 32, ..wan_b.clone() };
+
+        service.insert_ipv4_lan_route("eth0", unrelated.clone()).await;
+        service.insert_ipv4_lan_route("eth0", wan_a.clone()).await;
+        let _ = dataplane.take_lan_ops();
+
+        // Same-subnet IP change: withdraws old /32, overwrites /24, publishes new /32.
+        service.insert_ipv4_lan_route("eth0", wan_a2.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![
+                LanRouteOp::Del(wan_a_host),
+                LanRouteOp::Add(wan_a2.clone()),
+                LanRouteOp::Add(wan_a2_host.clone()),
+            ]
+        );
+        assert_eq!(
+            service.get_all_ipv4_lan_routes().await.get("eth0"),
+            Some(&vec![unrelated.clone(), wan_a2.clone()])
+        );
+
+        // Cross-subnet change: withdraws old /24 and old /32, publishes new /24 and /32,
+        // while keeping unrelated routes in the same owner bucket.
+        service.insert_ipv4_lan_route("eth0", wan_b.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![
+                LanRouteOp::Del(wan_a2),
+                LanRouteOp::Del(wan_a2_host),
+                LanRouteOp::Add(wan_b.clone()),
+                LanRouteOp::Add(wan_b_host.clone()),
+            ]
+        );
+        assert_eq!(
+            service.get_all_ipv4_lan_routes().await.get("eth0"),
+            Some(&vec![unrelated.clone(), wan_b.clone()])
+        );
+
+        // Prefix change /24 -> /32 on same IP: withdraws /24 without deleting /32.
+        service.insert_ipv4_lan_route("eth0", wan_b_host.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Del(wan_b), LanRouteOp::Add(wan_b_host.clone())]
+        );
+        assert_eq!(
+            service.get_all_ipv4_lan_routes().await.get("eth0"),
+            Some(&vec![unrelated, wan_b_host])
+        );
+    });
+}
+
+#[test]
+fn ipv4_wan_reachable_two_owners_same_host_ip_survivor_handoff() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let ip = Ipv4Addr::new(192, 0, 2, 10);
+
+        let wan0 = ipv4_lan_route(2, "wan0", ip, 24, LanRouteMode::WanReachable);
+        let wan0_host = LanRouteInfo { prefix: 32, ..wan0.clone() };
+        let wan1_host = ipv4_lan_route(5, "wan1", ip, 32, LanRouteMode::WanReachable);
+
+        service.insert_ipv4_lan_route("wan0", wan0.clone()).await;
+        let _ = dataplane.take_lan_ops();
+
+        // Higher-ifindex owner does not replace lower-ifindex winner on /32.
+        service.insert_ipv4_lan_route("wan1", wan1_host.clone()).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(wan0_host)]);
+
+        // Removing wan0 withdraws its /24 and hands /32 over to surviving wan1 without deleting /32.
+        service.remove_ipv4_lan_route("wan0").await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Del(wan0), LanRouteOp::Add(wan1_host.clone())]
+        );
+
+        // Removing the last owner deletes /32.
+        service.remove_ipv4_lan_route("wan1").await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Del(wan1_host)]);
+    });
+}
+
+#[test]
+fn ipv4_wan_reachable_overlapping_lpm_and_colliding_host_32_precedence() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        // Overlapping more-specific LAN /25 + WAN /24.
+        let lan25 =
+            ipv4_lan_route(1, "lan0", Ipv4Addr::new(192, 0, 2, 1), 25, LanRouteMode::Reachable);
+        let wan24 =
+            ipv4_lan_route(2, "wan0", Ipv4Addr::new(192, 0, 2, 10), 24, LanRouteMode::WanReachable);
+        let wan_host = LanRouteInfo { prefix: 32, ..wan24.clone() };
+
+        service.insert_ipv4_lan_route("lan0", lan25.clone()).await;
+        let _ = dataplane.take_lan_ops();
+
+        service.insert_ipv4_lan_route("wan0", wan24.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Add(wan24.clone()), LanRouteOp::Add(wan_host.clone())]
+        );
+
+        service.remove_ipv4_lan_route("wan0").await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Del(wan24.clone()), LanRouteOp::Del(wan_host.clone())]
+        );
+        assert_eq!(service.get_all_ipv4_lan_routes().await.get("lan0"), Some(&vec![lan25]));
+
+        // Same-subnet LAN /24 + WAN /24: normal last-publish on insert, restore LAN on withdraw.
+        let lan24 =
+            ipv4_lan_route(3, "lan1", Ipv4Addr::new(192, 0, 2, 1), 24, LanRouteMode::Reachable);
+        service.insert_ipv4_lan_route("lan1", lan24.clone()).await;
+        let _ = dataplane.take_lan_ops();
+
+        service.insert_ipv4_lan_route("wan0", wan24.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Add(wan24.clone()), LanRouteOp::Add(wan_host.clone())]
+        );
+
+        service.remove_ipv4_lan_route("wan0").await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Add(lan24), LanRouteOp::Del(wan_host.clone())]
+        );
+
+        // Colliding /32 host route: WanReachable takes precedence and withdrawal restores Reachable.
+        let lan32 =
+            ipv4_lan_route(1, "lan32", Ipv4Addr::new(192, 0, 2, 10), 32, LanRouteMode::Reachable);
+        service.insert_ipv4_lan_route("lan32", lan32.clone()).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(lan32.clone())]);
+
+        service.insert_ipv4_lan_route("wan0", wan24.clone()).await;
+        assert_eq!(
+            dataplane.take_lan_ops(),
+            vec![LanRouteOp::Add(wan24.clone()), LanRouteOp::Add(wan_host.clone())]
+        );
+
+        // A later Reachable /32 on the same IP must not clobber the active WanReachable /32.
+        let lan32_b =
+            ipv4_lan_route(4, "lan32-b", Ipv4Addr::new(192, 0, 2, 10), 32, LanRouteMode::Reachable);
+        service.insert_ipv4_lan_route("lan32-b", lan32_b).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(wan_host)]);
+
+        service.remove_ipv4_lan_route("wan0").await;
+        let ops = dataplane.take_lan_ops();
+        assert_eq!(ops.len(), 2);
+        assert_eq!(
+            ops[0],
+            LanRouteOp::Add(ipv4_lan_route(
+                3,
+                "lan1",
+                Ipv4Addr::new(192, 0, 2, 1),
+                24,
+                LanRouteMode::Reachable,
+            ))
+        );
+        assert_eq!(ops[1], LanRouteOp::Add(lan32));
+    });
+}
+
+#[test]
+fn ipv4_reachable_and_nexthop_do_not_synthesize_host_32() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let reachable =
+            ipv4_lan_route(1, "lan0", Ipv4Addr::new(192, 168, 1, 1), 24, LanRouteMode::Reachable);
+        let nexthop = ipv4_lan_route(
+            1,
+            "lan0",
+            Ipv4Addr::new(10, 10, 0, 0),
+            24,
+            LanRouteMode::NextHop {
+                next_hop_ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)),
+            },
+        );
+
+        service.insert_ipv4_lan_route("lan0", reachable.clone()).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(reachable.clone())]);
+
+        service.insert_ipv4_lan_route("lan0-static", nexthop.clone()).await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Add(nexthop.clone())]);
+
+        service.remove_ipv4_lan_route("lan0").await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Del(reachable)]);
+
+        service.remove_ipv4_lan_route("lan0-static").await;
+        assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Del(nexthop)]);
     });
 }

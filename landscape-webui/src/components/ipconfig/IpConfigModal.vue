@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
 import {
   apply_ip_form,
   default_ethernet_link,
   IpConfigForm,
   ip_form_from_link,
   WanIpMode,
-} from "@/lib/wan_link";
+} from "@/lib/wan/wan_link";
 import { computed, ref } from "vue";
 import ConfigModal from "@/components/common/ConfigModal.vue";
 import IpEdit from "../IpEdit.vue";
@@ -63,7 +63,7 @@ async function on_modal_enter() {
 async function update_mode() {
   try {
     const link =
-      wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value ??
+      wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name) ??
       default_ethernet_link(iface_info.iface_name);
     apply_ip_form(link, iface_data.value);
     if (link.is_new()) {
@@ -170,6 +170,10 @@ function select_ip_model(value: WanIpMode) {
           style="flex: 1"
           v-else-if="iface_data.ip_model.t === WanIpMode.PPPoE"
         >
+          <n-alert type="warning">
+            {{ t("interface.pppoe_native_warn_1") }}<br />
+            {{ t("interface.pppoe_native_warn_2") }}
+          </n-alert>
           <n-form style="flex: 1" :model="iface_data.ip_model" :cols="5">
             <n-grid :cols="5">
               <n-form-item-gi :label="t('interface.username')" :span="5">

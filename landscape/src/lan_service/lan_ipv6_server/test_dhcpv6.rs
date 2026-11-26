@@ -62,8 +62,10 @@ fn reply_params() -> Ipv6LanReplyParams {
     Ipv6LanReplyParams {
         preferred_lifetime: 300,
         valid_lifetime: 600,
+        rdnss_lifetime: 600,
         ra_flags: 0x80,
         ra_autonomous: true,
+        rdnss_link_local_only: false,
     }
 }
 

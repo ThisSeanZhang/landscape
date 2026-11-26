@@ -1,7 +1,18 @@
 export default {
+  live: "实时",
+  history: "历史",
+  collection_disabled: "DNS 指标采集已关闭。",
+  history_disabled:
+    "DNS 指标当前仅存于内存。将存储后端切换为 SQLite 并保存，即可记录后续查询。",
+  open_storage_settings: "前往设置开启 DNS 历史",
+  history_unsupported: "当前后端版本未包含指标持久化功能，无法记录 DNS 历史。",
+  settings_unavailable: "无法读取 DNS 指标配置。",
   title: "DNS 历史",
-  auto_search_tip: "自动搜索 (500ms 抖动)",
+  auto_search_tip: "输入后会自动筛选查询记录。",
+  records_found: "共 {count} 条记录",
   dashboard: "仪表盘",
+  stats_load_failed: "指标加载失败",
+  range_stats: "时段统计",
   query_log: "查询日志",
   // 过滤器
   domain: "域名",
@@ -35,9 +46,18 @@ export default {
   col_status: "状态",
   col_duration: "耗时 (ms)",
   col_flow: "Flow 信息",
-  col_answers: "回答",
+  col_answers: "解析结果",
+  answer_details: "应答详情",
+  answer_count: "应答记录（{count}）",
+  show_answers: "查看 {domain} 的应答",
+  copy_answers: "复制原始应答",
   // 仪表盘
   dash: {
+    ranking_note: "排行显示前 10 项。域名或客户端较多时，排行计数为近似值。",
+    minute_trend: "最近五分钟查询趋势（按分钟）",
+    queries: "查询数",
+    status_distribution: "查询状态分布",
+    latency_distribution: "上游查询延迟分布",
     total_queries: "总查询量",
     cache_hit_rate: "缓存命中率",
     block_rate: "拦截率",
@@ -70,6 +90,7 @@ export default {
     cache_hit_tip: "命中率基于有效查询（排除拦截、过滤及错误）。",
   },
   tip: {
+    lookup_geosite: "查看 {domain} 的 GeoSite 归属",
     default_flow: "默认 Flow",
     search_domain: "搜索此域名",
     check_domain: "测试域名查询日志",

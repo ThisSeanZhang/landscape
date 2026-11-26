@@ -285,27 +285,29 @@ mod tests {
     /// sure both generated skeletons agree on the layout.
     #[test]
     fn nat_timer_layouts_match_xdp_skel() {
-        use crate::maps::{Nat6TimerKey, Nat6TimerValue};
+        use crate::maps::{Nat6MappingKey, Nat6TimerKey, Nat6TimerValue};
         use crate::skel::xdp_nat6::types as xdp6;
 
         assert_size!(Nat6TimerKey, xdp6::nat6_timer_key);
-        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, client_suffix);
-        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, client_port);
-        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, id_byte);
-        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, l4_protocol);
-
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, local);
+        assert_field_as!(
+            Nat6TimerKey,
+            remote_addr,
+            xdp6::nat6_timer_key,
+            remote_addr.in6_u.u6_addr8
+        );
+        assert_field!(Nat6TimerKey, xdp6::nat6_timer_key, remote_port);
+        assert_size!(Nat6MappingKey, xdp6::nat6_mapping_key);
+        assert_field!(Nat6MappingKey, xdp6::nat6_mapping_key, client_suffix);
+        assert_field!(Nat6MappingKey, xdp6::nat6_mapping_key, client_port);
+        assert_field!(Nat6MappingKey, xdp6::nat6_mapping_key, id_byte);
+        assert_field!(Nat6MappingKey, xdp6::nat6_mapping_key, l4_protocol);
         assert_size!(Nat6TimerValue, xdp6::nat6_timer_value);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, timer);
-        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, server_status);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, tcp_flags);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, status);
-        assert_field_as!(
-            Nat6TimerValue,
-            trigger_addr,
-            xdp6::nat6_timer_value,
-            trigger_addr.in6_u.u6_addr8
-        );
-        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, trigger_port);
-        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_allow_reuse);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_trigger);
+        assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, allow_reuse);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, is_static);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, need_prefix_replace);
         assert_field!(Nat6TimerValue, xdp6::nat6_timer_value, client_prefix);

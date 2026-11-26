@@ -1,9 +1,8 @@
-import { ServiceStatus } from "@/lib/services";
 import type {
+  ServiceStatus,
   ConnectKey,
   ConnectMetricPoint,
   ConnectRealtimeStatus,
-  ConnectHistoryStatus,
   ConnectHistoryResponse,
   ConnectGlobalStats,
   GetConnectGlobalStatsParams,
@@ -13,6 +12,7 @@ import type {
   GetConnectHistoryParams as ConnectHistoryQueryParams,
   MetricResolution,
 } from "@landscape-router/types/api/schemas";
+
 import {
   getSrcIpStats as _getSrcIpStats,
   getDstIpStats as _getDstIpStats,
@@ -43,7 +43,7 @@ export async function get_iface_stats(): Promise<IfaceRealtimeStat[]> {
 export async function get_connect_global_stats(
   params?: GetConnectGlobalStatsParams,
 ): Promise<ConnectGlobalStats> {
-  return _getConnectGlobalStats(params);
+  return _getConnectGlobalStats(params, { silent: true });
 }
 
 export async function get_metric_status(): Promise<ServiceStatus> {
@@ -57,24 +57,27 @@ export async function get_connects_info(): Promise<ConnectRealtimeStatus[]> {
 export async function get_connect_history(
   params?: ConnectHistoryQueryParams,
 ): Promise<ConnectHistoryResponse> {
-  return _getConnectHistory(params);
+  return _getConnectHistory(params, { silent: true });
 }
 
 export async function get_connect_metric_info(
   key: ConnectKey,
   resolution?: MetricResolution,
 ): Promise<ConnectMetricPoint[]> {
-  return _getConnectMetricInfo({ key, resolution });
+  return _getConnectMetricInfo(
+    { key, resolution },
+    { silent: resolution !== undefined },
+  );
 }
 
 export async function get_history_src_ip_stats(
   params?: ConnectHistoryQueryParams,
 ): Promise<IpHistoryStat[]> {
-  return _getHistorySrcIpStats(params);
+  return _getHistorySrcIpStats(params, { silent: true });
 }
 
 export async function get_history_dst_ip_stats(
   params?: ConnectHistoryQueryParams,
 ): Promise<IpHistoryStat[]> {
-  return _getHistoryDstIpStats(params);
+  return _getHistoryDstIpStats(params, { silent: true });
 }

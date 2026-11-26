@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useThemeVars } from "naive-ui";
+import SampleStatus from "./SampleStatus.vue";
+import { useFetchIntervalStore } from "@/stores/fetch_interval";
 import { useSysInfo } from "@/stores/systeminfo";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
 
+defineProps<{ compact?: boolean }>();
 const { t } = useI18n({ useScope: "global" });
 const themeVars = useThemeVars();
 const sysinfo = useSysInfo();
+const polling = useFetchIntervalStore();
 const frontEndStore = useFrontEndStore();
 
 const cpus = computed(() => sysinfo.router_status.cpus);
@@ -95,146 +99,176 @@ const getCpuIndex = (name: string, index: number) => {
     <template #header>
       <n-flex align="center" justify="space-between">
         <span>CPU</span>
-        <n-tag size="small" :bordered="false"> {{ cpuCount }} Cores </n-tag>
+        <n-tag
+          v-if="!compact && sysinfo.lastSampleAt !== undefined"
+          size="small"
+          :bordered="false"
+          >{{ cpuCount }} {{ t("sysinfo.cores") }}</n-tag
+        >
       </n-flex>
     </template>
 
-    <!-- CPU Model -->
-    <n-flex v-if="cpuModel" style="margin-bottom: 12px">
-      <n-text depth="3" style="font-size: 12px">
-        <n-ellipsis :tooltip="{ width: 300 }">{{ cpuModel }}</n-ellipsis>
-      </n-text>
-    </n-flex>
+    <SampleStatus
+      :failed="sysinfo.sampleFailed"
+      :updated-at="sysinfo.lastSampleAt"
+      @retry="polling.refreshNow"
+    />
+    <template v-if="sysinfo.lastSampleAt !== undefined">
+      <div v-if="compact">
+        <strong class="overview-value">{{ globalUsage.toFixed(1) }}%</strong>
+        <div class="overview-meter" aria-hidden="true">
+          <span
+            :style="{
+              width: globalUsage + '%',
+              background: getUsageColor(globalUsage),
+            }"
+          />
+        </div>
+      </div>
+      <template v-else>
+        <!-- CPU Model -->
+        <n-flex v-if="cpuModel" style="margin-bottom: 12px">
+          <n-text depth="3" style="font-size: 12px">
+            <n-ellipsis :tooltip="{ width: 300 }">{{ cpuModel }}</n-ellipsis>
+          </n-text>
+        </n-flex>
 
-    <!-- Global Stats -->
-    <n-flex :size="8" style="margin-bottom: 12px">
-      <n-flex vertical style="flex: 0 0 85px">
-        <n-statistic :label="t('sysinfo.total_cpu_usage')">
-          <template #default>
-            <n-text :style="{ color: getUsageColor(globalUsage) }">
-              {{ globalUsage.toFixed(1) }}%
-            </n-text>
-          </template>
-        </n-statistic>
-      </n-flex>
-      <n-flex vertical style="flex: 0 0 95px">
-        <n-statistic :label="t('sysinfo.cpu_temp')">
-          <template #default>
-            <n-text
-              v-if="globalTemp"
-              :style="{ color: getTempColor(globalTemp) }"
-            >
-              {{ globalTemp.toFixed(1) }}°C
-            </n-text>
-            <n-tooltip v-else trigger="hover">
-              <template #trigger>
-                <span
-                  style="
-                    color: var(--n-text-color-3);
-                    font-size: 0.9em;
-                    cursor: help;
-                  "
-                >
-                  N/A
-                </span>
+        <!-- Global Stats -->
+        <n-flex :size="8" style="margin-bottom: 12px">
+          <n-flex vertical style="flex: 0 0 85px">
+            <n-statistic :label="t('sysinfo.total_cpu_usage')">
+              <template #default>
+                <n-text :style="{ color: getUsageColor(globalUsage) }">
+                  {{ globalUsage.toFixed(1) }}%
+                </n-text>
               </template>
-              {{ t("sysinfo.no_sensor") }}
-            </n-tooltip>
-          </template>
-        </n-statistic>
-      </n-flex>
-      <n-flex vertical style="flex: 1; min-width: 0">
-        <n-statistic :label="t('sysinfo.average_load')">
-          <template #default>
-            <n-tooltip trigger="hover">
-              <template #trigger>
-                <div
-                  style="
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    max-width: 100%;
-                  "
+            </n-statistic>
+          </n-flex>
+          <n-flex vertical style="flex: 0 0 95px">
+            <n-statistic :label="t('sysinfo.cpu_temp')">
+              <template #default>
+                <n-text
+                  v-if="globalTemp"
+                  :style="{ color: getTempColor(globalTemp) }"
                 >
+                  {{ globalTemp.toFixed(1) }}°C
+                </n-text>
+                <n-tooltip v-else trigger="hover">
+                  <template #trigger>
+                    <span
+                      style="
+                        color: var(--n-text-color-3);
+                        font-size: 0.9em;
+                        cursor: help;
+                      "
+                    >
+                      N/A
+                    </span>
+                  </template>
+                  {{ t("sysinfo.no_sensor") }}
+                </n-tooltip>
+              </template>
+            </n-statistic>
+          </n-flex>
+          <n-flex vertical style="flex: 1; min-width: 0">
+            <n-statistic :label="t('sysinfo.average_load')">
+              <template #default>
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <div
+                      style="
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        max-width: 100%;
+                      "
+                    >
+                      {{ load_avg.one }} / {{ load_avg.five }} /
+                      {{ load_avg.fifteen }}
+                    </div>
+                  </template>
                   {{ load_avg.one }} / {{ load_avg.five }} /
                   {{ load_avg.fifteen }}
-                </div>
+                </n-tooltip>
               </template>
-              {{ load_avg.one }} / {{ load_avg.five }} / {{ load_avg.fifteen }}
-            </n-tooltip>
-          </template>
-        </n-statistic>
-      </n-flex>
-    </n-flex>
+            </n-statistic>
+          </n-flex>
+        </n-flex>
 
-    <n-divider style="margin: 0 0 12px 0" />
+        <n-divider style="margin: 0 0 12px 0" />
 
-    <!-- CPU Cores Visualization -->
-    <div class="cpu-cores-wrapper">
-      <n-scrollbar style="max-height: 100%">
-        <!-- Extra padding wrapper to prevent hover clipping -->
-        <div class="cpu-cores-inner">
-          <div :style="flexStyle">
-            <n-tooltip
-              v-for="(cpu, index) in cpus"
-              :key="cpu.name"
-              trigger="hover"
-              placement="top"
-            >
-              <template #trigger>
-                <div
-                  class="cpu-core-box"
-                  :class="[`mode-${layoutMode}`]"
-                  :style="{
-                    height: `${boxDimensions.height}px`,
-                    flex: '1 1 0',
-                    minWidth: '0',
-                  }"
+        <!-- CPU Cores Visualization -->
+        <div class="cpu-cores-wrapper">
+          <n-scrollbar style="max-height: 100%">
+            <!-- Extra padding wrapper to prevent hover clipping -->
+            <div class="cpu-cores-inner">
+              <div :style="flexStyle">
+                <n-tooltip
+                  v-for="(cpu, index) in cpus"
+                  :key="cpu.name"
+                  trigger="hover"
+                  placement="top"
                 >
-                  <!-- Fill bar -->
-                  <div
-                    class="cpu-core-fill"
-                    :style="{
-                      height: `${cpu.usage}%`,
-                      backgroundColor: getUsageColor(cpu.usage),
-                    }"
-                  ></div>
-                  <!-- Label overlay (only for large/medium modes) -->
-                  <div
-                    v-if="layoutMode === 'large' || layoutMode === 'medium'"
-                    class="cpu-core-label"
-                  >
-                    <span class="cpu-index">{{
-                      getCpuIndex(cpu.name, index)
-                    }}</span>
-                    <span v-if="layoutMode === 'large'" class="cpu-usage"
-                      >{{ Math.round(cpu.usage) }}%</span
+                  <template #trigger>
+                    <div
+                      class="cpu-core-box"
+                      :class="[`mode-${layoutMode}`]"
+                      :style="{
+                        height: `${boxDimensions.height}px`,
+                        flex: '1 1 0',
+                        minWidth: '0',
+                      }"
                     >
+                      <!-- Fill bar -->
+                      <div
+                        class="cpu-core-fill"
+                        :style="{
+                          height: `${cpu.usage}%`,
+                          backgroundColor: getUsageColor(cpu.usage),
+                        }"
+                      ></div>
+                      <!-- Label overlay (only for large/medium modes) -->
+                      <div
+                        v-if="layoutMode === 'large' || layoutMode === 'medium'"
+                        class="cpu-core-label"
+                      >
+                        <span class="cpu-index">{{
+                          getCpuIndex(cpu.name, index)
+                        }}</span>
+                        <span v-if="layoutMode === 'large'" class="cpu-usage"
+                          >{{ Math.round(cpu.usage) }}%</span
+                        >
+                      </div>
+                    </div>
+                  </template>
+                  <!-- Tooltip Content -->
+                  <div style="text-align: center">
+                    <div style="font-weight: 600; margin-bottom: 4px">
+                      {{ cpu.name }}
+                    </div>
+                    <div style="font-size: 1.1em">
+                      {{ cpu.usage.toFixed(1) }}%
+                    </div>
+                    <div
+                      v-if="cpu.temperature"
+                      style="font-size: 1em; margin-top: 2px"
+                      :style="{ color: getTempColor(cpu.temperature) }"
+                    >
+                      {{ cpu.temperature.toFixed(1) }}°C
+                    </div>
+                    <div
+                      style="font-size: 0.85em; opacity: 0.7; margin-top: 2px"
+                    >
+                      {{ cpu.frequency }} MHz
+                    </div>
                   </div>
-                </div>
-              </template>
-              <!-- Tooltip Content -->
-              <div style="text-align: center">
-                <div style="font-weight: 600; margin-bottom: 4px">
-                  {{ cpu.name }}
-                </div>
-                <div style="font-size: 1.1em">{{ cpu.usage.toFixed(1) }}%</div>
-                <div
-                  v-if="cpu.temperature"
-                  style="font-size: 1em; margin-top: 2px"
-                  :style="{ color: getTempColor(cpu.temperature) }"
-                >
-                  {{ cpu.temperature.toFixed(1) }}°C
-                </div>
-                <div style="font-size: 0.85em; opacity: 0.7; margin-top: 2px">
-                  {{ cpu.frequency }} MHz
-                </div>
+                </n-tooltip>
               </div>
-            </n-tooltip>
-          </div>
+            </div>
+          </n-scrollbar>
         </div>
-      </n-scrollbar>
-    </div>
+      </template>
+    </template>
   </n-card>
 </template>
 

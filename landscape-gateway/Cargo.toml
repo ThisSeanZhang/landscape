@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 landscape-common = { path = "../landscape-common" }
-landscape-database = { path = "../landscape-database" }
 pingora = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -23,3 +22,10 @@ serde = { workspace = true }
 arc-swap = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }
+http = { workspace = true }
+futures-util = { workspace = true, features = ["std"] }
+libc = { workspace = true }
+
+[dev-dependencies]
+h2 = { workspace = true }
+rcgen = { workspace = true }

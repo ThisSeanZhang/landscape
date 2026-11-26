@@ -35,10 +35,14 @@ pub struct MemMetricStore {
 
 impl MemMetricStore {
     pub async fn open(base_path: &Path) -> Result<Self, String> {
+        Self::connect(base_path, true).await
+    }
+
+    async fn connect(base_path: &Path, create: bool) -> Result<Self, String> {
         let path = memory_db_path(base_path);
         let options = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true)
+            .create_if_missing(create)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5));
@@ -180,7 +184,7 @@ impl MemMetricStore {
     }
 
     pub async fn cleanup(&self, retention_days: u64) {
-        let cutoff = now_ms().saturating_sub(retention_days * 86_400_000);
+        let cutoff = now_ms().saturating_sub(retention_days.saturating_mul(86_400_000));
         match sqlx::query("DELETE FROM mem_1m WHERE minute_ts < ?")
             .bind(cutoff as i64)
             .execute(&self.pool)
@@ -222,6 +226,24 @@ pub struct MemRecording {
 }
 
 impl MemRecording {
+    /// Open an existing history for queries while recording is disabled.
+    pub async fn open_existing(home: &Path) -> Option<Self> {
+        if !cfg!(feature = "mem-track") {
+            return None;
+        }
+        let dir = home.join(LANDSCAPE_METRIC_DIR_NAME);
+        if !tokio::fs::try_exists(memory_db_path(&dir)).await.unwrap_or(false) {
+            return None;
+        }
+        match MemMetricStore::connect(&dir, false).await {
+            Ok(store) => Some(Self { store, recorder: None }),
+            Err(error) => {
+                tracing::warn!(%error, "cannot open existing memory history");
+                None
+            }
+        }
+    }
+
     /// 查询已持久化的分钟历史(失败/无数据返回空)。
     pub async fn query_history(&self, params: &MemHistoryQueryParams) -> MemHistoryResponse {
         self.store.query_history(params).await
@@ -234,7 +256,7 @@ impl MemRecording {
         }
     }
 
-    /// 重新拉起后台记录任务(停止后可重启,如 metric 模式热切换)。
+    /// 重新拉起后台记录任务(停止后可重启,如调整自监控保留天数)。
     pub fn spawn_recorder(&mut self, retention_days: u64) {
         if let Some(recorder) = self.recorder.take() {
             // 正常流程不会走到(recorder 已被 stop_recorder 取走),防御性取消。

@@ -60,8 +60,11 @@ struct ipv4_mark_action {
     __u32 mark;
 };
 
-static int prepend_dummy_mac(struct __sk_buff *skb) {
+static int prepend_dummy_mac(struct __sk_buff *skb, bool is_docker) {
     u8 mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x08, 0x00};
+    // The WAN root may call bpf_redirect_neigh, which rejects a multicast
+    // destination before replacing L2. Docker consumes the original VLAN frame.
+    if (!is_docker) mac[0] = 0x02;
 
     if (bpf_skb_change_head(skb, 14, 0)) return -1;
 
@@ -71,7 +74,7 @@ static int prepend_dummy_mac(struct __sk_buff *skb) {
 }
 
 static int prepend_dummy_mac_v6(struct __sk_buff *skb) {
-    u8 mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x08, 0xdd};
+    u8 mac[] = {0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0xf, 0xe, 0xd, 0xc, 0xb, 0xa, 0x86, 0xdd};
 
     if (bpf_skb_change_head(skb, 14, 0)) return -1;
 
@@ -255,7 +258,16 @@ static __always_inline int current_l3_protocol(struct __sk_buff *skb, u32 curren
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     barrier_var(data);
-    if (data + need > data_end) return TC_ACT_SHOT;
+    if (data + need > data_end) {
+        /* A short linear head does not imply a truncated packet. Pull only
+         * the bytes needed for protocol detection, including on L3 devices.
+         */
+        if (bpf_skb_pull_data(skb, need) != 0) return TC_ACT_SHOT;
+        data = (void *)(long)skb->data;
+        data_end = (void *)(long)skb->data_end;
+        barrier_var(data);
+        if (data + need > data_end) return TC_ACT_SHOT;
+    }
 
     if (current_l3_offset != 0) {
         struct ethhdr *eth = (struct ethhdr *)data;

@@ -17,12 +17,6 @@
 #define NAT_CONN_ACTIVE 1
 #define NAT_CONN_DELETE 2
 
-// connection tracking states (advanced by pkt_type)
-#define CT_INIT 0
-#define CT_SYN 1
-#define CT_FIN 2
-#define CT_LESS_EST 3
-
 // 33333
 volatile const __be16 TEST_PORT = 0x3582;
 
@@ -37,27 +31,7 @@ const volatile u64 UDP_TIMEOUT = 1E9 * 60 * 5;
 #endif
 
 // 检查间隔时间
-const volatile u64 REPORT_INTERVAL = 1E9 * 5;
-
-#define READ_SKB_U16(skb_ptr, offset, var)                                                         \
-    do {                                                                                           \
-        struct __sk_buff *_skb = (skb_ptr);                                                        \
-        u32 _off = (offset);                                                                       \
-        if (_off > MAX_OFFSET - (u32)sizeof(var)) return TC_ACT_SHOT;                              \
-        char *_data = (char *)(long)_skb->data;                                                    \
-        char *_data_end = (char *)(long)_skb->data_end;                                            \
-        char *_p = _data + _off;                                                                   \
-        barrier_var(_p);                                                                           \
-        if (_p + sizeof(var) > _data_end) {                                                        \
-            if (bpf_skb_pull_data(_skb, _off + sizeof(var)) != 0) return TC_ACT_SHOT;              \
-            _data = (char *)(long)_skb->data;                                                      \
-            _data_end = (char *)(long)_skb->data_end;                                              \
-            _p = _data + _off;                                                                     \
-            barrier_var(_p);                                                                       \
-            if (_p + sizeof(var) > _data_end) return TC_ACT_SHOT;                                  \
-        }                                                                                          \
-        (var) = *(__be16 *)_p;                                                                     \
-    } while (0)
+const volatile u64 REPORT_INTERVAL = 1000000000ULL;
 
 #define GRESS_MASK (1 << 0)
 
@@ -84,28 +58,47 @@ struct nat4_timer_key {
     struct inet4_pair pair_ip;
 };
 
-//
-struct nat6_timer_key {
-    u8 client_suffix[8];
+struct nat6_mapping_key {
+    __be32 client_suffix[2];
     u16 client_port;
     u8 id_byte;
     u8 l4_protocol;
 };
 
-//
+struct nat6_timer_key {
+    struct nat6_mapping_key local;
+    __be16 remote_port;
+    u16 _pad;
+    struct in6_addr remote_addr;
+};
+
+/* Linux hash maps use jhash2 when key_size is a multiple of four. */
+_Static_assert(sizeof(struct nat6_mapping_key) == 12 && _Alignof(struct nat6_mapping_key) == 4,
+               "IPv6 mapping key layout");
+_Static_assert(sizeof(struct nat6_timer_key) == 32 && _Alignof(struct nat6_timer_key) == 4,
+               "IPv6 CT key layout");
+
+struct nat6_mapping_value {
+    u32 refs; /* Zero closes the entry until its last owner deletes it. */
+    struct bpf_spin_lock lock;
+    __be64 client_prefix;
+    struct in6_addr trigger_addr;
+    __be16 trigger_port;
+    u8 allow_reuse;
+};
+
 struct nat6_timer_value {
     struct bpf_timer timer;
-    u64 server_status;
-    u64 client_status;
+    u64 tcp_flags;
     u64 status;
-    struct in6_addr trigger_addr;
-    u16 trigger_port;
-    u8 is_allow_reuse;
+    u8 is_trigger;
+    u8 allow_reuse; /* Last mark applied by the trigger CT. */
+    u8 _pad;
     u8 flow_id;
     u8 gress;
     u8 is_static;
     u8 need_prefix_replace;
-    u8 _pad;
+    u8 delete_report_failures;
 
     u64 create_time;
     u64 ingress_bytes;
@@ -114,16 +107,19 @@ struct nat6_timer_value {
     u64 egress_packets;
     u32 cpu_id;
     u32 ifindex;
-    u8 client_prefix[8];
+    __be64 client_prefix;
+    u64 wait_deadline_ns; /* CLOCK_MONOTONIC, written by the timer on entry to WAIT_TIMEOUT. */
 };
 
 enum timer_status {
     TIMER_INIT = 0ULL,
     TIMER_PENDING_REF = 10ULL,
     TIMER_ACTIVE = 20ULL,
-    TIMER_TIMEOUT_1 = 30ULL,
-    TIMER_TIMEOUT_2 = 31ULL,
-    TIMER_RELEASE = 40ULL,
+    TIMER_IDLE_CHECK_1 = 30ULL,
+    TIMER_IDLE_CHECK_2 = 31ULL,
+    /* Packets can wake the CT until the timer claims it for cleanup. */
+    TIMER_WAIT_TIMEOUT = 40ULL,
+    TIMER_WAIT_TCP_CLOSE = 41ULL, /* Both FINs seen; packets cannot extend this wait. */
     TIMER_CLEAN_START = 50ULL,
     TIMER_DELETE_EGRESS = TIMER_CLEAN_START,
     TIMER_DELETE_INGRESS = 51ULL,
@@ -137,20 +133,13 @@ enum nat_op_result {
     NAT_OP_ERR = -1,
 };
 
-// Result of an IPv6 static mapping lookup.
-enum nat6_static_result {
-    NAT6_STATIC_MISS = 0,     // no static mapping, fall back to dynamic path
-    NAT6_STATIC_REPLACE = 1,  // static mapping hit, client prefix must be replaced
-    NAT6_STATIC_PASS = 2,     // static mapping hit, no prefix replace needed
-};
-
 static __always_inline bool ct_try_set_status(u64 *status_in_value, u64 curr_state,
                                               u64 next_state) {
     return __sync_bool_compare_and_swap(status_in_value, curr_state, next_state);
 }
 
 static __always_inline bool ct_status_can_activate(u64 status) {
-    return status != TIMER_ACTIVE && status != TIMER_PENDING_REF && status < TIMER_CLEAN_START;
+    return status != TIMER_ACTIVE && status != TIMER_PENDING_REF && status < TIMER_WAIT_TCP_CLOSE;
 }
 
 struct nat4_action {

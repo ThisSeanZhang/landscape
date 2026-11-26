@@ -1,20 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useThemeVars } from "naive-ui";
 import { ArrowDown, ArrowUp } from "@vicons/carbon";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { useMetricStore } from "@/stores/status_metric";
+import { get_iface_stats } from "@/api/metric";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
+import { useAsyncState } from "@vueuse/core";
 import ConnectViewSwitcher from "@/components/metric/connect/ConnectViewSwitcher.vue";
 import { formatPackets, formatRate } from "@/lib/util";
 
 const { t } = useI18n();
 const themeVars = useThemeVars();
-const metricStore = useMetricStore();
+const {
+  state: ifaceStats,
+  isLoading,
+  execute: refresh,
+} = useAsyncState(get_iface_stats, [], { resetOnExecute: false });
+useMetricAutoRefresh(refresh, isLoading);
+
 const ifaceNodeStore = useIfaceNodeStore();
 
 const ifaceRows = computed(() =>
-  [...metricStore.iface_stats].sort(
+  [...ifaceStats.value].sort(
     (a, b) =>
       (b.stats.egress_bps || 0) +
       (b.stats.ingress_bps || 0) -
@@ -45,12 +53,7 @@ function ifaceName(ifindex: number) {
 }
 
 onMounted(async () => {
-  metricStore.SET_ENABLE("iface", true);
-  await Promise.all([ifaceNodeStore.UPDATE_INFO(), metricStore.UPDATE_INFO()]);
-});
-
-onUnmounted(() => {
-  metricStore.SET_ENABLE("iface", false);
+  await ifaceNodeStore.UPDATE_INFO();
 });
 </script>
 
@@ -103,7 +106,7 @@ onUnmounted(() => {
 
     <n-flex align="center" justify="space-between" style="margin-bottom: 12px">
       <n-h3 style="margin: 0">{{ t("metric.connect.stats.live_iface") }}</n-h3>
-      <n-button @click="metricStore.UPDATE_INFO()" type="primary">
+      <n-button @click="refresh()" :loading="isLoading" type="primary">
         {{ t("metric.connect.stats.refresh_sample") }}
       </n-button>
     </n-flex>

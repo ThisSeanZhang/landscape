@@ -25,47 +25,4 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } firewall_block_ip6_map SEC(".maps");
 
-#define FIREWALL_CREATE_CONN 1
-#define FIREWALL_DELETE_CONN 2
-// struct firewall_conn_event {
-//     struct in6_addr src_addr;
-//     struct in6_addr dst_addr;
-//     u16 src_port;
-//     u16 dst_port;
-//     u64 create_time;
-//     u64 report_time;
-//     u8 l4_proto;
-//     u8 l3_proto;
-//     u8 event_type;
-//     u8 flow_id;
-//     u8 trace_id;
-// } __firewall_conn_event;
-
-// struct {
-//     __uint(type, BPF_MAP_TYPE_RINGBUF);
-//     __uint(max_entries, 1 << 24);
-// } firewall_conn_events SEC(".maps");
-
-struct firewall_conn_metric_event {
-    struct in6_addr src_addr;
-    struct in6_addr dst_addr;
-    u16 src_port;
-    u16 dst_port;
-    u64 create_time;
-    u64 time;
-    u64 ingress_bytes;
-    u64 ingress_packets;
-    u64 egress_bytes;
-    u64 egress_packets;
-    u8 l4_proto;
-    u8 l3_proto;
-    u8 flow_id;
-    u8 trace_id;
-} __firewall_conn_metric_event;
-
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1 << 24);
-} firewall_conn_metric_events SEC(".maps");
-
 #endif /* __LD_FIREWALL_SHARE_H__ */

@@ -1,7 +1,19 @@
 export default {
+  live: "Live",
+  history: "History",
+  collection_disabled: "DNS metrics collection is disabled.",
+  history_disabled:
+    "DNS metrics are stored in memory. Select SQLite as the storage backend and save to start recording queries.",
+  open_storage_settings: "Open DNS storage settings",
+  history_unsupported:
+    "This backend build does not support persistent DNS history.",
+  settings_unavailable: "Could not load DNS metric settings.",
   title: "DNS History",
-  auto_search_tip: "Auto-search (500ms debounce)",
+  auto_search_tip: "Records are filtered as you type.",
+  records_found: "Records found: {count}",
   dashboard: "Dashboard",
+  stats_load_failed: "Could not load DNS metrics",
+  range_stats: "Range Statistics",
   query_log: "Query Log",
   // Filters
   domain: "Domain",
@@ -36,8 +48,18 @@ export default {
   col_duration: "Duration (ms)",
   col_flow: "Flow Info",
   col_answers: "Answers",
+  answer_details: "Answer details",
+  answer_count: "Answer records ({count})",
+  show_answers: "Show answers for {domain}",
+  copy_answers: "Copy raw answers",
   // Dashboard
   dash: {
+    ranking_note:
+      "Rankings show the top 10. Counts are approximate when many distinct domains or clients are active.",
+    minute_trend: "Query volume by minute (last 5 minutes)",
+    queries: "Queries",
+    status_distribution: "Query outcomes",
+    latency_distribution: "Upstream latency distribution",
     total_queries: "Total Queries",
     cache_hit_rate: "Cache Hit Rate",
     block_rate: "Block Rate",
@@ -71,6 +93,7 @@ export default {
       "Hit rate is based on effective queries (excluding blocks, filters, and errors).",
   },
   tip: {
+    lookup_geosite: "Find GeoSites for {domain}",
     default_flow: "Default Flow",
     search_domain: "Search this domain",
     check_domain: "Test domain query result",

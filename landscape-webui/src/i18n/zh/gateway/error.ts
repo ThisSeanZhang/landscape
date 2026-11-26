@@ -1,4 +1,12 @@
 export default {
+  "gateway.invalid_health_check":
+    "健康检查的间隔、超时和阈值必须大于零且在有效范围内。",
+  "gateway.invalid_upstream_endpoint": "请填写有效的上游地址和非零端口。",
+  "gateway.config.zero_port": "网关 {field} 必须大于零",
+  "gateway.config.port_conflict": "网关 HTTP 和 HTTPS 不能同时使用端口 {port}",
+  "gateway.stop_timeout": "网关未能在 {timeout_ms} 毫秒内停止，已保留原实例",
+  "gateway.stop_failed": "网关停止失败：{reason}",
+  "gateway.invalid_stored_rule": "已存储的网关规则 '{id}' 无效：{reason}",
   "gateway.rule_not_found": "找不到网关规则 (ID: {0})",
   "gateway.legacy_path_prefix_unsupported":
     "旧版路径前缀规则仅支持只读兼容，不能新建或更新",

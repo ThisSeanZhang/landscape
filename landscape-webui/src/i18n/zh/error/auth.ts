@@ -1,4 +1,5 @@
 export default {
+  "auth.password_managed_externally": "管理员密码由启动参数或环境变量管理",
   "auth.missing_header": "缺少认证头",
   "auth.invalid_format": "认证头格式无效",
   "auth.invalid_token": "登录令牌无效，请重新登录",

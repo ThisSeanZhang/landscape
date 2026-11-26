@@ -3,8 +3,8 @@ import { computed, ref } from "vue";
 import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import ConfigModal from "@/components/common/ConfigModal.vue";
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
-import { default_ethernet_link, WanLink } from "@/lib/wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
+import { default_ethernet_link, WanLink } from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 import { generateValidMAC, formatMacAddress } from "@/lib/util";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
@@ -32,15 +32,14 @@ const link = ref<WanLink>(default_link());
 
 async function on_modal_enter() {
   await wanLinkStore.UPDATE_INFO();
-  const resolved = wanLinkStore.RESOLVE_NODE_LINK(iface_info.iface_name).value;
+  const resolved = wanLinkStore.DRAFT_NODE_LINK(iface_info.iface_name);
   if (resolved === undefined) {
     link.value = default_link();
   } else {
-    const next = new WanLink(resolved);
-    if (!next.pd.mac || next.pd.mac === "00:00:00:00:00:00") {
-      next.pd.mac = iface_info.mac ?? generateValidMAC();
+    if (!resolved.pd.mac || resolved.pd.mac === "00:00:00:00:00:00") {
+      resolved.pd.mac = iface_info.mac ?? generateValidMAC();
     }
-    link.value = next;
+    link.value = resolved;
   }
 }
 

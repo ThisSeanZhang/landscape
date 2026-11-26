@@ -1,101 +1,120 @@
 <script setup lang="ts">
+import type { DNSRuleConfig } from "@landscape-router/types/api/schemas";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import RoutingRuleCard from "@/components/flow/RoutingRuleCard.vue";
+import { DnsServices } from "@vicons/carbon";
 import DnsRuleEditModal from "@/components/dns/DnsRuleEditModal.vue";
-import { DnsRule } from "@/lib/dns";
 import { delDnsRules } from "@landscape-router/types/api/dns-rules/dns-rules";
-import { CheckmarkOutline } from "@vicons/carbon";
 import FlowMarkExhibit from "@/components/flow/FlowMarkExhibit.vue";
-const rule = defineModel<DnsRule>("rule", { required: true });
+
+const { rule } = defineProps<{ rule: DNSRuleConfig }>();
 const { t } = useI18n();
+const emit = defineEmits<{ refresh: [] }>();
+const showEditor = ref(false);
+const filterDisplay = {
+  unfilter: { label: "dns.rule_edit.filter_unfilter", tone: "default" },
+  only_ipv4: { label: "dns.rule_edit.filter_ipv4", tone: "info" },
+  only_ipv6: { label: "dns.rule_edit.filter_ipv6", tone: "success" },
+} as const;
 
-const show_edit_modal = ref(false);
+const filter = computed(() => filterDisplay[rule.filter ?? "unfilter"]);
 
-const emit = defineEmits(["refresh"]);
-
-async function del() {
-  if (rule.value.id) {
-    await delDnsRules(rule.value.id);
+async function deleteRule() {
+  if (rule.id) {
+    await delDnsRules(rule.id);
     emit("refresh");
   }
 }
-
-const title_name = computed(() =>
-  rule.value.name == null || rule.value.name === ""
-    ? t("common.no_remark")
-    : rule.value.name,
-);
 </script>
+
 <template>
-  <n-flex>
-    <n-card size="small">
-      <template #header>
-        <StatusTitle
-          :enable="rule.enable"
-          :remark="`${rule.index}: ${title_name}`"
-        ></StatusTitle>
-      </template>
+  <RoutingRuleCard
+    :title="rule.name?.trim() || t('common.no_remark')"
+    :enabled="rule.enable"
+    :priority="rule.index"
+    :sources="rule.source"
+    :delete-rule="deleteRule"
+    @edit="showEditor = true"
+  >
+    <template #summary>
+      <div class="upstream">
+        <n-icon aria-hidden="true"><DnsServices /></n-icon>
+        <span>{{ t("dns.rule_card.upstream_config") }}</span>
+        <strong><UpstreamExhibit :rule_id="rule.upstream_id" /></strong>
+      </div>
+    </template>
 
-      <!-- {{ rule }} -->
-      <n-descriptions bordered label-placement="top" :column="2">
-        <!-- <n-descriptions-item label="优先级">
-          {{ rule.index }}
-        </n-descriptions-item> -->
-        <n-descriptions-item :label="t('dns.rule_card.traffic_action')">
-          <FlowMarkExhibit
-            :mark="rule.mark"
-            :flow_id="rule.flow_id"
-          ></FlowMarkExhibit>
-          <!-- {{ rule.mark }} -->
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('dns.rule_card.upstream_config')">
-          <UpstreamExhibit :rule_id="rule.upstream_id"></UpstreamExhibit>
-          <!-- {{ rule.resolve_mode }} -->
-        </n-descriptions-item>
-        <n-descriptions-item :label="t('dns.rule_card.match_rules')" span="2">
-          <n-scrollbar v-if="rule.source.length > 0" style="max-height: 120px">
-            <n-flex>
-              <RuleSourceExhibit v-for="item in rule.source" :source="item">
-              </RuleSourceExhibit>
-            </n-flex>
-          </n-scrollbar>
-          <n-empty v-else :description="t('dns.rule_card.no_match_rules')">
-            <template #icon>
-              <n-icon>
-                <CheckmarkOutline />
-              </n-icon>
-            </template>
-          </n-empty>
-          <!-- {{ rule.source }} -->
-        </n-descriptions-item>
-      </n-descriptions>
-      <template #header-extra>
-        <n-flex>
-          <n-button
-            size="small"
-            type="warning"
-            secondary
-            @click="show_edit_modal = true"
-          >
-            {{ t("common.edit") }}
-          </n-button>
+    <dl class="rule-facts">
+      <div>
+        <dt>{{ t("flow.rule_card.traffic_routing") }}</dt>
+        <dd><FlowMarkExhibit :mark="rule.mark" :flow_id="rule.flow_id" /></dd>
+      </div>
+      <div>
+        <dt>{{ t("dns.rule_card.answer_filter") }}</dt>
+        <dd>
+          <n-tag size="small" :bordered="false" :type="filter.tone">
+            {{ t(filter.label) }}
+          </n-tag>
+        </dd>
+      </div>
+    </dl>
 
-          <n-popconfirm @positive-click="del()">
-            <template #trigger>
-              <n-button size="small" type="error" secondary @click="">
-                {{ t("common.delete") }}
-              </n-button>
-            </template>
-            {{ t("common.confirm_delete") }}
-          </n-popconfirm>
-        </n-flex>
-      </template>
-    </n-card>
-    <DnsRuleEditModal
-      @refresh="emit('refresh')"
-      :flow_id="rule.flow_id"
-      :rule_id="rule.id"
-      v-model:show="show_edit_modal"
-    ></DnsRuleEditModal>
-  </n-flex>
+    <template #source="{ source }">
+      <RuleSourceExhibit :source="source" show-geo-details />
+    </template>
+    <template #empty>
+      <n-text>{{ t("dns.rule_card.no_match_rules") }}</n-text>
+    </template>
+  </RoutingRuleCard>
+  <DnsRuleEditModal
+    v-model:show="showEditor"
+    :flow_id="rule.flow_id"
+    :rule_id="rule.id"
+    @refresh="emit('refresh')"
+  />
 </template>
+
+<style scoped>
+.upstream {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.upstream .n-icon {
+  vertical-align: -0.12em;
+  margin-inline-end: 4px;
+  color: var(--accent);
+}
+.upstream strong {
+  margin-inline-start: 4px;
+  font-weight: 500;
+}
+.rule-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  margin: 12px;
+}
+.rule-facts > div + div {
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--n-border-color);
+}
+.rule-facts dt {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.rule-facts dd {
+  display: flex;
+  align-items: flex-start;
+  margin: 0;
+}
+.rule-facts dd :deep(.n-tag) {
+  height: auto;
+  min-height: var(--n-height);
+  max-width: 100%;
+  line-height: 1.35;
+  white-space: normal;
+}
+</style>

@@ -34,8 +34,14 @@ pub fn get_static_nat_mapping_v6_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_static_nat_mappings_v6(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<StaticNatMappingV6ConfigView>> {
-    let result: Vec<StaticNatMappingV6ConfigView> =
-        state.static_nat6_mapping_service.list().await?.into_iter().map(Into::into).collect();
+    let result: Vec<StaticNatMappingV6ConfigView> = state
+        .managed
+        .static_nat6_mapping_service
+        .list()
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     LandscapeApiResp::success(result)
 }
 
@@ -53,7 +59,7 @@ async fn get_static_nat_mapping_v6(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<StaticNatMappingV6ConfigView> {
-    let result = state.static_nat6_mapping_service.find_by_id(id).await?;
+    let result = state.managed.static_nat6_mapping_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config.into())
     } else {
@@ -73,7 +79,7 @@ async fn add_static_nat_mapping_v6(
     JsonBody(config): JsonBody<CreateStaticNatMappingV6Config>,
 ) -> LandscapeApiResult<StaticNatMappingV6ConfigView> {
     let config: StaticNatMappingV6Config = config.into();
-    let result = state.static_nat6_mapping_service.checked_set(config).await?;
+    let result = state.managed.static_nat6_mapping_service.checked_set(config).await?;
     LandscapeApiResp::success(result.into())
 }
 
@@ -93,13 +99,13 @@ async fn update_static_nat_mapping_v6(
     Path(id): Path<ConfigId>,
     JsonBody(body): JsonBody<UpdateStaticNatMappingV6Config>,
 ) -> LandscapeApiResult<StaticNatMappingV6ConfigView> {
-    if state.static_nat6_mapping_service.find_by_id(id).await?.is_none() {
+    if state.managed.static_nat6_mapping_service.find_by_id(id).await?.is_none() {
         Err(StaticNatError::NotFound(id))?;
     }
     // Path id wins; update_at must echo the client's last-seen version.
     let mut config: StaticNatMappingV6Config = body.into();
     config.id = id;
-    let result = state.static_nat6_mapping_service.checked_set(config).await?;
+    let result = state.managed.static_nat6_mapping_service.checked_set(config).await?;
     LandscapeApiResp::success(result.into())
 }
 
@@ -115,7 +121,7 @@ async fn add_many_static_nat_mappings_v6(
     JsonBody(configs): JsonBody<Vec<CreateStaticNatMappingV6Config>>,
 ) -> LandscapeApiResult<()> {
     let configs: Vec<StaticNatMappingV6Config> = configs.into_iter().map(Into::into).collect();
-    state.static_nat6_mapping_service.checked_set_list(configs).await?;
+    state.managed.static_nat6_mapping_service.checked_set_list(configs).await?;
     LandscapeApiResp::success(())
 }
 
@@ -133,6 +139,6 @@ async fn del_static_nat_mapping_v6(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.static_nat6_mapping_service.delete(id).await?;
+    state.managed.static_nat6_mapping_service.delete(id).await?;
     LandscapeApiResp::success(())
 }

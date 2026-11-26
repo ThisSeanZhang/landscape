@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { DHCP_FILTER_OPTIONS, DHCP_OPTION_LABELS } from "./types";
+import { DHCP_FILTER_OPTIONS, DHCP_OPTION_LABELS } from "./constants";
 
 const model = defineModel<number[]>({ required: true });
 

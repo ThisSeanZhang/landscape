@@ -3,13 +3,13 @@
 //!
 //! Each test runs the complete worker pipeline once — scan (l3 offset from
 //! cb[1], normally written by tc_wan_ingress_root) →
-//! is_current_wan_packet → lan_redirect_check_in_wan → set_cache_in_wan —
+//! lan_redirect_check_in_wan → set_cache_in_wan —
 //! and locks the current behaviour before any route rewrite.
 //!
 //! Baseline quirks locked here (see route4_path.h /
 //! tc_wan_ingress_route.bpf.c):
-//!   * packets whose daddr equals the ingress WAN address go to the stack
-//!     (UNSPEC) before the lan lookup and never touch the cache;
+//!   * WAN local host routes (/32 WanReachable entries in rt4_lan_map) go to
+//!     the stack (UNSPEC) and never touch the cache;
 //!   * the reverse-path WAN-cache entry is written ONLY when
 //!     get_cache_mask(skb->mark) == INGRESS_STATIC_MARK (set by the NAT stage)
 //!     and only after a successful redirect; the cached ifindex is
@@ -106,14 +106,16 @@ fn run_wan_ingress(
     (result.return_value as i32, out)
 }
 
-fn seed_wan_self_binding(skel: &TcWanIngressRouteSkel<'_>) {
-    crate::maps::wan::add_wan_ip(
-        &skel.maps.wan_ip_binding,
+fn seed_wan_self_host_route(skel: &TcWanIngressRouteSkel<'_>) {
+    insert_route4_lan_entry(
+        &skel.maps.rt4_lan_map,
+        32,
+        wan_self_addr(),
+        wan_self_addr(),
+        WAN_ROUTE_TYPE,
         WAN_IFINDEX,
-        std::net::IpAddr::V4(wan_self_addr()),
-        None,
-        24,
-        None,
+        false,
+        [0; 6],
     );
 }
 
@@ -125,13 +127,13 @@ fn reply_pkt() -> Vec<u8> {
 fn wan_ingress_own_address_goes_to_stack_without_cache() {
     load_skel!("tc-wan-in-flow-self", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
-    seed_wan_self_binding(&skel);
+    seed_wan_self_host_route(&skel);
 
     let pkt = simple_ipv4_tcp(public_src(), wan_self_addr());
-    // static mark: even so, the self-address check runs first and must not cache
+    // static mark: even so, the /32 WAN host route hands to the stack without caching
     let (ret, out) = run_wan_ingress(&skel, &pkt, &mut wan_ctx(INGRESS_STATIC_MARK));
 
-    assert_eq!(ret, RET_UNSPEC, "daddr == wan ingress address must go to the stack");
+    assert_eq!(ret, RET_UNSPEC, "daddr matching WAN /32 host route must go to the stack");
     assert_eq!(out, pkt);
     assert!(
         lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, wan_self_addr(), public_src())
@@ -201,7 +203,7 @@ fn wan_ingress_lan_redirect_with_static_mark_writes_reverse_wan_cache() {
 fn wan_ingress_no_lan_entry_passes_with_static_mark() {
     load_skel!("tc-wan-in-flow-miss", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
-    seed_wan_self_binding(&skel);
+    seed_wan_self_host_route(&skel);
 
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
@@ -549,18 +551,18 @@ fn wan_ingress_arp_frame_passes_through() {
 // via an l3 offset of 15 instead of a short frame.
 
 #[test]
-fn wan_ingress_non_matching_wan_binding_continues_to_lan_redirect() {
-    // route4_is_current_wan_packet negative row: a binding exists for the
-    // ingress device, but daddr is not that address → keep going into the F1
-    // lan redirect check (and the static-mark cache write).
+fn wan_ingress_non_matching_wan_host_route_continues_to_lan_redirect() {
+    // A WAN /32 host route exists for the ingress WAN address, while daddr is
+    // a LAN host → rt4_lan_map lookup matches the LAN entry and redirects (plus
+    // static-mark reverse cache write).
     load_skel!("tc-wan-in-flow-bindmiss", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
-    seed_wan_self_binding(&skel);
+    seed_wan_self_host_route(&skel);
     seed_lan_entry_nomac(&skel);
 
     let (ret, _out) = run_wan_ingress(&skel, &reply_pkt(), &mut wan_ctx(INGRESS_STATIC_MARK));
 
-    assert_eq!(ret, RET_REDIRECT, "non-matching binding must not swallow the packet");
+    assert_eq!(ret, RET_REDIRECT, "non-matching WAN host route must not swallow the packet");
     let cache =
         lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_client(), public_src())
             .expect("redirect under static mark must still cache the reverse path");
@@ -843,4 +845,64 @@ fn wan_ingress_missing_wan_inner_map_is_inert() {
             .is_none(),
         "no inner map may be created implicitly"
     );
+}
+
+#[test]
+fn wan_ingress_wan_host_32_coexists_with_covering_lan_prefix() {
+    // Regression: a WAN /32 host route (WanReachable) under a covering LAN /24
+    // prefix must deliver to the local stack via LPM longest-prefix match,
+    // while neighboring addresses in the same /24 still redirect to LAN and
+    // populate the reverse WAN cache.
+    load_skel!("tc-wan-in-v4-host32-coexist", skel);
+    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, WAN_CACHE);
+
+    let shared_prefix = Ipv4Addr::from_str("100.64.0.0").unwrap();
+    let lan_gw = Ipv4Addr::from_str("100.64.0.1").unwrap();
+    let wan_local_host = Ipv4Addr::from_str("100.64.0.10").unwrap();
+    let lan_neighbor = Ipv4Addr::from_str("100.64.0.20").unwrap();
+
+    // Covering LAN prefix (/24) pointing to the LAN interface.
+    insert_route4_lan_entry(
+        &skel.maps.rt4_lan_map,
+        24,
+        shared_prefix,
+        lan_gw,
+        LAN_ROUTE_TYPE,
+        TARGET_IFINDEX,
+        false,
+        [0; 6],
+    );
+    // WAN /32 host route (WanReachable) inside the same /24.
+    insert_route4_lan_entry(
+        &skel.maps.rt4_lan_map,
+        32,
+        wan_local_host,
+        wan_local_host,
+        WAN_ROUTE_TYPE,
+        WAN_IFINDEX,
+        false,
+        [0; 6],
+    );
+
+    let host_pkt = simple_ipv4_tcp(public_src(), wan_local_host);
+    let (host_ret, host_out) = run_wan_ingress(&skel, &host_pkt, &mut wan_ctx(INGRESS_STATIC_MARK));
+    assert_eq!(host_ret, RET_UNSPEC, "WAN /32 under covering LAN /24 must go to local stack");
+    assert_eq!(host_out, host_pkt);
+    assert!(
+        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, wan_local_host, public_src())
+            .is_none(),
+        "local-stack /32 must not populate WAN reverse cache"
+    );
+
+    let neighbor_pkt = simple_ipv4_tcp(public_src(), lan_neighbor);
+    let (neighbor_ret, _neighbor_out) =
+        run_wan_ingress(&skel, &neighbor_pkt, &mut wan_ctx(INGRESS_STATIC_MARK));
+    assert_eq!(
+        neighbor_ret, RET_REDIRECT,
+        "neighbor address in same /24 must still redirect to LAN"
+    );
+    let cache =
+        lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, lan_neighbor, public_src())
+            .expect("LAN redirect under static mark must populate WAN reverse cache");
+    assert_eq!(cache.ifindex, LOOPBACK_IFINDEX);
 }

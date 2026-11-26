@@ -47,13 +47,13 @@ pub(crate) const IP_MAC_V6_SPEC: MapCreateSpec = MapCreateSpec {
     inner: None,
 };
 
-/// `ip6_dao_events`: `BPF_MAP_TYPE_RINGBUF`, `1 << 24` bytes.
+/// `ip6_dao_events`: `BPF_MAP_TYPE_RINGBUF`, `1 << 18` bytes.
 pub(crate) const IP6_DAO_EVENTS_SPEC: MapCreateSpec = MapCreateSpec {
     map_type: MapType::RingBuf,
     name: IP6_DAO_EVENTS_PIN,
     key_size: 0,
     value_size: 0,
-    max_entries: 1 << 24,
+    max_entries: 1 << 18,
     map_flags: 0,
     inner: None,
 };

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { new_ifaces } from "@/api/iface";
-import { create_wan_link, update_wan_link } from "@/api/service_wan_link";
+import { create_wan_link, update_wan_link } from "@/api/services/wan_link";
 import {
   apply_pppd_form,
   default_pppd_link,
   PppdLinkForm,
   pppd_form_from_link,
   WanLink,
-} from "@/lib/wan_link";
+} from "@/lib/wan/wan_link";
 import { computed, ref } from "vue";
 import type { SelectOption } from "naive-ui";
 import ConfigModal from "@/components/common/ConfigModal.vue";

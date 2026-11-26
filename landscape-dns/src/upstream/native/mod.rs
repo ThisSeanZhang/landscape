@@ -27,20 +27,21 @@
 //! - **Error selection**: when every fan-out leg (or every attempt) fails,
 //!   the most informative error wins, independent of leg completion order:
 //!   explicit protocol codes first (the server answered, and the code is
-//!   final), then connectivity-class errors (`Timeout`/`Internal`/`Tls`),
+//!   final), then an unusable application response (e.g. HTTP 503),
+//!   then connectivity-class errors (`Timeout`/`Internal`/`Tls`),
 //!   then the capacity-class `NoConnections`.
 //! - **Truncated answers** are a fallback for transport-level retry
 //!   failures only: an explicit negative (or error code) from the stream
 //!   retry outranks the partial UDP answer. A truncated answer with no data
 //!   is never surfaced as an empty success — the caller would cache it as a
 //!   negative for a domain that demonstrably exists. A partial (non-empty)
-//!   truncated answer surfaces with the `LookupAnswer::truncated` flag: the
+//!   truncated answer surfaces with the `DnsAnswer::truncated` flag: the
 //!   caller serves it with the TC bit and never caches it as complete.
 //! - **Explicit codes are final**: `NXDomain`/`NoError` are negative
 //!   answers (with the authority-section SOA preserved for RFC 2308
 //!   negative caching), `ServFail`/`Refused`/... are returned after one
 //!   attempt (matching the old hickory RetryDnsHandle, which never retried
-//!   response-code errors); only transport failures are retried. Permanent
+//!   response-code errors). Unusable DoH responses can retry untried endpoints. Permanent
 //!   TLS failures are final too.
 //! - **`max_conns` is a per-upstream budget** across all endpoints (UDP
 //!   sockets are exempt); `min_conns` is a per-pool warm floor, effectively
@@ -56,7 +57,6 @@
 //! stage, matching the intent of the commented-out setting.
 
 use std::net::IpAddr;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -64,14 +64,16 @@ use std::time::{Duration, Instant};
 
 use hickory_proto::op::{DnsRequestOptions, Message, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
-use rand::RngExt;
-use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use landscape_common::dns::config::DnsUpstreamConfig;
 
+use crate::resolve::answer::DnsAnswer;
 use crate::upstream::native::pool_config::{PoolConfig, PoolSettings};
 use crate::upstream::native::traits::{DnsConn, DnsConnector, DnsTransport};
+
+mod scheduler;
+use scheduler::{AttemptHistory, EndpointScheduler};
 
 pub(crate) mod mark;
 pub(crate) mod pool_config;
@@ -105,8 +107,16 @@ pub(crate) enum UpstreamError {
     /// retrying cannot succeed, so it fails fast and never counts towards
     /// the offline flip or connection retirement.
     Tls(String),
+    /// A request failed at the application layer (e.g. HTTP 503) on a live connection.
+    Response(String),
     /// Unexpected internal failure.
     Internal(String),
+}
+
+impl UpstreamError {
+    fn is_final(&self) -> bool {
+        matches!(self, Self::Protocol(..) | Self::Tls(_))
+    }
 }
 
 impl std::fmt::Display for UpstreamError {
@@ -117,49 +127,10 @@ impl std::fmt::Display for UpstreamError {
             UpstreamError::NoConnections => write!(f, "no usable upstream connections"),
             UpstreamError::Offline => write!(f, "upstream is offline (fast-fail)"),
             UpstreamError::Tls(e) => write!(f, "upstream TLS failure: {e}"),
+            UpstreamError::Response(e) => write!(f, "invalid upstream response: {e}"),
             UpstreamError::Internal(e) => write!(f, "upstream internal error: {e}"),
         }
     }
-}
-
-/// Outcome of one concurrent fan-out attempt.
-enum FanOutVerdict {
-    /// A usable answer (positive, or truncated when stream legs already ran).
-    Answer(Message),
-    /// An explicit negative answer (NXDomain/NoData) is final; the SOA
-    /// record (when the upstream sent one) rides along so the caller can
-    /// honour RFC 2308 negative caching.
-    Negative(ResponseCode, Option<Box<Record>>),
-    /// A truncated UDP answer arrived and no positive answer did. Preferred
-    /// over a negative: truncation means the data exists (it just does not
-    /// fit over UDP), so the caller retries stream-only and may recover it,
-    /// whereas the negative from another endpoint would be premature.
-    Truncated(Message),
-    /// Every leg failed with a transient error.
-    Failed(UpstreamError),
-}
-
-/// A message with no answers and an explicit negative code.
-///
-/// Defensive: the real hickory path already converts every empty
-/// NoError/NXDomain response into `Err(Protocol(..))` inside
-/// `classify_response`, so `fan_out` never sees one as `Ok(..)`. The check
-/// is kept so a future native transport (or the mock connectors) that
-/// surfaces negatives as messages still gets the balanced selection.
-fn is_negative_response(message: &Message) -> bool {
-    message.answers.is_empty()
-        && matches!(message.metadata.response_code, ResponseCode::NoError | ResponseCode::NXDomain)
-}
-
-/// The SOA record of a message's authority section, if any (RFC 2308
-/// negative caching). Boxed to keep the error types small on the hot path.
-fn soa_of_message(message: &Message) -> Option<Box<Record>> {
-    message
-        .authorities
-        .iter()
-        .find(|record| matches!(record.data, RData::SOA(_)))
-        .cloned()
-        .map(Box::new)
 }
 
 /// Relative informativeness of a failed leg's error: lower rank wins when
@@ -171,10 +142,11 @@ fn soa_of_message(message: &Message) -> Option<Box<Record>> {
 fn error_rank(e: &UpstreamError) -> u8 {
     match e {
         UpstreamError::Protocol(_, _) => 0,
-        UpstreamError::Timeout | UpstreamError::Internal(_) | UpstreamError::Tls(_) => 1,
-        UpstreamError::NoConnections => 2,
+        UpstreamError::Response(_) => 1,
+        UpstreamError::Timeout | UpstreamError::Internal(_) | UpstreamError::Tls(_) => 2,
+        UpstreamError::NoConnections => 3,
         // Legs never produce `Offline`; kept so the rank is total.
-        UpstreamError::Offline => 3,
+        UpstreamError::Offline => 4,
     }
 }
 
@@ -185,17 +157,6 @@ fn select_better_error(best: &mut Option<UpstreamError>, incoming: UpstreamError
     if best.as_ref().map(error_rank).unwrap_or(u8::MAX) > error_rank(&incoming) {
         *best = Some(incoming);
     }
-}
-
-/// Rotates `legs` from a random start and truncates to `cap`, spreading the
-/// fan-out across all endpoints across attempts.
-fn rotate_capped(legs: &[usize], cap: usize) -> Vec<usize> {
-    if legs.is_empty() || cap == 0 {
-        return Vec::new();
-    }
-    let n = legs.len().min(cap);
-    let start = rand::rng().random_range(0..legs.len());
-    (0..n).map(|i| legs[(start + i) % legs.len()]).collect()
 }
 
 /// Per-connection runtime state kept by the pool.
@@ -214,16 +175,11 @@ struct PooledConn {
     /// just-failed connection look freshly *successful* to the LRU/stale
     /// logic.
     last_borrow_ms: AtomicU64,
+    in_flight: AtomicUsize,
     consecutive_failures: AtomicU32,
     /// Set when the connection must be replaced (closed on reap).
     dead: AtomicBool,
-    /// Whether the connection was inserted into the pool's `conns` vector.
-    /// Until it is, the `PooledConn` Arc is the only reference (e.g. a
-    /// cap-excess use-then-drop connection): the `Drop` impl closes the
-    /// connection then, so every dialed connection honours the shutdown
-    /// contract — explicitly via the retirement paths once pooled, via
-    /// `Drop` before.
-    pooled: AtomicBool,
+    response_failed: AtomicBool,
 }
 
 impl PooledConn {
@@ -232,9 +188,10 @@ impl PooledConn {
             conn,
             last_used_ms: AtomicU64::new(now_ms),
             last_borrow_ms: AtomicU64::new(now_ms),
+            in_flight: AtomicUsize::new(0),
             consecutive_failures: AtomicU32::new(0),
             dead: AtomicBool::new(false),
-            pooled: AtomicBool::new(false),
+            response_failed: AtomicBool::new(false),
         }
     }
 
@@ -245,22 +202,41 @@ impl PooledConn {
         self.last_used_ms.load(Ordering::Relaxed).max(self.last_borrow_ms.load(Ordering::Relaxed))
     }
 
-    /// Marks the connection as pooled (caller must hold the `conns` lock);
-    /// from then on the retirement paths own the shutdown.
-    fn mark_pooled(&self) {
-        self.pooled.store(true, Ordering::Relaxed);
+    fn borrow(self: &Arc<Self>, now_ms: u64) -> ConnectionLease {
+        self.in_flight.fetch_add(1, Ordering::Relaxed);
+        self.last_borrow_ms.store(now_ms, Ordering::Relaxed);
+        ConnectionLease(self.clone())
+    }
+
+    fn load(&self) -> (usize, u64) {
+        (self.in_flight.load(Ordering::Relaxed), self.last_used_ms.load(Ordering::Relaxed))
     }
 }
 
 impl Drop for PooledConn {
     fn drop(&mut self) {
-        // A connection that never made it into the pool (cap-excess
-        // use-then-drop, or a raced fresh conn that lost the insertion
-        // race) has no retirement path to close it: close it here so the
-        // shutdown contract holds for every dialed connection.
-        if !self.pooled.load(Ordering::Relaxed) {
-            self.conn.shutdown();
-        }
+        // Retirement removes the pool's reference. Active leases keep the
+        // transport alive until their queries complete or are cancelled.
+        self.conn.shutdown();
+    }
+}
+
+/// Reserved while selecting the connection under the pool lock. Dropping a
+/// cancelled fan-out leg immediately makes its slot visible to other lookups.
+#[derive(Debug)]
+struct ConnectionLease(Arc<PooledConn>);
+
+impl std::ops::Deref for ConnectionLease {
+    type Target = Arc<PooledConn>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for ConnectionLease {
+    fn drop(&mut self) {
+        self.0.in_flight.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -337,33 +313,6 @@ impl Clock for MonotonicClock {
     }
 }
 
-/// Result of an upstream lookup: the answer records plus whether they are a
-/// partial (truncated) answer. A truncated answer must not be cached as a
-/// complete answer and must reach the client with the TC bit set so the
-/// client retries over TCP.
-#[derive(Debug, Clone)]
-pub struct LookupAnswer {
-    pub records: Vec<Record>,
-    pub truncated: bool,
-}
-
-impl std::ops::Deref for LookupAnswer {
-    type Target = Vec<Record>;
-
-    fn deref(&self) -> &Vec<Record> {
-        &self.records
-    }
-}
-
-impl IntoIterator for LookupAnswer {
-    type Item = Record;
-    type IntoIter = std::vec::IntoIter<Record>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.records.into_iter()
-    }
-}
-
 /// Decrements the slot's background-dial count when dropped, so a panicked
 /// or early-returning dial task can never leave the counter stuck above
 /// zero (which would silently disable elastic growth forever).
@@ -422,8 +371,10 @@ pub(crate) struct UpstreamPool {
     flow_id: u32,
     dns_mark: u32,
     upstream_id: Uuid,
+    stream_dials: tokio::sync::Semaphore,
     config: PoolConfig,
     connectors: Vec<Arc<dyn DnsConnector>>,
+    scheduler: EndpointScheduler,
     conns: Mutex<Vec<Arc<PooledConn>>>,
     health: Health,
     /// Per-endpoint dial state (cold-dial single-flight gate + background
@@ -475,7 +426,9 @@ impl UpstreamPool {
             flow_id,
             dns_mark,
             upstream_id: upstream.id,
+            stream_dials: tokio::sync::Semaphore::new(usize::from(config.max_conns)),
             config,
+            scheduler: EndpointScheduler::new(&connectors),
             connectors,
             conns: Mutex::new(vec![]),
             health: Health::new(),
@@ -511,7 +464,9 @@ impl UpstreamPool {
             flow_id: 7,
             dns_mark: 0x8000,
             upstream_id: Uuid::new_v4(),
+            stream_dials: tokio::sync::Semaphore::new(usize::from(config.max_conns)),
             config,
+            scheduler: EndpointScheduler::new(&connectors),
             connectors,
             conns: Mutex::new(vec![]),
             health: Health::new(),
@@ -559,20 +514,32 @@ impl UpstreamPool {
         }
     }
 
-    /// Resolves `domain` for `query_type`, mirroring the old resolver
-    /// semantics: `attempts` tries, each bounded by `query_timeout`, with
-    /// UDP→stream fallback on truncation, a lookup-level deadline
-    /// (`attempts × query_timeout + connect_timeout`), and fast-fail while
-    /// offline.
+    /// String convenience entry point for tests. Production resolves through
+    /// [`Self::lookup_name`] with the wire-parsed [`Name`] so labels that
+    /// legitimately contain underscores are not re-validated by IDNA.
+    #[cfg(test)]
     pub(crate) async fn lookup(
         self: &Arc<Self>,
         domain: &str,
         query_type: RecordType,
-    ) -> Result<LookupAnswer, UpstreamError> {
-        let name = match crate::domain::name_from_domain_text(domain) {
+    ) -> Result<DnsAnswer, UpstreamError> {
+        let name = match Name::from_str(domain) {
             Ok(name) => name,
             Err(e) => return Err(UpstreamError::Internal(format!("invalid domain: {e}"))),
         };
+        self.lookup_name(name, query_type).await
+    }
+
+    /// Resolves an already-parsed `name` for `query_type`, mirroring the old
+    /// resolver semantics: `attempts` tries, each bounded by `query_timeout`,
+    /// with UDP→stream fallback on truncation, a lookup-level deadline
+    /// (`attempts × query_timeout + connect_timeout`), and fast-fail while
+    /// offline.
+    pub(crate) async fn lookup_name(
+        self: &Arc<Self>,
+        name: Name,
+        query_type: RecordType,
+    ) -> Result<DnsAnswer, UpstreamError> {
         let query = Query::query(name, query_type);
         let options = request_options();
 
@@ -601,7 +568,7 @@ impl UpstreamPool {
             // Permanent TLS failures (bad certificate, ...) never count
             // towards the offline flip either: retrying or probing cannot
             // fix them.
-            Err(UpstreamError::Tls(_)) => {}
+            Err(UpstreamError::Tls(_) | UpstreamError::Response(_)) => {}
             // Transient connectivity failures count towards the offline
             // flip; the flip spawns the revival probe loop.
             Err(UpstreamError::Timeout | UpstreamError::Internal(_)) => {
@@ -633,6 +600,8 @@ impl UpstreamPool {
         deadline: tokio::time::Instant,
     ) -> Result<Message, UpstreamError> {
         let mut force_stream = false;
+        let mut history = AttemptHistory::default();
+        let mut fanout = self.config.fanout;
         let mut last_err: Option<UpstreamError> = None;
         // A truncated UDP answer whose stream retry never got to run is
         // returned at the end if it carries data (it just did not fit over
@@ -653,16 +622,18 @@ impl UpstreamPool {
             // falls through to the truncated guard below instead of
             // returning directly: a stored non-empty partial answer beats
             // the timeout error.
-            let outcome =
-                match tokio::time::timeout(remaining, self.attempt(query, options, force_stream))
-                    .await
-                {
-                    Ok(outcome) => outcome,
-                    Err(_) => {
-                        select_better_error(&mut last_err, UpstreamError::Timeout);
-                        break;
-                    }
-                };
+            let outcome = match tokio::time::timeout(
+                remaining,
+                self.attempt(query, options, force_stream, fanout, &mut history),
+            )
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    select_better_error(&mut last_err, UpstreamError::Timeout);
+                    break;
+                }
+            };
             match outcome {
                 Ok(message) => {
                     // Truncated answer: switch to stream-only connectors for
@@ -690,23 +661,21 @@ impl UpstreamPool {
                     return Ok(message);
                 }
                 Err(e) => {
-                    // Explicit protocol answers are final: the server is
-                    // alive and answered (matching the old hickory
-                    // RetryDnsHandle, which never retried response-code
-                    // errors). NXDomain/NoError-empty are the negative
-                    // cases; ServFail/Refused and friends would only be
-                    // repeated deterministically by another attempt, so
-                    // retrying would amplify load and latency on an
-                    // erroring upstream. Permanent TLS failures are final
-                    // too: a bad certificate cannot be fixed by retrying.
-                    // Endpoint diversity within one attempt is still
-                    // provided by the fan-out; only transport failures —
-                    // timeouts, connection errors, internal errors — are
-                    // transient and retried.
-                    if matches!(e, UpstreamError::Protocol(_, _) | UpstreamError::Tls(_)) {
+                    if e.is_final() {
                         return Err(e);
                     }
                     select_better_error(&mut last_err, e);
+                    if matches!(last_err, Some(UpstreamError::Response(_))) {
+                        // Further attempts can try other endpoints on this live upstream.
+                        fanout = self.scheduler.remaining_fanout(
+                            force_stream,
+                            self.config.fanout,
+                            &history,
+                        );
+                        if fanout == 0 {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -724,7 +693,12 @@ impl UpstreamPool {
         if let Some(message) = truncated {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if !remaining.is_zero() {
-                match tokio::time::timeout(remaining, self.attempt(query, options, true)).await {
+                match tokio::time::timeout(
+                    remaining,
+                    self.attempt(query, options, true, self.config.fanout, &mut history),
+                )
+                .await
+                {
                     Ok(Ok(answer)) => {
                         // Same invariant as the in-loop handling: an empty
                         // truncated answer is never returned as success —
@@ -788,7 +762,7 @@ impl UpstreamPool {
         query: &Query,
         options: &DnsRequestOptions,
         attempts: u8,
-    ) -> Result<LookupAnswer, UpstreamError> {
+    ) -> Result<DnsAnswer, UpstreamError> {
         // Values are clamped (`MAX_CONNECT_TIMEOUT`, `ATTEMPTS_UPPER`), so
         // this cannot overflow in practice; `checked_add` guards against a
         // future caller relaxing the clamps.
@@ -800,27 +774,30 @@ impl UpstreamPool {
         let mut records = Vec::new();
         let mut search_name = query.name().clone();
         let mut message = self.lookup_message(query, options, attempts, deadline).await?;
-        // A truncated answer (partial) surfaces with the flag so the client
-        // retries over TCP; it must not be chased for CNAME or cached as
-        // complete.
-        if message.metadata.truncation {
-            return Ok(LookupAnswer { records: message.answers, truncated: true });
-        }
-
-        // CNAME and ANY queries are answered as-is (hickory-resolver parity:
-        // the old `caching_client` never chased for these types). Chasing a
-        // CNAME-typed query would follow up on the target, which typically
-        // answers NXDomain, discarding the CNAME records we already have.
-        if query.query_type().is_any() || query.query_type().is_cname() {
-            records.extend(message.answers.iter().cloned());
-            return Ok(LookupAnswer { records, truncated: false });
-        }
-
-        // The first response is hop 0; every follow-up query is another hop,
-        // bounded by `MAX_CNAME_DEPTH` (the old hickory-resolver limit).
         let mut hops = 0u8;
         loop {
+            if message.metadata.truncation || DnsAnswer::is_negative_message(&message) {
+                if !message.metadata.truncation && message.answers.is_empty() && records.is_empty()
+                {
+                    let soa = message
+                        .authorities
+                        .into_iter()
+                        .find(|r| r.record_type() == RecordType::SOA);
+                    return Err(UpstreamError::Protocol(
+                        message.metadata.response_code,
+                        soa.map(Box::new),
+                    ));
+                }
+                let mut answer = DnsAnswer::from_message(message);
+                records.append(&mut answer.records);
+                answer.records = records;
+                return Ok(answer);
+            }
+
             records.extend(message.answers.iter().cloned());
+            if query.query_type().is_any() || query.query_type().is_cname() {
+                return Ok(DnsAnswer::new(records, ResponseCode::NoError));
+            }
 
             // Fold the CNAME chain inside this response to a fixpoint:
             // answers may chain out of order (e.g. `[CNAME(mid→final),
@@ -849,7 +826,7 @@ impl UpstreamPool {
 
             if chain_end == search_name {
                 // No CNAME for the current name: the answer is final.
-                return Ok(LookupAnswer { records, truncated: false });
+                return Ok(DnsAnswer::new(records, ResponseCode::NoError));
             }
             // The response already carries the requested records for the end
             // of the chain (recursive resolvers usually return CNAME + final
@@ -879,265 +856,18 @@ impl UpstreamPool {
                     .cloned()
                     .collect();
                 records.extend(extras);
-                return Ok(LookupAnswer { records, truncated: false });
+                return Ok(DnsAnswer::new(records, ResponseCode::NoError));
             }
             if hops >= pool_config::MAX_CNAME_DEPTH {
                 // Depth limit reached (e.g. a CNAME loop): return the chain
                 // we accumulated instead of hanging.
-                return Ok(LookupAnswer { records, truncated: false });
+                return Ok(DnsAnswer::new(records, ResponseCode::NoError));
             }
 
             let next_query = Query::query(chain_end.clone(), query.query_type());
-            message = match self.lookup_message(&next_query, options, attempts, deadline).await {
-                Ok(message) => message,
-                Err(e) => return Err(e),
-            };
+            message = self.lookup_message(&next_query, options, attempts, deadline).await?;
             search_name = chain_end;
             hops += 1;
-            // A truncated follow-up hop surfaces the same way as a
-            // truncated hop 0: fold in the partial records and return the
-            // flag. Chasing on partial data is unreliable — the cut-off
-            // tail may hold the CNAME or the final records — and reporting
-            // the partial chain complete would let the caller cache it.
-            if message.metadata.truncation {
-                records.extend(message.answers.iter().cloned());
-                return Ok(LookupAnswer { records, truncated: true });
-            }
-        }
-    }
-
-    /// One attempt: query up to `config.fanout` primary legs concurrently and
-    /// select the outcome with a Balanced strategy — a positive answer wins
-    /// immediately (the other legs are aborted), an explicit negative answer
-    /// (NXDomain/NoData) waits a short grace for a positive, a truncated UDP
-    /// answer is surfaced (ahead of a negative, since the stream retry may
-    /// recover the full answer) so the caller retries stream-only, and
-    /// transport failures are retried by the caller.
-    ///
-    /// When every primary leg fails with a transient error, plaintext pools
-    /// fall through to their stream (TCP) legs in the same attempt — the old
-    /// sequential UDP→TCP fallback, now concurrent.
-    async fn attempt(
-        self: &Arc<Self>,
-        query: &Query,
-        options: &DnsRequestOptions,
-        force_stream: bool,
-    ) -> Result<Message, UpstreamError> {
-        let legs = self.candidate_legs(force_stream);
-        match self.fan_out(query, options, &legs).await {
-            FanOutVerdict::Answer(message) => Ok(message),
-            FanOutVerdict::Negative(code, soa) => Err(UpstreamError::Protocol(code, soa)),
-            FanOutVerdict::Truncated(message) => Ok(message),
-            FanOutVerdict::Failed(e) => {
-                // Explicit protocol answers (ServFail, Refused, ...) and
-                // permanent TLS failures are final — matching
-                // `lookup_message`'s handling of them and the module doc's
-                // "an explicit protocol code is the final answer": the UDP→
-                // stream fallback below is only for *transient* transport
-                // errors, and re-querying a server that just answered with
-                // ServFail would double its latency and load for nothing.
-                if matches!(e, UpstreamError::Protocol(_, _) | UpstreamError::Tls(_)) {
-                    return Err(e);
-                }
-                // The UDP→stream fallback only applies to the primary UDP
-                // phase: a failed stream-only phase (force_stream) must not
-                // re-run the same stream legs within the same attempt.
-                if !force_stream && self.has_udp() {
-                    let stream = rotate_capped(&self.stream_legs(), self.config.fanout);
-                    if !stream.is_empty() {
-                        return match self.fan_out(query, options, &stream).await {
-                            FanOutVerdict::Answer(message) => Ok(message),
-                            FanOutVerdict::Negative(code, soa) => {
-                                Err(UpstreamError::Protocol(code, soa))
-                            }
-                            FanOutVerdict::Truncated(message) => Ok(message),
-                            FanOutVerdict::Failed(e2) => {
-                                // Both phases failed: report the more
-                                // informative error instead of letting the
-                                // fallback phase's error mask the primary
-                                // phase's (e.g. a cap-bound NoConnections
-                                // hiding a connectivity Timeout).
-                                let mut best = Some(e);
-                                select_better_error(&mut best, e2);
-                                Err(best.unwrap())
-                            }
-                        };
-                    }
-                }
-                Err(e)
-            }
-        }
-    }
-
-    /// Queries the given legs concurrently and applies the Balanced response
-    /// selection.
-    async fn fan_out(
-        self: &Arc<Self>,
-        query: &Query,
-        options: &DnsRequestOptions,
-        legs: &[usize],
-    ) -> FanOutVerdict {
-        let mut join_set = JoinSet::new();
-        for &idx in legs {
-            let pool = self.clone();
-            let connector = self.connectors[idx].clone();
-            let query = query.clone();
-            let options = *options;
-            join_set
-                .spawn(async move { pool.leg_query(connector.clone(), &query, &options).await });
-        }
-        if join_set.is_empty() {
-            return FanOutVerdict::Failed(UpstreamError::NoConnections);
-        }
-
-        let mut last_err: Option<UpstreamError> = None;
-        let mut negative: Option<(ResponseCode, Option<Box<Record>>)> = None;
-        let mut truncated: Option<Message> = None;
-        let grace = tokio::time::sleep(pool_config::NEGATIVE_GRACE);
-        tokio::pin!(grace);
-
-        loop {
-            // `biased;` makes a ready leg result win over the grace timer
-            // when both fire in the same poll cycle, so a positive that
-            // settles exactly at the grace boundary is not discarded.
-            tokio::select! {
-                biased;
-                joined = join_set.join_next() => {
-                    let Some(joined) = joined else {
-                        // Every leg settled without a positive answer. A
-                        // truncated answer outranks an explicit negative
-                        // (stream retry may recover the data), so it is
-                        // returned before the negative.
-                        if let Some(message) = truncated {
-                            return FanOutVerdict::Truncated(message);
-                        }
-                        if let Some((code, soa)) = negative {
-                            return FanOutVerdict::Negative(code, soa);
-                        }
-                        return FanOutVerdict::Failed(
-                            last_err.unwrap_or(UpstreamError::NoConnections),
-                        );
-                    };
-                    if let Some(verdict) = Self::fold_leg_outcome(
-                        &mut last_err,
-                        &mut negative,
-                        &mut truncated,
-                        &mut grace,
-                        joined,
-                    ) {
-                        // Positive answer: win immediately.
-                        // The other legs are aborted mid-flight. Their
-                        // connection-level failures are deliberately not
-                        // recorded: an aborted query proves nothing about
-                        // the connection (it may simply have been slower
-                        // than the winner). A genuinely dead connection
-                        // is still retired eventually — its aborted legs
-                        // never update `last_used_ms`, so it goes stale
-                        // and the next query races it against a fresh
-                        // dial, retiring it on failure.
-                        join_set.abort_all();
-                        return verdict;
-                    }
-                }
-                _ = &mut grace, if negative.is_some() => {
-                    // No positive answer arrived within the grace window. A
-                    // truncated UDP answer is still preferred over the
-                    // negative: the stream retry may recover the full answer,
-                    // so surface the truncation instead of the negative.
-                    // Before aborting, harvest any leg that settled in the
-                    // same poll cycle: `biased;` already prefers a ready leg
-                    // result over the timer, and this drain is the backstop
-                    // for results enqueued right after the select fired — a
-                    // positive at the grace boundary must not be discarded.
-                    while let Some(joined) = join_set.try_join_next() {
-                        if let Some(verdict) = Self::fold_leg_outcome(
-                            &mut last_err,
-                            &mut negative,
-                            &mut truncated,
-                            &mut grace,
-                            joined,
-                        ) {
-                            join_set.abort_all();
-                            return verdict;
-                        }
-                    }
-                    // Aborting the remaining legs skips their failure
-                    // accounting (see the positive-answer abort above).
-                    join_set.abort_all();
-                    if let Some(message) = truncated {
-                        return FanOutVerdict::Truncated(message);
-                    }
-                    let (code, soa) = negative.unwrap();
-                    return FanOutVerdict::Negative(code, Self::clamp_contested_negative_ttl(soa));
-                }
-            }
-        }
-    }
-
-    /// A negative answer that won only after the grace window (another
-    /// endpoint was still in flight) may be stale: clamp its SOA TTL so the
-    /// negative caching it drives (RFC 2308) expires quickly instead of
-    /// poisoning the domain until the original TTL.
-    fn clamp_contested_negative_ttl(mut soa: Option<Box<Record>>) -> Option<Box<Record>> {
-        if let Some(record) = &mut soa {
-            record.ttl = record.ttl.min(pool_config::CONTESTED_NEGATIVE_TTL);
-        }
-        soa
-    }
-
-    /// Folds one leg's outcome into the fan-out selection state; returns a
-    /// verdict when the leg's answer wins outright (a positive answer).
-    fn fold_leg_outcome(
-        last_err: &mut Option<UpstreamError>,
-        negative: &mut Option<(ResponseCode, Option<Box<Record>>)>,
-        truncated: &mut Option<Message>,
-        grace: &mut Pin<&mut tokio::time::Sleep>,
-        joined: Result<Result<Message, UpstreamError>, tokio::task::JoinError>,
-    ) -> Option<FanOutVerdict> {
-        match joined {
-            Ok(Ok(message)) => {
-                if message.metadata.truncation {
-                    // A truncated answer is the least desirable of the
-                    // *usable* outcomes (the caller retries stream-only);
-                    // keep it only if nothing better arrives.
-                    if truncated.is_none() {
-                        *truncated = Some(message);
-                    }
-                    return None;
-                }
-                if is_negative_response(&message) {
-                    if negative.is_none() {
-                        *negative =
-                            Some((message.metadata.response_code, soa_of_message(&message)));
-                        grace
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + pool_config::NEGATIVE_GRACE);
-                    }
-                    return None;
-                }
-                // Positive answer: win immediately.
-                Some(FanOutVerdict::Answer(message))
-            }
-            Ok(Err(e)) => match &e {
-                UpstreamError::Protocol(
-                    code @ (ResponseCode::NXDomain | ResponseCode::NoError),
-                    soa,
-                ) => {
-                    if negative.is_none() {
-                        *negative = Some((*code, soa.clone()));
-                        grace
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + pool_config::NEGATIVE_GRACE);
-                    }
-                    None
-                }
-                _ => {
-                    select_better_error(last_err, e);
-                    None
-                }
-            },
-            // A leg task panicked: treat it as no outcome.
-            Err(_) => None,
         }
     }
 
@@ -1163,16 +893,21 @@ impl UpstreamPool {
             && self.clock.now_ms().saturating_sub(pooled.last_used_ms.load(Ordering::Relaxed))
                 >= self.config.stale_conn_age.as_millis() as u64;
 
-        let (winner, result) = if stale {
+        let slot = stale.then(|| self.dial_slot_for(connector.ip(), connector.transport()));
+        let replacement = slot.as_ref().and_then(|slot| slot.gate.try_lock().ok());
+        let (winner, result) = if replacement.is_some() {
             self.race(&pooled, connector.as_ref(), query, options).await
         } else {
             (pooled.clone(), self.query_once(pooled.conn.as_ref(), query, options).await)
         };
 
         match &result {
-            Ok(_message) => {
+            Ok(_) | Err(UpstreamError::Protocol(..) | UpstreamError::Response(_)) => {
                 winner.last_used_ms.store(self.clock.now_ms(), Ordering::Relaxed);
                 winner.consecutive_failures.store(0, Ordering::Relaxed);
+                winner
+                    .response_failed
+                    .store(matches!(result, Err(UpstreamError::Response(_))), Ordering::Relaxed);
             }
             Err(e) => {
                 self.record_conn_failure(&winner, e);
@@ -1185,6 +920,11 @@ impl UpstreamPool {
                 {
                     winner.last_used_ms.store(self.clock.now_ms(), Ordering::Relaxed);
                     self.scale_up(connector);
+                    // Let the freshly spawned scale-up dial get its first poll.
+                    // Besides preserving the old fan-out scheduling behavior,
+                    // this avoids a capacity burst repeatedly observing the
+                    // pre-dial slot state before the background task runs.
+                    tokio::task::yield_now().await;
                 }
             }
         }
@@ -1212,63 +952,31 @@ impl UpstreamPool {
             // The future is unwind-isolated like the maintenance pass so a
             // broken connector cannot kill the task with a stray panic.
             let _guard = DialGuard(&slot.background_dial);
-            let conn = match catch_unwind_future(tokio::time::timeout(
-                pool.config.connect_timeout,
-                connector.connect(),
-            ))
-            .await
-            {
-                Ok(Ok(Ok(conn))) => conn,
+            let conn = match catch_unwind_future(pool.dial(connector.as_ref())).await {
+                Ok(Ok(conn)) => conn,
                 _ => return,
             };
             let pooled = Arc::new(PooledConn::new(conn, pool.clock.now_ms()));
-            let mut conns = pool.conns.lock().unwrap_or_else(|e| e.into_inner());
-            if pool.stream_conn_count(&conns) >= pool.config.max_conns as usize {
-                drop(conns);
-                pooled.conn.shutdown();
-                return;
-            }
-            pooled.mark_pooled();
-            conns.push(pooled);
+            pool.pool_fresh(pooled);
         });
     }
 
-    /// The legs a fan-out attempt starts with: the UDP connector per IP for
-    /// plaintext (the fast path), or the stream connector per IP for
-    /// encrypted modes. `force_stream` (UDP truncation retry) restricts to
-    /// stream legs. Rotated from a random start and capped at
-    /// `config.fanout`, so excess endpoints are spread across attempts.
-    fn candidate_legs(&self, force_stream: bool) -> Vec<usize> {
-        let legs = if force_stream {
-            self.stream_legs()
-        } else if self.has_udp() {
-            self.udp_legs()
+    async fn dial(&self, connector: &dyn DnsConnector) -> Result<Arc<dyn DnsConn>, UpstreamError> {
+        let deadline = tokio::time::Instant::now() + self.config.connect_timeout;
+        let _permit = if connector.transport() == DnsTransport::Stream {
+            Some(
+                tokio::time::timeout_at(deadline, self.stream_dials.acquire())
+                    .await
+                    .map_err(|_| UpstreamError::NoConnections)?
+                    .expect("pool semaphore remains open"),
+            )
         } else {
-            self.stream_legs()
+            None
         };
-        rotate_capped(&legs, self.config.fanout)
-    }
-
-    fn has_udp(&self) -> bool {
-        self.connectors.iter().any(|c| c.transport() == DnsTransport::Udp)
-    }
-
-    fn udp_legs(&self) -> Vec<usize> {
-        self.connectors
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.transport() == DnsTransport::Udp)
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    fn stream_legs(&self) -> Vec<usize> {
-        self.connectors
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.transport() == DnsTransport::Stream)
-            .map(|(i, _)| i)
-            .collect()
+        tokio::time::timeout_at(deadline, connector.connect())
+            .await
+            .map_err(|_| UpstreamError::Timeout)?
+            .map_err(from_conn_error)
     }
 
     /// One query on `conn` bounded by the per-attempt budget.
@@ -1287,17 +995,9 @@ impl UpstreamPool {
     /// Races a query on the stale connection against the same query on a
     /// freshly dialed connection; the first answer wins.
     ///
-    /// When the fresh connection wins, the stale one is retired and the fresh
-    /// one takes its place in the pool (cap-checked) — the pool self-heals
-    /// without the next query paying a timeout. When the stale connection
-    /// answers first it is clearly alive and the fresh dial is simply
-    /// abandoned.
-    ///
-    /// A *transport-level* failure on the fresh leg (dial error, timeout, I/O)
-    /// tells us nothing about the stale connection, so it does not retire the
-    /// stale one: the stale leg's own verdict decides instead. Only an answer
-    /// — success or an explicit protocol error code, which proves the server
-    /// answered — lets the fresh connection take over.
+    /// A DNS reply on the replacement retires the old connection. When one
+    /// leg fails first, let the other finish within the lookup deadline. An
+    /// application response (e.g. HTTP 503) takes precedence over a timeout.
     async fn race(
         &self,
         pooled: &Arc<PooledConn>,
@@ -1308,93 +1008,55 @@ impl UpstreamPool {
         let old_future = self.query_once(pooled.conn.as_ref(), query, options);
         tokio::pin!(old_future);
 
-        // The fresh dial may complete while the stale leg is still running.
-        // When the race then resolves against the stale leg (or against a
-        // fresh leg that failed at the transport level), the dialed fresh
-        // connection is not needed: it must be closed (the shutdown
-        // contract) instead of silently dropped.
-        let fresh_slot: Arc<Mutex<Option<Arc<dyn DnsConn>>>> = Arc::new(Mutex::new(None));
-        let new_future = async {
-            // A dial failure or timeout means the server may be unreachable;
-            // stay pending so the stale connection's own verdict decides the
-            // race. The dial gets its own (larger) budget, mirroring
-            // `acquire`, so a hung handshake cannot hold the race open.
-            let conn = match tokio::time::timeout(self.config.connect_timeout, connector.connect())
-                .await
-            {
-                Ok(Ok(conn)) => conn,
-                _ => std::future::pending().await,
-            };
-            *fresh_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(conn.clone());
-            let result = self.query_once(conn.as_ref(), query, options).await;
-            (conn, result)
+        let fresh_future = async {
+            let conn = self.dial(connector).await.ok()?;
+            let fresh = Arc::new(PooledConn::new(conn, self.clock.now_ms()));
+            let result = self.query_once(fresh.conn.as_ref(), query, options).await;
+            Some((fresh, result))
         };
-        let mut new_future = Box::pin(new_future);
+        tokio::pin!(fresh_future);
 
-        // `biased;` polls the fresh branch first: when both legs settle in
-        // the same poll cycle, a fresh answer (or explicit protocol code)
-        // wins the tie. A stale connection is raced precisely because it is
-        // suspected dead (usually about to time out), so letting the stale
-        // side win ties would discard a valid fresh answer and burn another
-        // attempt.
-        tokio::select! {
+        let (old_result, fresh_result) = tokio::select! {
             biased;
-            (new_conn, new_result) = &mut new_future => match &new_result {
-                Ok(_) | Err(UpstreamError::Protocol(_, _)) => {
-                    // The fresh connection answered (or proved itself alive
-                    // with an explicit protocol answer): the stale one is
-                    // presumed dead, retire it and keep the fresh one.
-                    fresh_slot.lock().unwrap_or_else(|e| e.into_inner()).take();
-                    let fresh = self.retire_and_pool(pooled, new_conn);
-                    (fresh, new_result)
-                }
-                Err(_) => {
-                    // Fresh leg failed at the transport level (timeout, I/O):
-                    // it proves nothing about the stale conn, so wait for the
-                    // stale leg's own verdict and close the failed fresh dial.
-                    if let Some(conn) = fresh_slot.lock().unwrap_or_else(|e| e.into_inner()).take()
-                    {
-                        conn.shutdown();
+            fresh = &mut fresh_future => {
+                match fresh {
+                    Some((conn, result @ (Ok(_) | Err(UpstreamError::Protocol(..))))) => {
+                        return (self.retire_and_pool(pooled, conn), result);
                     }
-                    let old_result = old_future.await;
-                    (pooled.clone(), old_result)
+                    other => (old_future.await, other),
                 }
-            },
-            old_result = &mut old_future => {
-                // The stale conn's verdict decided the race. When it failed
-                // with a transient transport error, a fresh conn that
-                // already finished dialing is kept for the retry instead of
-                // being thrown away: its query was cancelled with the
-                // dropped future, so it is idle and healthy. When the stale
-                // conn answered (it is alive) or failed permanently, the
-                // dialed fresh conn is unnecessary and closed. A dial still
-                // in flight is simply abandoned.
-                if let Some(conn) = fresh_slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    if matches!(
-                        old_result,
-                        Err(UpstreamError::Timeout | UpstreamError::Internal(_))
-                    ) {
-                        self.pool_fresh(conn);
-                    } else {
-                        conn.shutdown();
-                    }
+            }
+            old = &mut old_future => {
+                if matches!(old, Ok(_) | Err(UpstreamError::Protocol(..))) {
+                    return (pooled.clone(), old);
                 }
-                (pooled.clone(), old_result)
+                (old, fresh_future.await)
+            }
+        };
+
+        if let Some((fresh, result)) = fresh_result {
+            let use_fresh = match (&old_result, &result) {
+                (_, Ok(_) | Err(UpstreamError::Protocol(..))) => true,
+                (Err(old), Err(new @ UpstreamError::Response(_))) => {
+                    error_rank(new) < error_rank(old)
+                }
+                _ => false,
+            };
+            if use_fresh {
+                return (self.retire_and_pool(pooled, fresh), result);
             }
         }
+        (pooled.clone(), old_result)
     }
 
     /// Pools a freshly dialed connection, cap-checked; when the cap is full
     /// it is closed instead. Returns whether it was pooled.
-    fn pool_fresh(&self, conn: Arc<dyn DnsConn>) -> bool {
-        let pooled = Arc::new(PooledConn::new(conn, self.clock.now_ms()));
+    fn pool_fresh(&self, pooled: Arc<PooledConn>) -> bool {
         let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
         if self.stream_conn_count(&conns) >= self.config.max_conns as usize {
             drop(conns);
-            pooled.conn.shutdown();
             return false;
         }
-        pooled.mark_pooled();
         conns.push(pooled);
         true
     }
@@ -1404,26 +1066,26 @@ impl UpstreamPool {
     ///
     /// Only ever called from `race`, which is stream-only (UDP never races),
     /// so no UDP exemption is needed here.
-    fn retire_and_pool(&self, old: &Arc<PooledConn>, fresh: Arc<dyn DnsConn>) -> Arc<PooledConn> {
+    fn retire_and_pool(
+        &self,
+        old: &Arc<PooledConn>,
+        fresh_pooled: Arc<PooledConn>,
+    ) -> Arc<PooledConn> {
         old.dead.store(true, Ordering::Relaxed);
-        let fresh_pooled = Arc::new(PooledConn::new(fresh, self.clock.now_ms()));
         let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
         let retired = Self::purge_dead(&mut conns);
         if self.stream_conn_count(&conns) < self.config.max_conns as usize {
-            fresh_pooled.mark_pooled();
             conns.push(fresh_pooled.clone());
         }
         // When the cap is full the fresh connection is not pooled: it still
         // serves this query and `PooledConn`'s Drop closes it afterwards.
         drop(conns);
-        for pooled in retired {
-            pooled.conn.shutdown();
-        }
+        drop(retired);
         fresh_pooled
     }
 
     /// Removes dead connections from `conns`, returning the retired ones so
-    /// the caller can `shutdown()` them outside the lock. Every purge path
+    /// the caller can release pool ownership outside the lock. Every purge path
     /// (`acquire`, `retire_and_pool`, `maintain`) goes through here so the
     /// shutdown contract stays uniform.
     fn purge_dead(conns: &mut Vec<Arc<PooledConn>>) -> Vec<Arc<PooledConn>> {
@@ -1440,12 +1102,12 @@ impl UpstreamPool {
     }
 
     /// The live, non-dead connection for `connector`'s endpoint with the
-    /// oldest `last_used` (LRU), if any. Dead connections are purged inline
-    /// (and shut down) so cap accounting stays exact even between
+    /// fewest in-flight queries, breaking ties by oldest use. Dead connections
+    /// are purged inline so cap accounting stays exact even between
     /// maintenance ticks. A connection is only reusable by connectors of
     /// the same transport: after a UDP truncation the TCP connector must
     /// dial a real TCP connection instead of reusing the (same-IP) UDP one.
-    fn find_reusable(&self, connector: &dyn DnsConnector) -> Option<Arc<PooledConn>> {
+    fn find_reusable(&self, connector: &dyn DnsConnector) -> Option<ConnectionLease> {
         let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
         let retired = Self::purge_dead(&mut conns);
         let existing = conns
@@ -1455,12 +1117,10 @@ impl UpstreamPool {
                     && pooled.conn.transport() == connector.transport()
                     && !pooled.dead.load(Ordering::Relaxed)
             })
-            .min_by_key(|pooled| pooled.last_used_ms.load(Ordering::Relaxed))
-            .cloned();
+            .min_by_key(|pooled| pooled.load())
+            .map(|pooled| pooled.borrow(self.clock.now_ms()));
         drop(conns);
-        for pooled in &retired {
-            pooled.conn.shutdown();
-        }
+        drop(retired);
         existing
     }
 
@@ -1477,30 +1137,10 @@ impl UpstreamPool {
     async fn acquire(
         &self,
         connector: &dyn DnsConnector,
-    ) -> Result<Option<Arc<PooledConn>>, UpstreamError> {
-        let result = self.acquire_inner(connector).await;
-        // Stamp the borrow (completion stamps `last_used_ms` in `leg_query`):
-        // the maintenance pass judges idleness by both stamps, so a query in
-        // flight on an almost-idle connection cannot be reaped — and for
-        // DoQ, actively closed — under the query. The staleness check must
-        // observe the *completion* stamp, which the borrow does not touch.
-        if let Ok(Some(pooled)) = &result {
-            pooled.last_borrow_ms.store(self.clock.now_ms(), Ordering::Relaxed);
-        }
-        result
-    }
-
-    async fn acquire_inner(
-        &self,
-        connector: &dyn DnsConnector,
-    ) -> Result<Option<Arc<PooledConn>>, UpstreamError> {
+    ) -> Result<Option<ConnectionLease>, UpstreamError> {
         // Fast path: reuse a live, non-dead connection for this endpoint.
         if let Some(pooled) = self.find_reusable(connector) {
             return Ok(Some(pooled));
-        }
-
-        if !self.can_dial(connector.transport()) {
-            return Ok(None);
         }
 
         // Cold-dial single-flight: when another task is already dialing
@@ -1547,10 +1187,10 @@ impl UpstreamPool {
             return Ok(Some(pooled));
         }
 
-        let conn = tokio::time::timeout(self.config.connect_timeout, connector.connect())
-            .await
-            .map_err(|_| UpstreamError::Timeout)?
-            .map_err(from_conn_error)?;
+        if connector.transport() == DnsTransport::Stream && !self.make_room_for_stream() {
+            return Ok(None);
+        }
+        let conn = self.dial(connector).await?;
 
         let pooled = Arc::new(PooledConn::new(conn, self.clock.now_ms()));
         let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
@@ -1572,8 +1212,8 @@ impl UpstreamPool {
                         && p.conn.transport() == connector.transport()
                         && !p.dead.load(Ordering::Relaxed)
                 })
-                .min_by_key(|p| p.last_used_ms.load(Ordering::Relaxed))
-                .cloned()
+                .min_by_key(|p| p.load())
+                .map(|p| p.borrow(self.clock.now_ms()))
             {
                 drop(conns);
                 // The connection we just built will not serve this query:
@@ -1581,11 +1221,35 @@ impl UpstreamPool {
                 // never pooled) so the shutdown contract holds.
                 return Ok(Some(existing));
             }
-            return Ok(Some(pooled));
+            return Ok(Some(pooled.borrow(self.clock.now_ms())));
         }
-        pooled.mark_pooled();
-        conns.push(pooled.clone());
-        Ok(Some(pooled))
+        let lease = pooled.borrow(self.clock.now_ms());
+        conns.push(pooled);
+        Ok(Some(lease))
+    }
+
+    /// An idle connection which returned an unusable application response
+    /// may yield its slot to an unconnected endpoint. Active leases stay pooled.
+    fn make_room_for_stream(&self) -> bool {
+        let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
+        if self.stream_conn_count(&conns) < usize::from(self.config.max_conns) {
+            return true;
+        }
+        let candidate = conns
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                p.conn.transport() == DnsTransport::Stream
+                    && p.response_failed.load(Ordering::Relaxed)
+                    && p.in_flight.load(Ordering::Relaxed) == 0
+            })
+            .min_by_key(|(_, p)| p.last_active_ms())
+            .map(|(index, _)| index);
+        let Some(index) = candidate else { return false };
+        let retired = conns.swap_remove(index);
+        drop(conns);
+        drop(retired);
+        true
     }
 
     /// True while the pool may dial another connection for `transport`.
@@ -1609,10 +1273,7 @@ impl UpstreamPool {
     /// (bad certificate) would fail on any connection, so retiring this one
     /// would only trigger a pointless re-dial and never count.
     fn record_conn_failure(&self, pooled: &Arc<PooledConn>, err: &UpstreamError) {
-        if matches!(
-            err,
-            UpstreamError::Protocol(_, _) | UpstreamError::NoConnections | UpstreamError::Tls(_)
-        ) {
+        if !matches!(err, UpstreamError::Timeout | UpstreamError::Internal(_)) {
             return;
         }
         let failures = pooled.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1747,8 +1408,9 @@ impl UpstreamPool {
                     // Both activity stamps count: a connection whose query
                     // completed long ago but was just borrowed (query in
                     // flight) is not idle.
-                    now.saturating_sub(pooled.last_active_ms())
-                        > self.config.idle_timeout.as_millis() as u64
+                    pooled.in_flight.load(Ordering::Relaxed) == 0
+                        && now.saturating_sub(pooled.last_active_ms())
+                            > self.config.idle_timeout.as_millis() as u64
                 })
                 .cloned()
                 .collect();
@@ -1777,9 +1439,7 @@ impl UpstreamPool {
                 retired.push(pooled);
             }
         }
-        for pooled in retired {
-            pooled.conn.shutdown();
-        }
+        drop(retired);
 
         // 2. Warm-up: top the pool back up to `min_conns` stream connections.
         self.warm_up_to_min().await;
@@ -1824,7 +1484,10 @@ impl UpstreamPool {
         let Ok(name) = Name::from_str(".") else { return };
         let query = Query::query(name, RecordType::NS);
         let options = request_options();
-        match self.attempt(&query, &options, false).await {
+        match self
+            .attempt(&query, &options, false, self.config.fanout, &mut AttemptHistory::default())
+            .await
+        {
             Ok(_) | Err(UpstreamError::Protocol(_, _)) => self.health.record_success(),
             Err(_) => {}
         }
@@ -1849,6 +1512,7 @@ fn from_conn_error(e: traits::DnsConnError) -> UpstreamError {
         traits::DnsConnError::NoConnections => UpstreamError::NoConnections,
         traits::DnsConnError::Protocol(code, soa) => UpstreamError::Protocol(code, soa),
         traits::DnsConnError::Tls(msg) => UpstreamError::Tls(msg),
+        traits::DnsConnError::Response(msg) => UpstreamError::Response(msg),
         traits::DnsConnError::Internal(msg) => UpstreamError::Internal(msg),
     }
 }

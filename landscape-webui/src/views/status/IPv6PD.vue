@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { get_all_ipv6pd_prefix_status } from "@/api/service_ipv6pd";
-import type { IPV6PDPrefixStatus } from "@/api/service_ipv6pd";
-import { link_label } from "@/lib/wan_link";
+import { get_all_ipv6pd_prefix_status } from "@/api/services/ipv6pd";
+import type { IPV6PDPrefixStatus } from "@landscape-router/types/api/schemas";
+import { link_label } from "@/lib/wan/wan_link";
 import { useWanLinkStore } from "@/stores/wan_link";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";

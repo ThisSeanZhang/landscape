@@ -1,5 +1,5 @@
 //! 1 秒级 RAM 环形缓冲:最近 N 个快照,服务 `/api/v1/self-monitor/memory` 的
-//! 实时/近期查询;分钟级历史走 MetricEngine 的持久化链路,两条链路相互独立。
+//! 实时/近期查询;分钟级历史走 自监控的独立持久化链路,两条链路相互独立。
 //! 未开启 feature `mem-track` 时两条链路均不启动(见 [`start_sampler_with`])。
 
 use std::collections::VecDeque;
@@ -25,11 +25,15 @@ pub struct MemoryHistory {
 }
 
 impl MemoryHistory {
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         MemoryHistory {
-            inner: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
-            capacity,
+            inner: Arc::new(Mutex::new(VecDeque::new())),
+            capacity: capacity.max(1),
         }
+    }
+
+    pub fn sample(&self) {
+        self.push(super::capture_compact());
     }
 
     fn push(&self, snapshot: CompactSnapshot) {
@@ -119,7 +123,7 @@ pub fn start_sampler_with(interval: Duration, capacity: usize) -> MemoryHistory 
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            task_history.push(super::capture_compact());
+            task_history.sample();
         }
     });
     history

@@ -45,9 +45,10 @@ pub enum FromLanStageType {
     Mss = 0,
     Firewall = 1,
     Nat = 2,
-    /// Per-link terminal encap stage; never on the from-WAN chain (the
-    /// WAN side decapsulates at the intro dispatch), which is why the
-    /// from-WAN enum has no such variant.
+    /// XDP-only per-link terminal encap stage; never on the from-WAN
+    /// chain (the WAN side decapsulates at the intro dispatch), which is
+    /// why the from-WAN enum has no such variant. The TC chain folds the
+    /// same PPPoE encap into its per-chain exit instead.
     Pppoe = 3,
 }
 

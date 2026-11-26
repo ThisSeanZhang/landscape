@@ -22,8 +22,8 @@ use crate::tests::test_xdp_dummy::TestXdpDummySkelBuilder;
 
 use crate::skel::tc_lan_ingress_route::TcLanIngressRouteSkelBuilder;
 
-use crate::skel::tc_pppoe::TcPppoeSkelBuilder;
-use crate::skel::tc_pppoe::types::pppoe_egress_tmpl;
+use crate::skel::tc_wan_pppoe_exit::TcWanPppoeExitSkelBuilder;
+use crate::skel::tc_wan_pppoe_exit::types::pppoe_egress_tmpl;
 
 /// Common two-veth-pair environment: an ingress pair crossing into a peer
 /// netns, plus an out pair kept entirely in the test netns (redirect target).
@@ -318,11 +318,137 @@ fn tc_firewall_wan_egress_ingress() {
     drop(skel);
 }
 
-// ── 4: tc_pppoe_wan_egress encapsulation on a real veth ──
+/// Force a cross-WAN redirect with an empty BPF neighbour map. The on-link
+/// host answers ARP, while the gateway has a different permanent kernel MAC.
+#[test]
+#[ignore = "requires root and veth pairs; run with --include-ignored"]
+fn tc_wan_root_neighbour_miss_delivers_via_selected_next_hop() {
+    use std::io::Read;
+    use std::net::{Ipv4Addr, UdpSocket};
+    use std::os::fd::AsFd;
+    use std::sync::Arc;
+
+    use landscape_common::net::MacAddr;
+    use landscape_common::sys_service::route_service::{RouteTargetInfo, WanRouteTarget};
+
+    use crate::LandscapeMapPath;
+    use crate::chain::wan_link::WanLinkDataplane;
+    use crate::maps::route::replace_wan_route_slots_v4_with_map;
+    use crate::maps::wan_trie::dispatcher::WanTrieDispatcher;
+    use crate::route_backbone::{RouteBackbone, pinned_map};
+    use crate::skel::tc_wan_egress_route::TcWanEgressRouteSkelBuilder;
+
+    let env = TcEnv::two_pairs("tcn4");
+    let ip = |args: &[&str]| assert!(Command::new("ip").args(args).status().unwrap().success());
+    let gateway = Ipv4Addr::new(192, 0, 2, 1);
+    let wan = Ipv4Addr::new(192, 0, 2, 10);
+    let src_mac = MacAddr(2, 0, 0, 0, 0, 10);
+    let mut capture = {
+        let _peer = env.peer_ns.enter();
+        ip(&["link", "set", env.pair.peer(), "address", "02:00:00:00:00:50"]);
+        ip(&["addr", "add", "192.0.2.80/24", "dev", env.pair.peer()]);
+        let socket = socket2::Socket::new(
+            socket2::Domain::PACKET,
+            socket2::Type::RAW,
+            Some(i32::from((libc::ETH_P_ALL as u16).to_be()).into()),
+        )
+        .unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        socket
+    };
+    let _router = env.test_ns.enter();
+    ip(&["link", "set", env.pair.host(), "address", "02:00:00:00:00:0a"]);
+    ip(&["addr", "add", "192.0.2.10/24", "dev", env.pair.host()]);
+    ip(&[
+        "neigh",
+        "replace",
+        "192.0.2.1",
+        "lladdr",
+        "02:00:00:00:00:01",
+        "nud",
+        "permanent",
+        "dev",
+        env.pair.host(),
+    ]);
+
+    // Make Linux choose the first WAN for both destinations. Landscape then
+    // selects the second WAN and its own next hop, even for the /32 route.
+    ip(&["addr", "add", "198.51.100.2/24", "dev", env.out_pair.host()]);
+    ip(&[
+        "neigh",
+        "replace",
+        "198.51.100.1",
+        "lladdr",
+        "02:00:00:00:00:99",
+        "nud",
+        "permanent",
+        "dev",
+        env.out_pair.host(),
+    ]);
+    for route in ["192.0.2.80/32", "203.0.113.8/32"] {
+        ip(&["route", "add", route, "via", "198.51.100.1", "dev", env.out_pair.host()]);
+    }
+
+    let pins = crate::tests::isolated_pin_root("tc-wan-root-neigh");
+    let paths = Arc::new(LandscapeMapPath::from_root(&pins));
+    crate::maps::init_maps_for_test(&paths);
+    let backbone = RouteBackbone::new(paths.clone(), Arc::new(WanTrieDispatcher::new())).unwrap();
+    let link = WanLinkDataplane::new(Arc::new(backbone), 9, Some(env.h_i), true).unwrap();
+    link.bind_wan_ipv4(env.h_i, wan, Some(gateway), 24, Some(src_mac));
+    let firewall = link.attach_firewall(env.h_i, true).unwrap();
+    let mut entry_builder = TcWanEgressRouteSkelBuilder::default();
+    entry_builder.object_builder_mut().pin_root_path(&pins).unwrap();
+    let mut entry_obj = MaybeUninit::uninit();
+    let mut open = entry_builder.open(&mut entry_obj).unwrap();
+    let roots = pinned_map(&paths.tc_wan_egress_roots_path()).unwrap();
+    open.maps.tc_wan_egress_roots.reuse_fd(roots.as_fd()).unwrap();
+    let entry = open.load().unwrap();
+    let target = RouteTargetInfo::new_gateway_v4(
+        env.h_i,
+        env.pair.host(),
+        Some(src_mac),
+        wan,
+        gateway,
+        true,
+    );
+    replace_wan_route_slots_v4_with_map(
+        &entry.maps.rt4_slot_map,
+        0,
+        &[(WanRouteTarget::link(9, target), 1)],
+    );
+
+    let _first = TCAttach::attach_egress(&entry.progs.tc_wan_egress_route, env.out_h_i as i32);
+    let _target = TCAttach::attach_egress(&entry.progs.tc_wan_egress_route, env.h_i as i32);
+    let sender = UdpSocket::bind((wan, 0)).unwrap();
+    for (dst, last_octet) in [([192, 0, 2, 80], 0x50), ([203, 0, 113, 8], 1)] {
+        sender.send_to(b"tc-neigh", (Ipv4Addr::from(dst), 7777)).unwrap();
+        let mut frame = [0u8; 2048];
+        let mut received = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            let n = capture.read(&mut frame).expect("receive resolved frame on target WAN peer");
+            if n >= 50
+                && frame[12..14] == [8, 0]
+                && frame[30..34] == dst
+                && &frame[42..50] == b"tc-neigh"
+            {
+                assert_eq!(frame[..6], [2, 0, 0, 0, 0, last_octet], "destination {dst:?}");
+                assert_eq!(frame[6..12], src_mac.octets());
+                received = true;
+                break;
+            }
+        }
+        assert!(received, "target WAN did not deliver {dst:?}");
+    }
+    drop(firewall);
+    link.close();
+}
+
+// ── 4: tc_wan_pppoe_exit encapsulation on a real veth ──
 
 #[test]
 #[ignore = "requires root and veth pairs; run with --include-ignored"]
-fn tc_pppoe_wan_egress_encap() {
+fn tc_wan_pppoe_exit_encap() {
     let env = TcEnv::two_pairs("tcppp");
     {
         let _e = env.test_ns.enter();
@@ -345,7 +471,7 @@ fn tc_pppoe_wan_egress_encap() {
     }
     let pin_root = crate::tests::isolated_pin_root("tc-pppoe");
 
-    let mut b = TcPppoeSkelBuilder::default();
+    let mut b = TcWanPppoeExitSkelBuilder::default();
     b.object_builder_mut().pin_root_path(&pin_root).unwrap();
     let mut obj = MaybeUninit::uninit();
     let mut open = b.open(&mut obj).unwrap();
@@ -361,7 +487,7 @@ fn tc_pppoe_wan_egress_encap() {
     let _dl;
     {
         let _e = env.test_ns.enter();
-        _attach = TCAttach::attach_egress(&skel.progs.tc_pppoe_wan_egress_v4, env.h_i as i32);
+        _attach = TCAttach::attach_egress(&skel.progs.tc_wan_pppoe_exit_redirect, env.h_i as i32);
     }
     {
         let _e = env.peer_ns.enter();

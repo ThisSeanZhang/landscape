@@ -17,7 +17,7 @@ export const useCapabilityStore = defineStore("capability", () => {
         loaded.value = true;
       } catch {
         // The backend may be an older build without the capability endpoint,
-        // or the request failed. Keep `loaded=false` so HAS() fails open.
+        // or the request failed. Keep the state unresolved so a later LOAD() can retry.
       } finally {
         pending = null;
       }
@@ -27,10 +27,10 @@ export const useCapabilityStore = defineStore("capability", () => {
 
   /**
    * Whether the given capability is available. Before the list has been loaded
-   * (or when loading failed) this returns `true` so the UI stays fully usable.
+   * (or when loading failed) self-monitoring stays hidden until the backend confirms support.
    */
   function HAS(capability: string): boolean {
-    if (!loaded.value) return true;
+    if (!loaded.value) return capability !== "mem_track";
     return capabilities.value.has(capability);
   }
 

@@ -54,8 +54,7 @@ static __always_inline void napt_rollback_new_mapping(__u8 proto, __be32 interna
     struct napt_from_wan_value *mapping = napt_wan_lookup(proto, external_port);
 
     if (!mapping || mapping->kind != NAPT_MAPPING_DYNAMIC || mapping->generation != gen ||
-        napt_state_get(mapping->state_ref) != NAPT_WAN_STATE_ACTIVE ||
-        napt_state_refs(mapping->state_ref) != 0)
+        mapping->state_ref != napt_state_make(NAPT_WAN_STATE_ACTIVE, 0))
         return;
 
     (void)napt_lan_delete_dynamic(internal_addr, internal_port, proto, external_port, gen);

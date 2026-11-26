@@ -6,6 +6,7 @@
 #include "base/landscape.h"
 #include "chain/xdp_meta.h"
 #include "chain/xdp_lan_maps.h"
+#include "chain/xdp_from_lan_exit_maps.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

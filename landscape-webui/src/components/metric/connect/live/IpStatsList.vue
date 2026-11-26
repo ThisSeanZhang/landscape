@@ -5,6 +5,7 @@ import { useThemeVars, NTooltip, NIcon, NButton } from "naive-ui";
 import { Search } from "@vicons/carbon";
 import { GlobeSearch24Regular } from "@vicons/fluent";
 import type { IpRealtimeStat } from "@landscape-router/types/api/schemas";
+import GeoRuleLink from "@/components/geo/GeoRuleLink.vue";
 import FlowExhibit from "@/components/flow/FlowExhibit.vue";
 
 import { useI18n } from "vue-i18n";
@@ -55,6 +56,9 @@ const columns = computed(() => [
                 )
               : null,
           ]),
+          props.showGeoLookup
+            ? h(GeoRuleLink, { target: { ip: row.ip } })
+            : null,
           props.showGeoLookup
             ? h(
                 NTooltip,

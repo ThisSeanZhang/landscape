@@ -17,8 +17,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use h2::client::SendRequest;
-use hickory_proto::op::{DnsRequestOptions, Message, MessageType, Query};
-use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
+use hickory_proto::op::{DnsRequestOptions, Message, Query};
+use http::header::{ACCEPT, AGE, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{Request, Response, Version};
 use tokio::sync::Semaphore;
 
@@ -227,11 +227,14 @@ impl DnsConn for DohConn {
             send_stream.send_data(Bytes::from(bytes), true).map_err(map_h2_capacity)?;
 
             let response = response_future.await.map_err(map_h2_capacity)?;
+            let age = response.headers().get(AGE).map(parse_age).transpose()?.unwrap_or(0);
             let body = read_body(response).await?;
-            let message = Message::from_vec(&body)
-                .map_err(|e| DnsConnError::Internal(format!("undecodable DoH body: {e}")))?;
-            if message.metadata.message_type != MessageType::Response {
-                return Err(DnsConnError::Io("DoH body is not a DNS response".into()));
+            let mut message = Message::from_vec(&body)
+                .map_err(|e| DnsConnError::Response(format!("undecodable DoH body: {e}")))?;
+            super::validate_reply(&message, std::slice::from_ref(query))
+                .map_err(|reason| DnsConnError::Response(reason.into()))?;
+            if age > 0 {
+                age_records(&mut message, age);
             }
             Ok(message)
         })
@@ -299,6 +302,31 @@ impl Drop for InFlightGuard<'_> {
     }
 }
 
+fn parse_age(value: &http::HeaderValue) -> Result<u32, DnsConnError> {
+    let digits = value.as_bytes();
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return Err(DnsConnError::Response("invalid HTTP Age".into()));
+    }
+    Ok(digits
+        .iter()
+        .fold(0u32, |age, digit| age.saturating_mul(10).saturating_add(u32::from(digit - b'0'))))
+}
+
+fn age_records(message: &mut Message, age: u32) {
+    if crate::resolve::answer::DnsAnswer::is_negative_message(message) {
+        for record in &mut message.authorities {
+            if let hickory_proto::rr::RData::SOA(soa) = &record.data {
+                record.ttl = record.ttl.min(soa.minimum);
+            }
+        }
+    }
+    for record in
+        message.answers.iter_mut().chain(&mut message.authorities).chain(&mut message.additionals)
+    {
+        record.ttl = record.ttl.saturating_sub(age);
+    }
+}
+
 /// Collects the response body, enforcing the DoH response contract: 2xx
 /// status, the DNS content type, a Content-Length match when advertised,
 /// and a bounded size (a DNS message cannot exceed 65535 bytes).
@@ -308,22 +336,22 @@ async fn read_body(mut response: Response<h2::RecvStream>) -> Result<Vec<u8>, Dn
         .get(CONTENT_LENGTH)
         .map(|v| v.to_str())
         .transpose()
-        .map_err(|e| DnsConnError::Io(format!("bad Content-Length header: {e}")))?
+        .map_err(|e| DnsConnError::Response(format!("bad Content-Length header: {e}")))?
         .map(|v| v.parse::<usize>())
         .transpose()
-        .map_err(|e| DnsConnError::Io(format!("bad Content-Length header: {e}")))?;
+        .map_err(|e| DnsConnError::Response(format!("bad Content-Length header: {e}")))?;
 
     // RFC 8484 §4.2.1: non-2xx responses carry no DNS answer.
     if !response.status().is_success() {
-        return Err(DnsConnError::Io(format!("DoH returned HTTP {}", response.status())));
+        return Err(DnsConnError::Response(format!("DoH returned HTTP {}", response.status())));
     }
     // The content type must be the DNS wire format (when specified).
     if let Some(content_type) = response.headers().get(CONTENT_TYPE) {
         let content_type = content_type
             .to_str()
-            .map_err(|e| DnsConnError::Io(format!("bad Content-Type header: {e}")))?;
+            .map_err(|e| DnsConnError::Response(format!("bad Content-Type header: {e}")))?;
         if content_type != MIME_APPLICATION_DNS {
-            return Err(DnsConnError::Io(format!(
+            return Err(DnsConnError::Response(format!(
                 "unsupported Content-Type '{content_type}' (must be '{MIME_APPLICATION_DNS}')"
             )));
         }
@@ -332,23 +360,20 @@ async fn read_body(mut response: Response<h2::RecvStream>) -> Result<Vec<u8>, Dn
     let mut body = Vec::with_capacity(content_length.unwrap_or(512).clamp(512, 4_096));
     while let Some(partial) = response.body_mut().data().await {
         let partial = partial.map_err(map_h2_capacity)?;
+        response
+            .body_mut()
+            .flow_control()
+            .release_capacity(partial.len())
+            .map_err(map_h2_capacity)?;
+        if body.len() + partial.len() > u16::MAX as usize {
+            return Err(DnsConnError::Response("DoH body exceeds the 65535-byte DNS limit".into()));
+        }
         body.extend_from_slice(&partial);
-        // A DNS message is bounded by its 16-bit length fields: a server
-        // streaming beyond that is misbehaving (or hostile) and must not
-        // be allowed to grow the buffer without limit.
-        if body.len() > u16::MAX as usize {
-            return Err(DnsConnError::Io("DoH body exceeds the 65535-byte DNS limit".into()));
-        }
-        if let Some(content_length) = content_length
-            && body.len() >= content_length
-        {
-            break;
-        }
     }
     if let Some(content_length) = content_length
         && body.len() != content_length
     {
-        return Err(DnsConnError::Io(format!(
+        return Err(DnsConnError::Response(format!(
             "expected {content_length} body bytes, got {}",
             body.len()
         )));
@@ -359,6 +384,34 @@ async fn read_body(mut response: Response<h2::RecvStream>) -> Result<Vec<u8>, Dn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn age_handles_overflow_and_expires_negative_soa_at_its_minimum() {
+        use hickory_proto::{
+            op::OpCode,
+            rr::{Name, RData, Record, rdata::SOA},
+        };
+        assert_eq!(
+            parse_age(&http::HeaderValue::from_static("999999999999999999999")).unwrap(),
+            u32::MAX
+        );
+        assert!(parse_age(&http::HeaderValue::from_static("-1")).is_err());
+        let mut message = Message::response(0, OpCode::Query);
+        let name = Name::from_ascii("example.com.").unwrap();
+        message.authorities.push(Record::from_rdata(
+            name.clone(),
+            3600,
+            RData::SOA(SOA::new(name.clone(), name.clone(), 1, 1, 1, 1, 30)),
+        ));
+        message.additionals.push(Record::from_rdata(
+            name,
+            12,
+            RData::A(hickory_proto::rr::rdata::A::new(1, 2, 3, 4)),
+        ));
+        age_records(&mut message, 20);
+        assert_eq!(message.authorities[0].ttl, 10);
+        assert_eq!(message.additionals[0].ttl, 0);
+    }
 
     #[test]
     fn request_uri_is_https_with_server_name_and_path() {

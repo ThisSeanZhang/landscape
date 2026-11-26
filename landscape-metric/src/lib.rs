@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, RwLock};
 
 use landscape_common::concurrency::{spawn_task, task_label};
-use landscape_common::config::{MetricMode, MetricRuntimeConfig};
 use landscape_common::database::error::DbError;
 use landscape_common::metric::connect::ConnectMetric;
 use landscape_common::metric::connect::{
@@ -13,8 +12,11 @@ use landscape_common::metric::connect::{
 };
 use landscape_common::metric::dns::DnsMetricEvent;
 use landscape_common::metric::dns::{
-    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse,
+    DnsHistoryQueryParams, DnsHistoryResponse, DnsLightweightSummaryResponse, DnsLiveDashboard,
     DnsSummaryQueryParams, DnsSummaryResponse,
+};
+use landscape_common::sys_config::{
+    ConnectMetricRuntimeConfig, DnsMetricRuntimeConfig, MetricStoreBackend,
 };
 use landscape_common::utils::time::now_ms;
 use tokio::sync::mpsc;
@@ -31,250 +33,131 @@ pub use sink::memory::MemoryMetricStore;
 pub mod memory_store {
     pub use crate::sink::memory::MemoryMetricStore;
 }
-use sink::MetricSink;
-use sink::memory::MemoryMetricSink;
 #[cfg(feature = "metric-persistent")]
 use sink::persistent::PersistentMetricStore;
-
-fn lock_or_recover<'a, T>(lock: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
-    lock.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("{name} lock poisoned; recovering the inner state");
-        poisoned.into_inner()
-    })
-}
+use sink::{ConnectMetricSink, DnsMetricSink};
 
 use agg::dns_bucket::{minute_end, minute_start};
 use agg::dns_window::{DNS_RECENT_WINDOW_SECS, DnsRecentWindow};
 
-/// 构建后端 sink:内存模式与 Off 模式挂 MemorySink;persistent 初始化失败时
-/// 回退内存 sink,保证 metric 数据不影响系统启动。
-/// 返回是否启用 DNS 实时窗口(persistent 后端成功初始化时为 true)。
-async fn build_sink(
-    _base_path: PathBuf,
-    _config: &MetricRuntimeConfig,
-    mode: &MetricMode,
-) -> (Arc<dyn MetricSink>, bool) {
-    match mode {
-        MetricMode::Off | MetricMode::Memory => (Arc::new(MemoryMetricSink), false),
-        MetricMode::Persistent => {
-            #[cfg(feature = "metric-persistent")]
-            {
-                match PersistentMetricStore::new_with_config(_base_path, _config).await {
-                    Ok(store) => (Arc::new(store), true),
-                    Err(error) => {
-                        tracing::error!(
-                            "failed to initialize persistent metric backend, falling back to memory: {}",
-                            error
-                        );
-                        (Arc::new(MemoryMetricSink), false)
-                    }
-                }
-            }
-            #[cfg(not(feature = "metric-persistent"))]
-            {
-                tracing::error!(
-                    "metric mode 'persistent' requested, but landscape-metric was built \
-                     without the metric-persistent feature; falling back to memory"
-                );
-                (Arc::new(MemoryMetricSink), false)
-            }
+#[cfg(feature = "metric-persistent")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MetricKind {
+    Connect,
+    Dns,
+}
+
+#[derive(Default)]
+struct Workers {
+    stats: workers::WriteQueueStats,
+    stop: CancellationToken,
+    tasks: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
+}
+impl Workers {
+    async fn shutdown(&self) {
+        self.stop.cancel();
+        let mut tasks = self.tasks.lock().await;
+        for task in tasks.drain(..) {
+            let _ = task.await;
         }
     }
 }
+impl Drop for Workers {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
 
-/// 指标引擎:聚合层(内存实时态)+ sink 层(历史存储)通过管线串接。
-/// 实时查询由聚合层内存态直接服务,历史查询转发给 sink。
-#[derive(Clone)]
-pub struct MetricEngine {
-    config: MetricRuntimeConfig,
-    sink: Arc<dyn MetricSink>,
+pub struct ConnectMetricEngine {
+    sink: Option<Arc<dyn ConnectMetricSink>>,
     connect_tx: Option<mpsc::Sender<ConnectMetric>>,
-    dns_tx: Option<mpsc::Sender<DnsMetricEvent>>,
-    shutdown: CancellationToken,
-    workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    connect_writer_tx: Arc<Mutex<Option<workers::ConnectBatchTx>>>,
-    connect_writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    dns_writer_tx: Arc<Mutex<Option<workers::dns::DnsBatchTx>>>,
-    dns_writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    writer_stats: workers::WriteQueueStats,
+    workers: Workers,
     flow_cache: agg::FlowCache,
     iface_realtime: agg::IfaceRealtimeCache,
     second_window_ms: u64,
-    dns_window: Option<DnsRecentWindow>,
 }
 
-impl MetricEngine {
-    pub async fn new(base_path: PathBuf, config: MetricRuntimeConfig) -> Result<Self, String> {
-        let mode = resolved_metric_mode(config.mode.clone());
-        let (sink, is_persistent) = build_sink(base_path, &config, &mode).await;
-
-        let flow_cache: agg::FlowCache = Arc::new(RwLock::new(HashMap::new()));
-        let iface_realtime: agg::IfaceRealtimeCache = Arc::new(RwLock::new(HashMap::new()));
-        let shutdown = CancellationToken::new();
-        let workers = Arc::new(Mutex::new(Vec::new()));
-        let connect_writer_tx = Arc::new(Mutex::new(None));
-        let connect_writer_handle = Arc::new(Mutex::new(None));
-        let dns_writer_tx = Arc::new(Mutex::new(None));
-        let dns_writer_handle = Arc::new(Mutex::new(None));
-        let writer_stats = workers::WriteQueueStats::default();
-        let second_window_ms = agg::second_window_ms(&config);
-
-        let dns_window = if is_persistent { Some(DnsRecentWindow::new()) } else { None };
-
-        let (connect_tx, connect_rx) = mpsc::channel::<ConnectMetric>(agg::CHANNEL_CAPACITY);
-        let (dns_tx, dns_rx) = mpsc::channel::<DnsMetricEvent>(agg::CHANNEL_CAPACITY);
-
-        if !matches!(mode, MetricMode::Off) {
-            // connect/dns 各自的 sqlite 文件相互独立,拆成两条 writer 链路并行写;
-            // cleanup 由各 writer 任务内的定时器执行,不再占用投递队列。
-            let (connect_write_tx, connect_write_rx) = mpsc::channel::<Batch>(256);
-            let queue_stats = writer_stats.clone();
-            let connect_writer_sink = sink.clone();
-            let connect_writer_config = config.clone();
-            let connect_writer_stats = queue_stats.clone();
-            let connect_writer = spawn_task(task_label::task::METRIC_CONNECT_WRITER, async move {
-                workers::run_connect_writer(
-                    connect_writer_sink,
-                    connect_write_rx,
-                    connect_writer_stats,
-                    connect_writer_config,
-                )
-                .await;
-            });
-            *lock_or_recover(&connect_writer_tx, "metric connect writer tx") =
-                Some(connect_write_tx.clone());
-            *lock_or_recover(&connect_writer_handle, "metric connect writer handle") =
-                Some(connect_writer);
-
-            let dns_write_tx = if is_persistent {
-                let (dns_write_tx, dns_write_rx) =
-                    mpsc::channel::<workers::dns::DnsWriteMessage>(256);
-                let dns_writer_sink = sink.clone();
-                let dns_writer_config = config.clone();
-                let dns_writer_stats = queue_stats.clone();
-                let dns_writer = spawn_task(task_label::task::METRIC_DNS_WRITER, async move {
-                    workers::dns::run_dns_writer(
-                        dns_writer_sink,
-                        dns_write_rx,
-                        dns_writer_stats,
-                        dns_writer_config,
-                    )
-                    .await;
-                });
-                *lock_or_recover(&dns_writer_tx, "metric dns writer tx") =
-                    Some(dns_write_tx.clone());
-                *lock_or_recover(&dns_writer_handle, "metric dns writer handle") = Some(dns_writer);
-                Some(dns_write_tx)
-            } else {
-                None
-            };
-
-            // 行为决策:启动不回填 DNS 最近窗口(不读回磁盘),重启后状态卡展示 0,
-            // 直到新的 DNS 指标到达。避免高 QPS 下启动时一次性读回 5 分钟原始行的开销。
-            let config_clone = config.clone();
-            let flow_cache_clone = flow_cache.clone();
-            let iface_realtime_clone = iface_realtime.clone();
-            let shutdown_clone = shutdown.clone();
-            let workers_clone = workers.clone();
-            let write_tx_clone = connect_write_tx.clone();
-            let queue_stats_clone = queue_stats.clone();
-            let connect_handle = spawn_task(task_label::task::METRIC_CONNECT_WORKER, async move {
-                workers::run_connect_worker(
-                    connect_rx,
-                    write_tx_clone,
-                    queue_stats_clone,
-                    config_clone,
-                    flow_cache_clone,
-                    iface_realtime_clone,
-                    shutdown_clone,
-                )
-                .await;
-            });
-            lock_or_recover(&workers_clone, "metric workers").push(connect_handle);
-
-            let config_clone = config.clone();
-            let shutdown_clone = shutdown.clone();
-            let workers_clone = workers.clone();
-            let dns_window_clone = dns_window.clone();
-            let write_tx_clone = dns_write_tx.clone();
-            let queue_stats_clone = queue_stats.clone();
-            let dns_handle = spawn_task(task_label::task::METRIC_DNS_WORKER, async move {
-                workers::dns::run_dns_worker(
-                    dns_rx,
-                    write_tx_clone,
-                    queue_stats_clone,
-                    config_clone,
-                    dns_window_clone,
-                    shutdown_clone,
-                )
-                .await;
-            });
-            lock_or_recover(&workers_clone, "metric workers").push(dns_handle);
+impl ConnectMetricEngine {
+    pub fn off() -> Self {
+        Self {
+            sink: None,
+            connect_tx: None,
+            workers: Workers::default(),
+            flow_cache: Arc::new(RwLock::new(HashMap::new())),
+            iface_realtime: Arc::new(RwLock::new(HashMap::new())),
+            second_window_ms: 0,
         }
-
-        Ok(Self {
-            config,
-            sink,
-            connect_tx: if matches!(mode, MetricMode::Off) { None } else { Some(connect_tx) },
-            dns_tx: if matches!(mode, MetricMode::Off) { None } else { Some(dns_tx) },
-            shutdown,
-            workers,
-            connect_writer_tx,
-            connect_writer_handle,
-            dns_writer_tx,
-            dns_writer_handle,
-            writer_stats,
-            flow_cache,
-            iface_realtime,
-            second_window_ms,
-            dns_window,
-        })
+    }
+    pub async fn new(path: PathBuf, config: ConnectMetricRuntimeConfig) -> Result<Self, String> {
+        if !config.enabled {
+            return Ok(Self::off());
+        }
+        let sink: Option<Arc<dyn ConnectMetricSink>> = match config.store.backend {
+            MetricStoreBackend::Memory => None,
+            MetricStoreBackend::Sqlite => {
+                #[cfg(feature = "metric-persistent")]
+                {
+                    Some(Arc::new(
+                        PersistentMetricStore::open(
+                            path,
+                            MetricKind::Connect,
+                            config.store.max_bytes,
+                        )
+                        .await?,
+                    ))
+                }
+                #[cfg(not(feature = "metric-persistent"))]
+                {
+                    let _ = path;
+                    return Err(
+                        landscape_common::metric::MetricError::SqliteUnavailable.to_string()
+                    );
+                }
+            }
+        };
+        Ok(Self { sink, ..Self::off() }.start(config))
     }
 
-    pub fn mode(&self) -> MetricMode {
-        resolved_metric_mode(self.config.mode.clone())
+    fn start(mut self, config: ConnectMetricRuntimeConfig) -> Self {
+        self.second_window_ms = agg::second_window_ms(&config);
+        let stats = self.workers.stats.clone();
+        let (tx, rx) = mpsc::channel(agg::CHANNEL_CAPACITY);
+        let writer_tx = self.sink.as_ref().map(|sink| {
+            let (writer_tx, writer_rx) = mpsc::channel::<Batch>(256);
+            let writer = spawn_task(
+                task_label::task::METRIC_CONNECT_WRITER,
+                workers::run_connect_writer(sink.clone(), writer_rx, stats.clone(), config.clone()),
+            );
+            self.workers.tasks.get_mut().push(writer);
+            writer_tx
+        });
+        let worker = spawn_task(
+            task_label::task::METRIC_CONNECT_WORKER,
+            workers::run_connect_worker(
+                rx,
+                writer_tx,
+                stats,
+                config,
+                self.flow_cache.clone(),
+                self.iface_realtime.clone(),
+                self.workers.stop.clone(),
+            ),
+        );
+        self.workers.tasks.get_mut().insert(0, worker);
+        self.connect_tx = Some(tx);
+        self
     }
-
     pub fn get_connect_msg_channel(&self) -> Option<mpsc::Sender<ConnectMetric>> {
         self.connect_tx.clone()
     }
-
-    pub fn get_dns_msg_channel(&self) -> Option<mpsc::Sender<DnsMetricEvent>> {
-        self.dns_tx.clone()
-    }
-
-    /// Returns `(dropped_batches, failed_batches)` observed by the writer queue.
     pub fn writer_stats(&self) -> (u64, u64) {
-        self.writer_stats.snapshot()
+        self.workers.stats.snapshot()
     }
-
     pub async fn shutdown(&self) {
-        self.shutdown.cancel();
-        let handles: Vec<JoinHandle<()>> = {
-            let mut workers = lock_or_recover(&self.workers, "metric workers");
-            workers.drain(..).collect()
-        };
-        for handle in handles {
-            let _ = handle.await;
+        self.workers.shutdown().await;
+        if let Some(sink) = &self.sink {
+            sink.close().await;
         }
-        // 聚合 worker 已退出(其持有的 writer sender 随之释放),再释放引擎侧的
-        // sender,writer 消费完剩余批次后自然退出,保证 finalize 数据落库。
-        let connect_writer_tx =
-            lock_or_recover(&self.connect_writer_tx, "metric connect writer tx").take();
-        drop(connect_writer_tx);
-        let connect_writer_handle =
-            lock_or_recover(&self.connect_writer_handle, "metric connect writer handle").take();
-        if let Some(handle) = connect_writer_handle {
-            let _ = handle.await;
-        }
-        let dns_writer_tx = lock_or_recover(&self.dns_writer_tx, "metric dns writer tx").take();
-        drop(dns_writer_tx);
-        let dns_writer_handle =
-            lock_or_recover(&self.dns_writer_handle, "metric dns writer handle").take();
-        if let Some(handle) = dns_writer_handle {
-            let _ = handle.await;
-        }
-        self.sink.close().await;
     }
 
     pub async fn connect_infos(&self) -> Vec<ConnectRealtimeStatus> {
@@ -296,88 +179,177 @@ impl MetricEngine {
         &self,
         key: ConnectKey,
         resolution: MetricResolution,
-    ) -> Vec<ConnectMetricPoint> {
+    ) -> Result<Vec<ConnectMetricPoint>, DbError> {
         if resolution == MetricResolution::Second {
             let cutoff = now_ms().saturating_sub(self.second_window_ms);
-            return agg::second_points_by_key(&self.flow_cache, &key, cutoff);
+            return Ok(agg::second_points_by_key(&self.flow_cache, &key, cutoff));
         }
-        self.sink.query_metric_by_key(key, resolution).await
+        match &self.sink {
+            Some(sink) => sink.query_metric_by_key(key, resolution).await,
+            None => Ok(Default::default()),
+        }
     }
 
     pub async fn history_summaries_complex(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> ConnectHistoryResponse {
-        self.sink.history_summaries_complex(params).await
+    ) -> Result<ConnectHistoryResponse, DbError> {
+        match &self.sink {
+            Some(sink) => sink.history_summaries_complex(params).await,
+            None => Ok(Default::default()),
+        }
     }
 
     pub async fn history_src_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
-        self.sink.history_src_ip_stats(params).await
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        match &self.sink {
+            Some(sink) => sink.history_src_ip_stats(params).await,
+            None => Ok(Default::default()),
+        }
     }
 
     pub async fn history_dst_ip_stats(
         &self,
         params: ConnectHistoryQueryParams,
-    ) -> Vec<IpHistoryStat> {
-        self.sink.history_dst_ip_stats(params).await
+    ) -> Result<Vec<IpHistoryStat>, DbError> {
+        match &self.sink {
+            Some(sink) => sink.history_dst_ip_stats(params).await,
+            None => Ok(Default::default()),
+        }
     }
 
     pub async fn get_global_stats(
         &self,
         force_refresh: bool,
     ) -> Result<ConnectGlobalStats, DbError> {
-        self.sink.get_global_stats(force_refresh).await
+        match &self.sink {
+            Some(sink) => sink.get_global_stats(force_refresh).await,
+            None => Ok(Default::default()),
+        }
+    }
+}
+
+pub struct DnsMetricEngine {
+    sink: Option<Arc<dyn DnsMetricSink>>,
+    dns_tx: Option<mpsc::Sender<DnsMetricEvent>>,
+    workers: Workers,
+    dns_window: DnsRecentWindow,
+}
+
+impl DnsMetricEngine {
+    pub fn off() -> Self {
+        Self {
+            sink: None,
+            dns_tx: None,
+            workers: Workers::default(),
+            dns_window: DnsRecentWindow::new(),
+        }
+    }
+    pub async fn new(path: PathBuf, config: DnsMetricRuntimeConfig) -> Result<Self, String> {
+        if !config.enabled {
+            return Ok(Self::off());
+        }
+        let sink: Option<Arc<dyn DnsMetricSink>> = match config.store.backend {
+            MetricStoreBackend::Memory => None,
+            MetricStoreBackend::Sqlite => {
+                #[cfg(feature = "metric-persistent")]
+                {
+                    Some(Arc::new(
+                        PersistentMetricStore::open(path, MetricKind::Dns, config.store.max_bytes)
+                            .await?,
+                    ))
+                }
+                #[cfg(not(feature = "metric-persistent"))]
+                {
+                    let _ = path;
+                    return Err(
+                        landscape_common::metric::MetricError::SqliteUnavailable.to_string()
+                    );
+                }
+            }
+        };
+        Ok(Self { sink, ..Self::off() }.start(config))
+    }
+
+    fn start(mut self, config: DnsMetricRuntimeConfig) -> Self {
+        let stats = self.workers.stats.clone();
+        let (tx, rx) = mpsc::channel(agg::CHANNEL_CAPACITY);
+        let writer_tx = self.sink.as_ref().map(|sink| {
+            let (writer_tx, writer_rx) = mpsc::channel(256);
+            let writer = spawn_task(
+                task_label::task::METRIC_DNS_WRITER,
+                workers::dns::run_dns_writer(
+                    sink.clone(),
+                    writer_rx,
+                    stats.clone(),
+                    config.clone(),
+                ),
+            );
+            self.workers.tasks.get_mut().push(writer);
+            writer_tx
+        });
+        let worker = spawn_task(
+            task_label::task::METRIC_DNS_WORKER,
+            workers::dns::run_dns_worker(
+                rx,
+                writer_tx,
+                stats,
+                config,
+                self.dns_window.clone(),
+                self.workers.stop.clone(),
+            ),
+        );
+        self.workers.tasks.get_mut().insert(0, worker);
+        self.dns_tx = Some(tx);
+        self
+    }
+    pub fn get_dns_msg_channel(&self) -> Option<mpsc::Sender<DnsMetricEvent>> {
+        self.dns_tx.clone()
+    }
+    pub fn writer_stats(&self) -> (u64, u64) {
+        self.workers.stats.snapshot()
+    }
+    pub async fn shutdown(&self) {
+        self.workers.shutdown().await;
+        if let Some(sink) = &self.sink {
+            sink.close().await;
+        }
+    }
+
+    pub fn get_dns_live_dashboard(&self, flow_id: Option<u32>) -> DnsLiveDashboard {
+        self.dns_window.dashboard(now_ms(), flow_id)
     }
 
     pub async fn query_dns_history(&self, params: DnsHistoryQueryParams) -> DnsHistoryResponse {
-        self.sink.query_dns_history(params).await
+        match &self.sink {
+            Some(sink) => sink.query_dns_history(params).await,
+            None => Default::default(),
+        }
     }
 
-    /// 首页 DNS 状态卡片(DnsStatusCard)专用查询。
-    ///
-    /// DNS 查询架构约定(数据流):
-    /// - 本函数:数据源仅为内存窗口 `DnsRecentWindow`(最近 5 分钟,由采集方向
-    ///   ingest 驱动)。窗口纯内存:不落库、不与 DB 合并,重启后窗口为空时返回全 0。
-    /// - `get_dns_summary`(仪表盘状态卡 DNSDashboard,默认 10min):只查 DB 桶,
-    ///   与本函数无关;历史页 `query_dns_history`:只查 DB 原始行。
-    ///
-    /// 内存与 DB 相互独立、永不合并。非 persistent 模式(内存 sink)走
-    /// `sink.get_dns_lightweight_summary`。
+    /// Homepage counts come from the recent in-memory window in every storage mode.
     pub async fn get_dns_lightweight_summary(
         &self,
         params: DnsSummaryQueryParams,
     ) -> DnsLightweightSummaryResponse {
-        if let Some(window) = &self.dns_window {
-            let now_ms = now_ms();
-            let Some((start, end)) = normalized_dns_range(&params, now_ms) else {
-                // 倒置/异常区间窗口无法回答,返回空。
-                return DnsLightweightSummaryResponse::default();
-            };
-            return window.range_parts(start, end, params.flow_id).into_lightweight_response();
-        }
-        self.sink.get_dns_lightweight_summary(params).await
+        let Some((start, end)) = normalized_dns_range(&params, now_ms()) else {
+            return Default::default();
+        };
+        self.dns_window.range_parts(start, end, params.flow_id).into_lightweight_response()
     }
 
-    /// 仪表盘状态卡(DNSDashboard,默认 10min)专用查询。
-    ///
-    /// 数据源:仅 DB 1m 预聚合桶表(`dns_metrics_1m` + top 表,由 DNS writer 从
-    /// 原始行批次实时构建),永不读内存窗口;区间不足一个完整分钟时回退原始行
-    /// 保持子分钟精度。首页卡片走 `get_dns_lightweight_summary` 只读内存窗口,
-    /// 与本函数无关。非 persistent 模式(内存 sink)走 `sink.get_dns_summary`。
+    /// Dashboard history uses minute buckets, falling back to raw rows for a sub-minute range.
     pub async fn get_dns_summary(&self, params: DnsSummaryQueryParams) -> DnsSummaryResponse {
-        if self.dns_window.is_some() {
-            let now_ms = now_ms();
-            if let Some((start, end)) = normalized_dns_range(&params, now_ms) {
-                let parts = self.sink.get_dns_summary_parts(start, end, params.flow_id).await;
-                return parts.into_summary_response();
-            }
-            // 区间不足一个完整分钟:回退原始行路径保持子分钟精度。
-            return self.sink.get_dns_summary(params).await;
+        let Some(sink) = &self.sink else { return Default::default() };
+        if let Some((start, end)) = normalized_dns_range(&params, now_ms()) {
+            return sink
+                .get_dns_summary_parts(start, end, params.flow_id)
+                .await
+                .into_summary_response();
         }
-        self.sink.get_dns_summary(params).await
+        sink.get_dns_summary(params).await
     }
 }
 
@@ -400,21 +372,6 @@ fn normalized_dns_range(params: &DnsSummaryQueryParams, now_ms: u64) -> Option<(
     Some((start, end))
 }
 
-pub fn resolved_metric_mode(mode: MetricMode) -> MetricMode {
-    if matches!(mode, MetricMode::Persistent) {
-        #[cfg(feature = "metric-persistent")]
-        {
-            mode
-        }
-        #[cfg(not(feature = "metric-persistent"))]
-        {
-            MetricMode::Memory
-        }
-    } else {
-        mode
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,25 +379,21 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
-    fn test_config(mode: MetricMode) -> MetricRuntimeConfig {
-        MetricRuntimeConfig {
-            mode,
-            connect_second_window_minutes: 5,
-            connect_1m_retention_days: 1,
-            connect_1h_retention_days: 7,
-            connect_1d_retention_days: 30,
-            connect_summary_retention_days: 30,
-            connect_summary_max_rows: 0,
-            connect_db_max_bytes: landscape_common::DEFAULT_METRIC_CONNECT_DB_MAX_BYTES,
-            dns_retention_days: 7,
-            dns_1m_retention_days: 30,
-            dns_db_max_bytes: landscape_common::DEFAULT_DNS_METRIC_DB_MAX_BYTES,
-            write_batch_size: 2,
-            write_flush_interval_secs: 1,
-            cleanup_interval_secs: 3600,
-            cleanup_time_budget_ms: 1_000,
-            cleanup_slice_window_secs: 60,
-        }
+    use landscape_common::sys_config::{ConnectMetricConfig, DnsMetricConfig, RuntimeConfigSource};
+    fn connect_config(backend: MetricStoreBackend) -> ConnectMetricRuntimeConfig {
+        let mut config = ConnectMetricConfig::default().build_runtime();
+        config.store.backend = backend;
+        config.write_batch_size = 2;
+        config.store.write_flush_interval_secs = 1;
+        config.store.cleanup_interval_secs = 3600;
+        config
+    }
+    fn dns_config(backend: MetricStoreBackend) -> DnsMetricRuntimeConfig {
+        let mut config = DnsMetricConfig::default().build_runtime();
+        config.store.backend = backend;
+        config.store.write_flush_interval_secs = 1;
+        config.store.cleanup_interval_secs = 3600;
+        config
     }
 
     fn connect_metric(
@@ -471,7 +424,9 @@ mod tests {
     #[tokio::test]
     async fn memory_engine_serves_realtime_queries() {
         let engine =
-            MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
+            ConnectMetricEngine::new(PathBuf::new(), connect_config(MetricStoreBackend::Memory))
+                .await
+                .unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = now_ms();
 
@@ -509,7 +464,8 @@ mod tests {
                 },
                 MetricResolution::Minute,
             )
-            .await;
+            .await
+            .unwrap();
         assert!(points.is_empty());
         let stats = engine.get_global_stats(false).await.unwrap();
         assert_eq!(stats.total_connect_count, 0);
@@ -520,7 +476,9 @@ mod tests {
     #[tokio::test]
     async fn memory_engine_second_resolution_served_from_ring() {
         let engine =
-            MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
+            ConnectMetricEngine::new(PathBuf::new(), connect_config(MetricStoreBackend::Memory))
+                .await
+                .unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = now_ms();
         let key = ConnectKey { create_time: 1_000 * 1_000_000, cpu_id: 1 };
@@ -530,14 +488,15 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let points = engine.query_metric_by_key(key.clone(), MetricResolution::Second).await;
+            let points =
+                engine.query_metric_by_key(key.clone(), MetricResolution::Second).await.unwrap();
             if points.len() == 2 {
                 break;
             }
             assert!(tokio::time::Instant::now() < deadline, "timed out waiting for ring points");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        let points = engine.query_metric_by_key(key, MetricResolution::Second).await;
+        let points = engine.query_metric_by_key(key, MetricResolution::Second).await.unwrap();
         assert_eq!(points.last().unwrap().ingress_bytes, 200);
 
         engine.shutdown().await;
@@ -545,18 +504,21 @@ mod tests {
 
     #[tokio::test]
     async fn off_mode_exposes_no_channels() {
-        let engine = MetricEngine::new(PathBuf::new(), test_config(MetricMode::Off)).await.unwrap();
-        assert!(engine.get_connect_msg_channel().is_none());
-        assert!(engine.get_dns_msg_channel().is_none());
-        assert!(engine.connect_infos().await.is_empty());
-        assert_eq!(engine.get_global_stats(false).await.unwrap().total_connect_count, 0);
-        engine.shutdown().await;
+        let connect = ConnectMetricEngine::off();
+        let dns = DnsMetricEngine::off();
+        assert!(connect.get_connect_msg_channel().is_none());
+        assert!(dns.get_dns_msg_channel().is_none());
+        assert!(connect.connect_infos().await.is_empty());
+        connect.shutdown().await;
+        dns.shutdown().await;
     }
 
     #[tokio::test]
     async fn memory_shutdown_stops_worker() {
         let engine =
-            MetricEngine::new(PathBuf::new(), test_config(MetricMode::Memory)).await.unwrap();
+            ConnectMetricEngine::new(PathBuf::new(), connect_config(MetricStoreBackend::Memory))
+                .await
+                .unwrap();
         let tx = engine.get_connect_msg_channel().unwrap();
         let now_ms = now_ms();
         tx.send(connect_metric(1, 1_000, now_ms - 1_000, 100)).await.unwrap();
@@ -605,12 +567,58 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn closing_across_midnight_preserves_both_snapshots_at_every_resolution() {
+            let dir = tempfile::tempdir().unwrap();
+            let config = connect_config(MetricStoreBackend::Sqlite);
+            let engine = ConnectMetricEngine::new(dir.path().into(), config.clone()).await.unwrap();
+            let tx = engine.get_connect_msg_channel().unwrap();
+            let day = 86_400_000;
+            let midnight = now_ms() / day * day;
+            let active = connect_metric(1, midnight - 5_000, midnight - 2_000, 100);
+            let key = active.key();
+            let mut closed = connect_metric(1, midnight - 5_000, midnight + 1_000, 160);
+            closed.status = ConnectStatusType::Disabled.into();
+            tx.send(active).await.unwrap();
+            tx.send(closed).await.unwrap();
+            engine.shutdown().await;
+            assert_eq!(engine.writer_stats(), (0, 0));
+
+            let reader = ConnectMetricEngine::new(dir.path().into(), config).await.unwrap();
+            for (resolution, span) in [
+                (MetricResolution::Minute, 60_000),
+                (MetricResolution::Hour, 3_600_000),
+                (MetricResolution::Day, day),
+            ] {
+                let points = reader.query_metric_by_key(key.clone(), resolution).await.unwrap();
+                let samples: Vec<_> = points
+                    .into_iter()
+                    .map(|p| (p.report_time, p.ingress_bytes, p.status))
+                    .collect();
+                assert_eq!(
+                    samples,
+                    [
+                        (midnight - span, 100, ConnectStatusType::Active),
+                        (midnight, 160, ConnectStatusType::Disabled)
+                    ]
+                );
+            }
+            reader.shutdown().await;
+            // A closed database must surface a read error instead of an empty result.
+            assert!(reader.history_summaries_complex(Default::default()).await.is_err());
+            assert!(reader.history_src_ip_stats(Default::default()).await.is_err());
+            assert!(reader.history_dst_ip_stats(Default::default()).await.is_err());
+            assert!(reader.query_metric_by_key(key, MetricResolution::Minute).await.is_err());
+        }
+
+        #[tokio::test]
         async fn connect_pipeline_writes_summaries_buckets_and_global_stats() {
             let temp = tempfile::tempdir().unwrap();
-            let engine =
-                MetricEngine::new(temp.path().to_path_buf(), test_config(MetricMode::Persistent))
-                    .await
-                    .unwrap();
+            let engine = ConnectMetricEngine::new(
+                temp.path().to_path_buf(),
+                connect_config(MetricStoreBackend::Sqlite),
+            )
+            .await
+            .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let now_ms = now_ms();
             // 对齐到整分钟,避免两条 report_time 跨分钟边界落入不同 1m 桶导致断言 flaky。
@@ -640,7 +648,8 @@ mod tests {
             assert_eq!(stats.total_ingress_bytes, 200);
             assert_eq!(stats.total_egress_bytes, 400);
 
-            let points = engine.query_metric_by_key(key.clone(), MetricResolution::Minute).await;
+            let points =
+                engine.query_metric_by_key(key.clone(), MetricResolution::Minute).await.unwrap();
             assert_eq!(points.len(), 1);
             assert_eq!(points[0].ingress_bytes, 200);
 
@@ -649,7 +658,8 @@ mod tests {
                     limit: Some(10),
                     ..Default::default()
                 })
-                .await;
+                .await
+                .unwrap();
             assert_eq!(history.items.len(), 1);
             assert_eq!(history.items[0].key, key);
 
@@ -659,10 +669,12 @@ mod tests {
         #[tokio::test]
         async fn dns_pipeline_updates_window_and_persists_to_sqlite() {
             let temp = tempfile::tempdir().unwrap();
-            let engine =
-                MetricEngine::new(temp.path().to_path_buf(), test_config(MetricMode::Persistent))
-                    .await
-                    .unwrap();
+            let engine = DnsMetricEngine::new(
+                temp.path().to_path_buf(),
+                dns_config(MetricStoreBackend::Sqlite),
+            )
+            .await
+            .unwrap();
             let tx = engine.get_dns_msg_channel().unwrap();
             let now_ms = now_ms();
 
@@ -714,7 +726,9 @@ mod tests {
             let now_ms = now_ms();
 
             let engine =
-                MetricEngine::new(path.clone(), test_config(MetricMode::Persistent)).await.unwrap();
+                ConnectMetricEngine::new(path.clone(), connect_config(MetricStoreBackend::Sqlite))
+                    .await
+                    .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let mut closed = connect_metric(1, 1_000, now_ms - 1_000, 200);
             closed.status = ConnectStatusType::Disabled.into();
@@ -736,7 +750,9 @@ mod tests {
             drop(engine);
 
             let restarted =
-                MetricEngine::new(path, test_config(MetricMode::Persistent)).await.unwrap();
+                ConnectMetricEngine::new(path, connect_config(MetricStoreBackend::Sqlite))
+                    .await
+                    .unwrap();
             let stats = restarted.get_global_stats(false).await.unwrap();
             assert_eq!(stats.total_connect_count, 1);
             assert_eq!(stats.total_ingress_bytes, 200);
@@ -746,7 +762,8 @@ mod tests {
                     limit: Some(10),
                     ..Default::default()
                 })
-                .await;
+                .await
+                .unwrap();
             assert_eq!(history.items.len(), 1);
             assert_eq!(history.items[0].total_ingress_bytes, 200);
             restarted.shutdown().await;
@@ -755,10 +772,12 @@ mod tests {
         #[tokio::test]
         async fn dns_recent_window_agrees_with_sql_fallback_including_boundary_minute() {
             let temp = tempfile::tempdir().unwrap();
-            let engine =
-                MetricEngine::new(temp.path().to_path_buf(), test_config(MetricMode::Persistent))
-                    .await
-                    .unwrap();
+            let engine = DnsMetricEngine::new(
+                temp.path().to_path_buf(),
+                dns_config(MetricStoreBackend::Sqlite),
+            )
+            .await
+            .unwrap();
             let tx = engine.get_dns_msg_channel().unwrap();
             let now_ms = now_ms();
             let window_start = minute_start(now_ms.saturating_sub(DNS_RECENT_WINDOW_SECS * 1000));
@@ -813,7 +832,9 @@ mod tests {
             let now_ms = now_ms();
 
             let engine =
-                MetricEngine::new(path.clone(), test_config(MetricMode::Persistent)).await.unwrap();
+                ConnectMetricEngine::new(path.clone(), connect_config(MetricStoreBackend::Sqlite))
+                    .await
+                    .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let mut active = connect_metric(1, 1_000, now_ms - 1_000, 200);
             active.status = ConnectStatusType::Active.into();
@@ -835,7 +856,9 @@ mod tests {
             drop(engine);
 
             let restarted =
-                MetricEngine::new(path, test_config(MetricMode::Persistent)).await.unwrap();
+                ConnectMetricEngine::new(path, connect_config(MetricStoreBackend::Sqlite))
+                    .await
+                    .unwrap();
             let stats = restarted.get_global_stats(false).await.unwrap();
             assert_eq!(
                 stats.total_connect_count, 1,
@@ -854,8 +877,9 @@ mod tests {
             let path = temp.path().to_path_buf();
             let now_ms = now_ms();
 
-            let engine =
-                MetricEngine::new(path.clone(), test_config(MetricMode::Persistent)).await.unwrap();
+            let engine = DnsMetricEngine::new(path.clone(), dns_config(MetricStoreBackend::Sqlite))
+                .await
+                .unwrap();
             let tx = engine.get_dns_msg_channel().unwrap();
             tx.send(dns_metric(now_ms - 1_000)).await.unwrap();
 
@@ -882,7 +906,7 @@ mod tests {
 
             // 重启后:仪表盘状态卡从 DB 桶读到重启前的数据(桶在 DB,与窗口无关)。
             let restarted =
-                MetricEngine::new(path, test_config(MetricMode::Persistent)).await.unwrap();
+                DnsMetricEngine::new(path, dns_config(MetricStoreBackend::Sqlite)).await.unwrap();
             let summary = restarted.get_dns_summary(DnsSummaryQueryParams::default()).await;
             assert_eq!(
                 summary.total_queries, 1,
@@ -917,10 +941,12 @@ mod tests {
         #[tokio::test]
         async fn shutdown_returns_promptly_while_connect_sender_alive() {
             let temp = tempfile::tempdir().unwrap();
-            let engine =
-                MetricEngine::new(temp.path().to_path_buf(), test_config(MetricMode::Persistent))
-                    .await
-                    .unwrap();
+            let engine = ConnectMetricEngine::new(
+                temp.path().to_path_buf(),
+                connect_config(MetricStoreBackend::Sqlite),
+            )
+            .await
+            .unwrap();
             let tx = engine.get_connect_msg_channel().unwrap();
             let now_ms = now_ms();
             tx.send(connect_metric(1, 1_000, now_ms - 1_000, 100)).await.unwrap();
@@ -936,10 +962,12 @@ mod tests {
         #[tokio::test]
         async fn shutdown_returns_promptly_while_dns_sender_alive() {
             let temp = tempfile::tempdir().unwrap();
-            let engine =
-                MetricEngine::new(temp.path().to_path_buf(), test_config(MetricMode::Persistent))
-                    .await
-                    .unwrap();
+            let engine = DnsMetricEngine::new(
+                temp.path().to_path_buf(),
+                dns_config(MetricStoreBackend::Sqlite),
+            )
+            .await
+            .unwrap();
             let tx = engine.get_dns_msg_channel().unwrap();
             let now_ms = now_ms();
             tx.send(dns_metric(now_ms - 1_000)).await.unwrap();
@@ -1053,14 +1081,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn persistent_metric_mode_resolves_based_on_feature() {
-        let mode = resolved_metric_mode(MetricMode::Persistent);
-
-        #[cfg(feature = "metric-persistent")]
-        assert!(matches!(mode, MetricMode::Persistent));
-
-        #[cfg(not(feature = "metric-persistent"))]
-        assert!(matches!(mode, MetricMode::Memory));
+    #[tokio::test]
+    async fn sqlite_requires_persistence_and_opens_only_the_requested_database() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine =
+            DnsMetricEngine::new(temp.path().into(), dns_config(MetricStoreBackend::Sqlite)).await;
+        if !cfg!(feature = "metric-persistent") {
+            assert!(engine.is_err());
+            let connect = ConnectMetricEngine::new(
+                temp.path().into(),
+                connect_config(MetricStoreBackend::Sqlite),
+            )
+            .await;
+            assert!(connect.is_err());
+            assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
+            return;
+        }
+        let engine = engine.unwrap();
+        let names = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|f| f.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(names.iter().all(|name| name.contains("_dns.sqlite")));
+        assert!(!names.is_empty());
+        engine.shutdown().await;
     }
 }

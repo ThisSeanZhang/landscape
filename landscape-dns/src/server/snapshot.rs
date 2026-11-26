@@ -1,11 +1,11 @@
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 #[cfg(test)]
 use arc_swap::Guard;
 
-use landscape_common::dns::CacheRuntimeConfig;
-use landscape_common::flow::{DnsResultSink, FlowMarkInfo};
+use landscape_common::flow::DnsResultSink;
+use landscape_common::sys_config::CacheRuntimeConfig;
 
 use crate::{
     domain::ParsedDomain,
@@ -15,7 +15,6 @@ use crate::{
         engine::ResolveEngine,
         local::LocalResolver,
         redirect::RedirectEngine,
-        rule::DNSResolveRuntime,
     },
 };
 
@@ -70,10 +69,6 @@ impl SnapshotStore {
         }
     }
 
-    pub fn flow_id(&self) -> u32 {
-        self.flow_id
-    }
-
     #[cfg(test)]
     pub fn runtime_config(&self) -> &Arc<ArcSwap<CacheRuntimeConfig>> {
         &self.runtime_config
@@ -81,10 +76,6 @@ impl SnapshotStore {
 
     pub fn local_resolver(&self) -> &Arc<LocalResolver> {
         &self.local_resolver
-    }
-
-    pub fn sink(&self) -> &Arc<dyn DnsResultSink> {
-        &self.sink
     }
 
     #[cfg(test)]
@@ -119,12 +110,7 @@ impl SnapshotStore {
                 let current = self.runtime.load_full();
                 let new_cache =
                     self.remove_redirected_cache(&current.cache, &redirect_engine).await;
-                self.refresh_maps_from_cache(&new_cache);
-                self.runtime.store(Arc::new(RuntimeSnapshot {
-                    redirect_engine: Arc::new(redirect_engine),
-                    resolve_engine: current.resolve_engine.clone(),
-                    cache: new_cache,
-                }));
+                self.publish(Arc::new(redirect_engine), current.resolve_engine.clone(), new_cache);
             }
             SnapshotPatch::RebuildCache => {
                 let current = self.runtime.load_full();
@@ -142,31 +128,28 @@ impl SnapshotStore {
         resolve_engine: Arc<ResolveEngine>,
         ttl_cap: Option<u32>,
     ) {
-        let (new_cache, update_dns_mark_list) =
-            self.rebuild_cache(&redirect_engine, &resolve_engine, ttl_cap).await;
+        let new_cache =
+            CacheHandle::new(self.runtime_config.clone(), self.flow_id, self.sink.clone());
+        self.migrate_cache(&new_cache, &redirect_engine, &resolve_engine, ttl_cap).await;
+        new_cache.run_pending_tasks().await;
+        self.publish(redirect_engine, resolve_engine, new_cache);
+    }
 
-        tracing::debug!("add_dns_marks: {:?}", update_dns_mark_list);
-        self.sink.refresh_dns_marks(self.flow_id, update_dns_mark_list.into_iter().collect());
+    fn publish(
+        &self,
+        redirect_engine: Arc<RedirectEngine>,
+        resolve_engine: Arc<ResolveEngine>,
+        new_cache: CacheHandle,
+    ) {
+        // Drain writes to the old map before replacing it. A query holding the
+        // old snapshot may still finish and respond to its client.
+        self.runtime.load().cache.retire();
+        new_cache.refresh_marks();
         self.runtime.store(Arc::new(RuntimeSnapshot {
             redirect_engine,
             resolve_engine,
             cache: new_cache,
         }));
-        self.sink.rebuild_route_cache();
-    }
-
-    async fn rebuild_cache(
-        &self,
-        redirects: &RedirectEngine,
-        resolves: &ResolveEngine,
-        ttl_cap: Option<u32>,
-    ) -> (CacheHandle, HashSet<FlowMarkInfo>) {
-        let new_cache =
-            CacheHandle::new(self.runtime_config.clone(), self.flow_id, self.sink.clone());
-        self.migrate_cache(&new_cache, redirects, resolves, ttl_cap).await;
-        new_cache.run_pending_tasks().await;
-        let update_dns_mark_list = new_cache.dns_mark_list();
-        (new_cache, update_dns_mark_list)
     }
 
     async fn remove_redirected_cache(
@@ -179,9 +162,10 @@ impl SnapshotStore {
         for (key, value) in current_cache.iter() {
             let (domain, req_type) = &*key;
             let Ok(pd) = ParsedDomain::new(domain) else { continue };
-            if redirects
-                .lookup(&pd, *req_type, self.local_resolver.local_answer_provider())
-                .is_none()
+            if value.is_live()
+                && redirects
+                    .lookup(&pd, *req_type, self.local_resolver.local_answer_provider())
+                    .is_none()
             {
                 new_cache.insert_raw((domain.clone(), *req_type), value).await;
             }
@@ -197,25 +181,31 @@ impl SnapshotStore {
         resolves: &ResolveEngine,
         ttl_cap: Option<u32>,
     ) {
-        let current_cache = &self.runtime.load().cache;
+        let current = self.runtime.load_full();
 
-        for (key, value) in current_cache.iter() {
+        for (key, cache_item) in current.cache.iter() {
             let (domain, req_type) = &*key;
             let Ok(pd) = ParsedDomain::new(domain) else { continue };
-            let cache_item = value;
             if redirects
                 .lookup(&pd, *req_type, self.local_resolver.local_answer_provider())
                 .is_some()
             {
                 continue;
             }
-            if let Some(resolver) = Self::find_cache_rule(resolves, &pd, &cache_item) {
-                let new_mark = resolver.mark().clone();
-
+            if let Some(resolver) = resolves.find_match(&pd) {
+                // Reuse only data obtained under the winning rule and upstream.
+                let old = cache_item
+                    .matched_rule_order
+                    .and_then(|order| current.resolve_engine.get(order))
+                    .or_else(|| current.resolve_engine.find_match(&pd));
+                if cache_item.matched_rule_id.is_some_and(|id| id != resolver.get_config_id())
+                    || !old.is_some_and(|old| old.can_reuse_answers_with(resolver))
+                {
+                    continue;
+                }
                 let new_item = CacheDNSItem {
-                    rdatas: cache_item.rdatas.clone(),
-                    response_code: cache_item.response_code,
-                    mark: new_mark.clone(),
+                    answer: cache_item.answer.clone(),
+                    mark: resolver.mark().clone(),
                     insert_time: cache_item.insert_time,
                     min_ttl: ttl_cap.map_or(cache_item.min_ttl, |cap| cache_item.min_ttl.min(cap)),
                     filter: resolver.filter_mode(),
@@ -223,29 +213,10 @@ impl SnapshotStore {
                     matched_rule_order: Some(resolver.order()),
                 };
 
-                new_cache.insert_raw((domain.clone(), *req_type), Arc::new(new_item)).await;
+                if new_item.is_live() {
+                    new_cache.insert_raw((domain.clone(), *req_type), Arc::new(new_item)).await;
+                }
             }
         }
-    }
-
-    fn find_cache_rule<'a>(
-        resolves: &'a ResolveEngine,
-        domain: &ParsedDomain,
-        cache_item: &CacheDNSItem,
-    ) -> Option<&'a DNSResolveRuntime> {
-        if let Some(rule_order) = cache_item.matched_rule_order
-            && let Some(resolver) = resolves.get(rule_order)
-            && cache_item.matched_rule_id == Some(resolver.get_config_id())
-            && resolver.is_match(domain)
-        {
-            return Some(resolver);
-        }
-
-        resolves.find_match(domain)
-    }
-
-    pub fn refresh_maps_from_cache(&self, cache: &CacheHandle) {
-        self.sink.refresh_dns_marks(self.flow_id, cache.dns_mark_list().into_iter().collect());
-        self.sink.rebuild_route_cache();
     }
 }

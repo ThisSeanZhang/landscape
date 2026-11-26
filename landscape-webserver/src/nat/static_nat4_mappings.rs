@@ -36,8 +36,14 @@ pub fn get_static_nat_mapping_v4_paths() -> OpenApiRouter<LandscapeApp> {
 async fn get_static_nat_mappings_v4(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<StaticNatMappingV4ConfigView>> {
-    let result: Vec<StaticNatMappingV4ConfigView> =
-        state.static_nat4_mapping_service.list().await?.into_iter().map(Into::into).collect();
+    let result: Vec<StaticNatMappingV4ConfigView> = state
+        .managed
+        .static_nat4_mapping_service
+        .list()
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     LandscapeApiResp::success(result)
 }
 
@@ -55,7 +61,7 @@ async fn get_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<StaticNatMappingV4ConfigView> {
-    let result = state.static_nat4_mapping_service.find_by_id(id).await?;
+    let result = state.managed.static_nat4_mapping_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config.into())
     } else {
@@ -75,7 +81,7 @@ async fn add_static_nat_mapping_v4(
     JsonBody(config): JsonBody<CreateStaticNatMappingV4Config>,
 ) -> LandscapeApiResult<StaticNatMappingV4ConfigView> {
     let config: StaticNatMappingV4Config = config.into();
-    let result = state.static_nat4_mapping_service.checked_set(config).await?;
+    let result = state.managed.static_nat4_mapping_service.checked_set(config).await?;
     LandscapeApiResp::success(result.into())
 }
 
@@ -95,13 +101,13 @@ async fn update_static_nat_mapping_v4(
     Path(id): Path<ConfigId>,
     JsonBody(body): JsonBody<UpdateStaticNatMappingV4Config>,
 ) -> LandscapeApiResult<StaticNatMappingV4ConfigView> {
-    if state.static_nat4_mapping_service.find_by_id(id).await?.is_none() {
+    if state.managed.static_nat4_mapping_service.find_by_id(id).await?.is_none() {
         Err(StaticNatError::NotFound(id))?;
     }
     // Path id wins; update_at must echo the client's last-seen version.
     let mut config: StaticNatMappingV4Config = body.into();
     config.id = id;
-    let result = state.static_nat4_mapping_service.checked_set(config).await?;
+    let result = state.managed.static_nat4_mapping_service.checked_set(config).await?;
     LandscapeApiResp::success(result.into())
 }
 
@@ -117,7 +123,7 @@ async fn add_many_static_nat_mappings_v4(
     JsonBody(configs): JsonBody<Vec<CreateStaticNatMappingV4Config>>,
 ) -> LandscapeApiResult<()> {
     let configs: Vec<StaticNatMappingV4Config> = configs.into_iter().map(Into::into).collect();
-    state.static_nat4_mapping_service.checked_set_list(configs).await?;
+    state.managed.static_nat4_mapping_service.checked_set_list(configs).await?;
     LandscapeApiResp::success(())
 }
 
@@ -135,7 +141,7 @@ async fn del_static_nat_mapping_v4(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.static_nat4_mapping_service.delete(id).await?;
+    state.managed.static_nat4_mapping_service.delete(id).await?;
     LandscapeApiResp::success(())
 }
 
@@ -162,7 +168,11 @@ async fn check_static_nat_v4_conflict(
     let protocols: Vec<u8> =
         params.protocols.split(',').filter_map(|s| s.trim().parse().ok()).collect();
 
-    match state.static_nat4_mapping_service.check_port_conflict(params.wan_port, &protocols).await?
+    match state
+        .managed
+        .static_nat4_mapping_service
+        .check_port_conflict(params.wan_port, &protocols)
+        .await?
     {
         Some(StaticNatError::PortConflict { port, iface_name, protocol, start, end }) => {
             LandscapeApiResp::success(PortConflictCheckResponse {

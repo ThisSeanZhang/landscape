@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { watch, computed } from "vue";
+import { useMetricAutoRefresh } from "@/composables/useMetricAutoRefresh";
+import { useAsyncState } from "@vueuse/core";
 import { get_connect_metric_info } from "@/api/metric";
-import type {
-  ConnectKey,
-  ConnectMetricPoint,
-} from "@landscape-router/types/api/schemas";
+import type { ConnectKey } from "@landscape-router/types/api/schemas";
 import MetricLineChart from "../MetricLineChart.vue";
 import { useI18n } from "vue-i18n";
 
@@ -15,12 +14,19 @@ interface Props {
 }
 
 const props = defineProps<Props>();
-const chartData = ref<ConnectMetricPoint[]>([]);
-const interval = ref<any>(null);
+const {
+  state: chartData,
+  isLoading,
+  execute: refresh,
+} = useAsyncState(() => get_connect_metric_info(props.conn), [], {
+  resetOnExecute: false,
+});
+useMetricAutoRefresh(refresh, isLoading);
 
-async function fetchData() {
-  chartData.value = await get_connect_metric_info(props.conn);
-}
+watch(
+  () => props.conn,
+  () => refresh(),
+);
 
 // 数据降采样
 function downsampleData(
@@ -115,19 +121,15 @@ function formatVolumeRate(value: number): string {
 }
 
 const formatPacketRate = (value: number) => `${Math.round(value)} pps`;
-
-onMounted(() => {
-  fetchData();
-  interval.value = setInterval(fetchData, 5000);
-});
-
-onUnmounted(() => {
-  if (interval.value) clearInterval(interval.value);
-});
 </script>
 
 <template>
   <n-flex vertical>
+    <n-flex justify="end">
+      <n-button size="small" :loading="isLoading" @click="refresh()">{{
+        t("metric.connect.stats.refresh_sample")
+      }}</n-button>
+    </n-flex>
     <MetricLineChart
       :series="bytesSeries"
       :x-axis-title="t('metric.connect.filter.time')"

@@ -147,7 +147,7 @@ fn xdp_mss_syn() {
 
     let dummy_fd = dummy.progs.xdp_test_dummy.as_fd().as_raw_fd();
     skel.maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(&0u32.to_ne_bytes(), &dummy_fd.to_ne_bytes(), MapFlags::ANY)
         .unwrap();
 
@@ -194,7 +194,7 @@ fn xdp_mss_bidirectional() {
     let dummy_h = d_b1.open(&mut d1_obj).expect("open").load().expect("load");
     skel_h
         .maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(
             &0u32.to_ne_bytes(),
             &dummy_h.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),
@@ -207,7 +207,7 @@ fn xdp_mss_bidirectional() {
     let dummy_p = d_b2.open(&mut d2_obj).expect("open").load().expect("load");
     skel_p
         .maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(
             &0u32.to_ne_bytes(),
             &dummy_p.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),
@@ -272,7 +272,7 @@ fn xdp_mss_non_syn_passthrough() {
     let mut d_obj = std::mem::MaybeUninit::uninit();
     let dummy = d_b.open(&mut d_obj).expect("open").load().expect("load");
     skel.maps
-        .xdp_pipe_exits_lan
+        .xdp_from_lan_exit_map
         .update(
             &0u32.to_ne_bytes(),
             &dummy.progs.xdp_test_dummy.as_fd().as_raw_fd().to_ne_bytes(),

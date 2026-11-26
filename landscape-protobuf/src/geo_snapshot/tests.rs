@@ -8,8 +8,9 @@ use tempfile::tempdir;
 use uuid::Uuid;
 
 use super::{
-    GeoSnapshotError, GeoSnapshotReader, GeoSnapshotRule, GeoSnapshotSourceKind, IpSnapshotCidr,
-    IpSnapshotReader, IpSnapshotWriter, SiteSnapshotReader, SiteSnapshotWriter,
+    GeoSnapshotError, GeoSnapshotReader, GeoSnapshotRule, GeoSnapshotSourceKind, GeoSnapshotWriter,
+    IpSnapshotCidr, IpSnapshotPreparedCidr, IpSnapshotReader, IpSnapshotWriter, SiteSnapshotReader,
+    SiteSnapshotWriter,
 };
 
 fn create_writer(path: &std::path::Path) -> SiteSnapshotWriter {
@@ -291,4 +292,157 @@ fn ip_snapshot_rejects_invalid_prefix() {
         writer.write_cidr("10.0.0.0".parse().unwrap(), 33),
         Err(GeoSnapshotError::InvalidPayload(_))
     ));
+}
+
+#[test]
+fn site_snapshot_prepares_cache_rows() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("site-prepared.snap");
+    let mut writer = SiteSnapshotWriter::create(&path, Uuid::new_v4()).unwrap();
+    writer.start_key("cn").unwrap();
+    writer.write_rule_iter(DomainMatchType::Regex, "^[a-z]+$", ["z", "a", "a"]).unwrap();
+    writer.write_rule_iter(DomainMatchType::Regex, "(invalid", []).unwrap();
+    writer.write_rule_iter(DomainMatchType::Domain, "Example.COM.", []).unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+
+    let reader = SiteSnapshotReader::open(&path).unwrap();
+    assert_eq!(reader.metadata().format_version, super::FORMAT_VERSION);
+    let mut key_reader = reader.open_key("CN").unwrap();
+
+    let regex = key_reader.next_prepared().unwrap().unwrap();
+    assert_eq!(regex.match_type, DomainMatchType::Regex);
+    assert!(regex.pattern_valid);
+    assert_eq!(regex.value, "^[a-z]+$");
+    assert_eq!(regex.attributes_json.as_deref(), Some("[\"a\",\"z\"]"));
+
+    let invalid = key_reader.next_prepared().unwrap().unwrap();
+    assert_eq!(invalid.match_type, DomainMatchType::Regex);
+    assert!(!invalid.pattern_valid);
+
+    let domain = key_reader.next_prepared().unwrap().unwrap();
+    assert_eq!(domain.match_type, DomainMatchType::Domain);
+    assert!(domain.pattern_valid);
+    assert_eq!(domain.value, "example.com");
+    assert_eq!(domain.attributes_json, None);
+    assert!(key_reader.next_prepared().unwrap().is_none());
+}
+
+#[test]
+fn ip_snapshot_prepares_masked_rows() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ip-prepared.snap");
+    let mut writer = IpSnapshotWriter::create(&path, Uuid::new_v4()).unwrap();
+    writer.start_key("cn").unwrap();
+    writer.write_cidr("10.1.2.3".parse().unwrap(), 8).unwrap();
+    writer.write_cidr("2001:db8::1".parse().unwrap(), 32).unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+
+    let reader = IpSnapshotReader::open(&path).unwrap();
+    assert_eq!(reader.metadata().format_version, super::FORMAT_VERSION);
+    let mut key_reader = reader.open_key("CN").unwrap();
+
+    let v4 = key_reader.next_prepared().unwrap().unwrap();
+    assert_eq!((v4.family, v4.prefix_len), (4, 8));
+    assert_eq!(&v4.network[..4], &[10, 0, 0, 0]);
+
+    let v6 = key_reader.next_prepared().unwrap().unwrap();
+    assert_eq!((v6.family, v6.prefix_len), (6, 32));
+    assert_eq!(&v6.network[..4], &[0x20, 0x01, 0x0d, 0xb8]);
+    assert!(key_reader.next_prepared().unwrap().is_none());
+}
+
+#[test]
+fn prepared_cidr_clamps_prefix_to_family_maximum() {
+    let v4 = IpSnapshotPreparedCidr::from_ip("10.1.2.3".parse().unwrap(), 40);
+    assert_eq!((v4.family, v4.prefix_len), (4, 32));
+    assert_eq!(&v4.network[..4], &[10, 1, 2, 3]);
+
+    let v6 = IpSnapshotPreparedCidr::from_ip("2001:db8::1".parse().unwrap(), 200);
+    assert_eq!((v6.family, v6.prefix_len), (6, 128));
+}
+
+#[test]
+fn v2_ip_snapshot_rejects_unmasked_network() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ip-unmasked.snap");
+    let mut writer =
+        GeoSnapshotWriter::create(&path, GeoSnapshotSourceKind::Ip, Uuid::new_v4()).unwrap();
+    writer.start_key("cn").unwrap();
+    let mut item = vec![4, 8];
+    item.extend_from_slice(&[10, 1, 2, 3]);
+    writer.write_item(&item).unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+
+    let reader = IpSnapshotReader::open(&path).unwrap();
+    let mut key_reader = reader.open_key("CN").unwrap();
+    assert!(matches!(key_reader.next_prepared(), Err(GeoSnapshotError::InvalidPayload(_))));
+}
+
+fn downgrade_to_v1(path: &std::path::Path) {
+    let mut bytes = fs::read(path).unwrap();
+    assert_eq!(&bytes[8..10], &super::FORMAT_VERSION.to_le_bytes());
+    bytes[8..10].copy_from_slice(&super::FORMAT_VERSION_V1.to_le_bytes());
+    fs::write(path, bytes).unwrap();
+}
+
+fn push_v1_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn v1_site_item(match_type: u8, value: &str, attrs: &[&str]) -> Vec<u8> {
+    let mut item = vec![match_type];
+    push_v1_u32(&mut item, value.len() as u32);
+    item.extend_from_slice(value.as_bytes());
+    push_v1_u32(&mut item, attrs.len() as u32);
+    for attribute in attrs {
+        push_v1_u32(&mut item, attribute.len() as u32);
+        item.extend_from_slice(attribute.as_bytes());
+    }
+    item
+}
+
+#[test]
+fn v1_site_snapshot_still_reads_as_prepared() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("site-v1.snap");
+    let mut writer =
+        GeoSnapshotWriter::create(&path, GeoSnapshotSourceKind::Site, Uuid::new_v4()).unwrap();
+    writer.start_key("cn").unwrap();
+    writer.write_item(&v1_site_item(1, "(invalid", &["z", "a"])).unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+    downgrade_to_v1(&path);
+
+    let reader = SiteSnapshotReader::open(&path).unwrap();
+    assert_eq!(reader.metadata().format_version, super::FORMAT_VERSION_V1);
+    let prepared = reader.open_key("CN").unwrap().next_prepared().unwrap().unwrap();
+    assert_eq!(prepared.match_type, DomainMatchType::Regex);
+    assert!(!prepared.pattern_valid);
+    assert_eq!(prepared.value, "(invalid");
+    assert_eq!(prepared.attributes_json.as_deref(), Some("[\"a\",\"z\"]"));
+}
+
+#[test]
+fn v1_ip_snapshot_still_reads_as_prepared() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ip-v1.snap");
+    let mut writer =
+        GeoSnapshotWriter::create(&path, GeoSnapshotSourceKind::Ip, Uuid::new_v4()).unwrap();
+    writer.start_key("cn").unwrap();
+    let mut item = vec![4];
+    item.extend_from_slice(&[10, 1, 2, 3]);
+    push_v1_u32(&mut item, 8);
+    writer.write_item(&item).unwrap();
+    writer.end_key().unwrap();
+    writer.finish().unwrap();
+    downgrade_to_v1(&path);
+
+    let reader = IpSnapshotReader::open(&path).unwrap();
+    assert_eq!(reader.metadata().format_version, super::FORMAT_VERSION_V1);
+    let prepared = reader.open_key("CN").unwrap().next_prepared().unwrap().unwrap();
+    assert_eq!((prepared.family, prepared.prefix_len), (4, 8));
+    assert_eq!(&prepared.network[..4], &[10, 0, 0, 0]);
 }

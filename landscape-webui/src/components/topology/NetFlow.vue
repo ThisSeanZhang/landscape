@@ -10,12 +10,13 @@ import { useI18n } from "vue-i18n";
 import { add_controller } from "@/api/network";
 import FlowHeaderExtra from "@/components/topology/FlowHeaderExtra.vue";
 import FlowNode from "@/components/topology/FlowNode.vue";
+import TopologyDetailDrawer from "./TopologyDetailDrawer.vue";
 import TopologyDetailPanel from "@/components/topology/TopologyDetailPanel.vue";
-import { NetDev, WLANTypeTag } from "@/lib/dev";
-import { getBridgeAttachIssue } from "@/lib/topology";
+import { NetDev } from "@/lib/network/dev";
+import { getBridgeAttachIssue } from "@/lib/network/topology";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import { useIfaceNodeStore } from "@/stores/iface_node";
-import { useMetricStore } from "@/stores/status_metric";
+import { useTopologyMetricsStore } from "@/stores/topologyMetrics";
 
 interface Props {
   fit_padding?: number;
@@ -37,7 +38,7 @@ const {
 } = useVueFlow();
 const message = useMessage();
 const ifaceNodeStore = useIfaceNodeStore();
-const metricStore = useMetricStore();
+const topologyMetrics = useTopologyMetricsStore();
 const themeVars = useThemeVars();
 const containerRef = ref<HTMLElement | null>(null);
 const { width } = useElementSize(containerRef);
@@ -45,7 +46,7 @@ const selectedIfaceId = ref<number | null>(null);
 const connectionLoading = ref(false);
 
 const MOBILE_BREAKPOINT = 960;
-const DESKTOP_MIN_READABLE_ZOOM = 0.78;
+const MIN_READABLE_ZOOM = 0.78;
 const MINIMAP_WIDTH = 180;
 const MINIMAP_HEIGHT = 112;
 const TOP_ALIGN_PADDING = 56;
@@ -86,7 +87,8 @@ const flowNodes = computed(() => {
   }));
 });
 const ifaceStatsByIfindex = computed(
-  () => new Map(metricStore.iface_stats.map((item) => [item.ifindex, item])),
+  () =>
+    new Map(topologyMetrics.iface_stats.map((item) => [item.ifindex, item])),
 );
 const flowEdges = computed(() => {
   const highlighted = highlightedIfaces.value;
@@ -101,7 +103,6 @@ const flowEdges = computed(() => {
         : "normal-edge",
   }));
 });
-const detailOpen = computed(() => selectedIface.value !== undefined);
 const miniMapMaskColor = computed(() =>
   changeColor(themeVars.value.primaryColor, { alpha: 0.08 }),
 );
@@ -150,13 +151,16 @@ async function fitTopology(mode: "overview" | "readable" = "readable") {
     padding: props.fit_padding,
   };
 
-  if (mode === "readable" && !isDrawerMode.value) {
-    fit_params.minZoom = DESKTOP_MIN_READABLE_ZOOM;
+  if (mode === "readable") {
+    fit_params.minZoom = MIN_READABLE_ZOOM;
   }
 
   await fitView(fit_params);
 
-  if (isDrawerMode.value || ifaceNodeStore.nodes.length === 0) {
+  if (
+    !ifaceNodeStore.nodes.length ||
+    (isDrawerMode.value && mode === "overview")
+  ) {
     return;
   }
 
@@ -166,7 +170,8 @@ async function fitTopology(mode: "overview" | "readable" = "readable") {
       (node) => node.position?.y ?? TOP_ALIGN_PADDING,
     ),
   );
-  const aligned_y = TOP_ALIGN_PADDING - top_y * viewport.zoom;
+  const topPadding = isDrawerMode.value ? 80 : TOP_ALIGN_PADDING;
+  const aligned_y = topPadding - top_y * viewport.zoom;
 
   if (Math.abs(viewport.y - aligned_y) > 1) {
     await setViewport(
@@ -338,16 +343,17 @@ watch(selectedIface, (value) => {
 
 onMounted(() => {
   ifaceNodeStore.UPDATE_INFO();
-  metricStore.SET_ENABLE("iface", true);
-  metricStore.UPDATE_INFO();
+  topologyMetrics.active = true;
+  topologyMetrics.UPDATE_INFO();
 });
 
 onUnmounted(() => {
+  ifaceNodeStore.SETTING_CALL_BACK();
   if (heights_flush_handle !== null) {
     cancelAnimationFrame(heights_flush_handle);
     heights_flush_handle = null;
   }
-  metricStore.SET_ENABLE("iface", false);
+  topologyMetrics.active = false;
 });
 
 onNodeClick(({ node }) => {
@@ -375,6 +381,10 @@ onPaneClick(() => {
       :connect-on-click="false"
       :zoom-on-scroll="false"
       :fit-view-on-init="false"
+      @nodes-initialized="
+        isDrawerMode && ifaceNodeStore.view_locked && scheduleFitTopology()
+      "
+      :min-zoom="isDrawerMode ? 0.15 : 0.5"
       :pane-click-distance="4"
       @connect="handleConnect"
     >
@@ -423,25 +433,13 @@ onPaneClick(() => {
         </aside>
       </transition>
 
-      <n-drawer
+      <TopologyDetailDrawer
         v-if="isDrawerMode"
-        :show="detailOpen"
-        placement="bottom"
-        height="78%"
+        :node="selectedIface"
         :trap-focus="false"
         :block-scroll="false"
-        @update:show="(show: boolean) => !show && closePanel()"
-      >
-        <n-drawer-content :closable="false" body-content-style="padding: 0;">
-          <div class="topology-drawer-panel nopan nowheel">
-            <TopologyDetailPanel
-              v-if="selectedIface"
-              :node="selectedIface"
-              @close="closePanel"
-            />
-          </div>
-        </n-drawer-content>
-      </n-drawer>
+        @close="closePanel"
+      />
     </VueFlow>
   </div>
 </template>
@@ -525,10 +523,6 @@ onPaneClick(() => {
   bottom: 16px;
   width: 468px;
   overflow: visible;
-}
-
-.topology-drawer-panel {
-  height: 100%;
 }
 
 .topology-panel-enter-active,

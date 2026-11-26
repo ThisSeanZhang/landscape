@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { DnsUpstreamConfig } from "@landscape-router/types/api/schemas";
-import { DnsUpstreamModeTsEnum, upstream_mode_exhibit_name } from "@/lib/dns";
+import { upstream_mode_exhibit_name } from "@/lib/dns";
 import { delete_dns_upstream } from "@/api/dns_rule/upstream";
 import { useFrontEndStore } from "@/stores/front_end_config";
 import { useI18n } from "vue-i18n";
@@ -27,9 +27,9 @@ async function del() {
 }
 
 const domain = computed(() => {
-  if (props.rule.mode.t === DnsUpstreamModeTsEnum.Plaintext) {
+  if (props.rule.mode.t === "plaintext") {
     return t("dns.upstream_card.no_config");
-  } else if (props.rule.mode.t === DnsUpstreamModeTsEnum.Https) {
+  } else if (props.rule.mode.t === "https") {
     let url = props.rule.mode.http_endpoint ?? "/dns-query";
     return frontEndStore.MASK_INFO(`${props.rule.mode.domain}${url}`);
   } else {

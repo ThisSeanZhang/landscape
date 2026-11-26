@@ -1,28 +1,9 @@
 use std::sync::Arc;
 
-use hickory_proto::{ProtoError, rr::Name};
+use hickory_proto::rr::Name;
 use landscape_common::dns::error::DnsServiceError;
 
 pub(crate) use landscape_common::dns::domain::normalize_domain_text;
-
-/// Parse a DNS name without applying hostname/IDNA label restrictions.
-///
-/// DNS labels may legally contain characters such as `_` (for example
-/// `space_station.example.com`), while hickory's strict `Name::from_utf8`
-/// path treats them as invalid hostnames. For ASCII wire/domain text we build
-/// the labels from raw bytes; non-ASCII input still uses the IDNA path.
-pub(crate) fn name_from_domain_text(domain: &str) -> Result<Name, ProtoError> {
-    let trimmed = domain.trim_end_matches('.');
-    if trimmed.is_empty() {
-        return Name::from_labels(Vec::<&[u8]>::new());
-    }
-    if trimmed.is_ascii() {
-        let labels: Vec<&[u8]> = trimmed.split('.').map(str::as_bytes).collect();
-        Name::from_labels(labels)
-    } else {
-        Name::from_utf8(trimmed)
-    }
-}
 
 /// Canonical per-request representation of a DNS name. Parsed once per query
 /// and shared unchanged across the whole resolution chain (local resolver,
@@ -40,12 +21,7 @@ pub struct ParsedDomain {
 impl ParsedDomain {
     pub fn new(fqdn: &str) -> Result<Self, DnsServiceError> {
         let normalized = normalize_domain_text(fqdn);
-        let dns_name = if normalized.is_ascii() {
-            name_from_domain_text(normalized.as_ref())
-        } else {
-            Name::from_utf8(normalized.as_ref())
-        }
-        .map_err(|_| DnsServiceError::Invalid { domain: fqdn.to_string() })?;
+        let dns_name = parse_dns_name(normalized.as_ref(), fqdn)?;
         Ok(Self::canonicalize(dns_name))
     }
 
@@ -56,7 +32,9 @@ impl ParsedDomain {
     // Hickory parses Unicode labels as IDNA and stores their ASCII/Punycode
     // form. Keep that canonical representation everywhere downstream so
     // byte-oriented matchers and suffix checks never see UTF-8 labels.
-    fn canonicalize(dns_name: Name) -> Self {
+    fn canonicalize(mut dns_name: Name) -> Self {
+        // Wire names include the root label. Hickory also compares it when matching questions.
+        dns_name.set_fqdn(true);
         let name = dns_name.to_ascii().trim_end_matches('.').to_ascii_lowercase();
         let labels: Vec<String> = name.split('.').map(String::from).collect();
         let raw = Arc::from(format!("{}.", name).as_str());
@@ -103,6 +81,23 @@ impl ParsedDomain {
     }
 }
 
+/// Parse domain text into a DNS name, keeping IDNA for Unicode labels while
+/// also accepting DNS-only labels such as `xxx_xxx`.
+///
+/// `Name::from_str_relaxed` is whole-name: it falls back from IDNA to the
+/// ASCII parser only when the entire name fails IDNA, so a mix of IDNA and
+/// underscore labels fails both passes. Normalize that mixed case to ASCII
+/// with the (non-strict) `idna` crate and parse the result as plain labels.
+fn parse_dns_name(normalized: &str, original: &str) -> Result<Name, DnsServiceError> {
+    if let Ok(name) = Name::from_str_relaxed(normalized) {
+        return Ok(name);
+    }
+
+    let ascii = idna::domain_to_ascii(normalized)
+        .map_err(|_| DnsServiceError::Invalid { domain: original.to_string() })?;
+    Name::from_ascii(ascii).map_err(|_| DnsServiceError::Invalid { domain: original.to_string() })
+}
+
 #[cfg(test)]
 mod tests {
     use hickory_proto::rr::Name;
@@ -127,27 +122,41 @@ mod tests {
     }
 
     #[test]
-    fn from_wire_name_matches_string_construction() {
-        let wire = ParsedDomain::from_wire_name(Name::from_ascii("WWW.Example.COM.").unwrap());
-        let text = ParsedDomain::new("www.example.com").unwrap();
+    fn accepts_underscore_labels_after_the_first_character() {
+        let domain = ParsedDomain::new("xxx_xxx.example.com.").unwrap();
 
-        assert_eq!(wire.raw(), text.raw());
-        assert_eq!(wire.name(), text.name());
-        assert_eq!(
-            wire.as_dns_name().to_ascii().trim_end_matches('.'),
-            text.as_dns_name().to_ascii().trim_end_matches('.')
-        );
+        assert_eq!(domain.name(), "xxx_xxx.example.com");
+        assert_eq!(domain.raw(), "xxx_xxx.example.com.");
+        assert_eq!(domain.as_dns_name().to_ascii().trim_end_matches('.'), "xxx_xxx.example.com");
     }
-}
-
-#[cfg(test)]
-mod dns_label_tests {
-    use super::*;
 
     #[test]
-    fn underscore_label_is_parsed_as_dns_name() {
-        let domain = ParsedDomain::new("space_station.flydigi.com").unwrap();
-        assert_eq!(domain.name(), "space_station.flydigi.com");
-        assert_eq!(domain.as_dns_name().to_ascii(), "space_station.flydigi.com.");
+    fn accepts_mixed_idna_and_underscore_labels() {
+        let domain = ParsedDomain::new("xxx_xxx.测试.com.").unwrap();
+
+        assert!(domain.name().is_ascii());
+        assert!(domain.name().starts_with("xxx_xxx.xn--"));
+        assert!(domain.name().ends_with(".com"));
+        assert_eq!(domain.raw(), format!("{}.", domain.name()));
+    }
+
+    #[test]
+    fn accepts_underscore_inside_unicode_labels() {
+        let domain = ParsedDomain::new("测试_foo.com.").unwrap();
+
+        assert!(domain.name().is_ascii());
+        assert!(domain.name().starts_with("xn--"));
+        assert!(domain.name().ends_with(".com"));
+    }
+
+    #[test]
+    fn from_wire_name_matches_string_construction() {
+        let wire = ParsedDomain::from_wire_name(Name::from_ascii("WWW.Example.COM.").unwrap());
+        for input in ["www.example.com", "WWW.Example.COM."] {
+            let text = ParsedDomain::new(input).unwrap();
+            assert_eq!(wire.as_dns_name(), text.as_dns_name());
+            assert_eq!(wire.raw(), text.raw());
+            assert_eq!(wire.name(), text.name());
+        }
     }
 }

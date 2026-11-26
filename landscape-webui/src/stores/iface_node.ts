@@ -1,7 +1,7 @@
 import { ifaces } from "@/api/network";
-import { get_all_wan_links } from "@/api/service_wan_link";
-import { DevStateType, NetDev } from "@/lib/dev";
-import type { WanLink } from "@/lib/wan_link";
+import { get_all_wan_links } from "@/api/services/wan_link";
+import { NetDev } from "@/lib/network/dev";
+import type { WanLink } from "@/lib/wan/wan_link";
 import { IfaceZoneType } from "@landscape-router/types/api/schemas";
 import * as dagre from "@dagrejs/dagre";
 import { defineStore } from "pinia";
@@ -63,15 +63,11 @@ function sort_devices(devs: NetDev[]) {
 export function get_visible_devices(devs: NetDev[], hide_down: boolean) {
   return sort_devices(
     devs.filter((each) => {
-      if (each.dev_type === "Loopback") {
+      if (each.dev_type?.toLowerCase() === "loopback") {
         return false;
       }
 
-      if (
-        hide_down &&
-        each.dev_status.t === DevStateType.Down &&
-        !each.virtual
-      ) {
+      if (hide_down && each.dev_status.t === "down" && !each.virtual) {
         return false;
       }
 
@@ -119,7 +115,7 @@ export function merge_pppd_placeholders(
         perm_mac: undefined,
         dev_type: "ppp",
         dev_kind: "unknow",
-        dev_status: { t: DevStateType.Down },
+        dev_status: { t: "down" },
         controller_id: undefined,
         carrier: false,
         zone_type: IfaceZoneType.wan,
@@ -340,6 +336,8 @@ export const useIfaceNodeStore = defineStore(
   "iface_node",
   () => {
     const net_devs = ref<NetDev[]>([]);
+    const loadState = ref<"pending" | "ready" | "failed">("pending");
+    let latestRequest = 0;
     const pppd_links = ref<WanLink[]>([]);
     const pppd_link_map = computed(
       () =>
@@ -488,12 +486,21 @@ export const useIfaceNodeStore = defineStore(
     );
 
     async function UPDATE_INFO() {
-      const [devs, wan_links_result] = await Promise.all([
-        ifaces(),
-        get_all_wan_links().catch(() => [] as WanLink[]),
-      ]);
-      pppd_links.value = wan_links_result;
-      net_devs.value = merge_pppd_placeholders(devs, wan_links_result);
+      const id = ++latestRequest;
+      try {
+        const [devs, wan_links_result] = await Promise.all([
+          ifaces(),
+          get_all_wan_links().catch(() => [] as WanLink[]),
+        ]);
+        if (id !== latestRequest) return;
+        pppd_links.value = wan_links_result;
+        net_devs.value = merge_pppd_placeholders(devs, wan_links_result);
+        loadState.value = "ready";
+      } catch (error) {
+        if (id !== latestRequest) return;
+        loadState.value = "failed";
+        throw error;
+      }
     }
 
     /** Merge measured heights; only real changes (> 0.5px) relayout. */
@@ -518,7 +525,7 @@ export const useIfaceNodeStore = defineStore(
       }
     }
 
-    async function SETTING_CALL_BACK(call_back: () => void) {
+    async function SETTING_CALL_BACK(call_back?: () => void) {
       node_call_back.value = call_back;
     }
 
@@ -563,6 +570,7 @@ export const useIfaceNodeStore = defineStore(
 
     return {
       net_devs,
+      loadState,
       pppd_links,
       pppd_link_map,
       visible_net_devs,

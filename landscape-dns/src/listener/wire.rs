@@ -127,7 +127,6 @@ pub(crate) fn build_response(
     response.metadata.recursion_desired = req.recursion_desired;
     response.metadata.checking_disabled = req.checking_disabled;
     response.metadata.recursion_available = true;
-    response.metadata.authoritative = true;
     response.metadata.response_code = code;
     response.add_query(Query::query(req.name.clone(), req.query_type));
     response.answers = records;
@@ -142,7 +141,6 @@ fn error_response(message: &Message, code: ResponseCode) -> Message {
     response.metadata.recursion_desired = message.recursion_desired;
     response.metadata.checking_disabled = message.checking_disabled;
     response.metadata.recursion_available = true;
-    response.metadata.authoritative = true;
     response.metadata.response_code = code;
     response.queries = message.queries.clone();
     if let Some(req_edns) = &message.edns {
@@ -234,6 +232,23 @@ mod tests {
         assert_eq!(req.domain.raw(), "www.example.com.");
         assert_eq!(req.name.to_string(), "WWW.Example.COM.");
         assert_eq!(req.edns_max_size, DEFAULT_PAYLOAD);
+    }
+
+    #[test]
+    fn decodes_underscore_name_into_request() {
+        let mut message = Message::new(0x1234, MessageType::Query, OpCode::Query);
+        message.add_query(Query::query(
+            Name::from_ascii("xxx_xxx.example.com.").unwrap(),
+            RecordType::A,
+        ));
+        let buffer = encoded(&message);
+
+        let DecodeOutcome::Request(req) = decode(&buffer, test_src(), Protocol::Udp) else {
+            panic!("expected request");
+        };
+
+        assert_eq!(req.domain.raw(), "xxx_xxx.example.com.");
+        assert_eq!(req.domain.as_dns_name().to_ascii(), "xxx_xxx.example.com.");
     }
 
     #[test]
@@ -362,7 +377,7 @@ mod tests {
         assert_eq!(response.id, 0x1234);
         assert_eq!(response.message_type, MessageType::Response);
         assert!(response.recursion_available);
-        assert!(response.authoritative);
+        assert!(!response.authoritative);
         assert_eq!(response.queries.len(), 1);
         assert_eq!(response.queries[0].name.to_string(), "WWW.Example.COM.");
     }

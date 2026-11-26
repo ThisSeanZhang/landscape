@@ -61,11 +61,6 @@ const FLOW_DIRECT_MARK: u32 = 0x0100; // action DIRECT
 
 const CLIENT_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
 
-/// The wan-side self address (bound to the ingress wan device in tests).
-fn wan_self_addr() -> Ipv6Addr {
-    Ipv6Addr::from_str("2001:db8:ffff::10").unwrap()
-}
-
 fn lan_ctx() -> TestSkb {
     TestSkb {
         ifindex: LOOPBACK_IFINDEX,
@@ -95,11 +90,11 @@ macro_rules! load_skel {
     };
 }
 
-fn run_lan6_ingress(
+fn run_lan6_ingress_with_cb(
     skel: &TcLanIngressRouteSkel<'_>,
     pkt: &[u8],
     ctx: &mut TestSkb,
-) -> (i32, Vec<u8>, u32, u32) {
+) -> (i32, Vec<u8>, u32, [u32; 5]) {
     let mut out = vec![0_u8; pkt.len()];
     let mut ctx_out = TestSkb::default();
     let ret = skel
@@ -115,8 +110,17 @@ fn run_lan6_ingress(
         .expect("run tc_route6_lan_ingress")
         .return_value as i32;
     let mark = ctx_out.mark;
-    let forwarded = ctx_out.cb[0];
-    (ret, out, mark, forwarded)
+    let cb = ctx_out.cb;
+    (ret, out, mark, cb)
+}
+
+fn run_lan6_ingress(
+    skel: &TcLanIngressRouteSkel<'_>,
+    pkt: &[u8],
+    ctx: &mut TestSkb,
+) -> (i32, Vec<u8>, u32, u32) {
+    let (ret, out, mark, cb) = run_lan6_ingress_with_cb(skel, pkt, ctx);
+    (ret, out, mark, cb[0])
 }
 
 fn seed_flow_rule_under(skel: &TcLanIngressRouteSkel<'_>, flow_id: u32, dst: Ipv6Addr, mark: u32) {
@@ -141,18 +145,6 @@ fn seed_wan_slots(
     info.gateway_ip = IpAddr::V6(gateway_addr());
     let targets = [(WanRouteTarget::link(0, info), 1)];
     replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, flow_id, &targets);
-}
-
-/// WAN-binding entry for the redirect target (needed by the WAN-cache path).
-fn seed_wan_binding(skel: &TcLanIngressRouteSkel<'_>) {
-    crate::maps::wan::add_wan_ip(
-        &skel.maps.wan_ip_binding,
-        TARGET_IFINDEX,
-        IpAddr::V6(wan_self_addr()),
-        Some(IpAddr::V6(gateway_addr())),
-        64,
-        None,
-    );
 }
 
 fn arp_frame() -> Vec<u8> {

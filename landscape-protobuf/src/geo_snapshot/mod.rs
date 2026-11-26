@@ -9,9 +9,14 @@ use std::{collections::HashMap, io};
 use uuid::Uuid;
 
 pub use format::geo_snapshot_hash_hex;
-pub use ip::{IpSnapshotCidr, IpSnapshotKeyReader, IpSnapshotReader, IpSnapshotWriter};
+pub use ip::{
+    IpSnapshotCidr, IpSnapshotKeyReader, IpSnapshotPreparedCidr, IpSnapshotReader, IpSnapshotWriter,
+};
 pub use reader::{GeoSnapshotPayloadReader, GeoSnapshotReader};
-pub use site::{GeoSnapshotRule, SiteSnapshotKeyReader, SiteSnapshotReader, SiteSnapshotWriter};
+pub use site::{
+    GeoSnapshotPreparedRule, GeoSnapshotRule, SiteSnapshotKeyReader, SiteSnapshotReader,
+    SiteSnapshotWriter,
+};
 pub use writer::GeoSnapshotWriter;
 
 pub type GeoSnapshotHash = [u8; 32];
@@ -20,12 +25,33 @@ pub(super) const HEADER_MAGIC: [u8; 8] = *b"LGSNAP01";
 pub(super) const TRAILER_MAGIC: [u8; 8] = *b"LGSNAPEN";
 pub(super) const HEADER_LEN: u64 = 64;
 pub(super) const TRAILER_LEN: u64 = 64;
-pub(super) const FORMAT_VERSION: u16 = 1;
+pub(super) const FORMAT_VERSION: u16 = 2;
+/// Pre-v2 snapshots are still readable so an upgrade does not force a rebuild.
+/// TODO: drop v1 support once no v1 snapshot files are expected in the field.
+pub(super) const FORMAT_VERSION_V1: u16 = 1;
 pub(super) const HASH_ALGO_SHA256_PAYLOAD: u8 = 1;
 
 pub(super) const MAX_KEY_BYTES: u32 = 4096;
 pub(super) const MAX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
 pub(super) const MIN_INDEX_ENTRY_BYTES: u64 = 4 + 1 + 32 + 8 + 8 + 8;
+
+/// On-disk payload layout, selected from the header version so an unknown
+/// version can never fall through to a newer layout's parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SnapshotLayout {
+    V1,
+    V2,
+}
+
+impl SnapshotLayout {
+    pub(super) fn from_version(version: u16) -> Result<Self, GeoSnapshotError> {
+        match version {
+            FORMAT_VERSION_V1 => Ok(Self::V1),
+            FORMAT_VERSION => Ok(Self::V2),
+            other => Err(GeoSnapshotError::UnsupportedFormatVersion(other)),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

@@ -6,7 +6,7 @@ use crate::bpf_error::LdEbpfResult;
 use crate::chain::wan_link::WanLinkDataplane;
 
 // ========================================================================
-// v6 NAT stage — TC (timer-map owner) + XDP (FD borrower)
+// v6 NAT stage — TC and XDP share the per-WAN mapping and CT maps
 // ========================================================================
 
 /// Bake value for the `wan_ro_prefix6` rodata field shared by the nat6
@@ -28,8 +28,38 @@ pub(crate) fn wan_ro_addr6(addr: Option<Ipv6Addr>) -> [u8; 16] {
     addr.map(|addr| addr.octets()).unwrap_or([0u8; 16])
 }
 
-/// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with a shared
-/// conntrack timer map.
+/// Compute the NPT (Network Prefix Translation) mask for IPv6 prefix translation.
+///
+/// For a given prefix length N (0..64), the mask covers the bits between the
+/// prefix and the 64-bit interface-ID boundary. These are the bits that should
+/// be preserved from the LAN-side address during NPT translation.
+///
+/// The result is a little-endian u64 where each byte corresponds to bytes 0..7
+/// of the IPv6 address (in network order). Bits *inside* the prefix are 0
+/// (replaced by the WAN prefix) and bits *outside* the prefix (up to bit 63)
+/// are 1 (kept from the LAN address).
+pub(crate) fn compute_npt_mask(prefix_len: u8) -> u64 {
+    if prefix_len >= 64 {
+        return 0;
+    }
+    let mut mask: u64 = 0;
+    let full_bytes = (prefix_len / 8) as usize;
+    let remaining_bits = prefix_len % 8;
+    for i in 0..8usize {
+        let byte_mask: u8 = if i < full_bytes {
+            0x00
+        } else if i == full_bytes && remaining_bits > 0 {
+            (1u8 << (8 - remaining_bits)) - 1
+        } else {
+            0xFF
+        };
+        mask |= (byte_mask as u64) << (i * 8);
+    }
+    mask
+}
+
+/// The v6 NAT stage: TC ingress/egress + XDP LAN/WAN with shared
+/// endpoint mapping and conntrack maps.
 pub struct Nat6Handle {
     pub tc: TcNat6Handle,
     pub xdp: XdpNat6Handle,
@@ -67,7 +97,7 @@ impl Drop for XdpNat6Handle {
 }
 
 // ========================================================================
-// v6 NAT (ingress + egress, TC owns the timer map, XDP borrows it)
+// v6 NAT (ingress + egress, TC owns the mapping and timer maps, XDP borrows both)
 // ========================================================================
 
 pub fn attach_nat6(
@@ -88,11 +118,11 @@ pub fn attach_nat6(
     // "unconfigured" prefix, which the dataplane treats as drop (the
     // old map-miss semantics).
     let npt_mask = match prefix {
-        Some((_, prefix_len)) => crate::maps::wan::compute_npt_mask(prefix_len),
+        Some((_, prefix_len)) => compute_npt_mask(prefix_len),
         None => 0,
     };
 
-    // ── 1. Load TC nat6 first (ingress + egress, for timer map sharing with XDP) ──
+    // ── 1. Load TC nat6 first (ingress + egress, to share its maps with XDP) ──
 
     let tc_builder = crate::skel::tc_nat6::TcNat6SkelBuilder::default();
     let (tc_backing, tc_obj) = OwnedOpenObject::new();
@@ -108,10 +138,7 @@ pub fn attach_nat6(
         &mut tc_open.maps.tc_pipe_exits_wan_ingress,
         &paths.tc_pipe_exits_wan_ingress_path(),
     )?;
-    pin_and_reuse_map(
-        &mut tc_open.maps.tc_pipe_exits_wan_egress,
-        &paths.tc_pipe_exits_wan_egress_path(),
-    )?;
+    dp.reuse_tc_wan_egress_exit_map(&mut tc_open.maps.tc_from_lan_exit_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat6_static_map, &paths.nat6_static_map)?;
     pin_and_reuse_map(&mut tc_open.maps.nat_metric_events, &paths.nat_metric_events)?;
     pin_and_reuse_map(&mut tc_open.maps.frag6_cache_lan, &paths.frag6_cache_lan)?;
@@ -119,7 +146,7 @@ pub fn attach_nat6(
 
     let tc_skel = bpf_ctx!(tc_open.load(), "load tc_nat6 skeleton")?;
 
-    // ── 2. Open XDP nat6, reuse TC's timer map FD ──
+    // ── 2. Open XDP nat6, reuse TC's mapping and timer map FDs ──
 
     let xdp_builder = crate::skel::xdp_nat6::XdpNat6SkelBuilder::default();
     let (xdp_backing, xdp_obj) = OwnedOpenObject::new();
@@ -132,10 +159,7 @@ pub fn attach_nat6(
         ),
         "xdp_nat6 pin xdp_pipe_root_progs"
     )?;
-    crate::bpf_ctx!(
-        pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_lan, &paths.xdp_pipe_exits_lan_path()),
-        "xdp_nat6 pin xdp_pipe_exits_lan"
-    )?;
+    dp.reuse_xdp_lan_exit_map(&mut xdp_open.maps.xdp_from_lan_exit_map)?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut xdp_open.maps.xdp_pipe_exits_wan, &paths.xdp_pipe_exits_wan_path()),
         "xdp_nat6 pin xdp_pipe_exits_wan"
@@ -157,6 +181,10 @@ pub fn attach_nat6(
         "xdp_nat6 pin nat_metric_events"
     )?;
 
+    crate::bpf_ctx!(
+        xdp_open.maps.nat6_mapping_map.reuse_fd(tc_skel.maps.nat6_mapping_map.as_fd()),
+        "xdp_nat6 reuse nat6_mapping_map fd"
+    )?;
     crate::bpf_ctx!(
         xdp_open.maps.nat6_timer_map.reuse_fd(tc_skel.maps.nat6_timer_map.as_fd()),
         "xdp_nat6 reuse nat6_timer_map fd"

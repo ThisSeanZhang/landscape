@@ -33,7 +33,7 @@ pub fn get_cert_paths() -> OpenApiRouter<LandscapeApp> {
 async fn list_cert_tasks(
     State(state): State<LandscapeApp>,
 ) -> LandscapeApiResult<Vec<CertTaskProgress>> {
-    LandscapeApiResp::success(state.cert_service.task_progress_snapshot())
+    LandscapeApiResp::success(state.managed.cert_service.task_progress_snapshot())
 }
 
 #[utoipa::path(
@@ -43,7 +43,7 @@ async fn list_cert_tasks(
     responses((status = 200, description = "Success", body = CommonApiResp<Vec<CertConfig>>))
 )]
 async fn list_certs(State(state): State<LandscapeApp>) -> LandscapeApiResult<Vec<CertConfig>> {
-    let result = state.cert_service.list().await?;
+    let result = state.managed.cert_service.list().await?;
     LandscapeApiResp::success(result)
 }
 
@@ -58,7 +58,7 @@ async fn create_cert(
     State(state): State<LandscapeApp>,
     JsonBody(config): JsonBody<CertConfig>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.create_or_update_cert(config).await?;
+    let result = state.managed.cert_service.create_or_update_cert(config).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -76,7 +76,7 @@ async fn get_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.find_by_id(id).await?;
+    let result = state.managed.cert_service.find_by_id(id).await?;
     if let Some(config) = result {
         LandscapeApiResp::success(config)
     } else {
@@ -99,7 +99,7 @@ async fn get_cert_info(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertParsedInfo> {
-    let result = state.cert_service.get_cert_info(id).await?;
+    let result = state.managed.cert_service.get_cert_info(id).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -117,7 +117,7 @@ async fn delete_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<()> {
-    state.cert_service.delete_with_notify(id).await?;
+    state.managed.cert_service.delete_with_notify(id).await?;
     LandscapeApiResp::success(())
 }
 
@@ -136,7 +136,7 @@ async fn issue_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.issue_cert(id).await?;
+    let result = state.managed.cert_service.issue_cert(id).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -155,7 +155,7 @@ async fn cancel_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.cancel_cert(id).await?;
+    let result = state.managed.cert_service.cancel_cert(id).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -174,7 +174,7 @@ async fn revoke_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.revoke_cert(id).await?;
+    let result = state.managed.cert_service.revoke_cert(id).await?;
     LandscapeApiResp::success(result)
 }
 
@@ -193,6 +193,6 @@ async fn renew_cert(
     State(state): State<LandscapeApp>,
     Path(id): Path<ConfigId>,
 ) -> LandscapeApiResult<CertConfig> {
-    let result = state.cert_service.renew_cert(id).await?;
+    let result = state.managed.cert_service.renew_cert(id).await?;
     LandscapeApiResp::success(result)
 }

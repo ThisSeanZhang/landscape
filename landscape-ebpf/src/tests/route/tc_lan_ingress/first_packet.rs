@@ -541,9 +541,9 @@ fn lan_ingress_lan_map_has_mac_without_ip_mac_falls_to_neigh() {
 }
 
 #[test]
-fn lan_ingress_flow_slot_with_mac_rewrites_header() {
-    // Shared pick_wan has_mac branch: dst mac from ip_mac_v4[slot gate],
-    // src mac from the slot's own mac.
+fn lan_ingress_flow_slot_with_mac_defers_rewrite_to_link_root() {
+    // LAN ingress selects the link; the target from-LAN root resolves the
+    // destination MAC and writes both Ethernet addresses.
     load_skel!("tc-lan-flow-slot-mac", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
@@ -557,10 +557,7 @@ fn lan_ingress_flow_slot_with_mac_rewrites_header() {
     let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
     assert_eq!(ret, RET_REDIRECT);
-    // store_mac_v4(dst = ip_mac[gate_addr].mac, src = slot target mac)
-    assert_eq!(&out[0..6], &gw_mac.octets());
-    assert_eq!(&out[6..12], &target_mac.octets());
-    assert_eq!(&out[12..14], &[0x08, 0x00]);
+    assert_eq!(out, pkt, "LAN ingress must not rewrite the Ethernet header");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
     assert_eq!(forwarded, 1);
 }
@@ -594,10 +591,9 @@ fn lan_ingress_flow_slot_on_ingress_iface_sets_cb_and_redirects() {
 }
 
 #[test]
-fn lan_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
+fn lan_ingress_flow_slot_with_mac_gateway_miss_defers_to_root() {
     // First-packet pick_wan row: has_mac slot whose gate address has no
-    // ip_mac_v4 entry → mac_stored stays false, the cb flag is stamped and
-    // the packet leaves via bpf_redirect_neigh(gate) without a rewrite.
+    // ip_mac_v4 entry. LAN ingress hands it to the target root for resolution.
     load_skel!("tc-lan-flow-gwmiss", skel);
     create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
     seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
@@ -608,10 +604,10 @@ fn lan_ingress_flow_slot_with_mac_gateway_miss_falls_to_neigh() {
     let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
     let (ret, out, mark, forwarded) = run_lan_ingress(&skel, &pkt, &mut lan_ctx());
 
-    assert_eq!(ret, RET_REDIRECT, "neigh fallback still redirects");
-    assert_eq!(out, pkt, "no rewrite happened");
+    assert_eq!(ret, RET_REDIRECT, "cross-link handoff still redirects");
+    assert_eq!(out, pkt, "no rewrite happened at LAN ingress");
     assert_eq!(mark, normal_mark(FlowMarkAction::Redirect, 5, false));
-    assert_eq!(forwarded, 1, "the cb flag is stamped before the neigh fallback");
+    assert_eq!(forwarded, 1, "the cb flag targets the link root");
 
     let cache = lookup_rt4_cache_value(
         &skel.maps.rt4_cache_map,
