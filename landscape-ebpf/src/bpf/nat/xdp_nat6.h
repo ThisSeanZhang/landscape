@@ -7,6 +7,7 @@
 
 #include "base/ipv6.h"
 #include "base/tcp_phase.h"
+#include "frag/tc_frag6.h"
 #include "nat/nat_common.h"
 #include "nat/nat6_ct.h"
 #include "nat/xdp_csum_helpers.h"
@@ -52,7 +53,10 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
     if (!wan_ro_prefix6.b[0] || nat6_resolve(off, src_addr, sport, dst_addr, dport, true, mark,
                                              wan_if, (u64)(long)data_end - (u64)(long)data, &trans))
         return -1;
-    if (!trans.replace) return 0;
+    if (!trans.replace) {
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
+        return 0;
+    }
     bool is_icmpx_error = off->icmp_inner_l4_offset != 0;
     if (is_icmpx_error) {
         u32 err_sender_off = l3_offset + offsetof(struct ipv6hdr, saddr);
@@ -112,6 +116,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
         *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
+    frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
     return 0;
 }
 
@@ -129,7 +134,10 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
     __be64 dst_prefix;
     __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
     *out_is_static = trans.is_static;
-    if (!trans.replace || dst_prefix == local_client_prefix) return trans.is_static ? 1 : 0;
+    if (!trans.replace || dst_prefix == local_client_prefix) {
+        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
+        return trans.is_static ? 1 : 0;
+    }
     bool is_icmpx_error = xdp_nat6_is_icmp_error(off);
     if (is_icmpx_error) {
         u32 inner_src_off = xdp_nat6_icmp_error_l3_offset(off) + offsetof(struct ipv6hdr, saddr);
@@ -178,6 +186,7 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
         *csum_ptr = nat6_apply_l4_checksum(*csum_ptr, delta, outer_proto);
     }
 
+    frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
     return 0;
 }
 

@@ -114,6 +114,8 @@ static __always_inline int xdp_nat_read6(struct xdp_md *ctx, __u32 l3_offset, __
     off->icmp_error_l3_offset = 0;
     off->icmp_inner_l4_offset = 0;
     off->icmp_inner_l4_protocol = 0;
+    off->frag_next_header = 0;
+    off->frag_id = 0;
 
     __be32 frag_id = 0;
     __u8 frag_next = 0;
@@ -206,10 +208,7 @@ static __always_inline int xdp_nat_read6(struct xdp_md *ctx, __u32 l3_offset, __
     }
 
     if (has_ports) off->ports_valid = 1;
-
-    if (off->frag_code == LAND_FRAG_FIRST && has_ports)
-        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, *sport, *dport, 1,
-                          direction);
+    /* Defer frag6_cache_store() until NAT6 validates or creates the binding. */
     return XDP_NAT6_READ_OK;
 }
 

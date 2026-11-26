@@ -274,27 +274,68 @@ mod tests {
     fn reader_v6_nonfirst_fragment_cache_hit() {
         let first = build_ipv6_frag_tcp(0, true, 7);
         let nonfirst = build_ipv6_frag_tcp(1, true, 7);
-        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN);
-        assert_eq!(results.len(), 2);
 
-        let first = &results[0];
-        assert_read_ok(first);
-        assert_eq!(first.frag_code, LAND_FRAG_FIRST);
-        assert_eq!(first.l4_offset, 62);
-        assert_eq!(first.l4_protocol, 6);
-        assert_eq!(be16(first.sport), 12345);
-        assert_eq!(be16(first.dport), 443);
-        assert_eq!(first.tcp_phase, TCP_PHASE_SYN);
+        let builder = TestTcReadHead6SkelBuilder::default();
+        let mut open_object = MaybeUninit::uninit();
+        let mut open = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.current_l3_offset = L3_OFFSET;
+            rodata.current_direction = DIR_LAN;
+        }
+        let skel = open.load().unwrap();
+        let prog = &skel.progs.test_tc_read_head6;
 
-        let nonfirst = &results[1];
-        assert_read_ok(nonfirst);
-        assert_eq!(nonfirst.frag_code, LAND_FRAG_NON_INITIAL);
-        assert_eq!(nonfirst.l4_offset, 0);
-        assert_eq!(nonfirst.l4_protocol, 6);
-        assert_eq!(nonfirst.tcp_phase, TCP_PHASE_NONE);
-        assert_eq!(nonfirst.ports_valid, 1);
-        assert_eq!(be16(nonfirst.sport), 12345);
-        assert_eq!(be16(nonfirst.dport), 443);
+        prog.test_run(ProgramInput { data_in: Some(&first), ..Default::default() })
+            .expect("test_run failed");
+        let bytes = skel
+            .maps
+            .reader_test_map
+            .lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY)
+            .unwrap()
+            .unwrap();
+        let first_res = TcReadHead6Result::read_from_bytes(&bytes).unwrap();
+        assert_read_ok(&first_res);
+        assert_eq!(first_res.frag_code, LAND_FRAG_FIRST);
+        assert_eq!(first_res.l4_offset, 62);
+        assert_eq!(first_res.l4_protocol, 6);
+        assert_eq!(be16(first_res.sport), 12345);
+        assert_eq!(be16(first_res.dport), 443);
+        assert_eq!(first_res.tcp_phase, TCP_PHASE_SYN);
+        // Reader alone must not store into frag6_cache before NAT6 authorizes the flow.
+        assert_eq!(skel.maps.frag6_cache_lan.keys().count(), 0);
+        assert_eq!(skel.maps.frag6_cache_wan.keys().count(), 0);
+
+        // Seed the cache entry that NAT6 writes after validating the binding.
+        let mut cache_key = [0u8; 36];
+        cache_key[0..16].copy_from_slice(&SRC6);
+        cache_key[16..32].copy_from_slice(&DST6);
+        cache_key[32..36].copy_from_slice(&7u32.to_be_bytes());
+        let mut cache_val = [0u8; 8];
+        cache_val[0..2].copy_from_slice(&12345u16.to_be_bytes());
+        cache_val[2..4].copy_from_slice(&443u16.to_be_bytes());
+        cache_val[4] = 6; // proto = TCP
+        cache_val[5] = 6; // frag_next_header = TCP
+        cache_val[6] = 1; // NPTV6_FRAG_FLAG_HAS_PORTS
+        skel.maps.frag6_cache_lan.update(&cache_key, &cache_val, MapFlags::ANY).unwrap();
+
+        prog.test_run(ProgramInput { data_in: Some(&nonfirst), ..Default::default() })
+            .expect("test_run failed");
+        let bytes = skel
+            .maps
+            .reader_test_map
+            .lookup(&MAP_KEY.to_le_bytes(), MapFlags::ANY)
+            .unwrap()
+            .unwrap();
+        let nonfirst_res = TcReadHead6Result::read_from_bytes(&bytes).unwrap();
+        assert_read_ok(&nonfirst_res);
+        assert_eq!(nonfirst_res.frag_code, LAND_FRAG_NON_INITIAL);
+        assert_eq!(nonfirst_res.l4_offset, 0);
+        assert_eq!(nonfirst_res.l4_protocol, 6);
+        assert_eq!(nonfirst_res.tcp_phase, TCP_PHASE_NONE);
+        assert_eq!(nonfirst_res.ports_valid, 1);
+        assert_eq!(be16(nonfirst_res.sport), 12345);
+        assert_eq!(be16(nonfirst_res.dport), 443);
     }
 
     #[test]

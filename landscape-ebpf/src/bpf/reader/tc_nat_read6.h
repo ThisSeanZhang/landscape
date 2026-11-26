@@ -55,6 +55,8 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
     off->icmp_error_l3_offset = 0;
     off->icmp_inner_l4_offset = 0;
     off->icmp_inner_l4_protocol = 0;
+    off->frag_next_header = 0;
+    off->frag_id = 0;
 
     char *data = skb_data(skb);
     char *data_end = skb_data_end(skb);
@@ -158,10 +160,7 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
     }
 
     if (has_ports) off->ports_valid = 1;
-
-    if (off->frag_code == LAND_FRAG_FIRST && has_ports)
-        frag6_cache_store(src_addr, dst_addr, frag_id, next, frag_next, *sport, *dport, 1,
-                          direction);
+    /* Defer frag6_cache_store() until NAT6 validates or creates the binding. */
     return 1;
 }
 
