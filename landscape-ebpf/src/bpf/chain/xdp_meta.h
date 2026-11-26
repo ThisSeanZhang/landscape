@@ -70,6 +70,7 @@ static __always_inline int xdp_stamp_chain_id(struct xdp_md *ctx, u32 chain_id) 
 
 #define XDP_HANDOFF_DOCKER_MAGIC 0x4C444844
 #define XDP_HANDOFF_TC_REDIRECT_MAGIC 0x4C445443
+#define XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC 0x4C44544E
 
 struct xdp_docker_handoff_payload {
     u32 mark;
@@ -84,9 +85,18 @@ struct xdp_tc_redirect_handoff_payload {
     u16 link_chain_id;
 };
 
+struct xdp_tc_redirect_neigh_handoff_payload {
+    u32 mark;
+    u32 target_ifindex;
+    u16 nh_family;
+    u16 link_chain_id;
+    u32 nh_addr[4];
+};
+
 union xdp_handoff_payload {
     struct xdp_docker_handoff_payload docker;
     struct xdp_tc_redirect_handoff_payload tc_redirect;
+    struct xdp_tc_redirect_neigh_handoff_payload tc_redirect_neigh;
 };
 
 struct xdp_handoff_meta {
@@ -94,13 +104,28 @@ struct xdp_handoff_meta {
     union xdp_handoff_payload payload;
 };
 
+_Static_assert(sizeof(struct xdp_handoff_meta) == 32,
+               "xdp_handoff_meta must fit in the 32-byte XDP metadata limit");
+
+/* Write handoff metadata right before returning XDP_PASS to TC. Reuse any
+ * existing xdp_pipe_meta area so total metadata stays within the kernel's
+ * 32-byte bpf_xdp_adjust_meta ceiling. */
 static __always_inline int xdp_set_handoff_meta(struct xdp_md *ctx,
                                                 const struct xdp_handoff_meta *ho) {
-    int ret = bpf_xdp_adjust_meta(ctx, -(int)sizeof(*ho));
-    if (ret) return ret;
     void *data_meta = ctx_data_meta(ctx);
     void *data = ctx_data(ctx);
-    if (data_meta + sizeof(*ho) > data) return -1;
+    if (data_meta + sizeof(*ho) > data) {
+        int ret;
+        if (data_meta + sizeof(struct xdp_pipe_meta) <= data) {
+            ret = bpf_xdp_adjust_meta(ctx, -(int)(sizeof(*ho) - sizeof(struct xdp_pipe_meta)));
+        } else {
+            ret = bpf_xdp_adjust_meta(ctx, -(int)sizeof(*ho));
+        }
+        if (ret) return ret;
+        data_meta = ctx_data_meta(ctx);
+        data = ctx_data(ctx);
+        if (data_meta + sizeof(*ho) > data) return -1;
+    }
     __builtin_memcpy(data_meta, ho, sizeof(*ho));
     return 0;
 }
@@ -124,12 +149,31 @@ static __always_inline int xdp_set_tc_redirect_meta(struct xdp_md *ctx, u32 mark
     return xdp_set_handoff_meta(ctx, &ho);
 }
 
+static __always_inline int xdp_set_tc_redirect_neigh_meta(struct xdp_md *ctx, u32 mark,
+                                                          u32 target_ifindex, u16 link_chain_id,
+                                                          u16 nh_family, const u32 nh_addr[4]) {
+    struct xdp_handoff_meta ho = {
+        .magic = XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC,
+        .payload.tc_redirect_neigh =
+            {
+                .mark = mark,
+                .target_ifindex = target_ifindex,
+                .nh_family = nh_family,
+                .link_chain_id = link_chain_id,
+            },
+    };
+    __builtin_memcpy(ho.payload.tc_redirect_neigh.nh_addr, nh_addr,
+                     sizeof(ho.payload.tc_redirect_neigh.nh_addr));
+    return xdp_set_handoff_meta(ctx, &ho);
+}
+
 static __always_inline bool xdp_has_tc_redirect_meta(struct xdp_md *ctx) {
     void *data_meta = ctx_data_meta(ctx);
     void *data = ctx_data(ctx);
     if (data_meta + sizeof(struct xdp_handoff_meta) > data) return false;
     struct xdp_handoff_meta *ho = data_meta;
-    return ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC;
+    return ho->magic == XDP_HANDOFF_TC_REDIRECT_MAGIC ||
+           ho->magic == XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC;
 }
 
 #endif /* __LD_PIPELINE_H_ */

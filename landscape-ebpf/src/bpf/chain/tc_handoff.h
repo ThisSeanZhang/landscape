@@ -30,6 +30,18 @@ static __always_inline int xdp_handoff_check(struct __sk_buff *skb, bool from_la
             tc_cb_mark_forwarded(skb, ho->payload.tc_redirect.link_chain_id);
             return bpf_redirect(ho->payload.tc_redirect.target_ifindex, 0);
         }
+        if (ho->magic == XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC) {
+            u32 ho_mark = ho->payload.tc_redirect_neigh.mark;
+            u32 ho_ifindex = ho->payload.tc_redirect_neigh.target_ifindex;
+            u16 ho_chain = ho->payload.tc_redirect_neigh.link_chain_id;
+            struct bpf_redir_neigh param = {};
+            param.nh_family = ho->payload.tc_redirect_neigh.nh_family;
+            __builtin_memcpy(param.ipv6_nh, ho->payload.tc_redirect_neigh.nh_addr,
+                             sizeof(param.ipv6_nh));
+            skb->mark = ho_mark;
+            tc_cb_mark_forwarded(skb, ho_chain);
+            return bpf_redirect_neigh(ho_ifindex, &param, sizeof(param), 0);
+        }
     }
 
     return from_lan ? TC_ACT_OK : TC_ACT_UNSPEC;

@@ -16,10 +16,15 @@
 //! Run (needs root + the `bpf-test` feature):
 //!   cargo test -p landscape-ebpf --features bpf-test --lib route::tc_wan_ingress_intro -- --nocapture
 
+use std::io::ErrorKind;
+use std::mem::MaybeUninit;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsFd as _, AsRawFd as _};
+use std::process::Command;
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
+use etherparse::PacketBuilder;
 use libbpf_rs::{
     MapCore, MapFlags, ProgramInput,
     skel::{OpenSkel as _, SkelBuilder as _},
@@ -30,12 +35,17 @@ use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{
     PrefixEntry, ppp_entry, v4_entry, v6_entry, wan_trie_publish,
 };
+use crate::skel::tc_wan_ingress_intro::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
+use crate::skel::xdp_wan_route::XdpWanRouteSkelBuilder;
+use crate::tests::helper::map::{
+    ROUTE_TYPE_NEXTHOP, as_bytes, insert_route4_lan_entry, insert_route6_lan_entry,
+};
+use crate::tests::helper::net::{NetNsGuard, TCAttach, VethPair, send_raw_packet};
+use crate::tests::isolated_pin_root;
 use crate::tests::pkt::{
     simple_ipv4_tcp, simple_ipv6_tcp_syn, simple_pppoe_ipv4, simple_pppoe_ipv6,
 };
 use crate::tests::test_wan_trie_probe_skel::{TestWanTrieProbeSkel, TestWanTrieProbeSkelBuilder};
-
-use crate::skel::tc_wan_ingress_intro::{TcWanIngressIntroSkel, TcWanIngressIntroSkelBuilder};
 
 const RET_OK: i32 = 0;
 const RET_UNSPEC: i32 = -1;
@@ -272,4 +282,241 @@ fn pppoe_stack_traffic() {
     for pkt in [&lcp[..], &broadcast[..18], &multicast[..30]] {
         assert_eq!(run(&inst.skel, pkt), (RET_OK, pkt.to_vec()));
     }
+}
+
+fn open_raw_recv_socket(ifindex: u32) -> socket2::Socket {
+    let proto_be = (libc::ETH_P_ALL as u16).to_be();
+    let sock = socket2::Socket::new(
+        socket2::Domain::PACKET,
+        socket2::Type::RAW,
+        Some(socket2::Protocol::from(i32::from(proto_be))),
+    )
+    .expect("create AF_PACKET raw socket");
+    let addr = libc::sockaddr_ll {
+        sll_family: libc::AF_PACKET as u16,
+        sll_protocol: proto_be,
+        sll_ifindex: ifindex as i32,
+        sll_hatype: 0,
+        sll_pkttype: 0,
+        sll_halen: 0,
+        sll_addr: [0u8; 8],
+    };
+    let rc = unsafe {
+        libc::bind(
+            sock.as_raw_fd(),
+            (&addr as *const libc::sockaddr_ll).cast::<libc::sockaddr>(),
+            std::mem::size_of::<libc::sockaddr_ll>() as libc::socklen_t,
+        )
+    };
+    assert_eq!(rc, 0, "bind AF_PACKET raw socket failed: {}", std::io::Error::last_os_error());
+    sock.set_read_timeout(Some(Duration::from_millis(100))).expect("set raw socket read timeout");
+    sock
+}
+
+fn recv_matching_frame(
+    sock: &socket2::Socket,
+    deadline: Duration,
+    what: &str,
+    mut matches: impl FnMut(&[u8]) -> bool,
+) -> Vec<u8> {
+    let start = Instant::now();
+    let mut buf = [0u8; 2048];
+    loop {
+        let n = unsafe {
+            libc::recv(sock.as_raw_fd(), buf.as_mut_ptr().cast::<libc::c_void>(), buf.len(), 0)
+        };
+        if n > 0 {
+            let frame = &buf[..n as usize];
+            if matches(frame) {
+                return frame.to_vec();
+            }
+        } else if n < 0 {
+            let err = std::io::Error::last_os_error();
+            assert!(
+                matches!(
+                    err.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ),
+                "unexpected recv error while waiting for {what}: {err}"
+            );
+        }
+        assert!(start.elapsed() < deadline, "timed out after {deadline:?} waiting for {what}");
+    }
+}
+
+/// Real XDP -> TC `XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC` consumer test.
+///
+/// Linux `bpf_prog_test_run_skb` (`convert___skb_to_skb`) rejects non-zero
+/// `__sk_buff.data_meta` with `-EINVAL` and leaves `skb_shinfo->meta_len == 0`,
+/// so TC metadata handoff cannot be synthesized via `PROG_TEST_RUN`. Attach
+/// `xdp_wan_route_ingress` (producer) and `tc_wan_ingress_intro` with
+/// `xdp_handoff_enabled = true` (consumer) onto the same veth inside an
+/// isolated netns, then verify both IPv4 and IPv6 nexthop handoffs trigger
+/// `bpf_redirect_neigh` and arrive on the target LAN peer with rewritten L2 MACs.
+#[test]
+fn xdp_mode_consumes_redirect_neigh_handoff_meta() {
+    const WAN_SRC_MAC: [u8; 6] = [0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01];
+    const WAN_DST_MAC: [u8; 6] = [0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02];
+    const LAN_DEV_MAC: [u8; 6] = [0x02, 0xee, 0xdd, 0xcc, 0xbb, 0xaa];
+    const NEXTHOP_MAC: [u8; 6] = [0x02, 0x55, 0x66, 0x77, 0x88, 0x99];
+
+    let router_ns = NetNsGuard::create("twhr");
+    let wan_peer_ns = NetNsGuard::create("twhw");
+    let (wan_pair, lan_pair) = {
+        let _e = router_ns.enter();
+        (VethPair::create_with_netns("twhw", &wan_peer_ns), VethPair::create("twhl"))
+    };
+
+    let (wan_ifindex, lan_ifindex, lan_rx) = {
+        let _e = router_ns.enter();
+        let wan_ifindex = wan_pair.host_ifindex();
+        let lan_ifindex = lan_pair.host_ifindex();
+        let lan_peer_ifindex = lan_pair.peer_ifindex();
+
+        for args in [
+            ["link", "set", "dev", wan_pair.host(), "address", "02:aa:bb:cc:dd:02"],
+            ["link", "set", "dev", lan_pair.host(), "address", "02:ee:dd:cc:bb:aa"],
+            ["link", "set", "dev", lan_pair.peer(), "address", "02:55:66:77:88:99"],
+        ] {
+            assert!(Command::new("ip").args(args).status().unwrap().success());
+        }
+
+        // Seed permanent kernel neighbors WITHOUT kernel routes for the nexthops:
+        // - In XDP, bpf_fib_lookup() misses (no route) -> emits 32B
+        //   XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC and returns XDP_PASS.
+        // - In TC, tc_wan_ingress_intro consumes the magic and calls
+        //   bpf_redirect_neigh(lan_ifindex, &param), which looks up the neighbor
+        //   table directly and transmits the rewritten frame onto lan_pair.peer().
+        assert!(
+            Command::new("ip")
+                .args([
+                    "neigh",
+                    "replace",
+                    "192.168.50.1",
+                    "lladdr",
+                    "02:55:66:77:88:99",
+                    "nud",
+                    "permanent",
+                    "dev",
+                    lan_pair.host(),
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("ip")
+                .args([
+                    "-6",
+                    "neigh",
+                    "replace",
+                    "fd00:50::1",
+                    "lladdr",
+                    "02:55:66:77:88:99",
+                    "nud",
+                    "permanent",
+                    "dev",
+                    lan_pair.host(),
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let lan_rx = open_raw_recv_socket(lan_peer_ifindex);
+        (wan_ifindex, lan_ifindex, lan_rx)
+    };
+
+    let pin_root = isolated_pin_root("tc-intro-redir-neigh");
+    let mut xb = XdpWanRouteSkelBuilder::default();
+    xb.object_builder_mut().pin_root_path(&pin_root).unwrap();
+    let mut xobj = MaybeUninit::uninit();
+    let xskel = xb.open(&mut xobj).expect("open xdp_wan_route").load().expect("load xdp_wan_route");
+
+    let intro = load_intro(true);
+
+    let dst4 = Ipv4Addr::new(10, 200, 0, 20);
+    let nexthop4 = Ipv4Addr::new(192, 168, 50, 1);
+    insert_route4_lan_entry(
+        &xskel.maps.rt4_lan_map,
+        24,
+        Ipv4Addr::new(10, 200, 0, 0),
+        nexthop4,
+        ROUTE_TYPE_NEXTHOP,
+        lan_ifindex,
+        true,
+        LAN_DEV_MAC,
+    );
+
+    let dst6 = Ipv6Addr::from_str("2001:db8:200::20").unwrap();
+    let nexthop6 = Ipv6Addr::from_str("fd00:50::1").unwrap();
+    insert_route6_lan_entry(
+        &xskel.maps.rt6_lan_map,
+        64,
+        Ipv6Addr::from_str("2001:db8:200::").unwrap(),
+        nexthop6,
+        ROUTE_TYPE_NEXTHOP,
+        lan_ifindex,
+        true,
+        LAN_DEV_MAC,
+    );
+
+    // Even if LAN supports native XDP redirect, cold FIB miss must hand off to TC neigh.
+    let able: u32 = 1;
+    xskel
+        .maps
+        .xdp_redirect_able
+        .update(as_bytes(&lan_ifindex), as_bytes(&able), MapFlags::ANY)
+        .expect("seed xdp_redirect_able");
+
+    let _xdp_link;
+    let _tc_attach;
+    {
+        let _e = router_ns.enter();
+        _xdp_link = xskel
+            .progs
+            .xdp_wan_route_ingress
+            .attach_xdp(wan_ifindex as i32)
+            .expect("attach xdp_wan_route_ingress");
+        _tc_attach =
+            TCAttach::attach_ingress(&intro.skel.progs.tc_wan_ingress_intro, wan_ifindex as i32);
+    }
+
+    // 1) IPv4 cold nexthop handoff -> TC bpf_redirect_neigh(AF_INET, 192.168.50.1)
+    let builder4 = PacketBuilder::ethernet2(WAN_SRC_MAC, WAN_DST_MAC)
+        .ipv4([203, 0, 113, 7], dst4.octets(), 64)
+        .tcp(443, 54321, 100, 4096);
+    let mut pkt4 = Vec::with_capacity(builder4.size(8));
+    builder4.write(&mut pkt4, &[0x11; 8]).expect("build ipv4 tcp");
+    {
+        let _e = wan_peer_ns.enter();
+        send_raw_packet(wan_pair.peer(), &pkt4);
+    }
+    let rx4 = recv_matching_frame(
+        &lan_rx,
+        Duration::from_secs(5),
+        "IPv4 TC redirect_neigh handoff on LAN peer",
+        |f| f.len() >= 34 && f[12..14] == [0x08, 0x00] && f[30..34] == dst4.octets(),
+    );
+    assert_eq!(&rx4[0..6], &NEXTHOP_MAC, "IPv4 dst MAC must be resolved by bpf_redirect_neigh");
+    assert_eq!(&rx4[6..12], &LAN_DEV_MAC, "IPv4 src MAC must be rewritten to LAN dev MAC");
+
+    // 2) IPv6 cold nexthop handoff -> TC bpf_redirect_neigh(AF_INET6, fd00:50::1)
+    let builder6 = PacketBuilder::ethernet2(WAN_SRC_MAC, WAN_DST_MAC)
+        .ipv6(Ipv6Addr::from_str("2001:db8:1::7").unwrap().octets(), dst6.octets(), 64)
+        .tcp(443, 54321, 100, 4096);
+    let mut pkt6 = Vec::with_capacity(builder6.size(8));
+    builder6.write(&mut pkt6, &[0x22; 8]).expect("build ipv6 tcp");
+    {
+        let _e = wan_peer_ns.enter();
+        send_raw_packet(wan_pair.peer(), &pkt6);
+    }
+    let rx6 = recv_matching_frame(
+        &lan_rx,
+        Duration::from_secs(5),
+        "IPv6 TC redirect_neigh handoff on LAN peer",
+        |f| f.len() >= 54 && f[12..14] == [0x86, 0xdd] && f[38..54] == dst6.octets(),
+    );
+    assert_eq!(&rx6[0..6], &NEXTHOP_MAC, "IPv6 dst MAC must be resolved by bpf_redirect_neigh");
+    assert_eq!(&rx6[6..12], &LAN_DEV_MAC, "IPv6 src MAC must be rewritten to LAN dev MAC");
 }
