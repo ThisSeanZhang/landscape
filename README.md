@@ -12,7 +12,7 @@
 
 </div>
 
-[简体中文](./README.zh.md) | [English](./README.md) | [Documentation](https://landscape.whileaway.dev/)
+[简体中文](./README.zh.md) | [繁體中文](./README.zh-Hant.md) | [English](./README.md) | [Documentation](https://landscape.whileaway.dev/)
 
 ## Screenshot
 ![Landscape Web UI](./assets/main.png)
