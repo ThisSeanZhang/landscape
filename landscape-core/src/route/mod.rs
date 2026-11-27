@@ -29,7 +29,7 @@ use landscape_common::sys_service::route_service::{
     LanIPv6RouteKey, LanRouteInfo, RouteOwner, RouteTargetInfo, WanRouteTarget,
     dataplane::{NoopRouteTableDataplane, RouteTableDataplane},
 };
-use tokio::sync::{Notify, RwLock, broadcast};
+use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 
 pub(crate) type ShareRwLock<T> = Arc<RwLock<T>>;
 // Reachable local addresses grouped by interface index.
@@ -50,6 +50,17 @@ pub struct IpRouteService {
     pub(crate) wan_route_events: broadcast::Sender<WanRouteEvent>,
     pub(crate) link_healths: ShareRwLock<health::LinkHealths>,
     pub(crate) health_events: broadcast::Sender<health::WanLinkHealthEvent>,
+    // Active WAN links whose config requests a Flow 0 default route per family.
+    // Lets Flow 0 fail over to a healthy backup even while a primary link's
+    // session is down/redialing, without promoting backups when no link wants
+    // a default route (e.g. `--no-wan-default-route`).
+    pub(crate) default_route_intents: ShareRwLock<wan::DefaultRouteIntents>,
+    // Serializes Flow 0 eBPF slot updates across concurrent route/health events
+    // and deduplicates unchanged writes.
+    pub(crate) default_router_sync: Arc<Mutex<wan::DefaultRouterSyncState>>,
+    // Serializes per-flow WAN slot updates across route/health observers and
+    // config-change refreshes so stale snapshots never overwrite newer state.
+    pub(crate) flow_target_sync_lock: Arc<Mutex<()>>,
 
     pub(crate) ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,
     pub(crate) ipv6_lan_ifaces: ShareRwLock<Ipv6LanRoutesByKey>,
@@ -82,6 +93,9 @@ impl IpRouteService {
             wan_route_events: broadcast::channel(64).0,
             link_healths: Arc::new(RwLock::new(HashMap::new())),
             health_events: broadcast::channel(64).0,
+            default_route_intents: Arc::new(RwLock::new(wan::DefaultRouteIntents::default())),
+            default_router_sync: Arc::new(Mutex::new(wan::DefaultRouterSyncState::default())),
+            flow_target_sync_lock: Arc::new(Mutex::new(())),
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             kernel_default_ipv4_cache: Arc::new(RwLock::new(None)),

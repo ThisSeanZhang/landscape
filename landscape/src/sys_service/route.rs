@@ -3,4 +3,6 @@
 //! The implementation lives in `landscape-core`; per-flow WAN target
 //! recomputation is driven by [`crate::flow::rule_service::FlowRuleService`].
 
-pub use landscape_core::route::{IpRouteService, LocalAddrView, WanRouteEvent, WanRouteEventKind};
+pub use landscape_core::route::{
+    IpRouteService, LocalAddrView, WanLinkHealthEvent, WanRouteEvent, WanRouteEventKind,
+};

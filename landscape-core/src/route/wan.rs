@@ -1,6 +1,7 @@
 //! WAN route state: one active [`RouteTargetInfo`] per owner (link or
 //! container), default-router resolution, and change broadcasting.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use landscape_common::{
@@ -12,7 +13,22 @@ use landscape_common::{
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use super::{IpRouteService, WanRoutesByOwner, clone_locked_state};
+use super::{
+    IpRouteService, WanRoutesByOwner, clone_locked_state,
+    health::{LinkHealths, is_owner_available, is_owner_verified_healthy},
+};
+
+#[derive(Default)]
+pub(crate) struct DefaultRouteIntents {
+    ipv4_links: HashSet<Uuid>,
+    ipv6_links: HashSet<Uuid>,
+}
+
+#[derive(Default)]
+pub(crate) struct DefaultRouterSyncState {
+    last_v4: Option<Option<WanRouteTarget>>,
+    last_v6: Option<Option<WanRouteTarget>>,
+}
 
 enum WanRouteUpdate {
     Noop,
@@ -32,6 +48,14 @@ pub struct WanRouteEvent {
     pub kind: WanRouteEventKind,
 }
 
+fn is_failover_backup_link(owner: &RouteOwner, target: &WanRouteTarget) -> bool {
+    !target.info.default_route && !target.info.is_docker && matches!(owner, RouteOwner::Link(_))
+}
+
+fn affects_default_router(owner: &RouteOwner, target: &WanRouteTarget) -> bool {
+    target.info.default_route || is_failover_backup_link(owner, target)
+}
+
 fn reconcile_wan_route(
     routes: &mut WanRoutesByOwner,
     owner: &RouteOwner,
@@ -43,9 +67,10 @@ fn reconcile_wan_route(
         // so the eBPF slot values pick up the new chain.
         Some(old) if old == &target => WanRouteUpdate::Noop,
         _ => {
-            let mut refresh_default_router = target.info.default_route;
+            let mut refresh_default_router = affects_default_router(owner, &target);
             if let Some(old_target) = routes.insert(owner.clone(), target) {
-                refresh_default_router = refresh_default_router || old_target.info.default_route;
+                refresh_default_router =
+                    refresh_default_router || affects_default_router(owner, &old_target);
             }
             WanRouteUpdate::Changed { refresh_default_router }
         }
@@ -54,6 +79,7 @@ fn reconcile_wan_route(
 
 type OwnerSortKey<'a> = (u8, [u8; 16], &'a str);
 type DefaultCandidateSortKey<'a> = (&'a str, u16, OwnerSortKey<'a>);
+type BackupCandidateSortKey<'a> = (bool, DefaultCandidateSortKey<'a>);
 
 fn owner_sort_key(owner: &RouteOwner) -> OwnerSortKey<'_> {
     match owner {
@@ -69,43 +95,131 @@ fn default_candidate_sort_key<'a>(
     (target.info.iface_name.as_str(), target.link_chain_id, owner_sort_key(owner))
 }
 
-/// Deterministically choose a single default WAN route for Flow 0 from
-/// `routes`, eliminating HashMap iteration randomness when multiple routes
-/// carry `default_route == true`.
-pub(crate) fn select_default_wan_route(routes: &WanRoutesByOwner) -> Option<WanRouteTarget> {
-    routes
-        .iter()
-        .filter(|(_, entry)| entry.info.default_route)
-        .min_by(|(owner_a, a), (owner_b, b)| {
-            default_candidate_sort_key(owner_a, a).cmp(&default_candidate_sort_key(owner_b, b))
-        })
-        .map(|(_, entry)| entry.clone())
+fn backup_candidate_sort_key<'a>(
+    healths: &LinkHealths,
+    owner: &'a RouteOwner,
+    target: &'a WanRouteTarget,
+) -> BackupCandidateSortKey<'a> {
+    // Verified-healthy backups take precedence over unmonitored `Unknown` backups,
+    // while `Unknown` backups remain eligible whenever no verified-healthy backup exists.
+    (!is_owner_verified_healthy(healths, owner), default_candidate_sort_key(owner, target))
+}
+
+/// Deterministically choose a single default WAN route for Flow 0 with health
+/// failover:
+/// 1. Prefer an available (`Healthy` or `Unknown`) primary (`default_route == true`).
+/// 2. If all primaries are `Unhealthy` (or a configured primary route is absent
+///    while redialing), fail over to an available non-docker WAN link backup.
+/// 3. If every candidate is `Unhealthy`, fail open on the primary (or remaining
+///    backup if the primary route is absent) rather than blackholing Flow 0.
+pub(crate) fn select_default_wan_route(
+    routes: &WanRoutesByOwner,
+    healths: &LinkHealths,
+    has_configured_default: bool,
+) -> Option<WanRouteTarget> {
+    let mut primaries: Vec<(&RouteOwner, &WanRouteTarget)> =
+        routes.iter().filter(|(_, entry)| entry.info.default_route).collect();
+    primaries.sort_by(|(owner_a, a), (owner_b, b)| {
+        default_candidate_sort_key(owner_a, a).cmp(&default_candidate_sort_key(owner_b, b))
+    });
+
+    if let Some((_, target)) =
+        primaries.iter().find(|(owner, _)| is_owner_available(healths, owner))
+    {
+        return Some((*target).clone());
+    }
+
+    if !primaries.is_empty() || has_configured_default {
+        let mut backups: Vec<(&RouteOwner, &WanRouteTarget)> =
+            routes.iter().filter(|(owner, entry)| is_failover_backup_link(owner, entry)).collect();
+        backups.sort_by(|(owner_a, a), (owner_b, b)| {
+            backup_candidate_sort_key(healths, owner_a, a)
+                .cmp(&backup_candidate_sort_key(healths, owner_b, b))
+        });
+
+        if let Some((_, target)) =
+            backups.iter().find(|(owner, _)| is_owner_available(healths, owner))
+        {
+            return Some((*target).clone());
+        }
+
+        if let Some((_, target)) = primaries.first() {
+            return Some((*target).clone());
+        }
+        if has_configured_default && let Some((_, target)) = backups.first() {
+            return Some((*target).clone());
+        }
+    }
+
+    None
 }
 
 fn sync_default_ipv4_wan_route(
     dataplane: &dyn RouteTableDataplane,
-    default_route: Option<WanRouteTarget>,
+    default_route: Option<&WanRouteTarget>,
 ) {
     if let Some(route) = default_route {
-        let default_target = [(route, 1)];
+        let default_target = [(route.clone(), 1)];
         dataplane.replace_wan_slots_v4(0, &default_target);
     } else {
         dataplane.del_wan_slots_v4(0);
     }
-    dataplane.invalidate_lan_cache();
 }
 
 fn sync_default_ipv6_wan_route(
     dataplane: &dyn RouteTableDataplane,
-    default_route: Option<WanRouteTarget>,
+    default_route: Option<&WanRouteTarget>,
 ) {
     if let Some(route) = default_route {
-        let default_target = [(route, 1)];
+        let default_target = [(route.clone(), 1)];
         dataplane.replace_wan_slots_v6(0, &default_target);
     } else {
         dataplane.del_wan_slots_v6(0);
     }
-    dataplane.invalidate_lan_cache();
+}
+
+fn log_default_route_transition(
+    family: &str,
+    previous: Option<&WanRouteTarget>,
+    next: Option<&WanRouteTarget>,
+) {
+    match (previous, next) {
+        (Some(prev), Some(curr))
+            if prev.info.iface_name != curr.info.iface_name
+                || prev.info.default_route != curr.info.default_route =>
+        {
+            if !curr.info.default_route {
+                tracing::warn!(
+                    family,
+                    from_iface = %prev.info.iface_name,
+                    to_iface = %curr.info.iface_name,
+                    "default WAN route failed over to backup link"
+                );
+            } else if !prev.info.default_route {
+                tracing::info!(
+                    family,
+                    from_iface = %prev.info.iface_name,
+                    to_iface = %curr.info.iface_name,
+                    "default WAN route recovered to primary link"
+                );
+            } else {
+                tracing::info!(
+                    family,
+                    from_iface = %prev.info.iface_name,
+                    to_iface = %curr.info.iface_name,
+                    "default WAN route switched"
+                );
+            }
+        }
+        (None, Some(curr)) if !curr.info.default_route => {
+            tracing::warn!(
+                family,
+                to_iface = %curr.info.iface_name,
+                "default WAN route activated on backup link while primary is unavailable"
+            );
+        }
+        _ => {}
+    }
 }
 
 /// Which address family's kernel default route a nexthop set feeds.
@@ -128,14 +242,8 @@ fn usable_default_nexthop(entry: &WanRouteTarget, family: DefaultFamily) -> bool
     }
 }
 
-/// Collect the kernel default-route nexthops for one family from the WAN
-/// route state: default targets with a usable gateway (or a dev-only
-/// point-to-point nexthop), deduplicated and sorted so consecutive
-/// refreshes compare equal. Unspecified gateways and zero weights are
-/// skipped/clamped, and fields that never reach the `ip` arguments are
-/// normalized.
-fn kernel_default_nexthops_for(
-    routes: &WanRoutesByOwner,
+fn normalize_kernel_nexthops<'a>(
+    entries: impl IntoIterator<Item = &'a WanRouteTarget>,
     family: DefaultFamily,
 ) -> Vec<RouteTargetInfo> {
     let unspecified = match family {
@@ -143,9 +251,8 @@ fn kernel_default_nexthops_for(
         DefaultFamily::V6 => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
     };
 
-    let mut candidates: Vec<RouteTargetInfo> = routes
-        .values()
-        .filter(|entry| entry.info.default_route && usable_default_nexthop(entry, family))
+    let mut candidates: Vec<RouteTargetInfo> = entries
+        .into_iter()
         .map(|entry| {
             let mut nexthop = entry.info.clone();
             nexthop.weight = nexthop.weight.max(1);
@@ -172,14 +279,83 @@ fn kernel_default_nexthops_for(
     candidates
 }
 
+/// Collect the kernel default-route nexthops for one family from the WAN
+/// route state and current link health verdicts:
+/// - Available (`Healthy` / `Unknown`) primary default targets with a usable
+///   gateway (or dev-only point-to-point nexthop), deduplicated and sorted so
+///   consecutive refreshes compare equal.
+/// - When all primary targets are `Unhealthy` (or a configured primary route is
+///   absent), fails over to the deterministic best available non-docker WAN
+///   backup link.
+/// - When all candidates are `Unhealthy`, fails open on the original primaries.
+fn kernel_default_nexthops_for(
+    routes: &WanRoutesByOwner,
+    healths: &LinkHealths,
+    has_configured_default: bool,
+    family: DefaultFamily,
+) -> Vec<RouteTargetInfo> {
+    let primaries: Vec<(&RouteOwner, &WanRouteTarget)> = routes
+        .iter()
+        .filter(|(_, entry)| entry.info.default_route && usable_default_nexthop(entry, family))
+        .collect();
+
+    let available_primaries: Vec<&WanRouteTarget> = primaries
+        .iter()
+        .filter(|(owner, _)| is_owner_available(healths, owner))
+        .map(|(_, entry)| *entry)
+        .collect();
+    if !available_primaries.is_empty() {
+        return normalize_kernel_nexthops(available_primaries, family);
+    }
+
+    if !primaries.is_empty() || has_configured_default {
+        let mut backups: Vec<(&RouteOwner, &WanRouteTarget)> = routes
+            .iter()
+            .filter(|(owner, entry)| {
+                is_failover_backup_link(owner, entry) && usable_default_nexthop(entry, family)
+            })
+            .collect();
+        backups.sort_by(|(owner_a, a), (owner_b, b)| {
+            backup_candidate_sort_key(healths, owner_a, a)
+                .cmp(&backup_candidate_sort_key(healths, owner_b, b))
+        });
+
+        if let Some((_, backup)) =
+            backups.iter().find(|(owner, _)| is_owner_available(healths, owner))
+        {
+            return normalize_kernel_nexthops([*backup], family);
+        }
+
+        if !primaries.is_empty() {
+            return normalize_kernel_nexthops(
+                primaries.into_iter().map(|(_, entry)| entry),
+                family,
+            );
+        }
+        if has_configured_default && let Some((_, backup)) = backups.first() {
+            return normalize_kernel_nexthops([*backup], family);
+        }
+    }
+
+    Vec::new()
+}
+
 /// IPv4 nexthops for the kernel default route.
-pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
-    kernel_default_nexthops_for(routes, DefaultFamily::V4)
+pub(crate) fn kernel_default_nexthops(
+    routes: &WanRoutesByOwner,
+    healths: &LinkHealths,
+    has_configured_default: bool,
+) -> Vec<RouteTargetInfo> {
+    kernel_default_nexthops_for(routes, healths, has_configured_default, DefaultFamily::V4)
 }
 
 /// IPv6 nexthops for the kernel default route.
-pub(crate) fn kernel_default_nexthops_v6(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
-    kernel_default_nexthops_for(routes, DefaultFamily::V6)
+pub(crate) fn kernel_default_nexthops_v6(
+    routes: &WanRoutesByOwner,
+    healths: &LinkHealths,
+    has_configured_default: bool,
+) -> Vec<RouteTargetInfo> {
+    kernel_default_nexthops_for(routes, healths, has_configured_default, DefaultFamily::V6)
 }
 
 impl IpRouteService {
@@ -200,6 +376,44 @@ impl IpRouteService {
         let _ = self.wan_route_events.send(WanRouteEvent { owner: owner.clone(), family, kind });
     }
 
+    async fn default_route_intents(&self) -> (bool, bool) {
+        let intents = self.default_route_intents.read().await;
+        (!intents.ipv4_links.is_empty(), !intents.ipv6_links.is_empty())
+    }
+
+    /// Record whether an active WAN link is configured to provide a default
+    /// route in IPv4 and/or IPv6. Used to allow Flow 0 failover to a healthy
+    /// backup while the configured primary link's session is down or redialing.
+    pub async fn set_link_default_intent(
+        &self,
+        link_id: Uuid,
+        ipv4_default: bool,
+        ipv6_default: bool,
+    ) {
+        let changed = {
+            let mut intents = self.default_route_intents.write().await;
+            let v4_changed = if ipv4_default {
+                intents.ipv4_links.insert(link_id)
+            } else {
+                intents.ipv4_links.remove(&link_id)
+            };
+            let v6_changed = if ipv6_default {
+                intents.ipv6_links.insert(link_id)
+            } else {
+                intents.ipv6_links.remove(&link_id)
+            };
+            v4_changed || v6_changed
+        };
+        if changed {
+            self.refresh_default_router().await;
+        }
+    }
+
+    /// Clear a stopped or deleted WAN link's default-route intent.
+    pub async fn clear_link_default_intent(&self, link_id: Uuid) {
+        self.set_link_default_intent(link_id, false, false).await;
+    }
+
     async fn apply_ipv4_wan_route_update(&self, update: WanRouteUpdate) {
         if let WanRouteUpdate::Changed { refresh_default_router: true } = update {
             self.refresh_default_router().await;
@@ -212,17 +426,13 @@ impl IpRouteService {
         }
     }
 
-    async fn apply_removed_ipv4_wan_route(&self, removed: Option<WanRouteTarget>) {
+    async fn apply_removed_ipv6_wan_route(
+        &self,
+        owner: &RouteOwner,
+        removed: Option<WanRouteTarget>,
+    ) {
         if let Some(entry) = removed
-            && entry.info.default_route
-        {
-            self.refresh_default_router().await;
-        }
-    }
-
-    async fn apply_removed_ipv6_wan_route(&self, removed: Option<WanRouteTarget>) {
-        if let Some(entry) = removed
-            && entry.info.default_route
+            && affects_default_router(owner, &entry)
         {
             self.refresh_default_router().await;
         }
@@ -257,11 +467,21 @@ impl IpRouteService {
     pub async fn remove_ipv4_wan_route(&self, owner: &RouteOwner) {
         let removed = self.ipv4_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
-        self.apply_removed_ipv4_wan_route(removed).await;
-        // A link without its v4 WAN route has nothing to probe; its health
-        // verdict is stale.
-        if let RouteOwner::Link(link_id) = owner {
-            self.clear_link_health(*link_id).await;
+        let route_affects_default =
+            removed.as_ref().is_some_and(|entry| affects_default_router(owner, entry));
+
+        // A link without its v4 WAN route has nothing to probe; clear its stale
+        // health verdict before refreshing Flow 0 once for both changes.
+        let health_event = match owner {
+            RouteOwner::Link(link_id) => self.clear_link_health_inner(*link_id).await,
+            RouteOwner::Netns(_) => None,
+        };
+
+        if route_affects_default || health_event.is_some() {
+            self.refresh_default_router().await;
+        }
+        if let Some(event) = health_event {
+            let _ = self.health_events.send(event);
         }
         if had_removed {
             self.notify_wan_route_change(owner, IpFamily::Ipv4, WanRouteEventKind::Removed);
@@ -271,7 +491,7 @@ impl IpRouteService {
     pub async fn remove_ipv6_wan_route(&self, owner: &RouteOwner) {
         let removed = self.ipv6_wan_ifaces.write().await.remove(owner);
         let had_removed = removed.is_some();
-        self.apply_removed_ipv6_wan_route(removed).await;
+        self.apply_removed_ipv6_wan_route(owner, removed).await;
         if had_removed {
             self.notify_wan_route_change(owner, IpFamily::Ipv6, WanRouteEventKind::Removed);
         }
@@ -314,29 +534,65 @@ impl IpRouteService {
     }
 
     pub async fn refresh_default_router(&self) {
+        let mut sync = self.default_router_sync.lock().await;
+        let healths = self.clone_link_healths().await;
+        let (has_v4_intent, has_v6_intent) = self.default_route_intents().await;
+
         let ipv4_default = {
             let routes = self.ipv4_wan_ifaces.read().await;
-            select_default_wan_route(&routes)
+            select_default_wan_route(&routes, &healths, has_v4_intent)
         };
-        sync_default_ipv4_wan_route(&*self.dataplane, ipv4_default);
-
         let ipv6_default = {
             let routes = self.ipv6_wan_ifaces.read().await;
-            select_default_wan_route(&routes)
+            select_default_wan_route(&routes, &healths, has_v6_intent)
         };
-        sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
+
+        let v4_changed = sync.last_v4.as_ref() != Some(&ipv4_default);
+        let v6_changed = sync.last_v6.as_ref() != Some(&ipv6_default);
+
+        if v4_changed {
+            log_default_route_transition(
+                "ipv4",
+                sync.last_v4.as_ref().and_then(|v| v.as_ref()),
+                ipv4_default.as_ref(),
+            );
+            sync_default_ipv4_wan_route(&*self.dataplane, ipv4_default.as_ref());
+            sync.last_v4 = Some(ipv4_default);
+        }
+
+        if v6_changed {
+            log_default_route_transition(
+                "ipv6",
+                sync.last_v6.as_ref().and_then(|v| v.as_ref()),
+                ipv6_default.as_ref(),
+            );
+            sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default.as_ref());
+            sync.last_v6 = Some(ipv6_default);
+        }
+
+        if v4_changed || v6_changed {
+            self.dataplane.invalidate_lan_cache();
+        }
+        drop(sync);
 
         // The kernel default routes are owned by the single-writer
-        // reconcile loop: ring its doorbell instead of writing here.
+        // reconcile loop: ring its doorbell instead of writing here. Always
+        // notify because multi-primary kernel ECMP may change even when the
+        // single eBPF Flow 0 target did not.
         self.kernel_default_notify.notify_one();
     }
 
     /// Reconcile the kernel IPv4 default route with the current WAN route
-    /// state. Snapshots the state right before writing, so a stale view
-    /// can never be committed; a failed sync leaves the cache `None` so
-    /// the next pass retries.
+    /// state and link health verdicts. Snapshots the state right before
+    /// writing, so a stale view can never be committed; a failed sync leaves
+    /// the cache `None` so the next pass retries.
     pub(crate) async fn reconcile_kernel_default_ipv4(&self) {
-        let defaults = kernel_default_nexthops(&*self.ipv4_wan_ifaces.read().await);
+        let healths = self.clone_link_healths().await;
+        let (has_v4_intent, _) = self.default_route_intents().await;
+        let defaults = {
+            let routes = self.ipv4_wan_ifaces.read().await;
+            kernel_default_nexthops(&routes, &healths, has_v4_intent)
+        };
         let mut cache = self.kernel_default_ipv4_cache.write().await;
         if *cache == Some(defaults.clone()) {
             return;
@@ -349,10 +605,15 @@ impl IpRouteService {
     }
 
     /// Reconcile the kernel IPv6 default route with the current WAN route
-    /// state. Same single-writer snapshot/retry contract as the IPv4
-    /// variant.
+    /// state and link health verdicts. Same single-writer snapshot/retry
+    /// contract as the IPv4 variant.
     pub(crate) async fn reconcile_kernel_default_ipv6(&self) {
-        let defaults = kernel_default_nexthops_v6(&*self.ipv6_wan_ifaces.read().await);
+        let healths = self.clone_link_healths().await;
+        let (_, has_v6_intent) = self.default_route_intents().await;
+        let defaults = {
+            let routes = self.ipv6_wan_ifaces.read().await;
+            kernel_default_nexthops_v6(&routes, &healths, has_v6_intent)
+        };
         let mut cache = self.kernel_default_ipv6_cache.write().await;
         if *cache == Some(defaults.clone()) {
             return;

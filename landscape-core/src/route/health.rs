@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use landscape_common::wan_link::{WanLinkHealthInfo, WanLinkHealthState};
+use landscape_common::{
+    sys_service::route_service::RouteOwner,
+    wan_link::{WanLinkHealthInfo, WanLinkHealthState},
+};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -23,12 +26,42 @@ pub struct WanLinkHealthEvent {
 
 pub type LinkHealths = HashMap<Uuid, WanLinkHealthInfo>;
 
+/// Whether a WAN link is eligible for routing decisions.
+///
+/// Links without a health-check entry or still in `Unknown` (just started or
+/// health check disabled) are always treated as available so startup/unmonitored
+/// links are never evicted.
+pub(crate) fn is_link_available(healths: &LinkHealths, link_id: Uuid) -> bool {
+    healths.get(&link_id).is_none_or(|info| info.state != WanLinkHealthState::Unhealthy)
+}
+
+/// Whether a route owner is eligible for routing decisions. Non-link owners
+/// (Docker/Netns) are not subject to WAN link health probing.
+pub(crate) fn is_owner_available(healths: &LinkHealths, owner: &RouteOwner) -> bool {
+    match owner {
+        RouteOwner::Link(link_id) => is_link_available(healths, *link_id),
+        RouteOwner::Netns(_) => true,
+    }
+}
+
+/// True only when a link has an active `Healthy` verdict (used to prefer a
+/// verified-healthy backup over an unmonitored `Unknown` backup).
+pub(crate) fn is_owner_verified_healthy(healths: &LinkHealths, owner: &RouteOwner) -> bool {
+    match owner {
+        RouteOwner::Link(link_id) => {
+            healths.get(link_id).is_some_and(|info| info.state == WanLinkHealthState::Healthy)
+        }
+        RouteOwner::Netns(_) => false,
+    }
+}
+
 impl IpRouteService {
     pub(crate) async fn clone_link_healths(&self) -> LinkHealths {
         clone_locked_state(&self.link_healths).await
     }
 
-    /// Upsert a link's health snapshot; broadcasts only on state flips.
+    /// Upsert a link's health snapshot; refreshes Flow 0 default routing and
+    /// broadcasts only on state flips.
     pub async fn update_link_health(&self, info: WanLinkHealthInfo) {
         let flip = {
             let mut lock = self.link_healths.write().await;
@@ -38,23 +71,35 @@ impl IpRouteService {
             (from != to).then_some(WanLinkHealthEvent { link_id: info.link_id, from, to, info })
         };
         if let Some(event) = flip {
+            self.refresh_default_router().await;
             let _ = self.health_events.send(event);
         }
     }
 
-    /// Drop a link's entry (session gone / section stopped), broadcasting
-    /// the removal as a flip to `Unknown`; silent when nothing is stored.
-    pub async fn clear_link_health(&self, link_id: Uuid) {
+    /// Remove a link's health entry without refreshing or broadcasting; returns
+    /// the flip-to-`Unknown` event when a real verdict existed.
+    pub(crate) async fn clear_link_health_inner(
+        &self,
+        link_id: Uuid,
+    ) -> Option<WanLinkHealthEvent> {
         let removed = self.link_healths.write().await.remove(&link_id);
-        if let Some(old) = removed
-            && old.state != WanLinkHealthState::Unknown
-        {
-            let _ = self.health_events.send(WanLinkHealthEvent {
+        removed.and_then(|old| {
+            (old.state != WanLinkHealthState::Unknown).then_some(WanLinkHealthEvent {
                 link_id,
                 from: old.state,
                 to: WanLinkHealthState::Unknown,
                 info: old,
-            });
+            })
+        })
+    }
+
+    /// Drop a link's entry (session gone / section stopped), refreshing Flow 0
+    /// and broadcasting the removal as a flip to `Unknown`; silent when nothing
+    /// is stored.
+    pub async fn clear_link_health(&self, link_id: Uuid) {
+        if let Some(event) = self.clear_link_health_inner(link_id).await {
+            self.refresh_default_router().await;
+            let _ = self.health_events.send(event);
         }
     }
 
