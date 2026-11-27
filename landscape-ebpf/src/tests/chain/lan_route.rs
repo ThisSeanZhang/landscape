@@ -11,12 +11,14 @@ use libbpf_rs::{
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::maps::route::cache::{LAN_CACHE, WAN_CACHE};
+use crate::maps::route::cache::{CONN_PIN_CACHE, LAN_CACHE, WAN_CACHE};
+use crate::maps::route::set_flow_balance_mode_with_map;
 use crate::maps::wan_trie::arena::mapped_table;
 use crate::maps::wan_trie::builder::{v4_entry, wan_trie_publish};
 use crate::maps::{
-    Route4CacheKey, Route4CacheValue, Route4SlotKey, Route4TargetInfo, Route6CacheKey,
-    Route6CacheValue, Route6SlotKey, Route6TargetInfo,
+    Route4CacheKey, Route4CacheValue, Route4ConnKey, Route4SlotKey, Route4TargetInfo,
+    Route6CacheKey, Route6CacheValue, Route6ConnKey, Route6SlotKey, Route6TargetInfo,
+    RouteConnValue, RouteFlowTargetKey,
 };
 use crate::skel::xdp_lan_exit::XdpLanExitSkelBuilder;
 use crate::skel::xdp_lan_root::XdpLanRootSkelBuilder;
@@ -923,6 +925,244 @@ fn xdp_lan_route_zero_ifindex_lan_cache_rebuilds_to_current_flow_v6() {
         as_bytes(&stale),
         as_bytes(&expected),
     );
+}
+
+// ── Test D4: outbound LAN_CACHE / CONN_PIN_CACHE tailcall failure & XDP disable fallback ──
+
+#[repr(C)]
+#[derive(FromBytes, Immutable, Debug, Clone, Copy, PartialEq, Eq)]
+struct FallbackTcRedirectMeta {
+    magic: u32,
+    mark: u32,
+    target_ifindex: u32,
+    link_chain_id: u16,
+    _pad: u16,
+    _reserved: [u8; 8],
+}
+
+const _: () = assert!(std::mem::size_of::<FallbackTcRedirectMeta>() == 24);
+
+fn run_xdp_route_with_meta(
+    prog: &libbpf_rs::ProgramMut<'_>,
+    pkt: &[u8],
+    initial_meta: &[u8],
+) -> (u32, Vec<u8>, Vec<u8>) {
+    let mut input = Vec::with_capacity(initial_meta.len() + pkt.len());
+    input.extend_from_slice(initial_meta);
+    input.extend_from_slice(pkt);
+
+    let mut ctx_in = XdpMd {
+        data: initial_meta.len() as u32,
+        data_end: input.len() as u32,
+        data_meta: 0,
+        ingress_ifindex: 3,
+        ..Default::default()
+    };
+    let mut ctx_out = XdpMd::default();
+    let mut out_buf = vec![0u8; input.len() + 64];
+    let (ret, out) = {
+        let res = prog
+            .test_run(ProgramInput {
+                data_in: Some(&input),
+                data_out: Some(&mut out_buf),
+                context_in: Some(ctx_in.as_mut_bytes()),
+                context_out: Some(ctx_out.as_mut_bytes()),
+                ..Default::default()
+            })
+            .expect("test_run xdp_lan_route");
+        (res.return_value, res.data.expect("xdp data_out").to_vec())
+    };
+    let meta_len = (ctx_out.data - ctx_out.data_meta) as usize;
+    let end = (ctx_out.data_end - ctx_out.data_meta) as usize;
+    assert_eq!(end, out.len(), "xdp data_end must match output slice");
+    (ret, out[..meta_len].to_vec(), out[meta_len..end].to_vec())
+}
+
+#[test]
+fn xdp_lan_route_conn_pin_cache_fallback_passes_without_meta_leak_v4_v6() {
+    use landscape_common::flow::FlowBalanceMode;
+
+    const XDP_PASS: u32 = 2;
+    const XDP_HANDOFF_TC_REDIRECT_MAGIC: u32 = 0x4C44_5443;
+    const WAN_IFINDEX: u32 = 42;
+    const MISSING_CHAIN: u16 = 77;
+    const FLOW_MARK: u32 = 0x0305;
+
+    let pin = crate::tests::isolated_pin_root("xdp-lr-conn-fallback");
+    let maps = crate::tests::init_shared_maps_for_test(&pin);
+    set_flow_balance_mode_with_map(&maps.rt_flow_mode_map, 5, FlowBalanceMode::FiveTuple);
+
+    let local4 = Ipv4Addr::new(10, 0, 0, 1);
+    let remote4 = Ipv4Addr::new(203, 0, 113, 1);
+    let local6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
+    let remote6 = Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 2);
+
+    let ft_key = RouteFlowTargetKey { flow_id: 5, ifindex: WAN_IFINDEX };
+    let target4 = Route4TargetInfo {
+        ifindex: WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN,
+        ..Default::default()
+    };
+    let target6 = Route6TargetInfo {
+        ifindex: WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN,
+        ..Default::default()
+    };
+    maps.rt4_flow_targets.update(as_bytes(&ft_key), as_bytes(&target4), MapFlags::ANY).unwrap();
+    maps.rt6_flow_targets.update(as_bytes(&ft_key), as_bytes(&target6), MapFlags::ANY).unwrap();
+
+    let conn_val = RouteConnValue {
+        mark_value: FLOW_MARK,
+        has_mac: 0,
+        is_docker: 0,
+        xdp_redirect_able: 1,
+        flags: 0,
+        ifindex: WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN,
+        _pad: 0,
+    };
+
+    let conn4_key = Route4ConnKey {
+        saddr: local4.to_bits().to_be(),
+        daddr: remote4.to_bits().to_be(),
+        sport: 12345_u16.to_be(),
+        dport: 443_u16.to_be(),
+        l4_proto: 6,
+        _pad: [0; 3],
+    };
+    let conn4_inner = lookup_inner_map(&maps.rt4_conn_map, CONN_PIN_CACHE);
+    conn4_inner.update(as_bytes(&conn4_key), as_bytes(&conn_val), MapFlags::ANY).unwrap();
+
+    let conn6_key = Route6ConnKey {
+        saddr: local6.octets(),
+        daddr: remote6.octets(),
+        sport: 12345_u16.to_be(),
+        dport: 443_u16.to_be(),
+        l4_proto: 6,
+        _pad: [0; 3],
+    };
+    let conn6_inner = lookup_inner_map(&maps.rt6_conn_map, CONN_PIN_CACHE);
+    conn6_inner.update(as_bytes(&conn6_key), as_bytes(&conn_val), MapFlags::ANY).unwrap();
+
+    let mut builder = XdpLanRouteSkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let skel = builder.open(&mut obj).unwrap().load().unwrap();
+
+    let pkt4 = simple_ipv4_tcp(local4, remote4);
+    let pkt6 = simple_ipv6_tcp_syn(local6, remote6);
+
+    // 1) Target WAN dynamically disables XDP (xdp_redirect_able map lacks WAN_IFINDEX
+    //    while cached conn_val.xdp_redirect_able is still 1): must emit TC redirect handoff.
+    for (label, pkt) in [("v4", &pkt4), ("v6", &pkt6)] {
+        let (ret, meta, frame) = run_xdp_route_with_meta(&skel.progs.xdp_lan_route, pkt, &[]);
+        assert_eq!(ret, XDP_PASS, "{label}: !xdp_redirect_target_able must return XDP_PASS");
+        assert_eq!(frame, *pkt);
+        assert_eq!(meta.len(), std::mem::size_of::<FallbackTcRedirectMeta>());
+        let ho = FallbackTcRedirectMeta::read_from_bytes(&meta).unwrap();
+        assert_eq!(ho.magic, XDP_HANDOFF_TC_REDIRECT_MAGIC);
+        assert_eq!(ho.mark, FLOW_MARK);
+        assert_eq!(ho.target_ifindex, WAN_IFINDEX);
+        assert_eq!(ho.link_chain_id, MISSING_CHAIN);
+    }
+
+    // 2) Target WAN is marked XDP-redirectable, but xdp_lan_pipe_root_progs[MISSING_CHAIN]
+    //    is empty (teardown race): tailcall fails and must reclaim data_meta + XDP_PASS.
+    skel.maps
+        .xdp_redirect_able
+        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+
+    let orig_meta: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    for (label, pkt) in [("v4", &pkt4), ("v6", &pkt6)] {
+        let (ret, meta, frame) = run_xdp_route_with_meta(&skel.progs.xdp_lan_route, pkt, &[]);
+        assert_eq!(ret, XDP_PASS, "{label}: conn_cache tailcall failure must return XDP_PASS");
+        assert!(meta.is_empty(), "{label}: must not leak xdp_pipe_meta into TC");
+        assert_eq!(frame, *pkt);
+
+        let (ret_pre, meta_pre, frame_pre) =
+            run_xdp_route_with_meta(&skel.progs.xdp_lan_route, pkt, &orig_meta);
+        assert_eq!(ret_pre, XDP_PASS, "{label}: pre-existing meta tailcall failure must XDP_PASS");
+        assert_eq!(meta_pre, orig_meta, "{label}: pre-existing data_meta must be restored intact");
+        assert_eq!(frame_pre, *pkt);
+    }
+}
+
+#[test]
+fn xdp_lan_route_lan_cache_fallback_passes_without_meta_leak_v4_v6() {
+    const XDP_PASS: u32 = 2;
+    const XDP_HANDOFF_TC_REDIRECT_MAGIC: u32 = 0x4C44_5443;
+    const WAN_IFINDEX: u32 = 42;
+    const MISSING_CHAIN: u16 = 88;
+    const FLOW_MARK: u32 = 0x0302;
+
+    let pin = crate::tests::isolated_pin_root("xdp-lr-lancache-fallback");
+    let maps = crate::tests::init_shared_maps_for_test(&pin);
+
+    let local4 = Ipv4Addr::new(10, 0, 0, 2);
+    let remote4 = Ipv4Addr::new(203, 0, 113, 2);
+    let local6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
+    let remote6 = Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 3);
+
+    let key4 = Route4CacheKey {
+        local_addr: local4.to_bits().to_be(),
+        remote_addr: remote4.to_bits().to_be(),
+    };
+    let val4 = Route4CacheValue {
+        mark_value: FLOW_MARK,
+        xdp_redirect_able: 1,
+        ifindex: WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN,
+        ..Default::default()
+    };
+    let lan4_inner = lookup_inner_map(&maps.rt4_cache_map, LAN_CACHE);
+    lan4_inner.update(as_bytes(&key4), as_bytes(&val4), MapFlags::ANY).unwrap();
+
+    let key6 = Route6CacheKey {
+        local_addr: local6.octets(),
+        remote_addr: remote6.octets(),
+    };
+    let val6 = Route6CacheValue {
+        mark_value: FLOW_MARK,
+        xdp_redirect_able: 1,
+        ifindex: WAN_IFINDEX,
+        link_chain_id: MISSING_CHAIN,
+        ..Default::default()
+    };
+    let lan6_inner = lookup_inner_map(&maps.rt6_cache_map, LAN_CACHE);
+    lan6_inner.update(as_bytes(&key6), as_bytes(&val6), MapFlags::ANY).unwrap();
+
+    let mut builder = XdpLanRouteSkelBuilder::default();
+    builder.object_builder_mut().pin_root_path(&pin).unwrap();
+    let mut obj = std::mem::MaybeUninit::uninit();
+    let skel = builder.open(&mut obj).unwrap().load().unwrap();
+
+    let pkt4 = simple_ipv4_tcp(local4, remote4);
+    let pkt6 = simple_ipv6_tcp_syn(local6, remote6);
+
+    // 1) Stale cached xdp_redirect_able == 1 while live xdp_redirect_able map lacks WAN_IFINDEX.
+    for (label, pkt) in [("v4", &pkt4), ("v6", &pkt6)] {
+        let (ret, meta, frame) = run_xdp_route_with_meta(&skel.progs.xdp_lan_route, pkt, &[]);
+        assert_eq!(ret, XDP_PASS, "{label}: LAN_CACHE !xdp_redirect_target_able must XDP_PASS");
+        assert_eq!(frame, *pkt);
+        let ho = FallbackTcRedirectMeta::read_from_bytes(&meta).unwrap();
+        assert_eq!(ho.magic, XDP_HANDOFF_TC_REDIRECT_MAGIC);
+        assert_eq!(ho.mark, FLOW_MARK);
+        assert_eq!(ho.target_ifindex, WAN_IFINDEX);
+        assert_eq!(ho.link_chain_id, MISSING_CHAIN);
+    }
+
+    // 2) Live xdp_redirect_able == 1 but xdp_lan_pipe_root_progs[MISSING_CHAIN] is empty.
+    skel.maps
+        .xdp_redirect_able
+        .update(&WAN_IFINDEX.to_ne_bytes(), &1u32.to_ne_bytes(), MapFlags::ANY)
+        .unwrap();
+    for (label, pkt) in [("v4", &pkt4), ("v6", &pkt6)] {
+        let (ret, meta, frame) = run_xdp_route_with_meta(&skel.progs.xdp_lan_route, pkt, &[]);
+        assert_eq!(ret, XDP_PASS, "{label}: LAN_CACHE tailcall failure must return XDP_PASS");
+        assert!(meta.is_empty(), "{label}: LAN_CACHE fallback must not leak xdp_pipe_meta");
+        assert_eq!(frame, *pkt);
+    }
 }
 
 // ── Test E: unknown IP must not be redirected (regression guard) ──

@@ -3,6 +3,7 @@
 //! invalidate verdict caches.
 
 use crate::config::FlowId;
+use crate::flow::FlowBalanceMode;
 
 use super::{LanRouteInfo, RouteTargetInfo, WanRouteTarget};
 
@@ -28,6 +29,12 @@ pub trait RouteTableDataplane: Send + Sync {
 
     /// Drop all IPv6 WAN target slots of `flow_id`.
     fn del_wan_slots_v6(&self, flow_id: FlowId);
+
+    /// Set the ECMP load-balancing mode (`dst_ip` or `five_tuple`) of
+    /// `flow_id`.
+    fn set_flow_balance_mode(&self, flow_id: FlowId, mode: FlowBalanceMode) {
+        let _ = (flow_id, mode);
+    }
 
     /// Replace the kernel IPv4 default route with the weighted nexthops
     /// derived from the WAN route state; an empty slice leaves the kernel

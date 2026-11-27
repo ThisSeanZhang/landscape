@@ -106,9 +106,14 @@ pub(crate) struct TproxyPacketTestResult {
 pub(crate) struct RouteContextV4 {
     pub saddr: u32,
     pub daddr: u32,
+    pub sport: u16,
+    pub dport: u16,
     pub l4_protocol: u8,
     pub tos: u8,
     pub smac: [u8; 6],
+    pub has_ports: u8,
+    pub l4_parsed: u8,
+    pub _pad: [u8; 2],
 }
 
 /// C side `route6_context`.
@@ -117,9 +122,14 @@ pub(crate) struct RouteContextV4 {
 pub(crate) struct RouteContextV6 {
     pub saddr: [u8; 16],
     pub daddr: [u8; 16],
+    pub sport: u16,
+    pub dport: u16,
     pub l4_protocol: u8,
     pub tos: u8,
     pub smac: [u8; 6],
+    pub has_ports: u8,
+    pub l4_parsed: u8,
+    pub _pad: [u8; 2],
 }
 
 /// C side `route_view`.

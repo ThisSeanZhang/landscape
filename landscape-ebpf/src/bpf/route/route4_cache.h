@@ -3,6 +3,8 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
+#include "route/route_mode.h"
+
 struct route4_cache_key {
     __be32 local_addr;
     __be32 remote_addr;
@@ -39,5 +41,31 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
     __array(values, struct route4_each_cache);
 } rt4_cache_map SEC(".maps");
+
+struct route4_conn_key {
+    __be32 saddr;
+    __be32 daddr;
+    __be16 sport;
+    __be16 dport;
+    u8 l4_proto;
+    u8 _pad[3];
+} _route4_conn_key;
+
+_Static_assert(sizeof(struct route4_conn_key) == 16, "route4_conn_key must be 16 bytes");
+
+struct route4_each_conn {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(key_size, sizeof(struct route4_conn_key));
+    __uint(value_size, sizeof(struct route_conn_value));
+    __uint(max_entries, 65536);
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
+    __type(key, u32);
+    __uint(max_entries, 2);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    __array(values, struct route4_each_conn);
+} rt4_conn_map SEC(".maps");
 
 #endif /* __LD_ROUTE4_CACHE_H__ */

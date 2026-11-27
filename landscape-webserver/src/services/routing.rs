@@ -43,6 +43,7 @@ fn link_health(
 )]
 async fn reset_cache(State(state): State<LandscapeApp>) -> LandscapeApiResult<()> {
     landscape_ebpf::maps::route::cache::recreate_route_lan_cache_inner_map(&state.ebpf_paths);
+    landscape_ebpf::maps::route::cache::recreate_route_conn_inner_map(&state.ebpf_paths);
     // landscape_ebpf::maps::route::cache::recreate_route_wan_cache_inner_map();
     LandscapeApiResp::success(())
 }

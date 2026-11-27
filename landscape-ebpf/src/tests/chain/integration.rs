@@ -413,6 +413,7 @@ fn tc_wan_root_neighbour_miss_delivers_via_selected_next_hop() {
     );
     replace_wan_route_slots_v4_with_map(
         &entry.maps.rt4_slot_map,
+        &entry.maps.rt4_flow_targets,
         0,
         &[(WanRouteTarget::link(9, target), 1)],
     );

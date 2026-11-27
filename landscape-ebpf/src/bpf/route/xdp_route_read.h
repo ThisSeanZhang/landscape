@@ -9,8 +9,8 @@
 #include "route/route6_context.h"
 
 static __always_inline int xdp_read_ipv4(struct xdp_md *ctx, struct route4_context *context) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
+    void *data = ctx_data(ctx);
+    void *data_end = ctx_data_end(ctx);
     struct ethhdr *eth = data;
     struct iphdr *iph;
 
@@ -26,8 +26,8 @@ static __always_inline int xdp_read_ipv4(struct xdp_md *ctx, struct route4_conte
 }
 
 static __always_inline int xdp_read_ipv6(struct xdp_md *ctx, struct route6_context *context) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
+    void *data = ctx_data(ctx);
+    void *data_end = ctx_data_end(ctx);
     struct ethhdr *eth = data;
     struct ipv6hdr *ip6h;
 
