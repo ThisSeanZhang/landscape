@@ -85,6 +85,7 @@ struct XdpTcRedirectMeta {
     target_ifindex: u32,
     link_chain_id: u16,
     _pad: u16,
+    _reserved: [u8; 8],
 }
 
 fn mac_word(mac: [u8; 6]) -> u64 {

@@ -30,9 +30,6 @@ use crate::tests::isolated_pin_root;
 const XDP_PASS: u32 = 2;
 const XDP_REDIRECT: u32 = 4;
 
-const AF_INET: u16 = 2;
-const AF_INET6: u16 = 10;
-
 const INGRESS_STATIC_MARK: u32 = 1;
 const XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC: u32 = 0x4C44544E;
 
@@ -53,10 +50,7 @@ struct XdpPipeMeta {
 #[derive(Debug, Clone, Copy, IntoBytes, FromBytes, Immutable)]
 struct XdpTcRedirectNeighHandoff {
     magic: u32,
-    mark: u32,
     target_ifindex: u32,
-    nh_family: u16,
-    link_chain_id: u16,
     nh_addr: [u8; 16],
 }
 
@@ -72,7 +66,7 @@ struct XdpMd {
 }
 
 const _: () = assert!(std::mem::size_of::<XdpPipeMeta>() == 12);
-const _: () = assert!(std::mem::size_of::<XdpTcRedirectNeighHandoff>() == 32);
+const _: () = assert!(std::mem::size_of::<XdpTcRedirectNeighHandoff>() == 24);
 
 fn build_v4_tcp(src: Ipv4Addr, dst: Ipv4Addr) -> Vec<u8> {
     let builder = PacketBuilder::ethernet2(WAN_SRC_MAC, WAN_DST_MAC)
@@ -195,18 +189,15 @@ fn xdp_wan_v4_nexthop_cold_neigh_hands_off_to_tc_neigh() {
     assert_eq!(
         out.len(),
         std::mem::size_of::<XdpTcRedirectNeighHandoff>() + pkt.len(),
-        "output must carry 32-byte TC neigh handoff metadata plus intact frame"
+        "output must carry 24-byte TC neigh handoff metadata plus intact frame"
     );
 
-    let ho = XdpTcRedirectNeighHandoff::read_from_bytes(&out[..32]).expect("parse handoff");
+    let ho = XdpTcRedirectNeighHandoff::read_from_bytes(&out[..24]).expect("parse handoff");
     assert_eq!(ho.magic, XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC);
-    assert_eq!(ho.mark, INGRESS_STATIC_MARK);
     assert_eq!(ho.target_ifindex, TARGET_IFINDEX);
-    assert_eq!(ho.nh_family, AF_INET);
-    assert_eq!(ho.link_chain_id, 0);
     assert_eq!(&ho.nh_addr[0..4], &nexthop.octets(), "must pass nexthop IP, not daddr");
     assert_eq!(&ho.nh_addr[4..16], &[0u8; 12]);
-    assert_eq!(&out[32..], &pkt[..], "frame must remain intact for TC bpf_redirect_neigh");
+    assert_eq!(&out[24..], &pkt[..], "frame must remain intact for TC bpf_redirect_neigh");
 
     let cache = lookup_rt4_cache_value(&skel.maps.rt4_cache_map, WAN_CACHE, dst, remote)
         .expect("static ingress mark must still populate reverse WAN cache on TC handoff");
@@ -248,17 +239,14 @@ fn xdp_wan_v6_nexthop_cold_neigh_hands_off_to_tc_neigh() {
     assert_eq!(
         out.len(),
         std::mem::size_of::<XdpTcRedirectNeighHandoff>() + pkt.len(),
-        "output must carry 32-byte TC neigh handoff metadata plus intact frame"
+        "output must carry 24-byte TC neigh handoff metadata plus intact frame"
     );
 
-    let ho = XdpTcRedirectNeighHandoff::read_from_bytes(&out[..32]).expect("parse handoff");
+    let ho = XdpTcRedirectNeighHandoff::read_from_bytes(&out[..24]).expect("parse handoff");
     assert_eq!(ho.magic, XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC);
-    assert_eq!(ho.mark, INGRESS_STATIC_MARK);
     assert_eq!(ho.target_ifindex, TARGET_IFINDEX);
-    assert_eq!(ho.nh_family, AF_INET6);
-    assert_eq!(ho.link_chain_id, 0);
     assert_eq!(ho.nh_addr, nexthop.octets(), "must pass nexthop IPv6, not daddr");
-    assert_eq!(&out[32..], &pkt[..], "frame must remain intact for TC bpf_redirect_neigh");
+    assert_eq!(&out[24..], &pkt[..], "frame must remain intact for TC bpf_redirect_neigh");
 
     let cache = lookup_rt6_cache_value(&skel.maps.rt6_cache_map, WAN_CACHE, dst, remote)
         .expect("static ingress mark must still populate reverse WAN cache on TC handoff");
@@ -286,9 +274,8 @@ fn xdp_wan_v4_and_v6_direct_lan_cold_neigh_hands_off_with_daddr() {
     let pkt4 = build_v4_tcp(Ipv4Addr::new(203, 0, 113, 7), dst4);
     let (ret4, out4) = run_xdp(&skel, &pkt4);
     assert_eq!(ret4, XDP_PASS);
-    let ho4 = XdpTcRedirectNeighHandoff::read_from_bytes(&out4[..32]).expect("parse v4 handoff");
+    let ho4 = XdpTcRedirectNeighHandoff::read_from_bytes(&out4[..24]).expect("parse v4 handoff");
     assert_eq!(ho4.magic, XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC);
-    assert_eq!(ho4.nh_family, AF_INET);
     assert_eq!(&ho4.nh_addr[0..4], &dst4.octets());
 
     let dst6 = Ipv6Addr::from_str("fd00::20").unwrap();
@@ -305,9 +292,8 @@ fn xdp_wan_v4_and_v6_direct_lan_cold_neigh_hands_off_with_daddr() {
     let pkt6 = build_v6_tcp(Ipv6Addr::from_str("2001:db8:1::7").unwrap(), dst6);
     let (ret6, out6) = run_xdp(&skel, &pkt6);
     assert_eq!(ret6, XDP_PASS);
-    let ho6 = XdpTcRedirectNeighHandoff::read_from_bytes(&out6[..32]).expect("parse v6 handoff");
+    let ho6 = XdpTcRedirectNeighHandoff::read_from_bytes(&out6[..24]).expect("parse v6 handoff");
     assert_eq!(ho6.magic, XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC);
-    assert_eq!(ho6.nh_family, AF_INET6);
     assert_eq!(ho6.nh_addr, dst6.octets());
 }
 

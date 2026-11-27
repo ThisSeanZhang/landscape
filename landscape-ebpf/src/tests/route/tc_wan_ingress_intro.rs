@@ -382,7 +382,7 @@ fn xdp_mode_consumes_redirect_neigh_handoff_meta() {
         }
 
         // Seed permanent kernel neighbors WITHOUT kernel routes for the nexthops:
-        // - In XDP, bpf_fib_lookup() misses (no route) -> emits 32B
+        // - In XDP, bpf_fib_lookup() misses (no route) -> emits 24B
         //   XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC and returns XDP_PASS.
         // - In TC, tc_wan_ingress_intro consumes the magic and calls
         //   bpf_redirect_neigh(lan_ifindex, &param), which looks up the neighbor

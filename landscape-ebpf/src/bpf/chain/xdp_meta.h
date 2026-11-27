@@ -86,10 +86,7 @@ struct xdp_tc_redirect_handoff_payload {
 };
 
 struct xdp_tc_redirect_neigh_handoff_payload {
-    u32 mark;
     u32 target_ifindex;
-    u16 nh_family;
-    u16 link_chain_id;
     u32 nh_addr[4];
 };
 
@@ -104,7 +101,7 @@ struct xdp_handoff_meta {
     union xdp_handoff_payload payload;
 };
 
-_Static_assert(sizeof(struct xdp_handoff_meta) == 32,
+_Static_assert(sizeof(struct xdp_handoff_meta) == 24,
                "xdp_handoff_meta must fit in the 32-byte XDP metadata limit");
 
 /* Write handoff metadata right before returning XDP_PASS to TC. Reuse any
@@ -149,18 +146,11 @@ static __always_inline int xdp_set_tc_redirect_meta(struct xdp_md *ctx, u32 mark
     return xdp_set_handoff_meta(ctx, &ho);
 }
 
-static __always_inline int xdp_set_tc_redirect_neigh_meta(struct xdp_md *ctx, u32 mark,
-                                                          u32 target_ifindex, u16 link_chain_id,
-                                                          u16 nh_family, const u32 nh_addr[4]) {
+static __always_inline int xdp_set_tc_redirect_neigh_meta(struct xdp_md *ctx, u32 target_ifindex,
+                                                          const u32 nh_addr[4]) {
     struct xdp_handoff_meta ho = {
         .magic = XDP_HANDOFF_TC_REDIRECT_NEIGH_MAGIC,
-        .payload.tc_redirect_neigh =
-            {
-                .mark = mark,
-                .target_ifindex = target_ifindex,
-                .nh_family = nh_family,
-                .link_chain_id = link_chain_id,
-            },
+        .payload.tc_redirect_neigh = {.target_ifindex = target_ifindex},
     };
     __builtin_memcpy(ho.payload.tc_redirect_neigh.nh_addr, nh_addr,
                      sizeof(ho.payload.tc_redirect_neigh.nh_addr));

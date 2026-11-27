@@ -104,9 +104,7 @@ static __always_inline int xdp_route4_lan_redirect_check_in_wan(struct xdp_md *c
     // so the kernel resolves ARP and rewrites L2 headers instead of emitting a
     // frame carrying the ingress WAN MAC on the LAN interface.
     u32 nh_addr[4] = {hop_key.addr, 0, 0, 0};
-    if (xdp_set_tc_redirect_neigh_meta(ctx, meta->mark, lan_info->ifindex, 0, AF_INET, nh_addr) !=
-        0)
-        return XDP_DROP;
+    if (xdp_set_tc_redirect_neigh_meta(ctx, lan_info->ifindex, nh_addr) != 0) return XDP_DROP;
     return XDP_PASS;
 }
 
@@ -183,8 +181,7 @@ static __always_inline int xdp_route6_lan_redirect_check_in_wan(struct xdp_md *c
     // Neighbor cache and FIB both missed: hand off to TC bpf_redirect_neigh
     // so the kernel resolves NDP and rewrites L2 headers instead of emitting a
     // frame carrying the ingress WAN MAC on the LAN interface.
-    if (xdp_set_tc_redirect_neigh_meta(ctx, meta->mark, lan_info->ifindex, 0, AF_INET6,
-                                       hop_key.addr.in6_u.u6_addr32) != 0)
+    if (xdp_set_tc_redirect_neigh_meta(ctx, lan_info->ifindex, hop_key.addr.in6_u.u6_addr32) != 0)
         return XDP_DROP;
     return XDP_PASS;
 }
