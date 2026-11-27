@@ -822,6 +822,9 @@ struct RecordingRouteDataplane {
     lan_ops: std::sync::Mutex<Vec<LanRouteOp>>,
     fail_next: std::sync::atomic::AtomicBool,
     fail_next_v6: std::sync::atomic::AtomicBool,
+    wan_slots_v4: std::sync::Mutex<HashMap<FlowId, Vec<(WanRouteTarget, u32)>>>,
+    wan_slots_v6: std::sync::Mutex<HashMap<FlowId, Vec<(WanRouteTarget, u32)>>>,
+    lan_cache_invalidations: std::sync::atomic::AtomicUsize,
 }
 
 impl RecordingRouteDataplane {
@@ -844,6 +847,18 @@ impl RecordingRouteDataplane {
     fn set_fail_next_v6(&self) {
         self.fail_next_v6.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+
+    fn slots_v4(&self, flow_id: FlowId) -> Option<Vec<(WanRouteTarget, u32)>> {
+        self.wan_slots_v4.lock().unwrap().get(&flow_id).cloned()
+    }
+
+    fn slots_v6(&self, flow_id: FlowId) -> Option<Vec<(WanRouteTarget, u32)>> {
+        self.wan_slots_v6.lock().unwrap().get(&flow_id).cloned()
+    }
+
+    fn lan_cache_invalidations(&self) -> usize {
+        self.lan_cache_invalidations.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 #[async_trait::async_trait]
@@ -858,13 +873,21 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
         self.lan_ops.lock().unwrap().push(LanRouteOp::Del(info));
     }
 
-    fn replace_wan_slots_v4(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
+    fn replace_wan_slots_v4(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]) {
+        self.wan_slots_v4.lock().unwrap().insert(flow_id, targets.to_vec());
+    }
 
-    fn replace_wan_slots_v6(&self, _flow_id: FlowId, _targets: &[(WanRouteTarget, u32)]) {}
+    fn replace_wan_slots_v6(&self, flow_id: FlowId, targets: &[(WanRouteTarget, u32)]) {
+        self.wan_slots_v6.lock().unwrap().insert(flow_id, targets.to_vec());
+    }
 
-    fn del_wan_slots_v4(&self, _flow_id: FlowId) {}
+    fn del_wan_slots_v4(&self, flow_id: FlowId) {
+        self.wan_slots_v4.lock().unwrap().remove(&flow_id);
+    }
 
-    fn del_wan_slots_v6(&self, _flow_id: FlowId) {}
+    fn del_wan_slots_v6(&self, flow_id: FlowId) {
+        self.wan_slots_v6.lock().unwrap().remove(&flow_id);
+    }
 
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool {
         self.calls.lock().unwrap().push(nexthops.to_vec());
@@ -876,7 +899,9 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
         !self.fail_next_v6.swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn invalidate_lan_cache(&self) {}
+    fn invalidate_lan_cache(&self) {
+        self.lan_cache_invalidations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[test]
@@ -1479,4 +1504,103 @@ fn ipv4_reachable_and_nexthop_do_not_synthesize_host_32() {
         service.remove_ipv4_lan_route("lan0-static").await;
         assert_eq!(dataplane.take_lan_ops(), vec![LanRouteOp::Del(nexthop)]);
     });
+}
+
+#[test]
+fn dual_wan_ipv6_default_selects_primary_only_while_secondary_serves_custom_flows() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let wan1_owner = link_owner("enp1s0.105");
+        let wan2_owner = link_owner("enp1s0.101");
+
+        let mut wan1_v6 = WanRouteTarget::link(
+            2,
+            RouteTargetInfo::new_gateway_v6(
+                10,
+                "enp1s0.105",
+                None,
+                Ipv6Addr::new(0x240e, 0x1, 0, 0, 0, 0, 0, 1),
+                Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                true,
+            ),
+        );
+        let wan2_v6 = WanRouteTarget::link(
+            3,
+            RouteTargetInfo::new_gateway_v6(
+                11,
+                "enp1s0.101",
+                None,
+                Ipv6Addr::new(0x2409, 0x2, 0, 0, 0, 0, 0, 1),
+                Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2),
+                false,
+            ),
+        );
+
+        // Even if WAN2 ("enp1s0.101", lexicographically smaller) registers first,
+        // it must not become Flow 0 default because default_route == false.
+        service.insert_ipv6_wan_route(&wan2_owner, wan2_v6.clone()).await;
+        assert!(dataplane.slots_v6(0).is_none());
+
+        service.insert_ipv6_wan_route(&wan1_owner, wan1_v6.clone()).await;
+        let flow0_v6 = dataplane.slots_v6(0).expect("flow 0 v6 default must be populated");
+        assert_eq!(flow0_v6.len(), 1);
+        assert_eq!(flow0_v6[0].0.info.iface_name, "enp1s0.105");
+
+        // Re-updating WAN2 keeps WAN1 pinned on Flow 0.
+        wan1_v6.info.gateway_ip = IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
+        service.insert_ipv6_wan_route(&wan2_owner, wan2_v6.clone()).await;
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+
+        // Meanwhile WAN2 participates in Flow 4 (single) and Flow 5 (ECMP).
+        let flows = vec![
+            flow_config(4, true, vec![iface_target("enp1s0.101", 1)]),
+            flow_config(
+                5,
+                true,
+                vec![iface_target("enp1s0.105", 2), iface_target("enp1s0.101", 3)],
+            ),
+        ];
+        service.sync_flow_wan_targets(&flows).await;
+
+        let flow4_v6 = dataplane.slots_v6(4).expect("flow 4 v6 targets");
+        assert_eq!(flow4_v6.len(), 1);
+        assert_eq!(flow4_v6[0].0.info.iface_name, "enp1s0.101");
+
+        let flow5_v6 = dataplane.slots_v6(5).expect("flow 5 v6 targets");
+        assert_eq!(flow5_v6.len(), 2);
+        assert_eq!(flow5_v6[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(flow5_v6[0].1, 2);
+        assert_eq!(flow5_v6[1].0.info.iface_name, "enp1s0.101");
+        assert_eq!(flow5_v6[1].1, 3);
+    });
+}
+
+#[test]
+fn default_router_selection_is_deterministic_across_multiple_default_wans() {
+    for _ in 0..32 {
+        let mut routes_v4 = WanRoutesByOwner::new();
+        routes_v4.insert(
+            link_owner("wan-b"),
+            WanRouteTarget::link(2, ipv4_wan_route("wan-b", Ipv4Addr::new(198, 51, 100, 2)).info),
+        );
+        routes_v4.insert(
+            link_owner("wan-a"),
+            WanRouteTarget::link(5, ipv4_wan_route("wan-a", Ipv4Addr::new(198, 51, 100, 1)).info),
+        );
+        routes_v4.insert(
+            link_owner("wan-c"),
+            WanRouteTarget::link(1, ipv4_wan_route("wan-c", Ipv4Addr::new(198, 51, 100, 3)).info),
+        );
+        let picked_v4 = super::wan::select_default_wan_route(&routes_v4).unwrap();
+        assert_eq!(picked_v4.info.iface_name, "wan-a");
+
+        let mut routes_v6 = WanRoutesByOwner::new();
+        routes_v6.insert(link_owner("wan-z"), ipv6_wan_default_route("wan-z"));
+        routes_v6.insert(link_owner("wan-m"), ipv6_wan_default_route("wan-m"));
+        routes_v6.insert(link_owner("wan-a"), ipv6_wan_default_route("wan-a"));
+        let picked_v6 = super::wan::select_default_wan_route(&routes_v6).unwrap();
+        assert_eq!(picked_v6.info.iface_name, "wan-a");
+    }
 }
