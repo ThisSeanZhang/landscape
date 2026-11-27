@@ -1,5 +1,5 @@
 use crate::repository::{FlowFilterExpr, UpdateActiveModel};
-use landscape_common::flow::config::FlowConfig;
+use landscape_common::flow::config::{FlowBalanceMode, FlowConfig};
 use migration::SimpleExpr;
 use sea_orm::{ActiveValue::Set, entity::prelude::*};
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ pub struct Model {
     pub flow_match_rules: DBJson,
     #[sea_orm(column_type = "Json")]
     pub packet_handle_iface_name: DBJson,
+    #[sea_orm(column_type = "Json")]
+    pub balance_mode: DBJson,
     pub name: String,
     pub remark: String,
     pub update_at: DBTimestamp,
@@ -51,6 +53,7 @@ impl From<Model> for FlowConfig {
             flow_id: entity.flow_id,
             flow_match_rules: serde_json::from_value(entity.flow_match_rules).unwrap(),
             flow_targets: serde_json::from_value(entity.packet_handle_iface_name).unwrap(),
+            balance_mode: FlowBalanceMode::from_db_json(entity.balance_mode),
             name: entity.name,
             remark: entity.remark,
             update_at: entity.update_at,
@@ -72,6 +75,7 @@ impl UpdateActiveModel<ActiveModel> for FlowConfig {
         active.flow_id = Set(self.flow_id);
         active.flow_match_rules = Set(serde_json::to_value(self.flow_match_rules).unwrap());
         active.packet_handle_iface_name = Set(serde_json::to_value(self.flow_targets).unwrap());
+        active.balance_mode = Set(serde_json::to_value(self.balance_mode).unwrap());
         active.name = Set(self.name);
         active.remark = Set(self.remark);
         active.update_at = Set(self.update_at);

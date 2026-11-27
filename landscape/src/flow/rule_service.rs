@@ -340,6 +340,7 @@ mod tests {
                     flow_id,
                     flow_match_rules: Vec::new(),
                     flow_targets: targets,
+                    balance_mode: Default::default(),
                     name: format!("flow-{flow_id}"),
                     remark: String::new(),
                     update_at: 0.0,

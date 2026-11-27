@@ -47,12 +47,12 @@ struct CurrentSchemaState {
 // reached via the manual step-based rollback path.
 pub const RELEASE_BOUNDARIES: &[ReleaseBoundary] = &[
     ReleaseBoundary {
-        version: "0.25.1",
-        terminal_migration: "m20260927_000000_add_use_experimental_pool_to_dns_upstream",
-    },
-    ReleaseBoundary {
         version: "0.26.0",
         terminal_migration: "m20261008_240001_wan_link_health_check",
+    },
+    ReleaseBoundary {
+        version: "0.28.3",
+        terminal_migration: "m20261031_053957_ddns_per_record_limit",
     },
 ];
 
@@ -416,12 +416,13 @@ mod tests {
             "keep only the two newest boundaries; drop the oldest at each release"
         );
 
-        // Release checklist: the newest migration must terminate a boundary,
-        // otherwise the release that ships it has no rollback target.
+        // Release checklist: the current Cargo.toml VERSION must be registered
+        // as the newest boundary. Unreleased dev migrations may follow it and
+        // are reported as pending_since_release until the next release cut.
         assert_eq!(
-            RELEASE_BOUNDARIES.last().unwrap().terminal_migration,
-            all_migrations.last().unwrap(),
-            "newest migration has no release boundary; register it before releasing"
+            RELEASE_BOUNDARIES.last().unwrap().version,
+            VERSION,
+            "current release version has no rollback boundary; register it when bumping VERSION"
         );
     }
 
@@ -502,6 +503,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rollback_plan_moves_database_to_target_boundary() {
+        use sea_orm::ConnectionTrait;
+
         // in-memory DB: every connection is a separate database, so force a single connection
         let mut opt: ConnectOptions = "sqlite::memory:".into();
         opt.max_connections(1);
@@ -512,16 +515,50 @@ mod tests {
         let current_head = applied_migration_names(&database).await.unwrap().pop().unwrap();
         let current_state =
             resolve_current_state(&current_head, &all_migrations, RELEASE_BOUNDARIES).unwrap();
-        let target = build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
-            .unwrap()
-            .into_iter()
-            .find(|target| target.version == "0.25.1")
-            .unwrap();
-        let plan = build_rollback_plan(&current_state, &target, &all_migrations).unwrap();
 
-        execute_rollback_plan(&database, &plan).await.unwrap();
+        // Step 1: roll back unreleased migrations to the current release boundary (0.28.3).
+        let target_0283 =
+            build_rollback_targets(&current_state, &all_migrations, RELEASE_BOUNDARIES)
+                .unwrap()
+                .into_iter()
+                .find(|target| target.version == "0.28.3")
+                .unwrap();
+        let plan_0283 = build_rollback_plan(&current_state, &target_0283, &all_migrations).unwrap();
+        assert_eq!(plan_0283.steps, 2);
+        assert_eq!(
+            plan_0283.rollback_migrations,
+            vec![
+                "m20261127_000001_flow_balance_mode",
+                "m20261127_000000_wan_link_pd_default_router",
+            ]
+        );
+
+        execute_rollback_plan(&database, &plan_0283).await.unwrap();
 
         let applied = applied_migration_names(&database).await.unwrap();
-        assert_eq!(applied.last().unwrap(), plan.target_head);
+        assert_eq!(applied.last().unwrap(), "m20261031_053957_ddns_per_record_limit");
+        // Verify 0.28.3 schema column ddns_jobs.max_ips_per_record is preserved.
+        database
+            .execute_unprepared("SELECT max_ips_per_record FROM ddns_jobs LIMIT 0")
+            .await
+            .unwrap();
+
+        // Step 2: roll back from 0.28.3 to the previous release boundary (0.26.0).
+        let state_0283 =
+            resolve_current_state(applied.last().unwrap(), &all_migrations, RELEASE_BOUNDARIES)
+                .unwrap();
+        let target_0260 = build_rollback_targets(&state_0283, &all_migrations, RELEASE_BOUNDARIES)
+            .unwrap()
+            .into_iter()
+            .find(|target| target.version == "0.26.0")
+            .unwrap();
+        let plan_0260 = build_rollback_plan(&state_0283, &target_0260, &all_migrations).unwrap();
+        assert_eq!(plan_0260.steps, 1);
+        assert_eq!(plan_0260.rollback_migrations, vec!["m20261031_053957_ddns_per_record_limit"]);
+
+        execute_rollback_plan(&database, &plan_0260).await.unwrap();
+
+        let applied_0260 = applied_migration_names(&database).await.unwrap();
+        assert_eq!(applied_0260.last().unwrap(), "m20261008_240001_wan_link_health_check");
     }
 }
