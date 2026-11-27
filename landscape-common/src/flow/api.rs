@@ -33,7 +33,7 @@ pub struct FlowVerdictRequest {
 
 use uuid::Uuid;
 
-use super::config::{FlowConfig, FlowTarget, WeightedFlowTarget};
+use super::config::{FlowBalanceMode, FlowConfig, FlowTarget, WeightedFlowTarget};
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
@@ -109,6 +109,9 @@ pub struct ApiFlowConfig {
     pub flow_targets: Vec<ApiWeightedFlowTarget>,
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub balance_mode: FlowBalanceMode,
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
     pub name: String,
     pub remark: String,
     #[serde(default = "get_f64_timestamp")]
@@ -124,6 +127,7 @@ impl From<FlowConfig> for ApiFlowConfig {
             flow_id: value.flow_id,
             flow_match_rules: value.flow_match_rules,
             flow_targets: value.flow_targets.into_iter().map(Into::into).collect(),
+            balance_mode: value.balance_mode,
             name: value.name,
             remark: value.remark,
             update_at: value.update_at,
@@ -139,6 +143,7 @@ impl From<ApiFlowConfig> for FlowConfig {
             flow_id: value.flow_id,
             flow_match_rules: value.flow_match_rules,
             flow_targets: value.flow_targets.into_iter().map(Into::into).collect(),
+            balance_mode: value.balance_mode,
             name: value.name,
             remark: value.remark,
             update_at: value.update_at,

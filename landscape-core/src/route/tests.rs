@@ -611,6 +611,7 @@ fn flow_config(flow_id: u32, enable: bool, targets: Vec<WeightedFlowTarget>) -> 
         flow_id,
         flow_match_rules: vec![],
         flow_targets: targets,
+        balance_mode: Default::default(),
         name: String::new(),
         remark: String::new(),
         update_at: 0.0,
