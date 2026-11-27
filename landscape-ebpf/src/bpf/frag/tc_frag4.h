@@ -6,6 +6,7 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#include "base/landscape.h"
 #include "frag/frag.h"
 
 /*
@@ -93,6 +94,14 @@ static __always_inline void frag4_cache_store(__be32 src_addr, __be32 dst_addr, 
         bpf_map_update_elem(&frag4_cache_lan, &key, &value, BPF_ANY);
     else
         bpf_map_update_elem(&frag4_cache_wan, &key, &value, BPF_ANY);
+}
+
+/* Store first-fragment metadata extracted by the reader only after NAT4 authorizes the flow. */
+static __always_inline void frag4_cache_store_first(__be32 src_addr, __be32 dst_addr, __be16 ip_id,
+                                                    __u8 proto, __be16 src_port, __be16 dst_port,
+                                                    __u8 cacheable, __u8 direction) {
+    if (unlikely(cacheable))
+        frag4_cache_store(src_addr, dst_addr, ip_id, proto, src_port, dst_port, direction);
 }
 
 /* ADR 0016: a non-initial fragment takes its ports from its direction's cache. */

@@ -21,7 +21,8 @@ struct xdp_nat_view {
     __u8 icmp_inner_l4_protocol;
     __u8 frag_code;
     __u8 ports_valid;
-    __u8 _pad[3];
+    __u8 frag_cacheable;
+    __be16 ip_id;
 };
 
 #endif /* LAND_XDP_NAT_VIEW_H */

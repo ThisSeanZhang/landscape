@@ -169,11 +169,23 @@ pub(crate) fn icmp_pkt(src: Ipv4Addr, dst: Ipv4Addr, id: u16, request: bool) -> 
 }
 
 pub(crate) fn ipv4_frag_udp(first: bool, id: u16) -> Vec<u8> {
+    ipv4_frag_udp_from_to(LAN_HOST, REMOTE_IP, LAN_PORT, REMOTE_PORT, first, id)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ipv4_frag_udp_from_to(
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    sport: u16,
+    dport: u16,
+    first: bool,
+    id: u16,
+) -> Vec<u8> {
     let l4 = if first {
         let payload = [0x11_u8, 0x22, 0x33, 0x44];
         let mut bytes = Vec::with_capacity(8 + payload.len());
-        bytes.extend_from_slice(&LAN_PORT.to_be_bytes());
-        bytes.extend_from_slice(&REMOTE_PORT.to_be_bytes());
+        bytes.extend_from_slice(&sport.to_be_bytes());
+        bytes.extend_from_slice(&dport.to_be_bytes());
         bytes.extend_from_slice(&(8_u16 + payload.len() as u16).to_be_bytes());
         bytes.extend_from_slice(&0_u16.to_be_bytes());
         bytes.extend_from_slice(&payload);
@@ -182,8 +194,7 @@ pub(crate) fn ipv4_frag_udp(first: bool, id: u16) -> Vec<u8> {
         vec![0xAB_u8; 32]
     };
 
-    let mut ipv4 =
-        Ipv4Header::new(0u16, 64, IpNumber::UDP, LAN_HOST.octets(), REMOTE_IP.octets()).unwrap();
+    let mut ipv4 = Ipv4Header::new(0u16, 64, IpNumber::UDP, src.octets(), dst.octets()).unwrap();
     ipv4.identification = id;
     ipv4.more_fragments = true;
     ipv4.fragment_offset = IpFragOffset::try_new(if first { 0 } else { 1 }).unwrap();

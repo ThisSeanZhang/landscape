@@ -25,7 +25,11 @@ const TCP_PHASE_SYN: u8 = 1;
 const TCP_PHASE_FIN: u8 = 3;
 const TCP_PHASE_RST: u8 = 4;
 
-fn run_reader_seq(payloads: &[&[u8]], direction: u32) -> Vec<TcReadHead4Result> {
+fn run_reader_seq(
+    payloads: &[&[u8]],
+    direction: u32,
+    seed: Option<([u8; 12], [u8; 4])>,
+) -> Vec<TcReadHead4Result> {
     let builder = TestTcReadHead4SkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let mut open = builder.open(&mut open_object).unwrap();
@@ -35,6 +39,13 @@ fn run_reader_seq(payloads: &[&[u8]], direction: u32) -> Vec<TcReadHead4Result> 
         rodata.current_direction = direction;
     }
     let skel = open.load().unwrap();
+    if let Some((key, value)) = seed {
+        if direction == DIR_LAN {
+            skel.maps.frag4_cache_lan.update(&key, &value, MapFlags::ANY).unwrap();
+        } else {
+            skel.maps.frag4_cache_wan.update(&key, &value, MapFlags::ANY).unwrap();
+        }
+    }
     let prog = &skel.progs.test_tc_read_head4;
 
     let mut results = Vec::with_capacity(payloads.len());
@@ -85,6 +96,22 @@ fn assert_read_ok(r: &TcReadHead4Result) {
 
 fn be16(value: u16) -> u16 {
     u16::from_be(value)
+}
+
+fn frag4_key(src: [u8; 4], dst: [u8; 4], ip_id: u16, proto: u8) -> [u8; 12] {
+    let mut key = [0u8; 12];
+    key[0..4].copy_from_slice(&src);
+    key[4..8].copy_from_slice(&dst);
+    key[8..10].copy_from_slice(&ip_id.to_be_bytes());
+    key[10] = proto;
+    key
+}
+
+fn frag4_value(sport: u16, dport: u16) -> [u8; 4] {
+    let mut value = [0u8; 4];
+    value[0..2].copy_from_slice(&sport.to_be_bytes());
+    value[2..4].copy_from_slice(&dport.to_be_bytes());
+    value
 }
 
 fn build_ipv4_frag_udp(first: bool, id: u16) -> Vec<u8> {
@@ -405,7 +432,9 @@ mod tests {
     fn reader_v4_nonfirst_fragment_cache_hit() {
         let first = build_ipv4_frag_first_eth();
         let nonfirst = build_ipv4_frag_nonfirst_tcp_eth();
-        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN);
+        let seed =
+            Some((frag4_key([192, 168, 1, 1], [192, 168, 1, 2], 0x4242, 6), frag4_value(21, 1234)));
+        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN, seed);
         assert_eq!(results.len(), 2);
 
         let first = &results[0];
@@ -424,10 +453,33 @@ mod tests {
     }
 
     #[test]
+    fn reader_v4_first_fragment_does_not_store_frag4_cache() {
+        let first = build_ipv4_frag_first_eth();
+        let builder = TestTcReadHead4SkelBuilder::default();
+        let mut open_object = MaybeUninit::uninit();
+        let mut open = builder.open(&mut open_object).unwrap();
+        {
+            let rodata = open.maps.rodata_data.as_deref_mut().unwrap();
+            rodata.current_l3_offset = L3_OFFSET;
+            rodata.current_direction = DIR_LAN;
+        }
+        let skel = open.load().unwrap();
+        let data = first.to_vec();
+        let input = ProgramInput { data_in: Some(&data), ..Default::default() };
+        skel.progs.test_tc_read_head4.test_run(input).expect("test_run failed");
+        assert_eq!(skel.maps.frag4_cache_lan.keys().count(), 0);
+        assert_eq!(skel.maps.frag4_cache_wan.keys().count(), 0);
+    }
+
+    #[test]
     fn reader_v4_frag_udp_cache_hit() {
         let first = build_ipv4_frag_udp(true, 0x5151);
         let nonfirst = build_ipv4_frag_udp(false, 0x5151);
-        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN);
+        let seed = Some((
+            frag4_key([192, 168, 1, 1], [192, 168, 1, 2], 0x5151, 17),
+            frag4_value(5000, 6000),
+        ));
+        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN, seed);
         assert_eq!(results.len(), 2);
 
         let first = &results[0];
@@ -453,7 +505,9 @@ mod tests {
         let id = 0x4321;
         let first = build_ipv4_frag_icmp_echo(true, id);
         let nonfirst = build_ipv4_frag_icmp_echo(false, id);
-        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN);
+        let seed =
+            Some((frag4_key([192, 168, 1, 1], [192, 168, 1, 2], id, 1), frag4_value(id, id)));
+        let results = run_reader_seq(&[&first, &nonfirst], DIR_LAN, seed);
         assert_eq!(results.len(), 2);
 
         let first = &results[0];

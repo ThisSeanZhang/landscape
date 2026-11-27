@@ -124,6 +124,8 @@ static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_
     view->icmp_inner_l4_offset = 0;
     view->icmp_inner_l4_protocol = 0;
     view->frag_code = frag;
+    view->frag_cacheable = 0;
+    view->ip_id = ip_id;
 
     if (frag >= LAND_FRAG_NON_INITIAL) {
         __be16 sport = 0;
@@ -201,9 +203,7 @@ static __always_inline int xdp_nat_read4(void *data, void *data_end, struct xdp_
     }
 
     if (cacheable) view->ports_valid = 1;
-
-    if (first_fragment && cacheable)
-        frag4_cache_store(*src_addr, *dst_addr, ip_id, next, view->sport, view->dport, direction);
+    if (first_fragment && cacheable) view->frag_cacheable = 1;
 
     return XDP_NAT4_READ_OK;
 }

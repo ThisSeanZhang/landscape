@@ -65,6 +65,9 @@ static __always_inline int nat_v4_egress(struct xdp_md *ctx) {
                                 &new_port);
     if (rc != NAPT_XDP_OK) return XDP_DROP;
 
+    frag4_cache_store_first(src_addr, dst_addr, view.ip_id, view.l4_protocol, view.sport,
+                            view.dport, view.frag_cacheable, LAND_FRAG_FROM_LAN);
+
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
 
@@ -113,6 +116,9 @@ static __always_inline int nat_v4_ingress(struct xdp_md *ctx) {
     int rc = xdp_napt_wan_state(&view, src_addr, dst_addr, current_ifindex, &meta.mark, bytes,
                                 &new_addr, &new_port, &is_static);
     if (rc != NAPT_XDP_OK) return XDP_DROP;
+
+    frag4_cache_store_first(src_addr, dst_addr, view.ip_id, view.l4_protocol, view.sport,
+                            view.dport, view.frag_cacheable, LAND_FRAG_FROM_WAN);
 
     if (is_static) xdp_apply_ingress_static_mark(ctx, &meta, data);
 

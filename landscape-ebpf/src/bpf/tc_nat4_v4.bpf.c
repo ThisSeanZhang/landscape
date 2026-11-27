@@ -85,6 +85,9 @@ int tc_v4_from_lan(struct __sk_buff *skb) {
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
 
+    frag4_cache_store_first(src_addr, dst_addr, view.ip_id, view.l4_protocol, view.sport,
+                            view.dport, view.frag_cacheable, LAND_FRAG_FROM_LAN);
+
     if (napt_is_icmp_error(&view)) {
         rc = napt_modify_icmp_error(skb, new_addr, new_port, 0, view.l3_offset);
     } else if (napt_is_non_initial(&view)) {
@@ -127,6 +130,9 @@ int tc_v4_from_wan(struct __sk_buff *skb) {
     rc = napt_wan_state(skb, &view, src_addr, dst_addr, &new_addr, &new_port);
     if (rc == TC_ACT_SHOT) return TC_ACT_SHOT;
     if (rc != TC_ACT_OK) goto chain;
+
+    frag4_cache_store_first(src_addr, dst_addr, view.ip_id, view.l4_protocol, view.sport,
+                            view.dport, view.frag_cacheable, LAND_FRAG_FROM_WAN);
 
     if (napt_is_icmp_error(&view)) {
         rc = napt_modify_icmp_error(skb, new_addr, new_port, 1, view.l3_offset);
