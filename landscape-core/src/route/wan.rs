@@ -52,6 +52,36 @@ fn reconcile_wan_route(
     }
 }
 
+type OwnerSortKey<'a> = (u8, [u8; 16], &'a str);
+type DefaultCandidateSortKey<'a> = (&'a str, u16, OwnerSortKey<'a>);
+
+fn owner_sort_key(owner: &RouteOwner) -> OwnerSortKey<'_> {
+    match owner {
+        RouteOwner::Link(id) => (0, *id.as_bytes(), ""),
+        RouteOwner::Netns(name) => (1, [0; 16], name.as_str()),
+    }
+}
+
+fn default_candidate_sort_key<'a>(
+    owner: &'a RouteOwner,
+    target: &'a WanRouteTarget,
+) -> DefaultCandidateSortKey<'a> {
+    (target.info.iface_name.as_str(), target.link_chain_id, owner_sort_key(owner))
+}
+
+/// Deterministically choose a single default WAN route for Flow 0 from
+/// `routes`, eliminating HashMap iteration randomness when multiple routes
+/// carry `default_route == true`.
+pub(crate) fn select_default_wan_route(routes: &WanRoutesByOwner) -> Option<WanRouteTarget> {
+    routes
+        .iter()
+        .filter(|(_, entry)| entry.info.default_route)
+        .min_by(|(owner_a, a), (owner_b, b)| {
+            default_candidate_sort_key(owner_a, a).cmp(&default_candidate_sort_key(owner_b, b))
+        })
+        .map(|(_, entry)| entry.clone())
+}
+
 fn sync_default_ipv4_wan_route(
     dataplane: &dyn RouteTableDataplane,
     default_route: Option<WanRouteTarget>,
@@ -284,22 +314,16 @@ impl IpRouteService {
     }
 
     pub async fn refresh_default_router(&self) {
-        let ipv4_default = self
-            .ipv4_wan_ifaces
-            .read()
-            .await
-            .values()
-            .find(|entry| entry.info.default_route)
-            .cloned();
+        let ipv4_default = {
+            let routes = self.ipv4_wan_ifaces.read().await;
+            select_default_wan_route(&routes)
+        };
         sync_default_ipv4_wan_route(&*self.dataplane, ipv4_default);
 
-        let ipv6_default = self
-            .ipv6_wan_ifaces
-            .read()
-            .await
-            .values()
-            .find(|entry| entry.info.default_route)
-            .cloned();
+        let ipv6_default = {
+            let routes = self.ipv6_wan_ifaces.read().await;
+            select_default_wan_route(&routes)
+        };
         sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
 
         // The kernel default routes are owned by the single-writer
