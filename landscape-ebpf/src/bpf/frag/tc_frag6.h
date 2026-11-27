@@ -8,6 +8,7 @@
 
 #include "frag/frag.h"
 #include "base/ipv6.h"
+#include "base/landscape.h"
 
 /*
  * First-fragment metadata cache (ADR 0022, amended by ADR 0025).
@@ -90,7 +91,7 @@ static __always_inline void frag6_cache_store_first(const struct ip6_scan_offset
                                                     const struct in6_addr *src_addr,
                                                     const struct in6_addr *dst_addr, __be16 sport,
                                                     __be16 dport, __u8 direction) {
-    if (off->frag_code == LAND_FRAG_FIRST && off->ports_valid)
+    if (unlikely(off->frag_code == LAND_FRAG_FIRST && off->ports_valid))
         frag6_cache_store(src_addr, dst_addr, off->frag_id, off->l4_protocol, off->frag_next_header,
                           sport, dport, 1, direction);
 }

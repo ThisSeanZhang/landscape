@@ -21,9 +21,9 @@ static __always_inline __be64 nat6_wan_prefix(__be64 prefix) {
     return (prefix & wan_ro_npt_mask) | (wan_ro_prefix6.q & ~wan_ro_npt_mask);
 }
 
-static __always_inline int nat6_rewrite_icmp_error(struct __sk_buff *skb,
-                                                   const struct ip6_scan_offsets *off, bool ingress,
-                                                   __be64 lan_prefix) {
+static __always_inline int nat6_modify_icmp_error(struct __sk_buff *skb,
+                                                  const struct ip6_scan_offsets *off, bool ingress,
+                                                  __be64 lan_prefix) {
     u32 outer_addr_off = off->l3_offset + (ingress ? offsetof(struct ipv6hdr, daddr)
                                                    : offsetof(struct ipv6hdr, saddr));
     u32 inner_addr_off = off->icmp_error_l3_offset + (ingress ? offsetof(struct ipv6hdr, saddr)
@@ -76,9 +76,31 @@ static __always_inline int nat6_rewrite_icmp_error(struct __sk_buff *skb,
     return TC_ACT_UNSPEC;
 }
 
-static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
-                                                     const struct ip6_scan_offsets *off, u32 offset,
-                                                     __be64 old_prefix, __be64 new_prefix) {
+/* Non-initial fragment: the address prefix is the only translated field present. */
+static __always_inline int nat6_modify_fragment(struct __sk_buff *skb,
+                                                const struct ip6_scan_offsets *off, u8 direction,
+                                                __be64 old_prefix, __be64 new_prefix) {
+    u32 offset =
+        off->l3_offset + (direction == LAND_FRAG_FROM_LAN ? offsetof(struct ipv6hdr, saddr)
+                                                          : offsetof(struct ipv6hdr, daddr));
+    /* tc_nat_read6 has already pulled the outer IPv6 header into the linear part of the skb. */
+    char *addr = skb_data(skb) + offset;
+    barrier_var(addr);
+    if (addr + sizeof(new_prefix) > skb_data_end(skb)) return TC_ACT_SHOT;
+    __builtin_memcpy(addr, &new_prefix, sizeof(new_prefix));
+
+    /* -ENOTSUPP is expected for skb checksum modes other than CHECKSUM_COMPLETE. */
+    bpf_csum_update(skb, nat6_prefix_diff(old_prefix, new_prefix));
+    return TC_ACT_UNSPEC;
+}
+
+/* Unfragmented or first fragment: translate the address prefix and the transport checksum. */
+static __always_inline int nat6_modify_outer(struct __sk_buff *skb,
+                                             const struct ip6_scan_offsets *off, u8 direction,
+                                             __be64 old_prefix, __be64 new_prefix) {
+    u32 offset =
+        off->l3_offset + (direction == LAND_FRAG_FROM_LAN ? offsetof(struct ipv6hdr, saddr)
+                                                          : offsetof(struct ipv6hdr, daddr));
     /* tc_nat_read6 has already pulled the outer IPv6 header into the linear part of the skb. */
     char *addr = skb_data(skb) + offset;
     barrier_var(addr);
@@ -88,7 +110,6 @@ static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
     __wsum prefix_diff = nat6_prefix_diff(old_prefix, new_prefix);
     /* -ENOTSUPP is expected for skb checksum modes other than CHECKSUM_COMPLETE. */
     bpf_csum_update(skb, prefix_diff);
-    if (off->frag_code == LAND_FRAG_NON_INITIAL) return TC_ACT_UNSPEC;
 
     u32 l4_checksum_offset = 0;
     if (nat6_l4_checksum(off->l4_offset, off->l4_protocol, &l4_checksum_offset)) return TC_ACT_SHOT;
@@ -105,42 +126,42 @@ static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
 static __always_inline int ipv6_egress_prefix_check_and_replace(
     struct __sk_buff *skb, const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport, u32 ifindex) {
-    u32 l3_offset = off->l3_offset;
-
     struct nat6_translation trans = {};
     if (!wan_ro_prefix6.b[0] || nat6_resolve(off, src_addr, sport, dst_addr, dport, true, skb->mark,
                                              ifindex, skb->len, &trans))
         return TC_ACT_SHOT;
-    if (!trans.replace) {
-        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
-        return TC_ACT_UNSPEC;
-    }
-    bool is_icmpx_error = off->icmp_inner_l4_offset != 0;
-    if (is_icmpx_error) return nat6_rewrite_icmp_error(skb, off, false, 0);
 
-    u32 ip_src_offset = l3_offset + offsetof(struct ipv6hdr, saddr);
+    /* nat6_resolve() authorized the flow; cache the first fragment before translating it. */
+    frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
+
+    if (!trans.replace) return TC_ACT_UNSPEC;
+
+    bool is_icmp_error = nat6_is_icmp_error(off);
+    if (unlikely(is_icmp_error)) return nat6_modify_icmp_error(skb, off, false, 0);
+
     __be64 old_ip_prefix;
     COPY_ADDR_FROM(&old_ip_prefix, src_addr->in6_u.u6_addr32);
-    int ret = nat6_replace_outer_prefix(skb, off, ip_src_offset, old_ip_prefix,
-                                        nat6_wan_prefix(old_ip_prefix));
-    if (ret != TC_ACT_SHOT)
-        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_LAN);
-    return ret;
+    __be64 new_ip_prefix = nat6_wan_prefix(old_ip_prefix);
+    if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
+        return nat6_modify_fragment(skb, off, LAND_FRAG_FROM_LAN, old_ip_prefix, new_ip_prefix);
+    return nat6_modify_outer(skb, off, LAND_FRAG_FROM_LAN, old_ip_prefix, new_ip_prefix);
 }
 
 static __always_inline int ipv6_ingress_prefix_check_and_replace(
     struct __sk_buff *skb, const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
     const struct in6_addr *dst_addr, __be16 sport, __be16 dport, u32 ifindex) {
-    u32 l3_offset = off->l3_offset;
     struct nat6_translation trans = {};
     if (!wan_ro_prefix6.b[0] || nat6_resolve(off, dst_addr, dport, src_addr, sport, false,
                                              skb->mark, ifindex, skb->len, &trans))
         return TC_ACT_SHOT;
+
+    /* nat6_resolve() authorized the flow; cache the first fragment before translating it. */
+    frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
+
     __be64 local_client_prefix = trans.client_prefix;
     __be64 dst_prefix;
     __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
     if (!trans.replace || dst_prefix == local_client_prefix) {
-        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
         if (trans.is_static) {
             u32 mark = skb->mark;
             barrier_var(mark);
@@ -148,17 +169,15 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
         }
         return TC_ACT_UNSPEC;
     }
-    bool is_icmpx = nat6_is_icmp_error(off);
-    if (is_icmpx) return nat6_rewrite_icmp_error(skb, off, true, local_client_prefix);
+    bool is_icmp_error = nat6_is_icmp_error(off);
+    if (unlikely(is_icmp_error)) return nat6_modify_icmp_error(skb, off, true, local_client_prefix);
 
-    u32 dst_ip_offset = l3_offset + offsetof(struct ipv6hdr, daddr);
     __be64 old_ip_prefix;
     COPY_ADDR_FROM(&old_ip_prefix, dst_addr->in6_u.u6_addr32);
-    int ret =
-        nat6_replace_outer_prefix(skb, off, dst_ip_offset, old_ip_prefix, local_client_prefix);
-    if (ret != TC_ACT_SHOT)
-        frag6_cache_store_first(off, src_addr, dst_addr, sport, dport, LAND_FRAG_FROM_WAN);
-    return ret;
+    if (unlikely(off->frag_code == LAND_FRAG_NON_INITIAL))
+        return nat6_modify_fragment(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix,
+                                    local_client_prefix);
+    return nat6_modify_outer(skb, off, LAND_FRAG_FROM_WAN, old_ip_prefix, local_client_prefix);
 }
 
 #endif /* LD_NAT6_V3_H */
