@@ -22,7 +22,7 @@ use crate::{
         tc_nat6::{TcNat6Skel, TcNat6SkelBuilder},
         xdp_nat6::{XdpNat6Skel, XdpNat6SkelBuilder},
     },
-    tests::{isolated_pin_root, pkt::simple_ipv6_udp},
+    tests::{TestSkb, isolated_pin_root, pkt::simple_ipv6_udp},
 };
 
 const WAN_PREFIX: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 1, 0x20, 0, 0, 0, 0);
@@ -35,6 +35,8 @@ const TC_ACT_SHOT: i32 = 2;
 const TC_ACT_UNSPEC: i32 = -1;
 const XDP_DROP: i32 = 1;
 const XDP_PASS: i32 = 2;
+const INGRESS_STATIC_MARK: u32 = 1;
+const INGRESS_CACHE_MASK: u32 = 0x0000_00ff;
 
 fn with_nat6(test: impl FnOnce(&TcNat6Skel<'_>, &XdpNat6Skel<'_>)) {
     with_nat6_config(60, Ethernet2Header::LEN, test);
@@ -115,6 +117,53 @@ fn run(prog: &ProgramMut<'_>, frame: &[u8], verdict: i32, flags: u32) -> Vec<u8>
     } else {
         assert_eq!(data.len(), frame.len(), "unexpected frame length");
         data.to_vec()
+    }
+}
+
+/// Like [`run`], but also reports the ingress mark: TC reads it back from the
+/// test-run context, XDP reads it from the prepended `xdp_pipe_meta`.
+#[track_caller]
+fn run_marked(
+    prog: &ProgramMut<'_>,
+    frame: &[u8],
+    verdict: i32,
+    flags: u32,
+) -> (Vec<u8>, Option<u32>) {
+    if matches!(prog.prog_type(), ProgramType::SchedCls) {
+        let mut ctx = TestSkb::default();
+        let mut ctx_out = TestSkb::default();
+        let mut out = vec![0; frame.len()];
+        let result = prog
+            .test_run(ProgramInput {
+                data_in: Some(frame),
+                context_in: Some(ctx.as_mut_bytes()),
+                context_out: Some(ctx_out.as_mut_bytes()),
+                data_out: Some(&mut out),
+                flags,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(result.return_value as i32, verdict, "{:?} verdict", prog.name());
+        (result.data.unwrap().to_vec(), Some(ctx_out.mark))
+    } else {
+        let mut out = vec![0; frame.len() + XDP_PIPE_META_LEN];
+        let result = prog
+            .test_run(ProgramInput {
+                data_in: Some(frame),
+                data_out: Some(&mut out),
+                flags,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(result.return_value as i32, verdict, "{:?} verdict", prog.name());
+        let data = result.data.unwrap();
+        if data.len() == frame.len() + XDP_PIPE_META_LEN {
+            let mark = u32::from_ne_bytes(data[..4].try_into().unwrap());
+            (data[XDP_PIPE_META_LEN..].to_vec(), Some(mark))
+        } else {
+            assert_eq!(data.len(), frame.len(), "unexpected frame length");
+            (data.to_vec(), None)
+        }
     }
 }
 
@@ -250,6 +299,61 @@ fn static_ingress_fragments_stay_in_their_wan_subnet_across_hooks() {
             assert_eq!(run(first_hook.0, &first, first_hook.1, 0), expected_first);
             run(later_hook.0, &other_later, later_hook.2, 0);
             assert_eq!(run(later_hook.0, &later, later_hook.1, 0), expected_later);
+        }
+    });
+}
+
+#[test]
+fn static_ingress_icmp6_error_and_non_initial_fragment_set_static_mark() {
+    with_nat6(|tc, xdp| {
+        map_udp53(tc, LAN_CLIENT);
+
+        // Non-initial fragments translate only the prefix, but the static mark
+        // must still follow the authorized static flow.
+        for (prog, verdict, id) in [
+            (&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK, 0x3101),
+            (&xdp.progs.ingress_nat_v6, XDP_PASS, 0x3102),
+        ] {
+            let [first, later, _] = udp_fragments(REMOTE, WAN_CLIENT, id);
+            let [expected_first, expected_later, _] = udp_fragments(REMOTE, LAN_CLIENT, id);
+            for (fragment, expected, which) in
+                [(&first, &expected_first, "first"), (&later, &expected_later, "non-initial")]
+            {
+                let (out, mark) = run_marked(prog, fragment, verdict, 0);
+                assert_eq!(out, *expected, "{:?} {which} fragment", prog.name());
+                assert_eq!(
+                    mark.map(|m| m & INGRESS_CACHE_MASK),
+                    Some(INGRESS_STATIC_MARK),
+                    "{:?} static {which} fragment must set INGRESS_STATIC_MARK",
+                    prog.name()
+                );
+            }
+        }
+
+        // ICMPv6 error quoting an outbound flow that matches the static mapping.
+        let quote = |client: Ipv6Addr| {
+            let mut frame = Vec::new();
+            PacketBuilder::ethernet2([2; 6], [4; 6])
+                .ipv6(client.octets(), REMOTE.octets(), 64)
+                .udp(53, 9999)
+                .write(&mut frame, b"quote")
+                .unwrap();
+            frame[Ethernet2Header::LEN..].to_vec()
+        };
+        let kind = Icmpv6Type::DestinationUnreachable(icmpv6::DestUnreachableCode::NoRoute);
+        let error = icmp6_error(ROUTER, WAN_CLIENT, kind, &quote(WAN_CLIENT));
+        let expected = icmp6_error(ROUTER, LAN_CLIENT, kind, &quote(LAN_CLIENT));
+        for (prog, verdict) in
+            [(&tc.progs.tc_nat_wan_ingress_v6, TC_ACT_OK), (&xdp.progs.ingress_nat_v6, XDP_PASS)]
+        {
+            let (out, mark) = run_marked(prog, &error, verdict, 0);
+            assert_eq!(out, expected, "{:?} static ICMPv6 error", prog.name());
+            assert_eq!(
+                mark.map(|m| m & INGRESS_CACHE_MASK),
+                Some(INGRESS_STATIC_MARK),
+                "{:?} static ICMPv6 error must set INGRESS_STATIC_MARK",
+                prog.name()
+            );
         }
     });
 }

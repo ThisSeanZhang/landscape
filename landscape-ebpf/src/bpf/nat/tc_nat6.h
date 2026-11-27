@@ -178,11 +178,7 @@ static __always_inline int ipv6_ingress_prefix_check_and_replace(
         }
         if (ret == TC_ACT_SHOT) return TC_ACT_SHOT;
     }
-    if (trans.is_static) {
-        u32 mark = skb->mark;
-        barrier_var(mark);
-        skb->mark = replace_cache_mask(mark, INGRESS_STATIC_MARK);
-    }
+    if (trans.is_static) skb_set_mark(skb, replace_cache_mask(skb_mark(skb), INGRESS_STATIC_MARK));
     return ret;
 }
 

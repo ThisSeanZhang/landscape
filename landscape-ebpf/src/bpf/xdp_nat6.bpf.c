@@ -72,10 +72,8 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
 
     u32 wan_if = meta.target_ifindex ? meta.target_ifindex : current_ifindex;
 
-    bool is_static = false;
-    int ret =
-        xdp_ipv6_ingress_prefix_check_and_replace(ctx, data, data_end, wan_if, meta.mark, &off,
-                                                  &src_addr, &dst_addr, sport, dport, &is_static);
+    int ret = xdp_ipv6_ingress_prefix_check_and_replace(ctx, data, data_end, wan_if, meta.mark,
+                                                        &off, &src_addr, &dst_addr, sport, dport);
     if (ret == -1) return XDP_DROP;
     if (ret == 1) {
         meta.mark = replace_cache_mask(meta.mark, INGRESS_STATIC_MARK);
@@ -86,7 +84,6 @@ static __always_inline int nat_v6_ingress(struct xdp_md *ctx) {
         else
             xdp_set_meta(ctx, &meta);
     }
-    if (ret == 2) return XDP_PASS;
 
     return XDP_PASS;
 }

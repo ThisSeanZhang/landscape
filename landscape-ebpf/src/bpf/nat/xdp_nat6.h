@@ -176,7 +176,7 @@ static __always_inline int xdp_ipv6_egress_prefix_check_and_replace(
 static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
     struct xdp_md *ctx, void *data, void *data_end, u32 wan_if, u32 mark,
     const struct ip6_scan_offsets *off, const struct in6_addr *src_addr,
-    const struct in6_addr *dst_addr, __be16 sport, __be16 dport, bool *out_is_static) {
+    const struct in6_addr *dst_addr, __be16 sport, __be16 dport) {
     struct nat6_translation trans = {};
     if (!wan_ro_prefix6.b[0] || nat6_resolve(off, dst_addr, dport, src_addr, sport, false, mark,
                                              wan_if, (u64)(long)data_end - (u64)(long)data, &trans))
@@ -188,7 +188,6 @@ static __always_inline int xdp_ipv6_ingress_prefix_check_and_replace(
     __be64 local_client_prefix = trans.client_prefix;
     __be64 dst_prefix;
     __builtin_memcpy(&dst_prefix, dst_addr, sizeof(dst_prefix));
-    *out_is_static = trans.is_static;
     if (!trans.replace || dst_prefix == local_client_prefix) return trans.is_static ? 1 : 0;
 
     int ret;
