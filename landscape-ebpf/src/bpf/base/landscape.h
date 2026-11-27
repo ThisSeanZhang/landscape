@@ -4,6 +4,7 @@
 #include <bpf/bpf_endian.h>
 #include "base/printk.h"
 #include "base/mark.h"
+#include "base/skb_ctx.h"
 #include "base/tproxy.h"
 
 #define TC_ACT_UNSPEC (-1)
@@ -122,26 +123,9 @@ static __always_inline bool is_zero_mac(const u8 *mac) {
     return mac[0] == 0 && mac[1] == 0 && mac[2] == 0 && mac[3] == 0 && mac[4] == 0 && mac[5] == 0;
 }
 
-/* Load skb data pointers via opaque asm (mirroring DEFINE_XDP_CTX_POINTER in
- * chain/xdp_meta.h and skb_mark in base/mark.h): prevents Clang from hoisting
- * `&skb->data` / `&skb->data_end` offsets into registers across adjacent
- * packet reads and tripping the verifier's "dereference of modified ctx ptr"
- * check. */
-#define DEFINE_SKB_CTX_POINTER(FIELD)                                                              \
-    static __always_inline void *skb_##FIELD(const struct __sk_buff *skb) {                        \
-        void *ptr;                                                                                 \
-        __asm__ __volatile__("%0 = *(u32 *)(%1 + %2)"                                              \
-                             : "=r"(ptr)                                                           \
-                             : "r"(skb), "i"(__builtin_offsetof(struct __sk_buff, FIELD)));        \
-        return ptr;                                                                                \
-    }
-DEFINE_SKB_CTX_POINTER(data)
-DEFINE_SKB_CTX_POINTER(data_end)
-#undef DEFINE_SKB_CTX_POINTER
-
 static __always_inline int is_broadcast_mac(struct __sk_buff *skb) {
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (data + 6 > data_end) return TC_ACT_UNSPEC;
 
@@ -272,8 +256,8 @@ static __always_inline int current_l3_protocol(struct __sk_buff *skb, u32 curren
                                                u8 *l3_protocol) {
     u32 need = current_l3_offset != 0 ? sizeof(struct ethhdr) : 1;
 
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (data + need > data_end) {
         /* A short linear head does not imply a truncated packet. Pull only

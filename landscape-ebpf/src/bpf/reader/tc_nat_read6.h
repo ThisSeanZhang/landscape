@@ -56,13 +56,13 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
     off->icmp_inner_l4_offset = 0;
     off->icmp_inner_l4_protocol = 0;
 
-    char *data = ip6_skb_data(skb);
-    char *data_end = ip6_skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     struct ipv6hdr *iph = (struct ipv6hdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) {
         if (bpf_skb_pull_data(skb, l3_offset + IPV6_HDR_LEN) != 0) return 0;
-        data = ip6_skb_data(skb);
-        data_end = ip6_skb_data_end(skb);
+        data = skb_data(skb);
+        data_end = skb_data_end(skb);
         iph = (struct ipv6hdr *)(data + l3_offset);
         if ((char *)(iph + 1) > data_end) return 0;
     }
@@ -111,8 +111,8 @@ static __always_inline int tc_nat_read6(struct __sk_buff *skb, __u32 l3_offset, 
     if (pull_len > skb->len) pull_len = skb->len;
     if (ip6_skb_may_pull(skb, pull_len) != 0) return 0;
 
-    data = ip6_skb_data(skb);
-    data_end = ip6_skb_data_end(skb);
+    data = skb_data(skb);
+    data_end = skb_data_end(skb);
 
     int has_ports = 0;
     if (next == IPV6_NH_TCP) {

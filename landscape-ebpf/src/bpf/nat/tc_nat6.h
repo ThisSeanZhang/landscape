@@ -36,8 +36,8 @@ static __always_inline int nat6_rewrite_icmp_error(struct __sk_buff *skb,
     u32 write_end = has_inner_sum ? inner_csum_end : inner_addr_off + sizeof(__be64);
     if (write_end > MAX_OFFSET || ip6_skb_may_pull(skb, write_end)) return TC_ACT_SHOT;
 
-    char *data = ip6_skb_data(skb);
-    char *data_end = ip6_skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     char *inner_addr = data + inner_addr_off;
     char *outer_addr = data + outer_addr_off;
     barrier_var(inner_addr);
@@ -79,9 +79,9 @@ static __always_inline int nat6_replace_outer_prefix(struct __sk_buff *skb,
                                                      const struct ip6_scan_offsets *off, u32 offset,
                                                      __be64 old_prefix, __be64 new_prefix) {
     /* tc_nat_read6 has already pulled the outer IPv6 header into the linear part of the skb. */
-    char *addr = ip6_skb_data(skb) + offset;
+    char *addr = skb_data(skb) + offset;
     barrier_var(addr);
-    if (addr + sizeof(new_prefix) > ip6_skb_data_end(skb)) return TC_ACT_SHOT;
+    if (addr + sizeof(new_prefix) > skb_data_end(skb)) return TC_ACT_SHOT;
     __builtin_memcpy(addr, &new_prefix, sizeof(new_prefix));
 
     __wsum prefix_diff = nat6_prefix_diff(old_prefix, new_prefix);

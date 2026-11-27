@@ -34,13 +34,13 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
     if (frag_id) *frag_id = id;
     if (frag_next) *frag_next = fnext;
 
-    char *data = ip6_skb_data(skb);
-    char *data_end = ip6_skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     struct ipv6hdr *iph = (struct ipv6hdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) {
         if (bpf_skb_pull_data(skb, l3_offset + IPV6_HDR_LEN) != 0) return -1;
-        data = ip6_skb_data(skb);
-        data_end = ip6_skb_data_end(skb);
+        data = skb_data(skb);
+        data_end = skb_data_end(skb);
         iph = (struct ipv6hdr *)(data + l3_offset);
         if ((char *)(iph + 1) > data_end) return -1;
     }
@@ -56,8 +56,8 @@ static __always_inline int tc_ip6_hdrlen(struct __sk_buff *skb, __u32 l3_offset,
         char *p = data + hdr_off;
         if (p + 2 > data_end) {
             if (bpf_skb_pull_data(skb, hdr_off + 2U) != 0) return -1;
-            data = ip6_skb_data(skb);
-            data_end = ip6_skb_data_end(skb);
+            data = skb_data(skb);
+            data_end = skb_data_end(skb);
             p = data + hdr_off;
             if (p + 2 > data_end) return -1;
         }

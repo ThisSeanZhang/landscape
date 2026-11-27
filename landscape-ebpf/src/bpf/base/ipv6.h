@@ -7,6 +7,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/l4.h"
+#include "base/skb_ctx.h"
 #include "base/tcp_phase.h"
 #include "frag/frag.h"
 
@@ -62,24 +63,8 @@ static inline __u32 ipv6_opt_len(const struct ipv6_opt_hdr *ext) {
     return ((__u32)ext->hdrlen + 1U) * 8U;
 }
 
-static __always_inline char *ip6_skb_data(const struct __sk_buff *skb) {
-    u64 v;
-    __asm__ __volatile__("%0 = *(u32 *)(%1 + %2)"
-                         : "=r"(v)
-                         : "r"(skb), "i"(__builtin_offsetof(struct __sk_buff, data)));
-    return (char *)(long)v;
-}
-
-static __always_inline char *ip6_skb_data_end(const struct __sk_buff *skb) {
-    u64 v;
-    __asm__ __volatile__("%0 = *(u32 *)(%1 + %2)"
-                         : "=r"(v)
-                         : "r"(skb), "i"(__builtin_offsetof(struct __sk_buff, data_end)));
-    return (char *)(long)v;
-}
-
 static __always_inline int ip6_skb_may_pull(struct __sk_buff *skb, __u32 end) {
-    if (ip6_skb_data(skb) + end <= ip6_skb_data_end(skb)) return 0;
+    if (skb_data(skb) + end <= skb_data_end(skb)) return 0;
     return bpf_skb_pull_data(skb, end);
 }
 
@@ -110,15 +95,15 @@ static __always_inline int ip6_scan_ext(struct __sk_buff *skb, __u32 l3_offset, 
                                         __u8 *frag_next, __u32 *packet_end) {
     if (!off || max_ext == 0) return -1;
 
-    char *data = ip6_skb_data(skb);
-    char *data_end = ip6_skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
 
     if (l3_offset == sizeof(struct ethhdr)) {
         struct ethhdr *eth = (struct ethhdr *)data;
         if ((char *)(eth + 1) > data_end) {
             if (bpf_skb_pull_data(skb, l3_offset) != 0) return -1;
-            data = ip6_skb_data(skb);
-            data_end = ip6_skb_data_end(skb);
+            data = skb_data(skb);
+            data_end = skb_data_end(skb);
             eth = (struct ethhdr *)data;
             if ((char *)(eth + 1) > data_end) return -1;
         }
@@ -128,8 +113,8 @@ static __always_inline int ip6_scan_ext(struct __sk_buff *skb, __u32 l3_offset, 
     struct ipv6hdr *iph = (struct ipv6hdr *)(data + l3_offset);
     if ((char *)(iph + 1) > data_end) {
         if (bpf_skb_pull_data(skb, l3_offset + IPV6_HDR_LEN) != 0) return -1;
-        data = ip6_skb_data(skb);
-        data_end = ip6_skb_data_end(skb);
+        data = skb_data(skb);
+        data_end = skb_data_end(skb);
         iph = (struct ipv6hdr *)(data + l3_offset);
         if ((char *)(iph + 1) > data_end) return -1;
     }
@@ -156,8 +141,8 @@ static __always_inline int ip6_scan_ext(struct __sk_buff *skb, __u32 l3_offset, 
             struct frag_hdr *fh = (struct frag_hdr *)(data + offset);
             if ((char *)(fh + 1) > data_end) {
                 if (bpf_skb_pull_data(skb, offset + sizeof(*fh)) != 0) return -1;
-                data = ip6_skb_data(skb);
-                data_end = ip6_skb_data_end(skb);
+                data = skb_data(skb);
+                data_end = skb_data_end(skb);
                 fh = (struct frag_hdr *)(data + offset);
                 if ((char *)(fh + 1) > data_end) return -1;
             }
@@ -184,8 +169,8 @@ static __always_inline int ip6_scan_ext(struct __sk_buff *skb, __u32 l3_offset, 
             struct ipv6_opt_hdr *ext = (struct ipv6_opt_hdr *)(data + offset);
             if ((char *)(ext + 1) > data_end) {
                 if (bpf_skb_pull_data(skb, offset + sizeof(*ext)) != 0) return -1;
-                data = ip6_skb_data(skb);
-                data_end = ip6_skb_data_end(skb);
+                data = skb_data(skb);
+                data_end = skb_data_end(skb);
                 ext = (struct ipv6_opt_hdr *)(data + offset);
                 if ((char *)(ext + 1) > data_end) return -1;
             }
@@ -338,8 +323,8 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     __u32 need = l4_offset + sizeof(struct icmp6hdr) + sizeof(struct ipv6hdr);
     if (ip6_skb_may_pull(skb, need) != 0) return -1;
 
-    char *data = ip6_skb_data(skb);
-    char *data_end = ip6_skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
 
     struct ipv6hdr *outer = (struct ipv6hdr *)(data + l3_offset);
     struct icmp6hdr *icmp = (struct icmp6hdr *)(data + l4_offset);
@@ -372,8 +357,8 @@ static __always_inline int icmp6_parse_error(struct __sk_buff *skb, __u32 l3_off
     if (inner.l4_offset + 8U > quote_end) return -1;
     if (ip6_skb_may_pull(skb, inner.l4_offset + 8U) != 0) return -1;
 
-    data = ip6_skb_data(skb);
-    data_end = ip6_skb_data_end(skb);
+    data = skb_data(skb);
+    data_end = skb_data_end(skb);
     if ((char *)(data + inner.l4_offset) + 8U > data_end) return -1;
 
     outer = (struct ipv6hdr *)(data + l3_offset);

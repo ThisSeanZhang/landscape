@@ -171,8 +171,8 @@ static __always_inline int bench_prepare_forwarded_ipv4(struct __sk_buff *skb) {
         return TC_ACT_OK;
 
     const u32 need = sizeof(struct ethhdr) + sizeof(struct iphdr);
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (data + need > data_end) {
         if (bpf_skb_pull_data(skb, need)) return TC_ACT_SHOT;
@@ -181,8 +181,8 @@ static __always_inline int bench_prepare_forwarded_ipv4(struct __sk_buff *skb) {
         barrier_var(data);
         if (data + need > data_end) return TC_ACT_SHOT;
     }
-    struct ethhdr *eth = data;
-    const struct iphdr *iph = data + sizeof(*eth);
+    struct ethhdr *eth = (struct ethhdr *)data;
+    const struct iphdr *iph = (const struct iphdr *)(data + sizeof(*eth));
     __be32 dst = iph->daddr;
     if (is_broadcast_ip4(dst)) return TC_ACT_OK;
 
@@ -223,8 +223,8 @@ static __always_inline int bench_prepare_forwarded_ipv6(struct __sk_buff *skb) {
         return TC_ACT_OK;
 
     const u32 need = sizeof(struct ethhdr) + sizeof(struct ipv6hdr);
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (data + need > data_end) {
         if (bpf_skb_pull_data(skb, need)) return TC_ACT_SHOT;
@@ -233,8 +233,8 @@ static __always_inline int bench_prepare_forwarded_ipv6(struct __sk_buff *skb) {
         barrier_var(data);
         if (data + need > data_end) return TC_ACT_SHOT;
     }
-    struct ethhdr *eth = data;
-    const struct ipv6hdr *ip6 = data + sizeof(*eth);
+    struct ethhdr *eth = (struct ethhdr *)data;
+    const struct ipv6hdr *ip6 = (const struct ipv6hdr *)(data + sizeof(*eth));
     const u8 *dst = ip6->daddr.in6_u.u6_addr8;
     if (unlikely((dst[0] & 0xff) == 0xff)) return TC_ACT_OK;
 
@@ -274,14 +274,14 @@ int bench_wan_egress_l2_v4(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (unlikely(data + sizeof(struct ethhdr) > data_end)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    const struct ethhdr *eth = data;
+    const struct ethhdr *eth = (const struct ethhdr *)data;
     bool ok = bench_mac_eq_ro(eth->h_dest, expected_gw_mac4) &&
               bench_mac_eq_ro(eth->h_source, egress_binding.source_mac);
 
@@ -309,14 +309,14 @@ int bench_wan_egress_l2_v6(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
 
-    void *data = skb_data(skb);
-    void *data_end = skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     barrier_var(data);
     if (unlikely(data + sizeof(struct ethhdr) > data_end)) {
         bench_sink_add(BENCH_FAIL);
         return TC_ACT_OK;
     }
-    const struct ethhdr *eth = data;
+    const struct ethhdr *eth = (const struct ethhdr *)data;
     bool ok = bench_mac_eq_ro(eth->h_dest, expected_gw_mac6) &&
               bench_mac_eq_ro(eth->h_source, egress_binding.source_mac);
 

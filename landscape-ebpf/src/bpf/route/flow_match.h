@@ -8,12 +8,12 @@
 #define FLOW_ENTRY_MODE_IP 1
 
 static __always_inline int read_flow_src_mac(struct __sk_buff *skb, u8 mac[6]) {
-    char *data = (char *)skb_data(skb);
-    char *data_end = (char *)skb_data_end(skb);
+    char *data = skb_data(skb);
+    char *data_end = skb_data_end(skb);
     if ((char *)(data + 12) > data_end) {
         if (skb->len < 12 || bpf_skb_pull_data(skb, 12) != 0) return -1;
-        data = (char *)skb_data(skb);
-        data_end = (char *)skb_data_end(skb);
+        data = skb_data(skb);
+        data_end = skb_data_end(skb);
         if ((char *)(data + 12) > data_end) return -1;
     }
     __builtin_memcpy(mac, data + 6, 6);
