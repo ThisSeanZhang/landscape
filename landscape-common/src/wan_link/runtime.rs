@@ -100,6 +100,7 @@ impl RuntimeWanLinkConfig {
             },
             pd: RuntimeWanLinkPdConfig {
                 enable: config.pd.enable,
+                default_router: config.pd.default_router,
                 mac: config.pd.mac,
                 expected_pd_len: config.pd.expected_pd_len.unwrap_or(DEFAULT_EXPECTED_PD_LEN),
             },
@@ -166,6 +167,7 @@ pub struct RuntimeWanLinkV4Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeWanLinkPdConfig {
     pub enable: bool,
+    pub default_router: bool,
     pub mac: MacAddr,
     pub expected_pd_len: u8,
 }

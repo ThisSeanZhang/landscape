@@ -194,6 +194,9 @@ pub enum WanLinkV4Model {
 pub struct WanLinkPdConfig {
     #[serde(default)]
     pub enable: bool,
+    /// Whether this link's PD route competes for the IPv6 default route.
+    #[serde(default)]
+    pub default_router: bool,
     #[cfg_attr(feature = "openapi", schema(value_type = String))]
     pub mac: MacAddr,
     #[serde(default)]

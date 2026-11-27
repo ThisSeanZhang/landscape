@@ -273,4 +273,6 @@ export default {
   mac_hint: "申请使用的 mac 地址 (PPP网卡上是生成虚拟的)",
   expected_pd_len: "预期上游 PD 前缀长度",
   expected_pd_len_invalid: "预期上游 PD 前缀长度必须是 56 到 64 的整数",
+  default_router: "设为 IPv6 默认路由",
+  default_router_desc: "没有指定其他出口时，IPv6 流量将优先使用这条链路",
 };

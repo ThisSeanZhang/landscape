@@ -31,14 +31,7 @@ pub(super) async fn run(
     pd_runtime: Arc<ArcSwap<PdRuntime>>,
     link_state: LinkStateHandle,
 ) {
-    let wan_route_info = RouteTargetInfo::new_gateway_v6(
-        iface.ifindex,
-        &iface.iface_name,
-        iface.mac,
-        Ipv6Addr::UNSPECIFIED,
-        Ipv6Addr::UNSPECIFIED,
-        true,
-    );
+    let wan_route_info = wan_route_info(&iface, config.default_router);
 
     crate::wan_service::ipv6pd_client::v6::dhcp_v6_pd_client(
         link_id,
@@ -61,4 +54,35 @@ pub(super) async fn run(
         link_state,
     )
     .await;
+}
+
+/// Build the PD route target seeded by the PD section. The gateway/iface
+/// address stay unspecified until the DHCPv6 lease arrives; the
+/// `default_router` flag decides whether the link's route competes for the
+/// IPv6 default route once it is published.
+fn wan_route_info(iface: &SessionIface, default_router: bool) -> RouteTargetInfo {
+    RouteTargetInfo::new_gateway_v6(
+        iface.ifindex,
+        &iface.iface_name,
+        iface.mac,
+        Ipv6Addr::UNSPECIFIED,
+        Ipv6Addr::UNSPECIFIED,
+        default_router,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use landscape_common::net::MacAddr;
+
+    fn iface() -> SessionIface {
+        SessionIface::new(7, "wan0", Some(MacAddr::dummy()))
+    }
+
+    #[test]
+    fn default_router_flag_is_published() {
+        assert!(wan_route_info(&iface(), true).default_route);
+        assert!(!wan_route_info(&iface(), false).default_route);
+    }
 }

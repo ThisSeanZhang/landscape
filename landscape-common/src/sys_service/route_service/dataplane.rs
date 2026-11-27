@@ -35,6 +35,12 @@ pub trait RouteTableDataplane: Send + Sync {
     /// own). Returns `false` when the sync failed and should be retried.
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool;
 
+    /// Replace the kernel IPv6 default route with the weighted nexthops
+    /// derived from the WAN route state; an empty slice leaves the kernel
+    /// default route untouched. Returns `false` when the sync failed and
+    /// should be retried.
+    async fn sync_kernel_default_ipv6(&self, nexthops: &[RouteTargetInfo]) -> bool;
+
     /// Recreate the LAN verdict-cache inner maps (invalidate all cached
     /// verdicts).
     fn invalidate_lan_cache(&self);
@@ -58,6 +64,10 @@ impl RouteTableDataplane for NoopRouteTableDataplane {
     fn del_wan_slots_v6(&self, _flow_id: FlowId) {}
 
     async fn sync_kernel_default_ipv4(&self, _nexthops: &[RouteTargetInfo]) -> bool {
+        true
+    }
+
+    async fn sync_kernel_default_ipv6(&self, _nexthops: &[RouteTargetInfo]) -> bool {
         true
     }
 

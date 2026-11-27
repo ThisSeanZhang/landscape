@@ -59,6 +59,7 @@ mod m20261008_095616_wan_links;
 mod m20261008_235359_wan_link_chain_id;
 mod m20261008_240001_wan_link_health_check;
 mod m20261031_053957_ddns_per_record_limit;
+mod m20261127_000000_wan_link_pd_default_router;
 mod tables;
 
 pub struct Migrator;
@@ -124,6 +125,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261008_235359_wan_link_chain_id::Migration),
             Box::new(m20261008_240001_wan_link_health_check::Migration),
             Box::new(m20261031_053957_ddns_per_record_limit::Migration),
+            Box::new(m20261127_000000_wan_link_pd_default_router::Migration),
         ]
     }
 }

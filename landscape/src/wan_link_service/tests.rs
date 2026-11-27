@@ -270,6 +270,37 @@ fn pd_toggle_changes_active_and_restarts_v4() {
 }
 
 #[test]
+fn pd_default_router_toggle_restarts_pd_only() {
+    let applied: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+        "attach_iface_name": "eth0",
+        "pd": {
+            "enable": true,
+            "default_router": true,
+            "mac": "00:00:00:00:00:00",
+            "expected_pd_len": 60
+        }
+    }))
+    .unwrap();
+    let new: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+        "attach_iface_name": "eth0",
+        "pd": {
+            "enable": true,
+            "default_router": false,
+            "mac": "00:00:00:00:00:00",
+            "expected_pd_len": 60
+        }
+    }))
+    .unwrap();
+
+    assert!(applied.active() && new.active());
+    let tags = config_change_tags(&applied, &new);
+    assert!(tags.contains(&SectionTag::Pd));
+    assert!(!tags.contains(&SectionTag::V4));
+}
+
+#[test]
 fn pppd_disable_is_inactive_and_restarts_v4() {
     let applied: WanLinkConfig = serde_json::from_value(serde_json::json!({
         "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",

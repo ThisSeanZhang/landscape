@@ -57,6 +57,8 @@ pub struct IpRouteService {
     // route; `None` means "kernel state unknown / last sync failed" and
     // forces the next reconcile to run.
     pub(crate) kernel_default_ipv4_cache: ShareRwLock<Option<Vec<RouteTargetInfo>>>,
+    // Same cache for the kernel IPv6 default route.
+    pub(crate) kernel_default_ipv6_cache: ShareRwLock<Option<Vec<RouteTargetInfo>>>,
     // Wakes the kernel-default-route reconcile loop right after a WAN
     // route change; `notify_one`'s single stored permit coalesces bursts
     // and survives across select iterations.
@@ -83,6 +85,7 @@ impl IpRouteService {
             ipv4_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             ipv6_lan_ifaces: Arc::new(RwLock::new(HashMap::new())),
             kernel_default_ipv4_cache: Arc::new(RwLock::new(None)),
+            kernel_default_ipv6_cache: Arc::new(RwLock::new(None)),
             kernel_default_notify: Arc::new(Notify::new()),
             reachable_local_ipv4_addrs: Arc::new(ArcSwap::from_pointee(Vec::new())),
             reachable_local_ipv4_addrs_by_ifindex: Arc::new(ArcSwap::from_pointee(HashMap::new())),

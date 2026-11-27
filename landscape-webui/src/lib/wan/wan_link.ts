@@ -74,6 +74,7 @@ export class WanLink {
     this.v4 = obj?.v4 ?? { enable: false, model: { t: "nothing" } };
     this.pd = obj?.pd ?? {
       enable: false,
+      default_router: false,
       mac: "00:00:00:00:00:00",
       expected_pd_len: DEFAULT_EXPECTED_PD_LEN,
     };
@@ -163,6 +164,7 @@ export function wan_link_from_payload(payload: WanLinkConfig): WanLink {
     },
     pd: {
       enable: payload.pd?.enable ?? false,
+      default_router: payload.pd?.default_router ?? false,
       mac: payload.pd?.mac ?? "00:00:00:00:00:00",
       expected_pd_len: payload.pd?.expected_pd_len ?? DEFAULT_EXPECTED_PD_LEN,
     },

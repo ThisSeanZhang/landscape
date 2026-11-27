@@ -1,7 +1,7 @@
 //! WAN route state: one active [`RouteTargetInfo`] per owner (link or
 //! container), default-router resolution, and change broadcasting.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use landscape_common::{
     ddns::IpFamily,
@@ -78,26 +78,50 @@ fn sync_default_ipv6_wan_route(
     dataplane.invalidate_lan_cache();
 }
 
-/// Collect the kernel IPv4 default-route nexthops from the WAN route
-/// state: default targets with a usable IPv4 gateway (or a dev-only
+/// Which address family's kernel default route a nexthop set feeds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefaultFamily {
+    V4,
+    V6,
+}
+
+/// Whether a WAN route entry can contribute a nexthop to the requested
+/// family's kernel default route.
+fn usable_default_nexthop(entry: &WanRouteTarget, family: DefaultFamily) -> bool {
+    if entry.info.dev_only_nexthop {
+        return true;
+    }
+    match (family, entry.info.gateway_ip) {
+        (DefaultFamily::V4, IpAddr::V4(gateway)) => gateway != Ipv4Addr::UNSPECIFIED,
+        (DefaultFamily::V6, IpAddr::V6(gateway)) => gateway != Ipv6Addr::UNSPECIFIED,
+        _ => false,
+    }
+}
+
+/// Collect the kernel default-route nexthops for one family from the WAN
+/// route state: default targets with a usable gateway (or a dev-only
 /// point-to-point nexthop), deduplicated and sorted so consecutive
 /// refreshes compare equal. Unspecified gateways and zero weights are
 /// skipped/clamped, and fields that never reach the `ip` arguments are
 /// normalized.
-pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
+fn kernel_default_nexthops_for(
+    routes: &WanRoutesByOwner,
+    family: DefaultFamily,
+) -> Vec<RouteTargetInfo> {
+    let unspecified = match family {
+        DefaultFamily::V4 => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        DefaultFamily::V6 => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    };
+
     let mut candidates: Vec<RouteTargetInfo> = routes
         .values()
-        .filter(|entry| entry.info.default_route)
-        .filter(|entry| {
-            entry.info.dev_only_nexthop
-                || matches!(entry.info.gateway_ip, IpAddr::V4(gateway) if gateway != Ipv4Addr::UNSPECIFIED)
-        })
+        .filter(|entry| entry.info.default_route && usable_default_nexthop(entry, family))
         .map(|entry| {
             let mut nexthop = entry.info.clone();
             nexthop.weight = nexthop.weight.max(1);
             nexthop.ifindex = 0;
             nexthop.mac = None;
-            nexthop.iface_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+            nexthop.iface_ip = unspecified;
             nexthop
         })
         .collect();
@@ -116,6 +140,16 @@ pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTar
     });
 
     candidates
+}
+
+/// IPv4 nexthops for the kernel default route.
+pub(crate) fn kernel_default_nexthops(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
+    kernel_default_nexthops_for(routes, DefaultFamily::V4)
+}
+
+/// IPv6 nexthops for the kernel default route.
+pub(crate) fn kernel_default_nexthops_v6(routes: &WanRoutesByOwner) -> Vec<RouteTargetInfo> {
+    kernel_default_nexthops_for(routes, DefaultFamily::V6)
 }
 
 impl IpRouteService {
@@ -268,7 +302,7 @@ impl IpRouteService {
             .cloned();
         sync_default_ipv6_wan_route(&*self.dataplane, ipv6_default);
 
-        // The kernel IPv4 default route is owned by the single-writer
+        // The kernel default routes are owned by the single-writer
         // reconcile loop: ring its doorbell instead of writing here.
         self.kernel_default_notify.notify_one();
     }
@@ -290,9 +324,25 @@ impl IpRouteService {
         }
     }
 
-    /// Spawn the kernel-default-route reconcile loop: it wakes up right
-    /// after every WAN route change (`notify_one` permit) and on a
-    /// periodic safety-net tick. The ticker's first tick fires
+    /// Reconcile the kernel IPv6 default route with the current WAN route
+    /// state. Same single-writer snapshot/retry contract as the IPv4
+    /// variant.
+    pub(crate) async fn reconcile_kernel_default_ipv6(&self) {
+        let defaults = kernel_default_nexthops_v6(&*self.ipv6_wan_ifaces.read().await);
+        let mut cache = self.kernel_default_ipv6_cache.write().await;
+        if *cache == Some(defaults.clone()) {
+            return;
+        }
+        if self.dataplane.sync_kernel_default_ipv6(&defaults).await {
+            *cache = Some(defaults);
+        } else {
+            *cache = None;
+        }
+    }
+
+    /// Spawn the kernel-default-route reconcile loop (IPv4 + IPv6): it
+    /// wakes up right after every WAN route change (`notify_one` permit)
+    /// and on a periodic safety-net tick. The ticker's first tick fires
     /// immediately, forcing a startup reconcile that pushes the current
     /// WAN default set; when there is none, the kernel default route is
     /// left untouched.
@@ -312,6 +362,7 @@ impl IpRouteService {
                         _ = ticker.tick() => {}
                     }
                     service.reconcile_kernel_default_ipv4().await;
+                    service.reconcile_kernel_default_ipv6().await;
                 }
             },
         );

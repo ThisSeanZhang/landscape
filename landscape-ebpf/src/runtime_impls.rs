@@ -274,22 +274,20 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
             return true;
         }
 
-        let args = kernel_default_ipv4_args(nexthops);
-        tracing::info!("sync kernel default ipv4 route: {}", args.join(" "));
-        match tokio::process::Command::new("ip").args(&args).output().await {
-            Ok(output) if output.status.success() => true,
-            Ok(output) => {
-                tracing::error!(
-                    "sync kernel default ipv4 route failed: {:?}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                false
-            }
-            Err(e) => {
-                tracing::error!("sync kernel default ipv4 route failed: {e:?}");
-                false
-            }
+        run_kernel_default_sync("ipv4", &kernel_default_ipv4_args(nexthops)).await
+    }
+
+    async fn sync_kernel_default_ipv6(
+        &self,
+        nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
+    ) -> bool {
+        // No WAN IPv6 default target: leave the kernel default route (if
+        // any) untouched.
+        if nexthops.is_empty() {
+            return true;
         }
+
+        run_kernel_default_sync("ipv6", &kernel_default_ipv6_args(nexthops)).await
     }
 
     fn invalidate_lan_cache(&self) {
@@ -297,14 +295,35 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
     }
 }
 
-/// Build the `ip` arguments for the kernel IPv4 default route:
-/// `route replace default nexthop via G dev I weight W ...`. Point-to-point
-/// nexthops marked `dev_only_nexthop` omit the `via` gateway. The slice is
+/// Run `ip` for one family's kernel default route, logging the command and
+/// any failure. Returns `true` only on success so the caller retries.
+async fn run_kernel_default_sync(family: &str, args: &[String]) -> bool {
+    tracing::info!("sync kernel default {family} route: {}", args.join(" "));
+    match tokio::process::Command::new("ip").args(args).output().await {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            tracing::error!(
+                "sync kernel default {family} route failed: {:?}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            tracing::error!("sync kernel default {family} route failed: {e:?}");
+            false
+        }
+    }
+}
+
+/// Build the `ip` arguments for a kernel default route:
+/// `<prefix> nexthop via G dev I weight W ...`. Point-to-point nexthops
+/// marked `dev_only_nexthop` omit the `via` gateway. The slice is
 /// non-empty: an empty target set is a no-op handled before this call.
-fn kernel_default_ipv4_args(
+fn kernel_default_route_args(
+    prefix: &[&str],
     nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
 ) -> Vec<String> {
-    let mut args = vec!["route".to_string(), "replace".to_string(), "default".to_string()];
+    let mut args: Vec<String> = prefix.iter().map(|arg| (*arg).to_string()).collect();
     for nexthop in nexthops {
         args.push("nexthop".to_string());
         if nexthop.dev_only_nexthop {
@@ -319,6 +338,20 @@ fn kernel_default_ipv4_args(
         args.push(nexthop.weight.to_string());
     }
     args
+}
+
+/// Build the `ip` arguments for the kernel IPv4 default route.
+fn kernel_default_ipv4_args(
+    nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
+) -> Vec<String> {
+    kernel_default_route_args(&["route", "replace", "default"], nexthops)
+}
+
+/// Build the `ip` arguments for the kernel IPv6 default route.
+fn kernel_default_ipv6_args(
+    nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
+) -> Vec<String> {
+    kernel_default_route_args(&["-6", "route", "replace", "default"], nexthops)
 }
 
 // ─────────────────────────────────────────────────────────────────────────

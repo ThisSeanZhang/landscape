@@ -46,6 +46,13 @@ fn ipv6_wan_default_route(iface_name: &str) -> WanRouteTarget {
     )
 }
 
+fn ipv6_wan_route(iface_name: &str, gateway: Ipv6Addr) -> WanRouteTarget {
+    WanRouteTarget::link(
+        0,
+        RouteTargetInfo::new_gateway_v6(2, iface_name, None, Ipv6Addr::LOCALHOST, gateway, true),
+    )
+}
+
 fn ipv4_lan_route(
     ifindex: u32,
     iface_name: &str,
@@ -804,19 +811,26 @@ enum LanRouteOp {
     Del(LanRouteInfo),
 }
 
-/// No-op dataplane recording every `sync_kernel_default_ipv4` payload and
-/// `add_lan_route`/`del_lan_route` call; `set_fail_next` makes the next
-/// kernel-default sync report failure.
+/// No-op dataplane recording every `sync_kernel_default_ipv4` /
+/// `sync_kernel_default_ipv6` payload and `add_lan_route`/`del_lan_route`
+/// call; `set_fail_next*` makes the next matching kernel-default sync report
+/// failure.
 #[derive(Default)]
 struct RecordingRouteDataplane {
     calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
+    v6_calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
     lan_ops: std::sync::Mutex<Vec<LanRouteOp>>,
     fail_next: std::sync::atomic::AtomicBool,
+    fail_next_v6: std::sync::atomic::AtomicBool,
 }
 
 impl RecordingRouteDataplane {
     fn calls(&self) -> Vec<Vec<RouteTargetInfo>> {
         self.calls.lock().unwrap().clone()
+    }
+
+    fn v6_calls(&self) -> Vec<Vec<RouteTargetInfo>> {
+        self.v6_calls.lock().unwrap().clone()
     }
 
     fn take_lan_ops(&self) -> Vec<LanRouteOp> {
@@ -825,6 +839,10 @@ impl RecordingRouteDataplane {
 
     fn set_fail_next(&self) {
         self.fail_next.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn set_fail_next_v6(&self) {
+        self.fail_next_v6.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -851,6 +869,11 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool {
         self.calls.lock().unwrap().push(nexthops.to_vec());
         !self.fail_next.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn sync_kernel_default_ipv6(&self, nexthops: &[RouteTargetInfo]) -> bool {
+        self.v6_calls.lock().unwrap().push(nexthops.to_vec());
+        !self.fail_next_v6.swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     fn invalidate_lan_cache(&self) {}
@@ -1019,6 +1042,141 @@ fn kernel_default_burst_converges_in_single_reconcile() {
 
         assert_eq!(dataplane.calls().len(), 1);
         assert_eq!(dataplane.calls()[0].len(), 2);
+    });
+}
+
+#[test]
+fn kernel_default_v6_nexthops_filters_dedups_and_sorts() {
+    let mut routes = WanRoutesByOwner::new();
+    routes.insert(link_owner("wan0"), ipv6_wan_route("wan0", "2001:db8::1".parse().unwrap()));
+
+    // Duplicate nexthop registered by another owner collapses into one.
+    routes.insert(
+        RouteOwner::Netns("dup".to_string()),
+        ipv6_wan_route("wan0", "2001:db8::1".parse().unwrap()),
+    );
+
+    // Non-default routes never contribute.
+    let mut non_default = ipv6_wan_route("wan1", "2001:db8::2".parse().unwrap());
+    non_default.info.default_route = false;
+    routes.insert(link_owner("wan1"), non_default);
+
+    // A default route behind an IPv4 gateway is skipped (v6 route table).
+    let mut v4_gateway = ipv6_wan_route("wan2", "2001:db8::3".parse().unwrap());
+    v4_gateway.info.gateway_ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+    routes.insert(link_owner("wan2"), v4_gateway);
+
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+
+    assert_eq!(nexthops.len(), 1);
+    assert_eq!(nexthops[0].iface_name, "wan0");
+    assert_eq!(nexthops[0].gateway_ip, IpAddr::V6("2001:db8::1".parse().unwrap()));
+}
+
+#[test]
+fn kernel_default_v6_skips_unspecified_gateway() {
+    let mut routes = WanRoutesByOwner::new();
+
+    // `via ::` is not a valid nexthop; such a route must be skipped.
+    routes.insert(link_owner("wan0"), ipv6_wan_route("wan0", Ipv6Addr::UNSPECIFIED));
+    routes.insert(link_owner("wan1"), ipv6_wan_route("wan1", "2001:db8::2".parse().unwrap()));
+
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+
+    assert_eq!(nexthops.len(), 1);
+    assert_eq!(nexthops[0].iface_name, "wan1");
+}
+
+#[test]
+fn kernel_default_v6_clamps_zero_weight_and_normalizes() {
+    let mut routes = WanRoutesByOwner::new();
+
+    // The kernel rejects `weight 0`; it must be clamped to 1.
+    let mut zero_weight = ipv6_wan_route("wan0", "2001:db8::1".parse().unwrap());
+    zero_weight.info.weight = 0;
+    routes.insert(link_owner("wan0"), zero_weight);
+
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+
+    assert_eq!(nexthops.len(), 1);
+    assert_eq!(nexthops[0].weight, 1);
+    assert_eq!(nexthops[0].ifindex, 0);
+    assert_eq!(nexthops[0].mac, None);
+    assert_eq!(nexthops[0].iface_ip, IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+}
+
+#[test]
+fn kernel_default_v6_route_syncs_on_change_only() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let owner_a = link_owner("wan0");
+        let owner_b = link_owner("wan1");
+        service
+            .insert_ipv6_wan_route(&owner_a, ipv6_wan_route("wan0", "2001:db8::1".parse().unwrap()))
+            .await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 1);
+        assert_eq!(dataplane.v6_calls()[0].len(), 1);
+
+        // An IPv4-only default change must not rewrite the v6 kernel route.
+        service
+            .insert_ipv4_wan_route(&owner_a, ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)))
+            .await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 1);
+
+        // Second default link joins the ECMP set.
+        service
+            .insert_ipv6_wan_route(&owner_b, ipv6_wan_route("wan1", "2001:db8::2".parse().unwrap()))
+            .await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 2);
+        assert_eq!(dataplane.v6_calls()[1].len(), 2);
+
+        // Removing one default link regenerates the set without it.
+        service.remove_ipv6_wan_route(&owner_a).await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 3);
+        assert_eq!(dataplane.v6_calls()[2].len(), 1);
+        assert_eq!(dataplane.v6_calls()[2][0].iface_name, "wan1");
+
+        // Removing the last default link propagates an empty target set;
+        // the dataplane leaves whatever kernel default route exists alone.
+        service.remove_ipv6_wan_route(&owner_b).await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 4);
+        assert!(dataplane.v6_calls()[3].is_empty());
+    });
+}
+
+#[test]
+fn kernel_default_v6_retries_after_failed_sync() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        service
+            .insert_ipv6_wan_route(
+                &link_owner("wan0"),
+                ipv6_wan_route("wan0", "2001:db8::1".parse().unwrap()),
+            )
+            .await;
+
+        // First sync attempt fails: the cache must stay `None` so the next
+        // reconcile retries instead of skipping.
+        dataplane.set_fail_next_v6();
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 1);
+
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 2);
+        assert_eq!(dataplane.v6_calls()[1].len(), 1);
+
+        // Success converged the cache; no further calls.
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.v6_calls().len(), 2);
     });
 }
 

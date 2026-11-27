@@ -293,4 +293,7 @@ export default {
   expected_pd_len: "Expected Upstream PD Prefix Length",
   expected_pd_len_invalid:
     "Expected upstream PD prefix length must be an integer from 56 to 64",
+  default_router: "Set as IPv6 Default Route",
+  default_router_desc:
+    "IPv6 traffic uses this link when no other egress is specified",
 };

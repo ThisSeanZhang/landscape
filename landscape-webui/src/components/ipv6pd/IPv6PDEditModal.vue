@@ -90,6 +90,12 @@ async function save_config() {
           :precision="0"
         />
       </n-form-item>
+      <n-form-item :label="t('lan_ipv6.default_router')">
+        <n-flex align="center" :size="12">
+          <n-switch v-model:value="link.pd.default_router" />
+          <n-text depth="3">{{ t("lan_ipv6.default_router_desc") }}</n-text>
+        </n-flex>
+      </n-form-item>
     </n-form>
 
     <template #footer>
