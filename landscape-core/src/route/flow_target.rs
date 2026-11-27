@@ -13,37 +13,73 @@ use landscape_common::{
     sys_service::route_service::{RouteOwner, WanRouteTarget, dataplane::RouteTableDataplane},
 };
 
-use super::{IpRouteService, WanRoutesByOwner};
+use super::{
+    IpRouteService, WanRoutesByOwner,
+    health::{LinkHealths, is_owner_available},
+};
 
-fn find_route_target<'a>(
-    wan_infos: &'a WanRoutesByOwner,
-    target: &FlowTarget,
-) -> Option<&'a WanRouteTarget> {
+fn route_owner_of(target: &FlowTarget) -> RouteOwner {
     match target {
-        FlowTarget::Interface { link_id, .. } => wan_infos.get(&RouteOwner::Link(*link_id)),
-        FlowTarget::Netns { container_name } => {
-            wan_infos.get(&RouteOwner::Netns(container_name.clone()))
-        }
+        FlowTarget::Interface { link_id, .. } => RouteOwner::Link(*link_id),
+        FlowTarget::Netns { container_name } => RouteOwner::Netns(container_name.clone()),
     }
+}
+
+fn filter_healthy_flow_targets(
+    flow_id: FlowId,
+    resolved: Vec<(RouteOwner, WanRouteTarget, u32)>,
+    link_healths: &LinkHealths,
+) -> Vec<(WanRouteTarget, u32)> {
+    // Only filter unhealthy links when a flow has >= 2 resolved targets
+    // (e.g. ECMP flows). Single-target isolated flows keep their resolved
+    // target (never leaking to other WANs), and multi-target flows fail open
+    // when every positive-weight target is Unhealthy so a probe target outage
+    // cannot blackhole the entire flow.
+    if resolved.len() >= 2 {
+        let available: Vec<(WanRouteTarget, u32)> = resolved
+            .iter()
+            .filter(|(owner, _, _)| is_owner_available(link_healths, owner))
+            .map(|(_, route, weight)| (route.clone(), *weight))
+            .collect();
+        if available.iter().any(|(_, weight)| *weight > 0) {
+            if available.len() < resolved.len() {
+                tracing::warn!(
+                    flow_id,
+                    total_targets = resolved.len(),
+                    healthy_targets = available.len(),
+                    "filtering unhealthy WAN link(s) from multi-target flow"
+                );
+            }
+            return available;
+        }
+        tracing::warn!(
+            flow_id,
+            total_targets = resolved.len(),
+            "all targets in flow are unhealthy; failing open with resolved targets"
+        );
+    }
+
+    resolved.into_iter().map(|(_, route, weight)| (route, weight)).collect()
 }
 
 pub(super) fn collect_target_refresh_result(
     flow_configs: &[FlowConfig],
     wan_infos: &WanRoutesByOwner,
+    link_healths: &LinkHealths,
 ) -> HashMap<FlowId, Vec<(WanRouteTarget, u32)>> {
     let mut result = HashMap::new();
 
     for flow_config in flow_configs {
         let targets = if flow_config.enable {
-            flow_config
+            let resolved: Vec<(RouteOwner, WanRouteTarget, u32)> = flow_config
                 .flow_targets
                 .iter()
                 .filter_map(|target| {
-                    find_route_target(wan_infos, &target.target)
-                        .cloned()
-                        .map(|route| (route, target.weight))
+                    let owner = route_owner_of(&target.target);
+                    wan_infos.get(&owner).cloned().map(|route| (owner, route, target.weight))
                 })
-                .collect()
+                .collect();
+            filter_healthy_flow_targets(flow_config.flow_id, resolved, link_healths)
         } else {
             Vec::new()
         };
@@ -107,13 +143,17 @@ fn apply_ipv6_target_refresh_result(
 
 impl IpRouteService {
     /// Recompute the per-flow WAN target slots for `flow_configs` against the
-    /// current WAN route state and sync them into the eBPF maps.
+    /// current WAN route and link-health state and sync them into the eBPF maps.
     pub async fn sync_flow_wan_targets(&self, flow_configs: &[FlowConfig]) {
+        let _sync_guard = self.flow_target_sync_lock.lock().await;
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
-        let ipv4_result = collect_target_refresh_result(flow_configs, &ipv4_wan_infos);
-
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
-        let ipv6_result = collect_target_refresh_result(flow_configs, &ipv6_wan_infos);
+        let link_healths = self.clone_link_healths().await;
+
+        let ipv4_result =
+            collect_target_refresh_result(flow_configs, &ipv4_wan_infos, &link_healths);
+        let ipv6_result =
+            collect_target_refresh_result(flow_configs, &ipv6_wan_infos, &link_healths);
 
         warn_fully_unresolved_flows(flow_configs, &ipv4_result, &ipv6_result);
 

@@ -10,6 +10,7 @@ use landscape_common::{
     sys_service::route_service::{
         LanIPv6RouteKey, LanRouteInfo, LanRouteMode, RouteOwner, RouteTargetInfo, WanRouteTarget,
     },
+    wan_link::{WanLinkHealthInfo, WanLinkHealthState},
 };
 use uuid::Uuid;
 
@@ -644,6 +645,20 @@ fn netns_target(container_name: &str, weight: u32) -> WeightedFlowTarget {
     )
 }
 
+fn health_info(link_id: Uuid, state: WanLinkHealthState) -> WanLinkHealthInfo {
+    WanLinkHealthInfo {
+        link_id,
+        state,
+        consecutive_failures: if state == WanLinkHealthState::Unhealthy { 3 } else { 0 },
+        targets: Vec::new(),
+        rtt_ewma_ms: None,
+        loss_ewma: None,
+        last_success_at: None,
+        last_failure_at: None,
+        updated_at: 0.0,
+    }
+}
+
 #[test]
 fn collect_refresh_enabled_flow_with_matching_targets() {
     let mut wan_infos = WanRoutesByOwner::new();
@@ -653,7 +668,7 @@ fn collect_refresh_enabled_flow_with_matching_targets() {
     let configs =
         vec![flow_config(5, true, vec![iface_target("wan0", 3), iface_target("wan1", 1)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert_eq!(targets.len(), 2);
@@ -672,7 +687,7 @@ fn collect_refresh_carries_chain_id() {
 
     let configs = vec![flow_config(5, true, vec![iface_target("wan0", 1)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert_eq!(targets.len(), 1);
@@ -686,7 +701,7 @@ fn collect_refresh_disabled_flow_yields_empty() {
 
     let configs = vec![flow_config(5, false, vec![iface_target("wan0", 1)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert!(targets.is_empty());
@@ -698,7 +713,7 @@ fn collect_refresh_enabled_flow_with_unresolved_targets_yields_empty() {
 
     let configs = vec![flow_config(5, true, vec![iface_target("missing_wan", 2)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert!(targets.is_empty());
@@ -712,7 +727,7 @@ fn collect_refresh_partial_match_keeps_only_resolved() {
     let configs =
         vec![flow_config(5, true, vec![iface_target("wan0", 3), iface_target("missing_wan", 1)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&5).expect("flow_id 5 should be present");
     assert_eq!(targets.len(), 1);
@@ -736,7 +751,7 @@ fn collect_refresh_resolves_by_link_id_with_stale_name() {
     );
     let configs = vec![flow_config(7, true, vec![stale_target])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&7).expect("flow_id 7 should be present");
     assert_eq!(targets.len(), 1, "a correct link_id must resolve regardless of its stale name");
@@ -756,7 +771,7 @@ fn collect_refresh_netns_owner_does_not_satisfy_interface_target() {
 
     let configs = vec![flow_config(9, true, vec![iface_target("wan0", 1)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&9).expect("flow_id 9 should be present");
     assert!(
@@ -775,7 +790,7 @@ fn collect_refresh_netns_target_resolves_by_container_name() {
 
     let configs = vec![flow_config(3, true, vec![netns_target("ns0", 5)])];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     let targets = result.get(&3).expect("flow_id 3 should be present");
     assert_eq!(targets.len(), 1);
@@ -794,11 +809,97 @@ fn collect_refresh_multiple_flows_independent() {
         flow_config(3, true, vec![iface_target("missing", 1)]),
     ];
 
-    let result = collect_target_refresh_result(&configs, &wan_infos);
+    let result = collect_target_refresh_result(&configs, &wan_infos, &LinkHealths::new());
 
     assert_eq!(result.get(&1).unwrap().len(), 1);
     assert!(result.get(&2).unwrap().is_empty());
     assert!(result.get(&3).unwrap().is_empty());
+}
+
+#[test]
+fn collect_refresh_health_filters_multi_target_and_fails_open() {
+    let mut wan_infos = WanRoutesByOwner::new();
+    wan_infos.insert(link_owner("wan1"), ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan2"), ipv4_wan_route("wan2", Ipv4Addr::new(203, 0, 113, 1)));
+
+    let configs = vec![
+        flow_config(4, true, vec![iface_target("wan2", 1)]),
+        flow_config(5, true, vec![iface_target("wan1", 2), iface_target("wan2", 3)]),
+    ];
+
+    // Unknown health (or missing health_check) keeps both targets.
+    let mut healths = LinkHealths::new();
+    healths
+        .insert(named_uuid("wan1"), health_info(named_uuid("wan1"), WanLinkHealthState::Unknown));
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    assert_eq!(res.get(&5).unwrap().len(), 2);
+
+    // WAN1 Unhealthy, WAN2 Healthy: Flow 5 converges to WAN2 only; Flow 4 stays WAN2.
+    healths
+        .insert(named_uuid("wan1"), health_info(named_uuid("wan1"), WanLinkHealthState::Unhealthy));
+    healths
+        .insert(named_uuid("wan2"), health_info(named_uuid("wan2"), WanLinkHealthState::Healthy));
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    let flow5 = res.get(&5).unwrap();
+    assert_eq!(flow5.len(), 1);
+    assert_eq!(flow5[0].0.info.iface_name, "wan2");
+    assert_eq!(flow5[0].1, 3);
+    assert_eq!(res.get(&4).unwrap().len(), 1);
+
+    // WAN1 Unhealthy, WAN2 Unknown: Unknown is treated as available, so Flow 5 converges to WAN2.
+    healths
+        .insert(named_uuid("wan2"), health_info(named_uuid("wan2"), WanLinkHealthState::Unknown));
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    assert_eq!(res.get(&5).unwrap().len(), 1);
+    assert_eq!(res.get(&5).unwrap()[0].0.info.iface_name, "wan2");
+
+    // Both Unhealthy: Flow 5 fails open (keeps both), and single-target Flow 4 keeps WAN2.
+    healths
+        .insert(named_uuid("wan2"), health_info(named_uuid("wan2"), WanLinkHealthState::Unhealthy));
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    assert_eq!(
+        res.get(&5).unwrap().len(),
+        2,
+        "multi-target flow must fail open when all unhealthy"
+    );
+    let flow4 = res.get(&4).unwrap();
+    assert_eq!(flow4.len(), 1, "single-target isolated flow must fail open and stay pinned");
+    assert_eq!(flow4[0].0.info.iface_name, "wan2");
+
+    // WAN1 Healthy, WAN2 Unhealthy: Flow 5 converges to WAN1, Flow 4 STILL stays pinned to WAN2.
+    healths
+        .insert(named_uuid("wan1"), health_info(named_uuid("wan1"), WanLinkHealthState::Healthy));
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    assert_eq!(res.get(&5).unwrap().len(), 1);
+    assert_eq!(res.get(&5).unwrap()[0].0.info.iface_name, "wan1");
+    assert_eq!(res.get(&4).unwrap().len(), 1);
+    assert_eq!(
+        res.get(&4).unwrap()[0].0.info.iface_name,
+        "wan2",
+        "single-target isolated flow must never leak to another WAN"
+    );
+}
+
+#[test]
+fn collect_refresh_zero_weight_healthy_target_fails_open() {
+    let mut wan_infos = WanRoutesByOwner::new();
+    wan_infos.insert(link_owner("wan1"), ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)));
+    wan_infos.insert(link_owner("wan2"), ipv4_wan_route("wan2", Ipv4Addr::new(203, 0, 113, 1)));
+
+    let configs =
+        vec![flow_config(5, true, vec![iface_target("wan1", 2), iface_target("wan2", 0)])];
+    let mut healths = LinkHealths::new();
+    healths
+        .insert(named_uuid("wan1"), health_info(named_uuid("wan1"), WanLinkHealthState::Unhealthy));
+    healths
+        .insert(named_uuid("wan2"), health_info(named_uuid("wan2"), WanLinkHealthState::Healthy));
+
+    let res = collect_target_refresh_result(&configs, &wan_infos, &healths);
+    assert_eq!(
+        res.get(&5).unwrap().len(),
+        2,
+        "must not filter down to only zero-weight targets and blackhole the flow"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -925,7 +1026,7 @@ fn kernel_default_nexthops_filters_dedups_and_sorts() {
     v6_gateway.info.gateway_ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
     routes.insert(link_owner("wan2"), v6_gateway);
 
-    let nexthops = super::wan::kernel_default_nexthops(&routes);
+    let nexthops = super::wan::kernel_default_nexthops(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].iface_name, "wan0");
@@ -943,7 +1044,7 @@ fn kernel_default_skips_unspecified_gateway() {
 
     routes.insert(link_owner("wan1"), ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 2)));
 
-    let nexthops = super::wan::kernel_default_nexthops(&routes);
+    let nexthops = super::wan::kernel_default_nexthops(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].iface_name, "wan1");
@@ -958,7 +1059,7 @@ fn kernel_default_clamps_zero_weight_and_normalizes() {
     zero_weight.info.weight = 0;
     routes.insert(link_owner("wan0"), zero_weight);
 
-    let nexthops = super::wan::kernel_default_nexthops(&routes);
+    let nexthops = super::wan::kernel_default_nexthops(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].weight, 1);
@@ -1091,7 +1192,7 @@ fn kernel_default_v6_nexthops_filters_dedups_and_sorts() {
     v4_gateway.info.gateway_ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
     routes.insert(link_owner("wan2"), v4_gateway);
 
-    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].iface_name, "wan0");
@@ -1106,7 +1207,7 @@ fn kernel_default_v6_skips_unspecified_gateway() {
     routes.insert(link_owner("wan0"), ipv6_wan_route("wan0", Ipv6Addr::UNSPECIFIED));
     routes.insert(link_owner("wan1"), ipv6_wan_route("wan1", "2001:db8::2".parse().unwrap()));
 
-    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].iface_name, "wan1");
@@ -1121,7 +1222,7 @@ fn kernel_default_v6_clamps_zero_weight_and_normalizes() {
     zero_weight.info.weight = 0;
     routes.insert(link_owner("wan0"), zero_weight);
 
-    let nexthops = super::wan::kernel_default_nexthops_v6(&routes);
+    let nexthops = super::wan::kernel_default_nexthops_v6(&routes, &LinkHealths::new(), false);
 
     assert_eq!(nexthops.len(), 1);
     assert_eq!(nexthops[0].weight, 1);
@@ -1593,14 +1694,325 @@ fn default_router_selection_is_deterministic_across_multiple_default_wans() {
             link_owner("wan-c"),
             WanRouteTarget::link(1, ipv4_wan_route("wan-c", Ipv4Addr::new(198, 51, 100, 3)).info),
         );
-        let picked_v4 = super::wan::select_default_wan_route(&routes_v4).unwrap();
+        let picked_v4 =
+            super::wan::select_default_wan_route(&routes_v4, &LinkHealths::new(), false).unwrap();
         assert_eq!(picked_v4.info.iface_name, "wan-a");
 
         let mut routes_v6 = WanRoutesByOwner::new();
         routes_v6.insert(link_owner("wan-z"), ipv6_wan_default_route("wan-z"));
         routes_v6.insert(link_owner("wan-m"), ipv6_wan_default_route("wan-m"));
         routes_v6.insert(link_owner("wan-a"), ipv6_wan_default_route("wan-a"));
-        let picked_v6 = super::wan::select_default_wan_route(&routes_v6).unwrap();
+        let picked_v6 =
+            super::wan::select_default_wan_route(&routes_v6, &LinkHealths::new(), false).unwrap();
         assert_eq!(picked_v6.info.iface_name, "wan-a");
     }
+}
+
+#[test]
+fn default_router_dual_stack_failover_recovery_and_fail_open() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let wan1_id = named_uuid("enp1s0.105");
+        let wan2_id = named_uuid("enp1s0.101");
+
+        let wan1_v4 = WanRouteTarget::link(
+            2,
+            RouteTargetInfo::new_gateway_v4(
+                10,
+                "enp1s0.105",
+                None,
+                Ipv4Addr::new(198, 51, 100, 10),
+                Ipv4Addr::new(198, 51, 100, 1),
+                true,
+            ),
+        );
+        let wan2_v4 = WanRouteTarget::link(
+            3,
+            RouteTargetInfo::new_gateway_v4(
+                11,
+                "enp1s0.101",
+                None,
+                Ipv4Addr::new(203, 0, 113, 10),
+                Ipv4Addr::new(203, 0, 113, 1),
+                false,
+            ),
+        );
+        let wan1_v6 = WanRouteTarget::link(
+            2,
+            RouteTargetInfo::new_gateway_v6(
+                10,
+                "enp1s0.105",
+                None,
+                Ipv6Addr::new(0x240e, 0x1, 0, 0, 0, 0, 0, 1),
+                Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1),
+                true,
+            ),
+        );
+        let wan2_v6 = WanRouteTarget::link(
+            3,
+            RouteTargetInfo::new_gateway_v6(
+                11,
+                "enp1s0.101",
+                None,
+                Ipv6Addr::new(0x2409, 0x2, 0, 0, 0, 0, 0, 1),
+                Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2),
+                false,
+            ),
+        );
+        let (docker_v4, docker_v6) = RouteTargetInfo::new_docker(99, "sing-box-flow1");
+
+        service.insert_ipv4_link_route(wan1_id, wan1_v4).await;
+        service.insert_ipv6_link_route(wan1_id, wan1_v6).await;
+        service.insert_ipv4_link_route(wan2_id, wan2_v4).await;
+        service.insert_ipv6_link_route(wan2_id, wan2_v6).await;
+        service
+            .insert_ipv4_wan_route(
+                &RouteOwner::Netns("sing-box-flow1".to_string()),
+                WanRouteTarget::netns(docker_v4),
+            )
+            .await;
+        service
+            .insert_ipv6_wan_route(
+                &RouteOwner::Netns("sing-box-flow1".to_string()),
+                WanRouteTarget::netns(docker_v6),
+            )
+            .await;
+
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "enp1s0.105");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "enp1s0.105");
+
+        // Unknown -> Healthy transitions do not disturb Flow 0 or flush LAN cache unnecessarily.
+        let invalidations_before = dataplane.lan_cache_invalidations();
+        service.update_link_health(health_info(wan1_id, WanLinkHealthState::Healthy)).await;
+        service.update_link_health(health_info(wan2_id, WanLinkHealthState::Healthy)).await;
+        assert_eq!(dataplane.lan_cache_invalidations(), invalidations_before);
+
+        // Primary flips Unhealthy: 0s dual-stack hot failover to WAN2 (eBPF v4/v6 + kernel v4/v6).
+        service.update_link_health(health_info(wan1_id, WanLinkHealthState::Unhealthy)).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "enp1s0.101");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.101");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "enp1s0.101");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "enp1s0.101");
+        assert!(dataplane.lan_cache_invalidations() > invalidations_before);
+
+        // Both WAN1 and WAN2 Unhealthy: fail-open stays on original primary WAN1, never Docker.
+        service.update_link_health(health_info(wan2_id, WanLinkHealthState::Unhealthy)).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "enp1s0.105");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "enp1s0.105");
+
+        // WAN2 recovers while WAN1 remains Unhealthy: switches back to WAN2.
+        service.update_link_health(health_info(wan2_id, WanLinkHealthState::Healthy)).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "enp1s0.101");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.101");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "enp1s0.101");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "enp1s0.101");
+
+        // Primary recovers Healthy: smoothly switches back to WAN1.
+        service.update_link_health(health_info(wan1_id, WanLinkHealthState::Healthy)).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "enp1s0.105");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "enp1s0.105");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "enp1s0.105");
+    });
+}
+
+#[test]
+fn default_router_treats_unknown_backup_as_available_and_prefers_verified_healthy_backup() {
+    let mut routes = WanRoutesByOwner::new();
+    let wan1_id = named_uuid("wan1");
+    let wan2_id = named_uuid("wan2");
+    let wan3_id = named_uuid("wan3");
+
+    routes
+        .insert(RouteOwner::Link(wan1_id), ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)));
+    let mut wan2 = ipv4_wan_route("wan2", Ipv4Addr::new(203, 0, 113, 2));
+    wan2.info.default_route = false;
+    routes.insert(RouteOwner::Link(wan2_id), wan2);
+
+    // WAN1 Unhealthy, WAN2 has no health entry (Unknown): WAN2 must be selected as backup.
+    let mut healths = LinkHealths::new();
+    healths.insert(wan1_id, health_info(wan1_id, WanLinkHealthState::Unhealthy));
+    let picked = super::wan::select_default_wan_route(&routes, &healths, false).unwrap();
+    assert_eq!(picked.info.iface_name, "wan2");
+
+    // Add a third backup WAN3 verified Healthy: verified Healthy takes precedence over Unknown.
+    let mut wan3 = ipv4_wan_route("wan3", Ipv4Addr::new(203, 0, 113, 3));
+    wan3.info.default_route = false;
+    routes.insert(RouteOwner::Link(wan3_id), wan3);
+    healths.insert(wan3_id, health_info(wan3_id, WanLinkHealthState::Healthy));
+    let picked = super::wan::select_default_wan_route(&routes, &healths, false).unwrap();
+    assert_eq!(picked.info.iface_name, "wan3");
+}
+
+#[test]
+fn default_router_fails_over_when_primary_route_drops_with_active_intent_and_respects_no_default() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let wan1_id = named_uuid("wan1");
+        let wan2_id = named_uuid("wan2");
+
+        let mut wan2_v4 = ipv4_wan_route("wan2", Ipv4Addr::new(203, 0, 113, 2));
+        wan2_v4.info.default_route = false;
+        let mut wan2_v6 = ipv6_wan_route("wan2", "2001:db8::2".parse().unwrap());
+        wan2_v6.info.default_route = false;
+
+        // With no default intent (--no-wan-default-route), non-default WAN2 stays off Flow 0.
+        service.insert_ipv4_link_route(wan2_id, wan2_v4).await;
+        service.insert_ipv6_link_route(wan2_id, wan2_v6).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert!(dataplane.slots_v4(0).is_none());
+        assert!(dataplane.slots_v6(0).is_none());
+        assert!(dataplane.calls().last().unwrap().is_empty());
+        assert!(dataplane.v6_calls().last().unwrap().is_empty());
+
+        // Primary WAN1 is configured as default (active link) and currently up.
+        service.set_link_default_intent(wan1_id, true, true).await;
+        service
+            .insert_ipv4_link_route(wan1_id, ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)))
+            .await;
+        service
+            .insert_ipv6_link_route(wan1_id, ipv6_wan_route("wan1", "2001:db8::1".parse().unwrap()))
+            .await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "wan1");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "wan1");
+
+        // Primary PPPoE session drops (routes removed while redialing): Flow 0 & kernel routes fail over to WAN2.
+        service.remove_ipv4_link_route(wan1_id).await;
+        service.remove_ipv6_link_route(wan1_id).await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "wan2");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "wan2");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "wan2");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "wan2");
+
+        // Primary comes back online: Flow 0 & kernel routes switch back to WAN1.
+        service
+            .insert_ipv4_link_route(wan1_id, ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)))
+            .await;
+        service
+            .insert_ipv6_link_route(wan1_id, ipv6_wan_route("wan1", "2001:db8::1".parse().unwrap()))
+            .await;
+        service.reconcile_kernel_default_ipv4().await;
+        service.reconcile_kernel_default_ipv6().await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "wan1");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "wan1");
+        assert_eq!(dataplane.calls().last().unwrap()[0].iface_name, "wan1");
+        assert_eq!(dataplane.v6_calls().last().unwrap()[0].iface_name, "wan1");
+
+        // Removing primary link completely (clear intent + remove routes): non-default WAN2 is not forced.
+        service.clear_link_default_intent(wan1_id).await;
+        service.remove_ipv4_link_route(wan1_id).await;
+        service.remove_ipv6_link_route(wan1_id).await;
+        assert!(dataplane.slots_v4(0).is_none());
+        assert!(dataplane.slots_v6(0).is_none());
+    });
+}
+
+#[test]
+fn default_router_never_fails_over_to_docker_netns() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        let wan1_id = named_uuid("wan1");
+        let (docker_v4, docker_v6) = RouteTargetInfo::new_docker(99, "sing-box-flow1");
+
+        service
+            .insert_ipv4_link_route(wan1_id, ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)))
+            .await;
+        service.insert_ipv6_link_route(wan1_id, ipv6_wan_default_route("wan1")).await;
+        service
+            .insert_ipv4_wan_route(
+                &RouteOwner::Netns("sing-box-flow1".to_string()),
+                WanRouteTarget::netns(docker_v4),
+            )
+            .await;
+        service
+            .insert_ipv6_wan_route(
+                &RouteOwner::Netns("sing-box-flow1".to_string()),
+                WanRouteTarget::netns(docker_v6),
+            )
+            .await;
+
+        service.update_link_health(health_info(wan1_id, WanLinkHealthState::Unhealthy)).await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "wan1");
+        assert_eq!(dataplane.slots_v6(0).unwrap()[0].0.info.iface_name, "wan1");
+    });
+}
+
+#[test]
+fn concurrent_route_and_health_updates_converge_without_deadlock() {
+    run_async_test(async {
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+
+        let wan1_id = named_uuid("wan1");
+        let wan2_id = named_uuid("wan2");
+        let mut wan2_v4 = ipv4_wan_route("wan2", Ipv4Addr::new(203, 0, 113, 2));
+        wan2_v4.info.default_route = false;
+
+        service
+            .insert_ipv4_link_route(wan1_id, ipv4_wan_route("wan1", Ipv4Addr::new(198, 51, 100, 1)))
+            .await;
+        service.insert_ipv4_link_route(wan2_id, wan2_v4.clone()).await;
+
+        let flows =
+            vec![flow_config(5, true, vec![iface_target("wan1", 2), iface_target("wan2", 3)])];
+
+        let s1 = service.clone();
+        let s2 = service.clone();
+        let s3 = service.clone();
+        let flows_clone = flows.clone();
+        tokio::join!(
+            async move {
+                for i in 0..30 {
+                    let state = if i % 2 == 0 {
+                        WanLinkHealthState::Unhealthy
+                    } else {
+                        WanLinkHealthState::Healthy
+                    };
+                    s1.update_link_health(health_info(wan1_id, state)).await;
+                }
+                s1.update_link_health(health_info(wan1_id, WanLinkHealthState::Unhealthy)).await;
+            },
+            async move {
+                for i in 0..30 {
+                    let mut route = wan2_v4.clone();
+                    route.info.iface_ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, (10 + i) as u8));
+                    s2.insert_ipv4_link_route(wan2_id, route).await;
+                }
+            },
+            async move {
+                for _ in 0..30 {
+                    s3.sync_flow_wan_targets(&flows_clone).await;
+                }
+            }
+        );
+
+        // Final settle sync confirms exact convergence to healthy WAN2.
+        service.sync_flow_wan_targets(&flows).await;
+        assert_eq!(dataplane.slots_v4(0).unwrap()[0].0.info.iface_name, "wan2");
+        let flow5 = dataplane.slots_v4(5).unwrap();
+        assert_eq!(flow5.len(), 1);
+        assert_eq!(flow5[0].0.info.iface_name, "wan2");
+    });
 }

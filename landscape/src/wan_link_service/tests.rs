@@ -14,7 +14,10 @@ use landscape_common::wan_link::{
 };
 
 use super::config_updates::LinkConfigUpdates;
-use super::{SectionRunner, SectionScope, SectionTag, config_change_tags, run_dependent_section};
+use super::{
+    SectionRunner, SectionScope, SectionTag, config_change_tags, link_default_intents,
+    run_dependent_section,
+};
 
 fn link_config(nat_enable: bool) -> WanLinkConfig {
     serde_json::from_value(serde_json::json!({
@@ -395,6 +398,58 @@ fn normalized_nat_defaults_do_not_restart() {
     let tags = config_change_tags(&applied, &new);
     assert!(!tags.contains(&SectionTag::Nat4));
     assert!(!tags.contains(&SectionTag::V4));
+}
+
+#[test]
+fn link_default_intents_tracks_active_v4_and_pd_default_router() {
+    let disabled_primary: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0000",
+        "attach_iface_name": "enp1s0",
+        "kind": { "t": "pppoe_native", "username": "u", "password": "p", "requested_mru": 1492 },
+        "v4": { "enable": false, "model": { "t": "ipcp", "default_router": true } },
+        "pd": { "enable": false, "default_router": true, "mac": "02:00:00:00:00:01", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert_eq!(link_default_intents(&disabled_primary), (false, false));
+
+    let active_primary: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0001",
+        "attach_iface_name": "enp1s0.105",
+        "kind": { "t": "pppoe_native", "username": "u", "password": "p", "requested_mru": 1492 },
+        "v4": { "enable": true, "model": { "t": "ipcp", "default_router": true } },
+        "pd": { "enable": true, "default_router": true, "mac": "02:00:00:00:00:01", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert_eq!(link_default_intents(&active_primary), (true, true));
+
+    let active_secondary: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0002",
+        "attach_iface_name": "enp1s0.101",
+        "kind": { "t": "pppoe_native", "username": "u", "password": "p", "requested_mru": 1492 },
+        "v4": { "enable": true, "model": { "t": "ipcp", "default_router": false } },
+        "pd": { "enable": true, "default_router": false, "mac": "02:00:00:00:00:02", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert_eq!(link_default_intents(&active_secondary), (false, false));
+
+    let v4_default_only: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0003",
+        "attach_iface_name": "enp1s0.101",
+        "kind": { "t": "pppoe_native", "username": "u", "password": "p", "requested_mru": 1492 },
+        "v4": { "enable": true, "model": { "t": "ipcp", "default_router": true } },
+        "pd": { "enable": true, "default_router": false, "mac": "02:00:00:00:00:03", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert_eq!(link_default_intents(&v4_default_only), (true, false));
+
+    let v6_only_eth: WanLinkConfig = serde_json::from_value(serde_json::json!({
+        "id": "0b6e4e88-0a85-4e1f-8e15-7d1d3d0d0004",
+        "attach_iface_name": "eth0",
+        "v4": { "enable": false, "model": { "t": "nothing" } },
+        "pd": { "enable": true, "default_router": true, "mac": "02:00:00:00:00:04", "expected_pd_len": 60 }
+    }))
+    .unwrap();
+    assert_eq!(link_default_intents(&v6_only_eth), (false, true));
 }
 
 fn board() -> WanLinkStatusHandle {
