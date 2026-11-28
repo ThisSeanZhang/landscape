@@ -4,6 +4,10 @@
 
 #include "nat_v4/tc_nat4.h"
 
+#ifndef EBUSY
+#define EBUSY 16
+#endif
+
 char LICENSE[] SEC("license") = "GPL";
 
 struct napt_ct_timer_test_input {
@@ -83,11 +87,17 @@ SEC("tc")
 int napt_ct_packet_wakeup_test(struct __sk_buff *skb) {
     (void)skb;
     __u32 index = 0;
-    struct napt_ct_timer_test_input *input = bpf_map_lookup_elem(&napt_ct_timer_test_input, &index);
+    struct napt_ct_advance_test_input *input =
+        bpf_map_lookup_elem(&napt_ct_advance_test_input, &index);
     if (!input) return TC_ACT_SHOT;
     struct napt_ct_value *ct = bpf_map_lookup_elem(&napt_ct, &input->key);
-    if (!ct || napt_ct_timer_init(ct) != 0) return TC_ACT_SHOT;
-    if (napt_ct_advance_pkt(input->key.proto, NAPT_TCP_PHASE_RST, NAPT_GRESS_WAN, ct) != TC_ACT_OK)
+    if (!ct) return TC_ACT_SHOT;
+    /* Reusing an existing CT returns -EBUSY (-16) once its bpf_timer is initialized. */
+    long init_ret = bpf_timer_init(&ct->timer, &napt_ct, 0);
+    if (init_ret != 0 && init_ret != -EBUSY) return TC_ACT_SHOT;
+    /* bpf_timer_cancel() clears callback_fn; always re-bind before running the test. */
+    if (bpf_timer_set_callback(&ct->timer, napt_ct_timer_cb) != 0) return TC_ACT_SHOT;
+    if (napt_ct_advance_pkt(input->key.proto, input->tcp_phase, input->gress, ct) != TC_ACT_OK)
         return TC_ACT_SHOT;
     /* The timer started disarmed. Cancel returns 1 only if the packet armed it. */
     return bpf_timer_cancel(&ct->timer);
