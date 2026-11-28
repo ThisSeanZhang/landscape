@@ -16,8 +16,8 @@ static __always_inline void learn_src_ip_mac_v4_xdp(struct xdp_md *ctx,
     struct mac_key_v4 src_key = {.addr = context->saddr};
     if (bpf_map_lookup_elem(&ip_mac_v4, &src_key) != NULL) return;
 
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
+    void *data = ctx_data(ctx);
+    void *data_end = ctx_data_end(ctx);
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) return;
 
@@ -35,8 +35,8 @@ static __always_inline void learn_src_ip_mac_v6_xdp(struct xdp_md *ctx,
     COPY_ADDR_FROM(src_key.addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8);
     if (bpf_map_lookup_elem(&ip_mac_v6, &src_key) != NULL) return;
 
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
+    void *data = ctx_data(ctx);
+    void *data_end = ctx_data_end(ctx);
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) return;
 

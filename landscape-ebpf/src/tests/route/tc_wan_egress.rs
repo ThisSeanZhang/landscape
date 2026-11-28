@@ -172,7 +172,12 @@ fn seed_wan_slots(
     info.is_docker = is_docker;
     info.gateway_ip = IpAddr::V4(wan_gateway());
     let targets = [(WanRouteTarget::link(chain, info), 1)];
-    replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &targets);
+    replace_wan_route_slots_v4_with_map(
+        &skel.maps.rt4_slot_map,
+        &skel.maps.rt4_flow_targets,
+        flow_id,
+        &targets,
+    );
 }
 
 fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {

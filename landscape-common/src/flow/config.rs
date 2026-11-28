@@ -12,6 +12,34 @@ use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
+/// Multi-target egress load-balancing mode for a flow.
+///
+/// Stored as an internally-tagged JSON object (`{"t": "dst_ip"}` /
+/// `{"t": "five_tuple"}`) so future modes or per-mode parameters can be
+/// introduced without additional database schema migrations.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum FlowBalanceMode {
+    #[default]
+    DstIp,
+    FiveTuple,
+}
+
+impl FlowBalanceMode {
+    /// Decode a persisted JSON value while tolerating extra per-variant fields
+    /// or unknown future variants when a user downgrades the binary.
+    pub fn from_db_json(value: serde_json::Value) -> Self {
+        if let Ok(mode) = serde_json::from_value::<Self>(value.clone()) {
+            return mode;
+        }
+        match value.get("t").and_then(|v| v.as_str()) {
+            Some("five_tuple") => Self::FiveTuple,
+            _ => Self::DstIp,
+        }
+    }
+}
+
 /// 流控配置结构体
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -28,6 +56,10 @@ pub struct FlowConfig {
     /// 处理流量目标网卡, 目前只取第一个
     /// 暂定, 可能会移动到具体的网卡上进行设置
     pub flow_targets: Vec<WeightedFlowTarget>,
+    /// 多目标出口负载均衡模式
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub balance_mode: FlowBalanceMode,
     /// 名称 (用于展示的简短标识, 为空时回退到 remark)
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
@@ -316,6 +348,55 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_flow_balance_mode_defaults_to_dst_ip_and_parses_tagged_json() {
+        let legacy_json = serde_json::json!({
+            "id": Uuid::nil(),
+            "enable": true,
+            "flow_id": 2,
+            "flow_match_rules": [],
+            "flow_targets": [],
+            "remark": "legacy"
+        });
+        let legacy: FlowConfig = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.balance_mode, FlowBalanceMode::DstIp);
+        assert_eq!(
+            serde_json::to_value(legacy.balance_mode).unwrap(),
+            serde_json::json!({ "t": "dst_ip" })
+        );
+
+        let five_tuple_json = serde_json::json!({
+            "id": Uuid::nil(),
+            "enable": true,
+            "flow_id": 5,
+            "flow_match_rules": [],
+            "flow_targets": [],
+            "balance_mode": { "t": "five_tuple" },
+            "remark": "ecmp"
+        });
+        let five_tuple: FlowConfig = serde_json::from_value(five_tuple_json).unwrap();
+        assert_eq!(five_tuple.balance_mode, FlowBalanceMode::FiveTuple);
+        assert_eq!(
+            serde_json::to_value(five_tuple.balance_mode).unwrap(),
+            serde_json::json!({ "t": "five_tuple" })
+        );
+
+        // Downgrade safety: extra fields on a known variant preserve the variant,
+        // and unknown future variants fall back cleanly to DstIp.
+        assert_eq!(
+            FlowBalanceMode::from_db_json(
+                serde_json::json!({ "t": "five_tuple", "sticky_timeout_secs": 300 })
+            ),
+            FlowBalanceMode::FiveTuple
+        );
+        assert_eq!(
+            FlowBalanceMode::from_db_json(
+                serde_json::json!({ "t": "future_consistent_hash", "seed": 42 })
+            ),
+            FlowBalanceMode::DstIp
+        );
+    }
+
+    #[test]
     fn rejects_reserved_default_flow_id() {
         let config = FlowConfig {
             id: Uuid::nil(),
@@ -323,6 +404,7 @@ mod tests {
             flow_id: DEFAULT_FLOW_ID,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: FlowBalanceMode::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,
@@ -340,6 +422,7 @@ mod tests {
             flow_id,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: FlowBalanceMode::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,

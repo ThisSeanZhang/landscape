@@ -524,6 +524,7 @@ mod wan_link_ref_tests {
                 FlowTarget::Interface { link_id, name: name.to_string() },
                 1,
             )],
+            balance_mode: Default::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,
@@ -582,6 +583,7 @@ mod cascade_delete_tests {
             flow_id,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: Default::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,
@@ -672,5 +674,49 @@ mod cascade_delete_tests {
         assert!(deleted.is_none());
         assert_eq!(provider.dns_rule_store().find_by_flow_id(7).await.unwrap().len(), 1);
         assert_eq!(provider.dst_ip_rule_store().find_by_flow_id(7).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn balance_mode_json_persists_and_tolerates_future_schema_downgrade() {
+        use crate::flow_rule::entity::FlowConfigModel;
+        use landscape_common::flow::config::FlowBalanceMode;
+
+        let provider = LandscapeDBServiceProvider::mem_test_db().await;
+        let id = Uuid::new_v4();
+        let mut cfg = flow(id, 5);
+        cfg.balance_mode = FlowBalanceMode::FiveTuple;
+
+        provider.flow_rule_store().upsert(cfg).await.unwrap();
+        let loaded = provider.flow_rule_store().find_by_id(id).await.unwrap().unwrap();
+        assert_eq!(loaded.balance_mode, FlowBalanceMode::FiveTuple);
+
+        let model_with_extra = FlowConfigModel {
+            id,
+            enable: true,
+            flow_id: 5,
+            flow_match_rules: serde_json::json!([]),
+            packet_handle_iface_name: serde_json::json!([]),
+            balance_mode: serde_json::json!({ "t": "five_tuple", "sticky_timeout_secs": 120 }),
+            name: String::new(),
+            remark: String::new(),
+            update_at: 0.0,
+        };
+        assert_eq!(FlowConfig::from(model_with_extra).balance_mode, FlowBalanceMode::FiveTuple);
+
+        let model_with_unknown = FlowConfigModel {
+            balance_mode: serde_json::json!({ "t": "future_mode", "seed": 7 }),
+            ..FlowConfigModel {
+                id,
+                enable: true,
+                flow_id: 5,
+                flow_match_rules: serde_json::json!([]),
+                packet_handle_iface_name: serde_json::json!([]),
+                balance_mode: serde_json::json!({}),
+                name: String::new(),
+                remark: String::new(),
+                update_at: 0.0,
+            }
+        };
+        assert_eq!(FlowConfig::from(model_with_unknown).balance_mode, FlowBalanceMode::DstIp);
     }
 }

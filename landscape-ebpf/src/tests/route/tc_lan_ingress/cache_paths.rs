@@ -451,3 +451,148 @@ fn lan_ingress_wan_cache_zero_ifindex_drops_without_rerouting_to_alternative() {
     assert_eq!(mark, normal_mark(FlowMarkAction::KeepGoing, 0, false));
     assert!(lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none());
 }
+
+// ---------------------------------------------------------------------------
+// FiveTuple CONN_PIN_CACHE fast path & WAN-down reselection (Plan A)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lan_ingress_five_tuple_uses_conn_pin_cache_without_polluting_lan_cache() {
+    use crate::maps::{
+        MacKeyV4, Route4ConnKey, RouteConnValue,
+        route::{cache::CONN_PIN_CACHE, set_flow_balance_mode_with_map},
+    };
+    use crate::tests::helper::map::{
+        create_route4_conn_inner_map, lookup_inner_map, read_unaligned,
+    };
+    use landscape_common::flow::FlowBalanceMode;
+
+    load_skel!("tc-lan-five-tuple-conn-pin-hit", skel);
+    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
+    create_route4_conn_inner_map(&skel.maps.rt4_conn_map);
+    set_flow_balance_mode_with_map(&skel.maps.rt_flow_mode_map, 5, FlowBalanceMode::FiveTuple);
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+
+    let mut info = RouteTargetInfo::dummy(TARGET_IFINDEX, "wan0", IpAddr::V4(wan_gateway()));
+    info.mac = Some(MacAddr(2, 0, 0, 0, 0, 0xaa));
+    replace_wan_route_slots_v4_with_map(
+        &skel.maps.rt4_slot_map,
+        &skel.maps.rt4_flow_targets,
+        5,
+        &[(WanRouteTarget::link(7, info), 1)],
+    );
+
+    let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
+    let (ret1, _out1, mark1, cb1) = run_lan_ingress_with_cb(&skel, &pkt, &mut lan_ctx());
+    assert_eq!(ret1, RET_REDIRECT);
+    assert_eq!(mark1, FLOW_REDIRECT_MARK);
+    assert_eq!(cb1[0], 1);
+    assert_eq!(cb1[1] >> 16, 7);
+    assert!(
+        lookup_rt4_cache_value(
+            &skel.maps.rt4_cache_map,
+            LAN_CACHE,
+            client_addr(),
+            remote_wan_addr()
+        )
+        .is_none(),
+        "FiveTuple flows must never write 2-tuple LAN_CACHE"
+    );
+
+    let conn_inner = lookup_inner_map(&skel.maps.rt4_conn_map, CONN_PIN_CACHE);
+    let conn_key = Route4ConnKey {
+        saddr: client_addr().to_bits().to_be(),
+        daddr: remote_wan_addr().to_bits().to_be(),
+        sport: 12345_u16.to_be(),
+        dport: 443_u16.to_be(),
+        l4_proto: 6,
+        _pad: [0; 3],
+    };
+    let conn_bytes = conn_inner
+        .lookup(as_bytes(&conn_key), MapFlags::ANY)
+        .unwrap()
+        .expect("FiveTuple slow path must populate 16B CONN_PIN_CACHE");
+    let conn_val: RouteConnValue = read_unaligned(&conn_bytes);
+    assert_eq!(conn_val.mark_value, FLOW_REDIRECT_MARK);
+    assert_eq!(conn_val.ifindex, TARGET_IFINDEX);
+    assert_eq!(conn_val.has_mac, 1);
+    assert_eq!(conn_val.is_docker, 0);
+    assert_eq!(conn_val.link_chain_id, 7);
+
+    // Clear neighbor learning entry and verify second packet hits CONN_PIN_CACHE fast path.
+    let mac_key = MacKeyV4 { addr: client_addr().to_bits().to_be() };
+    skel.maps.ip_mac_v4.delete(as_bytes(&mac_key)).unwrap();
+    assert!(lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none());
+
+    let (ret2, _out2, mark2, cb2) = run_lan_ingress_with_cb(&skel, &pkt, &mut lan_ctx());
+    assert_eq!(ret2, RET_REDIRECT);
+    assert_eq!(mark2, FLOW_REDIRECT_MARK);
+    assert_eq!(cb2[0], 1);
+    assert_eq!(cb2[1] >> 16, 7);
+    assert!(
+        lookup_ip_mac_v4(&skel.maps.ip_mac_v4, client_addr()).is_none(),
+        "CONN_PIN_CACHE fast-path hit must short-circuit before neighbor learning"
+    );
+}
+
+#[test]
+fn lan_ingress_five_tuple_conn_pin_cache_reselects_when_pinned_wan_disappears() {
+    use crate::maps::{
+        Route4ConnKey, RouteConnValue,
+        route::{cache::CONN_PIN_CACHE, set_flow_balance_mode_with_map},
+    };
+    use crate::tests::helper::map::{
+        create_route4_conn_inner_map, lookup_inner_map, read_unaligned,
+    };
+    use landscape_common::flow::FlowBalanceMode;
+
+    const SURVIVOR_IFINDEX: u32 = TARGET_IFINDEX + 1;
+
+    load_skel!("tc-lan-five-tuple-conn-pin-failover", skel);
+    create_route4_cache_inner_map(&skel.maps.rt4_cache_map, LAN_CACHE);
+    create_route4_conn_inner_map(&skel.maps.rt4_conn_map);
+    set_flow_balance_mode_with_map(&skel.maps.rt_flow_mode_map, 5, FlowBalanceMode::FiveTuple);
+    seed_flow_rule(&skel, remote_wan_addr(), FLOW_REDIRECT_MARK);
+
+    // Only SURVIVOR_IFINDEX (chain 9) is active; TARGET_IFINDEX (chain 3) is down.
+    let survivor = RouteTargetInfo::dummy(SURVIVOR_IFINDEX, "wan1", IpAddr::V4(wan_gateway()));
+    replace_wan_route_slots_v4_with_map(
+        &skel.maps.rt4_slot_map,
+        &skel.maps.rt4_flow_targets,
+        5,
+        &[(WanRouteTarget::link(9, survivor), 1)],
+    );
+
+    let conn_inner = lookup_inner_map(&skel.maps.rt4_conn_map, CONN_PIN_CACHE);
+    let conn_key = Route4ConnKey {
+        saddr: client_addr().to_bits().to_be(),
+        daddr: remote_wan_addr().to_bits().to_be(),
+        sport: 12345_u16.to_be(),
+        dport: 443_u16.to_be(),
+        l4_proto: 6,
+        _pad: [0; 3],
+    };
+    let stale = RouteConnValue {
+        mark_value: FLOW_REDIRECT_MARK,
+        has_mac: 0,
+        is_docker: 0,
+        xdp_redirect_able: 0,
+        flags: 0,
+        ifindex: TARGET_IFINDEX,
+        link_chain_id: 3,
+        _pad: 0,
+    };
+    conn_inner.update(as_bytes(&conn_key), as_bytes(&stale), MapFlags::ANY).unwrap();
+
+    let pkt = simple_ipv4_tcp(client_addr(), remote_wan_addr());
+    let (ret, _out, mark, cb) = run_lan_ingress_with_cb(&skel, &pkt, &mut lan_ctx());
+    assert_eq!(ret, RET_REDIRECT);
+    assert_eq!(mark, FLOW_REDIRECT_MARK);
+    assert_eq!(cb[0], 1);
+    assert_eq!(cb[1] >> 16, 9, "stale pinned WAN must fall through and select surviving WAN chain");
+
+    let updated_bytes = conn_inner.lookup(as_bytes(&conn_key), MapFlags::ANY).unwrap().unwrap();
+    let updated: RouteConnValue = read_unaligned(&updated_bytes);
+    assert_eq!(updated.ifindex, SURVIVOR_IFINDEX);
+    assert_eq!(updated.link_chain_id, 9);
+}

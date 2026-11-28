@@ -23,24 +23,20 @@ const volatile u32 current_l3_offset = 14;
 #define TC_LAN_INGRESS_V6_SLOT 1
 
 static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 current_l3_offset,
-                                                     const struct route4_context *context,
+                                                     struct route4_context *context,
                                                      const u32 flow_id) {
     const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route4_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route4_target_slot(context->daddr),
-    };
-    struct route4_target_info *target_info = bpf_map_lookup_elem(&rt4_slot_map, &slot_key);
+    struct route4_target_info *target_info =
+        route4_pick_wan_target_tc(skb, current_l3_offset, context, flow_id);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {
-            ld_from_lan_log("DROP default flow v4, no target for: %pI4 -> %pI4 slot %u",
-                            &context->saddr, &context->daddr, slot_key.slot);
+            ld_from_lan_log("DROP default flow v4, no target for: %pI4 -> %pI4", &context->saddr,
+                            &context->daddr);
             return TC_ACT_SHOT;
         }
-        ld_from_lan_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4 slot %u", resolved_flow_id,
-                        &context->saddr, &context->daddr, slot_key.slot);
+        ld_from_lan_log("DROP flow_id v4: %d, ip: %pI4 -> %pI4", resolved_flow_id, &context->saddr,
+                        &context->daddr);
         return TC_ACT_SHOT;
     }
 
@@ -67,15 +63,11 @@ static __always_inline int tc_route4_pick_wan_in_lan(struct __sk_buff *skb, u32 
 }
 
 static __always_inline int tc_route6_pick_wan_in_lan(struct __sk_buff *skb, u32 current_l3_offset,
-                                                     const struct route6_context *context,
+                                                     struct route6_context *context,
                                                      const u32 flow_id) {
     const u32 resolved_flow_id = get_flow_id(flow_id);
-
-    struct route6_slot_key slot_key = {
-        .flow_id = resolved_flow_id,
-        .slot = route6_target_slot(&context->daddr),
-    };
-    struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    struct route6_target_info *target_info =
+        route6_pick_wan_target_tc(skb, current_l3_offset, context, flow_id);
 
     if (target_info == NULL) {
         if (resolved_flow_id == 0) {

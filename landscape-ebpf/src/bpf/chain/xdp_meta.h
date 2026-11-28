@@ -29,8 +29,11 @@ struct xdp_pipe_meta {
                              : "r"(ctx), "i"(offsetof(struct xdp_md, FIELD)));                     \
         return ptr;                                                                                \
     }
+#ifndef __LD_XDP_CTX_DATA_PTR__
+#define __LD_XDP_CTX_DATA_PTR__
 DEFINE_XDP_CTX_POINTER(data)      /* This defines ctx_data(). */
 DEFINE_XDP_CTX_POINTER(data_end)  /* This defines ctx_data_end(). */
+#endif                            /* __LD_XDP_CTX_DATA_PTR__ */
 DEFINE_XDP_CTX_POINTER(data_meta) /* This defines ctx_data_meta(). */
 #undef DEFINE_XDP_CTX_POINTER
 

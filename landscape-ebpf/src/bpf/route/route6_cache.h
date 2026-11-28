@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
+#include "route/route_mode.h"
 
 struct route6_cache_key {
     struct in6_addr local_addr;
@@ -41,5 +42,31 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
     __array(values, struct route6_each_cache);
 } rt6_cache_map SEC(".maps");
+
+struct route6_conn_key {
+    struct in6_addr saddr;
+    struct in6_addr daddr;
+    __be16 sport;
+    __be16 dport;
+    u8 l4_proto;
+    u8 _pad[3];
+} _route6_conn_key;
+
+_Static_assert(sizeof(struct route6_conn_key) == 40, "route6_conn_key must be 40 bytes");
+
+struct route6_each_conn {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(key_size, sizeof(struct route6_conn_key));
+    __uint(value_size, sizeof(struct route_conn_value));
+    __uint(max_entries, 65536);
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
+    __type(key, u32);
+    __uint(max_entries, 2);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    __array(values, struct route6_each_conn);
+} rt6_conn_map SEC(".maps");
 
 #endif /* __LD_ROUTE6_CACHE_H__ */

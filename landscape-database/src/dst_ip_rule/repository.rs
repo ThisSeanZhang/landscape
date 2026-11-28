@@ -164,6 +164,7 @@ mod flow_existence_tests {
             flow_id,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: Default::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,

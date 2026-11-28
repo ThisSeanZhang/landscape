@@ -556,14 +556,24 @@ fn seed_ecmp_slots_v4(skel: &BenchRouteSkel<'_>) {
 
     for flow_id in [0u32, 2, 3, 4] {
         let single = [(WanRouteTarget::link(WAN1_LINK_CHAIN_ID, wan1.clone()), 1u32)];
-        replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, flow_id, &single);
+        replace_wan_route_slots_v4_with_map(
+            &skel.maps.rt4_slot_map,
+            &skel.maps.rt4_flow_targets,
+            flow_id,
+            &single,
+        );
     }
     // Dual-WAN ECMP 1:1 across 16 slots on Flow 5.
     let dual = [
         (WanRouteTarget::link(WAN1_LINK_CHAIN_ID, wan1), 1u32),
         (WanRouteTarget::link(WAN2_LINK_CHAIN_ID, wan2), 1u32),
     ];
-    replace_wan_route_slots_v4_with_map(&skel.maps.rt4_slot_map, 5, &dual);
+    replace_wan_route_slots_v4_with_map(
+        &skel.maps.rt4_slot_map,
+        &skel.maps.rt4_flow_targets,
+        5,
+        &dual,
+    );
 }
 
 fn seed_ecmp_slots_v6(skel: &BenchRouteSkel<'_>) {
@@ -579,13 +589,23 @@ fn seed_ecmp_slots_v6(skel: &BenchRouteSkel<'_>) {
 
     for flow_id in [0u32, 2, 3, 4] {
         let single = [(WanRouteTarget::link(WAN1_LINK_CHAIN_ID, wan1.clone()), 1u32)];
-        replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, flow_id, &single);
+        replace_wan_route_slots_v6_with_map(
+            &skel.maps.rt6_slot_map,
+            &skel.maps.rt6_flow_targets,
+            flow_id,
+            &single,
+        );
     }
     let dual = [
         (WanRouteTarget::link(WAN1_LINK_CHAIN_ID, wan1), 1u32),
         (WanRouteTarget::link(WAN2_LINK_CHAIN_ID, wan2), 1u32),
     ];
-    replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, 5, &dual);
+    replace_wan_route_slots_v6_with_map(
+        &skel.maps.rt6_slot_map,
+        &skel.maps.rt6_flow_targets,
+        5,
+        &dual,
+    );
 }
 
 #[test]

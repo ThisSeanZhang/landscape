@@ -139,22 +139,36 @@ pub(crate) fn build_tcp6_pkt(src: [u8; 16], dst: [u8; 16]) -> Vec<u8> {
     pkt
 }
 
-/// Route target slot hash for an IPv4 destination (mirrors the BPF side).
-pub(crate) fn route_slot(daddr: u32) -> u32 {
-    let mut hash = daddr;
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    hash & 0xF
+fn route_avalanche32(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    h
 }
 
-/// Route target slot hash for an IPv6 destination (mirrors the BPF side).
+/// Route target slot hash for an IPv4 destination (mirrors `route4_target_slot` in BPF).
+///
+/// `daddr` is host-endian; BPF hashes the raw `__be32` word read in native endianness.
+pub(crate) fn route_slot(daddr: u32) -> u32 {
+    let wire_ne = u32::from_ne_bytes(daddr.to_be_bytes());
+    route_avalanche32(wire_ne) & 0xFF
+}
+
+/// Route target slot hash for an IPv6 destination (mirrors `route6_target_slot` in BPF).
+///
+/// `daddr` is in wire byte order; BPF reads `in6_u.u6_addr32[0..4]` in native endianness.
 pub(crate) fn route_slot_v6(daddr: &[u8; 16]) -> u32 {
-    let w0 = u32::from_be_bytes([daddr[0], daddr[1], daddr[2], daddr[3]]);
-    let w1 = u32::from_be_bytes([daddr[4], daddr[5], daddr[6], daddr[7]]);
-    let mut hash = w0 ^ w1;
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    hash & 0xF
+    let w0 = u32::from_ne_bytes([daddr[0], daddr[1], daddr[2], daddr[3]]);
+    let w1 = u32::from_ne_bytes([daddr[4], daddr[5], daddr[6], daddr[7]]);
+    let w2 = u32::from_ne_bytes([daddr[8], daddr[9], daddr[10], daddr[11]]);
+    let w3 = u32::from_ne_bytes([daddr[12], daddr[13], daddr[14], daddr[15]]);
+    let mut h = w0.wrapping_mul(0x9e37_79b9);
+    h ^= w1.wrapping_mul(0x85eb_ca6b);
+    h ^= w2.wrapping_mul(0xc2b2_ae35);
+    h ^= w3;
+    route_avalanche32(h) & 0xFF
 }
 
 /// A uniquely named veth pair (`{prefix}h{pid}` / `{prefix}p{pid}`) that is
@@ -316,4 +330,37 @@ pub(crate) fn checked_if_nametoindex(name: &str) -> u32 {
         nix::net::if_::if_nametoindex(name).unwrap_or_else(|_| panic!("if_nametoindex({name})"));
     check_ifindex(name, ifindex as u32);
     ifindex as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_slot_matches_bpf_avalanche_byte_order() {
+        assert_eq!(route_slot(0), 0);
+        assert_eq!(route_slot_v6(&[0u8; 16]), 0);
+
+        let v4_a = u32::from_be_bytes([203, 0, 113, 1]);
+        let v4_b = u32::from_be_bytes([203, 0, 113, 2]);
+        assert_eq!(route_slot(v4_a), route_avalanche32(v4_a.to_be()) & 0xFF);
+        assert_eq!(route_slot(v4_b), route_avalanche32(v4_b.to_be()) & 0xFF);
+
+        let v6_a: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let v6_b: [u8; 16] = [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+
+        #[cfg(target_endian = "little")]
+        {
+            assert_eq!(route_slot(v4_a), 91);
+            assert_eq!(route_slot(v4_b), 129);
+            assert_ne!(route_slot(v4_a), route_avalanche32(v4_a) & 0xFF);
+            assert_eq!(route_slot_v6(&v6_a), 148);
+            assert_eq!(route_slot_v6(&v6_b), 64);
+        }
+
+        // Words 2 and 3 must contribute (unlike the legacy 8-byte XOR hash).
+        let mut v6_tail = v6_a;
+        v6_tail[15] ^= 0x01;
+        assert_ne!(route_slot_v6(&v6_a), route_slot_v6(&v6_tail));
+    }
 }

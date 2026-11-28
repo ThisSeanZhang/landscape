@@ -13,13 +13,11 @@ const ROUTE_TYPE_LAN: u8 = 0;
 const ROUTE_TYPE_NEXTHOP: u8 = 1;
 const ROUTE_TYPE_WAN: u8 = 2;
 
-fn invalidate_lan_route_cache_with_outer_maps<T, U>(rt4_cache_map: &T, rt6_cache_map: &U)
-where
-    T: MapCore,
-    U: MapCore,
-{
-    cache::recreate_route_lan_cache_inner_map_with_outer_maps(rt4_cache_map, rt6_cache_map);
+fn invalidate_lan_route_caches(paths: &LandscapeMapPath) {
+    cache::recreate_route_lan_cache_inner_map(paths);
+    cache::recreate_route_conn_inner_map(paths);
 }
+
 /// Open a pinned map, logging (instead of panicking) when it is missing.
 fn open_pinned_map(path: &Path) -> Option<libbpf_rs::MapHandle> {
     match libbpf_rs::MapHandle::from_pinned_path(path) {
@@ -32,47 +30,31 @@ fn open_pinned_map(path: &Path) -> Option<libbpf_rs::MapHandle> {
 }
 
 pub fn add_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
-    let (Some(rt4_lan_map), Some(rt6_lan_map), Some(rt4_cache_map), Some(rt6_cache_map)) = (
-        open_pinned_map(&paths.rt4_lan_map),
-        open_pinned_map(&paths.rt6_lan_map),
-        open_pinned_map(&paths.rt4_cache_map),
-        open_pinned_map(&paths.rt6_cache_map),
-    ) else {
+    let (Some(rt4_lan_map), Some(rt6_lan_map)) =
+        (open_pinned_map(&paths.rt4_lan_map), open_pinned_map(&paths.rt6_lan_map))
+    else {
         tracing::error!("skip lan route add: {lan_info:?}");
         return;
     };
 
-    let _ = add_lan_route_with_maps(
-        &rt4_lan_map,
-        &rt6_lan_map,
-        &rt4_cache_map,
-        &rt6_cache_map,
-        &lan_info,
-    );
+    if add_lan_route_with_maps(&rt4_lan_map, &rt6_lan_map, &lan_info) {
+        invalidate_lan_route_caches(paths);
+    }
 }
 
-pub(crate) fn add_lan_route_with_maps<T, U, V, W>(
+pub(crate) fn add_lan_route_with_maps<T, U>(
     rt4_lan_map: &T,
     rt6_lan_map: &U,
-    rt4_cache_map: &V,
-    rt6_cache_map: &W,
     lan_info: &LanRouteInfo,
 ) -> bool
 where
     T: MapCore,
     U: MapCore,
-    V: MapCore,
-    W: MapCore,
 {
     let changed_v4 = add_lan_route_inner_v4(rt4_lan_map, lan_info);
     let changed_v6 = add_lan_route_inner_v6(rt6_lan_map, lan_info);
 
-    if changed_v4 || changed_v6 {
-        invalidate_lan_route_cache_with_outer_maps(rt4_cache_map, rt6_cache_map);
-        return true;
-    }
-
-    false
+    changed_v4 || changed_v6
 }
 
 pub(crate) fn add_lan_route_inner_v4<T>(rt_lan_map: &T, lan_info: &LanRouteInfo) -> bool
@@ -211,7 +193,9 @@ pub fn del_lan_route(paths: &LandscapeMapPath, lan_info: LanRouteInfo) {
         return;
     };
 
-    let _ = del_lan_route_with_maps(&rt4_lan_map, &rt6_lan_map, &lan_info);
+    if del_lan_route_with_maps(&rt4_lan_map, &rt6_lan_map, &lan_info) {
+        invalidate_lan_route_caches(paths);
+    }
 }
 
 pub(crate) fn del_lan_route_with_maps<T, U>(

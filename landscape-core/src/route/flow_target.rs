@@ -9,7 +9,10 @@ use std::collections::HashMap;
 
 use landscape_common::{
     config::FlowId,
-    flow::{FlowTarget, config::FlowConfig},
+    flow::{
+        FlowTarget,
+        config::{FlowBalanceMode, FlowConfig},
+    },
     sys_service::route_service::{RouteOwner, WanRouteTarget, dataplane::RouteTableDataplane},
 };
 
@@ -146,6 +149,7 @@ impl IpRouteService {
     /// current WAN route and link-health state and sync them into the eBPF maps.
     pub async fn sync_flow_wan_targets(&self, flow_configs: &[FlowConfig]) {
         let _sync_guard = self.flow_target_sync_lock.lock().await;
+
         let ipv4_wan_infos = self.clone_ipv4_wan_infos().await;
         let ipv6_wan_infos = self.clone_ipv6_wan_infos().await;
         let link_healths = self.clone_link_healths().await;
@@ -157,6 +161,12 @@ impl IpRouteService {
 
         warn_fully_unresolved_flows(flow_configs, &ipv4_result, &ipv6_result);
 
+        for flow_config in flow_configs {
+            let mode =
+                if flow_config.enable { flow_config.balance_mode } else { FlowBalanceMode::DstIp };
+            self.dataplane.set_flow_balance_mode(flow_config.flow_id, mode);
+        }
+
         apply_ipv4_target_refresh_result(&*self.dataplane, ipv4_result);
         apply_ipv6_target_refresh_result(&*self.dataplane, ipv6_result);
 
@@ -164,8 +174,11 @@ impl IpRouteService {
     }
 
     /// Drop all WAN target slots of `flow_id` (e.g. after the flow config is
-    /// deleted).
-    pub fn clear_flow_wan_targets(&self, flow_id: FlowId) {
+    /// deleted or its `flow_id` is retired by an in-place edit).
+    pub async fn clear_flow_wan_targets(&self, flow_id: FlowId) {
+        let _guard = self.flow_target_sync_lock.lock().await;
+
+        self.dataplane.set_flow_balance_mode(flow_id, FlowBalanceMode::DstIp);
         self.dataplane.del_wan_slots_v4(flow_id);
         self.dataplane.del_wan_slots_v6(flow_id);
         self.dataplane.invalidate_lan_cache();
