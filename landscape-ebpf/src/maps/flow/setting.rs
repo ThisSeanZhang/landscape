@@ -67,6 +67,7 @@ pub fn reconcile_flow_match_entries(
     apply_raw_map_diff(&flow_match_map, diff)?;
     if changed {
         crate::maps::route::cache::recreate_route_lan_cache_inner_map(paths);
+        crate::maps::route::cache::recreate_route_conn_inner_map(paths);
     }
     Ok(())
 }

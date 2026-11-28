@@ -3,6 +3,8 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
+#include "route/flow_l4_maps.h"
+
 // reusable
 struct flow_dns_match_value_v4 {
     u32 mark;

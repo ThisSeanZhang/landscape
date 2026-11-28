@@ -55,18 +55,25 @@ pub struct LandscapeMapPath {
     pub nat_metric_events: PathBuf,
 
     /// route - LAN
+    pub rt_flow_mode_map: PathBuf,
     pub rt4_lan_map: PathBuf,
     pub rt4_slot_map: PathBuf,
+    pub rt4_flow_targets: PathBuf,
     pub flow4_dns_map: PathBuf,
     pub flow4_ip_map: PathBuf,
+    pub flow_l4_rule_map: PathBuf,
+    pub flow_l4_meta_map: PathBuf,
 
     pub rt6_lan_map: PathBuf,
     pub rt6_slot_map: PathBuf,
+    pub rt6_flow_targets: PathBuf,
     pub flow6_dns_map: PathBuf,
     pub flow6_ip_map: PathBuf,
 
     pub rt4_cache_map: PathBuf,
     pub rt6_cache_map: PathBuf,
+    pub rt4_conn_map: PathBuf,
+    pub rt6_conn_map: PathBuf,
 
     // IP MAC
     pub ip_mac_v4: PathBuf,
@@ -112,18 +119,25 @@ impl LandscapeMapPath {
             nat_metric_events: root.join(nat::NAT_METRIC_EVENTS_PIN),
 
             // route - LAN
+            rt_flow_mode_map: root.join(route::RT_FLOW_MODE_MAP_PIN),
             rt4_lan_map: root.join(route::RT4_LAN_MAP_PIN),
             rt4_slot_map: root.join(route::RT4_SLOT_MAP_PIN),
+            rt4_flow_targets: root.join(route::RT4_FLOW_TARGETS_PIN),
             flow4_dns_map: root.join(flow_dns::FLOW4_DNS_MAP_PIN),
             flow4_ip_map: root.join(flow_wanip::FLOW4_IP_MAP_PIN),
+            flow_l4_rule_map: root.join(flow_wanip::FLOW_L4_RULE_MAP_PIN),
+            flow_l4_meta_map: root.join(flow_wanip::FLOW_L4_META_MAP_PIN),
 
             rt6_lan_map: root.join(route::RT6_LAN_MAP_PIN),
             rt6_slot_map: root.join(route::RT6_SLOT_MAP_PIN),
+            rt6_flow_targets: root.join(route::RT6_FLOW_TARGETS_PIN),
             flow6_dns_map: root.join(flow_dns::FLOW6_DNS_MAP_PIN),
             flow6_ip_map: root.join(flow_wanip::FLOW6_IP_MAP_PIN),
 
             rt4_cache_map: root.join(route::RT4_CACHE_MAP_PIN),
             rt6_cache_map: root.join(route::RT6_CACHE_MAP_PIN),
+            rt4_conn_map: root.join(route::RT4_CONN_MAP_PIN),
+            rt6_conn_map: root.join(route::RT6_CONN_MAP_PIN),
 
             // IP MAC
             ip_mac_v4: root.join(mac::IP_MAC_V4_PIN),

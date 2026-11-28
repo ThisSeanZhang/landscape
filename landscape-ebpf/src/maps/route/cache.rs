@@ -6,13 +6,19 @@ use zerocopy::IntoBytes;
 
 use crate::maps::LandscapeMapPath;
 use crate::maps::route::types::{
-    Route4CacheKey, Route4CacheValue, Route6CacheKey, Route6CacheValue,
+    Route4CacheKey, Route4CacheValue, Route4ConnKey, Route6CacheKey, Route6CacheValue,
+    Route6ConnKey, RouteConnValue,
 };
 
 /// WAN verdict cache lives at outer slot 0, LAN at slot 1
 /// (`rt4/6_cache_map` is an ARRAY_OF_MAPS indexed by cache type).
 pub(crate) const WAN_CACHE: u32 = 0;
 pub(crate) const LAN_CACHE: u32 = 1;
+/// Outer slots of `rt4/6_conn_map` (`ARRAY_OF_MAPS`, 2 entries):
+/// - `CONN_PIN_CACHE (0)`: FiveTuple connection-pinning LRU (preserved across WAN weight/failback changes)
+/// - `L4_VERDICT_CACHE (1)`: DstIp 5-tuple verdict LRU for flows with L4 port rules (flushed with `LAN_CACHE`)
+pub(crate) const CONN_PIN_CACHE: u32 = 0;
+pub(crate) const L4_VERDICT_CACHE: u32 = 1;
 
 const DNS_MATCH_MAX_ENTRIES: u32 = 65536;
 
@@ -97,16 +103,6 @@ where
     );
 }
 
-pub(crate) fn recreate_route_lan_cache_inner_map_with_outer_maps<T, U>(
-    rt4_cache_map: &T,
-    rt6_cache_map: &U,
-) where
-    T: MapCore,
-    U: MapCore,
-{
-    recreate_route_lan_cache_inner_map_impl(rt4_cache_map, rt6_cache_map);
-}
-
 /// 修改了 静态 NAT 需要清理
 pub fn recreate_route_wan_cache_inner_map(paths: &LandscapeMapPath) {
     create_inner_map_generic::<_, Route4CacheKey, Route4CacheValue>(
@@ -121,8 +117,10 @@ pub fn recreate_route_wan_cache_inner_map(paths: &LandscapeMapPath) {
     );
 }
 
-/// 在修改了 DNS 规则， DST IP 规则。 Flow Match 规则后调用
-/// 使缓存失效
+/// Recreate the 2-tuple LAN verdict cache and the L4-port-isolated DstIp 5-tuple
+/// verdict cache (`L4_VERDICT_CACHE`, slot 1), while preserving `CONN_PIN_CACHE`
+/// (slot 0) so in-flight `FiveTuple` connections remain pinned across WAN weight
+/// or failback changes.
 pub fn recreate_route_lan_cache_inner_map(paths: &LandscapeMapPath) {
     let rt4_cache_map = match libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_cache_map) {
         Ok(map) => map,
@@ -140,4 +138,40 @@ pub fn recreate_route_lan_cache_inner_map(paths: &LandscapeMapPath) {
     };
 
     recreate_route_lan_cache_inner_map_impl(&rt4_cache_map, &rt6_cache_map);
+    recreate_route_l4_verdict_inner_map(paths);
+}
+
+/// Recreate the `L4_VERDICT_CACHE` (slot 1) inner maps for `skip_2tuple_cache`
+/// `DstIp` flows without touching `CONN_PIN_CACHE` (slot 0).
+pub fn recreate_route_l4_verdict_inner_map(paths: &LandscapeMapPath) {
+    create_inner_map_generic::<_, Route4ConnKey, RouteConnValue>(
+        &paths.rt4_conn_map,
+        "rt4_l4_verdict".into(),
+        L4_VERDICT_CACHE,
+    );
+    create_inner_map_generic::<_, Route6ConnKey, RouteConnValue>(
+        &paths.rt6_conn_map,
+        "rt6_l4_verdict".into(),
+        L4_VERDICT_CACHE,
+    );
+}
+
+/// Recreate both 5-tuple inner maps (`CONN_PIN_CACHE` slot 0 and
+/// `L4_VERDICT_CACHE` slot 1).
+///
+/// Called ONLY when flow/IP/DNS/port policy rules change (or on explicit
+/// manual cache reset), NEVER on WAN target/weight changes or failbacks so
+/// in-flight `FiveTuple` connections remain pinned to their healthy WAN.
+pub fn recreate_route_conn_inner_map(paths: &LandscapeMapPath) {
+    create_inner_map_generic::<_, Route4ConnKey, RouteConnValue>(
+        &paths.rt4_conn_map,
+        "rt4_conn_lru".into(),
+        CONN_PIN_CACHE,
+    );
+    create_inner_map_generic::<_, Route6ConnKey, RouteConnValue>(
+        &paths.rt6_conn_map,
+        "rt6_conn_lru".into(),
+        CONN_PIN_CACHE,
+    );
+    recreate_route_l4_verdict_inner_map(paths);
 }

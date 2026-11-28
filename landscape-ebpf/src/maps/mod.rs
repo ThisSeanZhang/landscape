@@ -556,20 +556,29 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 
     // route: LAN prefix maps and target slots are rebuilt every boot (their
     // content is re-synced from user space anyway).
+    route::init_rt_flow_mode_map(&paths.rt_flow_mode_map).expect("init rt_flow_mode_map failed");
     route::init_rt4_lan_map(&paths.rt4_lan_map).expect("init rt4_lan_map failed");
     route::init_rt6_lan_map(&paths.rt6_lan_map).expect("init rt6_lan_map failed");
     route::init_rt4_slot_map(&paths.rt4_slot_map).expect("init rt4_slot_map failed");
     route::init_rt6_slot_map(&paths.rt6_slot_map).expect("init rt6_slot_map failed");
+    route::init_rt4_flow_targets(&paths.rt4_flow_targets).expect("init rt4_flow_targets failed");
+    route::init_rt6_flow_targets(&paths.rt6_flow_targets).expect("init rt6_flow_targets failed");
 
     // per-flow rule outers
     flow_dns::init_flow4_dns_map(&paths.flow4_dns_map).expect("init flow4_dns_map failed");
     flow_dns::init_flow6_dns_map(&paths.flow6_dns_map).expect("init flow6_dns_map failed");
     flow_wanip::init_flow4_ip_map(&paths.flow4_ip_map).expect("init flow4_ip_map failed");
     flow_wanip::init_flow6_ip_map(&paths.flow6_ip_map).expect("init flow6_ip_map failed");
+    flow_wanip::init_flow_l4_rule_map(&paths.flow_l4_rule_map)
+        .expect("init flow_l4_rule_map failed");
+    flow_wanip::init_flow_l4_meta_map(&paths.flow_l4_meta_map)
+        .expect("init flow_l4_meta_map failed");
 
     // 每次启动重建 cache 外层 map（含内层 map），避免结构体变更后大小不匹配。
     route::init_rt4_cache_map(&paths.rt4_cache_map, &paths.rt6_cache_map)
         .expect("init rt4/6 cache maps failed");
+    route::init_rt_conn_maps(&paths.rt4_conn_map, &paths.rt6_conn_map)
+        .expect("init rt4/6 conn maps failed");
 
     // IP <-> MAC + DAD NS events
     mac::init_ip_mac_v4(&paths.ip_mac_v4).expect("init ip_mac_v4 failed");
@@ -582,6 +591,7 @@ pub(crate) fn init_path(paths: &LandscapeMapPath) {
 
     route::init_route_wan_cache_inner_map(&paths.rt4_cache_map, &paths.rt6_cache_map);
     route::init_route_lan_cache_inner_map(&paths.rt4_cache_map, &paths.rt6_cache_map);
+    route::init_route_conn_inner_map(&paths.rt4_conn_map, &paths.rt6_conn_map);
 }
 
 /// Create every shared map at the paths of a caller-provided
@@ -605,17 +615,24 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
     flow::init_flow_match_map(&paths.flow_match_map).expect("test init flow_match_map");
     dns::init_dns_flow_socks(&paths.dns_flow_socks).expect("test init dns_flow_socks");
 
+    route::init_rt_flow_mode_map(&paths.rt_flow_mode_map).expect("test init rt_flow_mode_map");
     route::init_rt4_lan_map(&paths.rt4_lan_map).expect("test init rt4_lan_map");
     route::init_rt6_lan_map(&paths.rt6_lan_map).expect("test init rt6_lan_map");
     route::init_rt4_slot_map(&paths.rt4_slot_map).expect("test init rt4_slot_map");
     route::init_rt6_slot_map(&paths.rt6_slot_map).expect("test init rt6_slot_map");
+    route::init_rt4_flow_targets(&paths.rt4_flow_targets).expect("test init rt4_flow_targets");
+    route::init_rt6_flow_targets(&paths.rt6_flow_targets).expect("test init rt6_flow_targets");
     flow_dns::init_flow4_dns_map(&paths.flow4_dns_map).expect("test init flow4_dns_map");
     flow_dns::init_flow6_dns_map(&paths.flow6_dns_map).expect("test init flow6_dns_map");
     flow_wanip::init_flow4_ip_map(&paths.flow4_ip_map).expect("test init flow4_ip_map");
     flow_wanip::init_flow6_ip_map(&paths.flow6_ip_map).expect("test init flow6_ip_map");
+    flow_wanip::init_flow_l4_rule_map(&paths.flow_l4_rule_map).expect("test init flow_l4_rule_map");
+    flow_wanip::init_flow_l4_meta_map(&paths.flow_l4_meta_map).expect("test init flow_l4_meta_map");
 
     route::init_rt4_cache_map(&paths.rt4_cache_map, &paths.rt6_cache_map)
         .expect("test init rt4/6 cache maps");
+    route::init_rt_conn_maps(&paths.rt4_conn_map, &paths.rt6_conn_map)
+        .expect("test init rt4/6 conn maps");
 
     mac::init_ip_mac_v4(&paths.ip_mac_v4).expect("test init ip_mac_v4");
     mac::init_ip_mac_v6(&paths.ip_mac_v6).expect("test init ip_mac_v6");
@@ -625,6 +642,7 @@ pub(crate) fn init_maps_for_test(paths: &LandscapeMapPath) {
 
     route::init_route_wan_cache_inner_map(&paths.rt4_cache_map, &paths.rt6_cache_map);
     route::init_route_lan_cache_inner_map(&paths.rt4_cache_map, &paths.rt6_cache_map);
+    route::init_route_conn_inner_map(&paths.rt4_conn_map, &paths.rt6_conn_map);
 }
 
 /// Unpin shared maps during full app shutdown so the kernel can free them.
@@ -676,6 +694,9 @@ mod tests {
             Route6CacheKey,
             Route4SlotKey,
             Route6SlotKey,
+            RouteFlowTargetKey,
+            Route4ConnKey,
+            Route6ConnKey,
             StaticNat6MappingKey,
             Nat6MappingKey,
             Nat6TimerKey,
@@ -1115,16 +1136,23 @@ mod tests {
                 frag::FRAG4_CACHE_WAN_PIN,
                 frag::FRAG6_CACHE_LAN_PIN,
                 frag::FRAG6_CACHE_WAN_PIN,
+                route::RT_FLOW_MODE_MAP_PIN,
                 route::RT4_LAN_MAP_PIN,
                 route::RT6_LAN_MAP_PIN,
                 route::RT4_SLOT_MAP_PIN,
                 route::RT6_SLOT_MAP_PIN,
+                route::RT4_FLOW_TARGETS_PIN,
+                route::RT6_FLOW_TARGETS_PIN,
                 flow_dns::FLOW4_DNS_MAP_PIN,
                 flow_wanip::FLOW4_IP_MAP_PIN,
                 flow_dns::FLOW6_DNS_MAP_PIN,
                 flow_wanip::FLOW6_IP_MAP_PIN,
+                flow_wanip::FLOW_L4_RULE_MAP_PIN,
+                flow_wanip::FLOW_L4_META_MAP_PIN,
                 route::RT4_CACHE_MAP_PIN,
                 route::RT6_CACHE_MAP_PIN,
+                route::RT4_CONN_MAP_PIN,
+                route::RT6_CONN_MAP_PIN,
                 mac::IP_MAC_V4_PIN,
                 mac::IP_MAC_V6_PIN,
                 mac::IP6_DAO_EVENTS_PIN,

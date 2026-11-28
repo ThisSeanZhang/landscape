@@ -132,7 +132,12 @@ fn seed_wan_slots(
     info.is_docker = is_docker;
     info.gateway_ip = IpAddr::V6(gateway_addr());
     let targets = [(WanRouteTarget::link(chain, info), 1)];
-    replace_wan_route_slots_v6_with_map(&skel.maps.rt6_slot_map, flow_id, &targets);
+    replace_wan_route_slots_v6_with_map(
+        &skel.maps.rt6_slot_map,
+        &skel.maps.rt6_flow_targets,
+        flow_id,
+        &targets,
+    );
 }
 
 fn assert_no_route_cache(skel: &TcWanEgressRouteSkel<'_>) {

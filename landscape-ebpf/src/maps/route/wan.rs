@@ -1,24 +1,88 @@
 //! Per-flow WAN target-slot maps (`rt4/6_target_slot_map`): weighted-slot
 //! replacement/clear keyed by flow_id.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 
 use landscape_common::config::FlowId;
+use landscape_common::flow::FlowBalanceMode;
 use landscape_common::sys_service::route_service::WanRouteTarget;
 use libbpf_rs::{MapCore, MapFlags};
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::maps::{
     LandscapeMapPath, Route4SlotKey, Route4TargetInfo, Route6SlotKey, Route6TargetInfo,
+    RouteFlowTargetKey,
 };
-const FLOW_TARGET_SLOT_COUNT: usize = 16;
+const FLOW_TARGET_SLOT_COUNT: usize = 256;
+const ROUTE_BALANCE_DST_IP: u8 = 0;
+const ROUTE_BALANCE_FIVE_TUPLE: u8 = 1;
+pub(crate) const ROUTE_FLOW_MODE_ANY_FIVE_TUPLE_KEY: u32 = 256;
+
+static RT_FLOW_MODE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn set_flow_balance_mode(paths: &LandscapeMapPath, flow_id: FlowId, mode: FlowBalanceMode) {
+    if flow_id >= ROUTE_FLOW_MODE_ANY_FIVE_TUPLE_KEY {
+        return;
+    }
+    let mode_map = match libbpf_rs::MapHandle::from_pinned_path(&paths.rt_flow_mode_map) {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::error!("open pinned rt_flow_mode_map error: {e:?}");
+            return;
+        }
+    };
+    set_flow_balance_mode_with_map(&mode_map, flow_id, mode);
+}
+
+pub(crate) fn set_flow_balance_mode_with_map<T: MapCore>(
+    mode_map: &T,
+    flow_id: FlowId,
+    mode: FlowBalanceMode,
+) {
+    if flow_id >= ROUTE_FLOW_MODE_ANY_FIVE_TUPLE_KEY {
+        return;
+    }
+    let _guard = RT_FLOW_MODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let raw_mode = match mode {
+        FlowBalanceMode::DstIp => ROUTE_BALANCE_DST_IP,
+        FlowBalanceMode::FiveTuple => ROUTE_BALANCE_FIVE_TUPLE,
+    };
+    if let Err(e) = mode_map.update(flow_id.as_bytes(), &[raw_mode], MapFlags::ANY) {
+        tracing::error!("update rt_flow_mode_map for flow {flow_id} error: {e:?}");
+        return;
+    }
+    let any_five_tuple = if raw_mode == ROUTE_BALANCE_FIVE_TUPLE {
+        1u8
+    } else {
+        let mut active = 0u8;
+        for id in 0..ROUTE_FLOW_MODE_ANY_FIVE_TUPLE_KEY {
+            if let Ok(Some(bytes)) = mode_map.lookup(id.as_bytes(), MapFlags::ANY)
+                && bytes.first().copied() == Some(ROUTE_BALANCE_FIVE_TUPLE)
+            {
+                active = 1;
+                break;
+            }
+        }
+        active
+    };
+    if let Err(e) = mode_map.update(
+        ROUTE_FLOW_MODE_ANY_FIVE_TUPLE_KEY.as_bytes(),
+        &[any_five_tuple],
+        MapFlags::ANY,
+    ) {
+        tracing::error!("update rt_flow_mode_map summary error: {e:?}");
+    }
+}
+
 pub fn replace_wan_route_slots_v4(
     paths: &LandscapeMapPath,
     flow_id: FlowId,
     targets: &[(WanRouteTarget, u32)],
 ) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_slot_map).unwrap();
-    replace_wan_route_slots_v4_with_map(&rt_target_map, flow_id, targets);
+    let rt_flow_targets = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_flow_targets).unwrap();
+    replace_wan_route_slots_v4_with_map(&rt_target_map, &rt_flow_targets, flow_id, targets);
 }
 
 pub fn replace_wan_route_slots_v6(
@@ -27,17 +91,20 @@ pub fn replace_wan_route_slots_v6(
     targets: &[(WanRouteTarget, u32)],
 ) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_slot_map).unwrap();
-    replace_wan_route_slots_v6_with_map(&rt_target_map, flow_id, targets);
+    let rt_flow_targets = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_flow_targets).unwrap();
+    replace_wan_route_slots_v6_with_map(&rt_target_map, &rt_flow_targets, flow_id, targets);
 }
 
 pub fn del_wan_route_slots_v4(paths: &LandscapeMapPath, flow_id: FlowId) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_slot_map).unwrap();
-    clear_wan_route_slots_v4(&rt_target_map, flow_id);
+    let rt_flow_targets = libbpf_rs::MapHandle::from_pinned_path(&paths.rt4_flow_targets).unwrap();
+    clear_wan_route_slots_v4(&rt_target_map, &rt_flow_targets, flow_id);
 }
 
 pub fn del_wan_route_slots_v6(paths: &LandscapeMapPath, flow_id: FlowId) {
     let rt_target_map = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_slot_map).unwrap();
-    clear_wan_route_slots_v6(&rt_target_map, flow_id);
+    let rt_flow_targets = libbpf_rs::MapHandle::from_pinned_path(&paths.rt6_flow_targets).unwrap();
+    clear_wan_route_slots_v6(&rt_target_map, &rt_flow_targets, flow_id);
 }
 
 fn build_slot_indices(weights: &[u32]) -> Vec<usize> {
@@ -72,21 +139,95 @@ fn build_slot_indices(weights: &[u32]) -> Vec<usize> {
     slots
 }
 
-pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
+fn build_target_info_v4(target: &WanRouteTarget) -> Route4TargetInfo {
+    Route4TargetInfo {
+        ifindex: target.info.ifindex,
+        has_mac: u8::from(target.info.mac.is_some()),
+        is_docker: u8::from(target.info.is_docker),
+        link_chain_id: target.link_chain_id,
+    }
+}
+
+fn build_target_info_v6(target: &WanRouteTarget) -> Route6TargetInfo {
+    Route6TargetInfo {
+        ifindex: target.info.ifindex,
+        has_mac: u8::from(target.info.mac.is_some()),
+        is_docker: u8::from(target.info.is_docker),
+        link_chain_id: target.link_chain_id,
+    }
+}
+
+fn clear_flow_targets_for_flow<U: MapCore>(rt_flow_targets: &U, flow_id: FlowId) {
+    let stale_keys: Vec<Vec<u8>> = rt_flow_targets
+        .keys()
+        .filter(|key_bytes| {
+            RouteFlowTargetKey::read_from_bytes(key_bytes)
+                .map(|k| k.flow_id == flow_id)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    for key_bytes in stale_keys {
+        if let Err(e) = rt_flow_targets.delete(&key_bytes) {
+            tracing::error!("delete stale flow_targets entry for flow {flow_id} error: {e:?}");
+        }
+    }
+}
+
+fn sync_flow_target_entries<U: MapCore, V: IntoBytes + zerocopy::Immutable>(
+    rt_flow_targets: &U,
+    flow_id: FlowId,
+    filtered: &[&(WanRouteTarget, u32)],
+    build_value: impl Fn(&WanRouteTarget) -> V,
+    map_label: &str,
+) {
+    let active_ifindices: HashSet<u32> = filtered.iter().map(|(t, _)| t.info.ifindex).collect();
+    let stale_keys: Vec<Vec<u8>> = rt_flow_targets
+        .keys()
+        .filter(|key_bytes| {
+            RouteFlowTargetKey::read_from_bytes(key_bytes)
+                .map(|k| k.flow_id == flow_id && !active_ifindices.contains(&k.ifindex))
+                .unwrap_or(false)
+        })
+        .collect();
+    for key_bytes in stale_keys {
+        let _ = rt_flow_targets.delete(&key_bytes);
+    }
+    for (target, _) in filtered {
+        let ft_key = RouteFlowTargetKey { flow_id, ifindex: target.info.ifindex };
+        let ft_val = build_value(target);
+        if let Err(e) = rt_flow_targets.update(ft_key.as_bytes(), ft_val.as_bytes(), MapFlags::ANY)
+        {
+            tracing::error!("upsert {map_label} error: {e:?}");
+        }
+    }
+}
+
+pub(crate) fn replace_wan_route_slots_v4_with_map<T, U>(
     rt_target_map: &T,
+    rt_flow_targets: &U,
     flow_id: FlowId,
     targets: &[(WanRouteTarget, u32)],
 ) where
     T: MapCore,
+    U: MapCore,
 {
     let filtered: Vec<_> = targets
         .iter()
         .filter(|(target, weight)| *weight > 0 && matches!(target.info.gateway_ip, IpAddr::V4(_)))
         .collect();
     if filtered.is_empty() {
-        clear_wan_route_slots_v4(rt_target_map, flow_id);
+        clear_wan_route_slots_v4(rt_target_map, rt_flow_targets, flow_id);
         return;
     }
+
+    sync_flow_target_entries(
+        rt_flow_targets,
+        flow_id,
+        &filtered,
+        build_target_info_v4,
+        "rt4_flow_targets",
+    );
 
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
@@ -97,12 +238,7 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
         let key = Route4SlotKey { flow_id, slot: slot as u32 };
-        let value = Route4TargetInfo {
-            ifindex: target.info.ifindex,
-            has_mac: u8::from(target.info.mac.is_some()),
-            is_docker: u8::from(target.info.is_docker),
-            link_chain_id: target.link_chain_id,
-        };
+        let value = build_target_info_v4(target);
 
         keys.extend_from_slice(key.as_bytes());
         values.extend_from_slice(value.as_bytes());
@@ -115,21 +251,31 @@ pub(crate) fn replace_wan_route_slots_v4_with_map<T>(
     }
 }
 
-pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
+pub(crate) fn replace_wan_route_slots_v6_with_map<T, U>(
     rt_target_map: &T,
+    rt_flow_targets: &U,
     flow_id: FlowId,
     targets: &[(WanRouteTarget, u32)],
 ) where
     T: MapCore,
+    U: MapCore,
 {
     let filtered: Vec<_> = targets
         .iter()
         .filter(|(target, weight)| *weight > 0 && matches!(target.info.gateway_ip, IpAddr::V6(_)))
         .collect();
     if filtered.is_empty() {
-        clear_wan_route_slots_v6(rt_target_map, flow_id);
+        clear_wan_route_slots_v6(rt_target_map, rt_flow_targets, flow_id);
         return;
     }
+
+    sync_flow_target_entries(
+        rt_flow_targets,
+        flow_id,
+        &filtered,
+        build_target_info_v6,
+        "rt6_flow_targets",
+    );
 
     let weights: Vec<u32> = filtered.iter().map(|(_, weight)| *weight).collect();
     let slots = build_slot_indices(&weights);
@@ -140,12 +286,7 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
     for (slot, target_index) in slots.into_iter().enumerate() {
         let (target, _) = filtered[target_index];
         let key = Route6SlotKey { flow_id, slot: slot as u32 };
-        let value = Route6TargetInfo {
-            ifindex: target.info.ifindex,
-            has_mac: u8::from(target.info.mac.is_some()),
-            is_docker: u8::from(target.info.is_docker),
-            link_chain_id: target.link_chain_id,
-        };
+        let value = build_target_info_v6(target);
 
         keys.extend_from_slice(key.as_bytes());
         values.extend_from_slice(value.as_bytes());
@@ -159,10 +300,13 @@ pub(crate) fn replace_wan_route_slots_v6_with_map<T>(
 }
 
 #[allow(clippy::field_reassign_with_default)]
-fn clear_wan_route_slots_v4<T>(rt_target_map: &T, flow_id: FlowId)
+fn clear_wan_route_slots_v4<T, U>(rt_target_map: &T, rt_flow_targets: &U, flow_id: FlowId)
 where
     T: MapCore,
+    U: MapCore,
 {
+    clear_flow_targets_for_flow(rt_flow_targets, flow_id);
+
     let mut keys =
         Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<Route4SlotKey>());
     let mut count = 0;
@@ -189,10 +333,13 @@ where
 }
 
 #[allow(clippy::field_reassign_with_default)]
-fn clear_wan_route_slots_v6<T>(rt_target_map: &T, flow_id: FlowId)
+fn clear_wan_route_slots_v6<T, U>(rt_target_map: &T, rt_flow_targets: &U, flow_id: FlowId)
 where
     T: MapCore,
+    U: MapCore,
 {
+    clear_flow_targets_for_flow(rt_flow_targets, flow_id);
+
     let mut keys =
         Vec::with_capacity(FLOW_TARGET_SLOT_COUNT * std::mem::size_of::<Route6SlotKey>());
     let mut count = 0;
@@ -233,36 +380,36 @@ mod slot_tests {
     #[test]
     fn slot_builder_balances_equal_weights() {
         let slots = build_slot_indices(&[1, 1]);
-        assert_eq!(slots.len(), 16);
-        assert_eq!(counts(&slots, 2), vec![8, 8]);
+        assert_eq!(slots.len(), 256);
+        assert_eq!(counts(&slots, 2), vec![128, 128]);
     }
 
     #[test]
     fn slot_builder_respects_three_to_one_ratio() {
         let slots = build_slot_indices(&[3, 1]);
-        assert_eq!(slots.len(), 16);
-        assert_eq!(counts(&slots, 2), vec![12, 4]);
+        assert_eq!(slots.len(), 256);
+        assert_eq!(counts(&slots, 2), vec![192, 64]);
     }
 
     #[test]
     fn slot_builder_skips_zero_weight_targets() {
         let slots = build_slot_indices(&[2, 0, 1]);
-        assert_eq!(slots.len(), 16);
-        assert_eq!(counts(&slots, 3), vec![11, 0, 5]);
+        assert_eq!(slots.len(), 256);
+        assert_eq!(counts(&slots, 3), vec![171, 0, 85]);
     }
 
     #[test]
     fn slot_builder_fills_all_slots_for_single_target() {
         let slots = build_slot_indices(&[1]);
-        assert_eq!(slots.len(), 16);
-        assert_eq!(counts(&slots, 1), vec![16]);
+        assert_eq!(slots.len(), 256);
+        assert_eq!(counts(&slots, 1), vec![256]);
     }
 
     #[test]
     fn slot_builder_distributes_prime_sum_weights() {
         let slots = build_slot_indices(&[5, 2]);
-        assert_eq!(slots.len(), 16);
-        // 5:2 ratio over 16 slots → 11:5 (nearest integer distribution)
-        assert_eq!(counts(&slots, 2), vec![11, 5]);
+        assert_eq!(slots.len(), 256);
+        // 5:2 ratio over 256 slots -> 183:73 (nearest integer distribution)
+        assert_eq!(counts(&slots, 2), vec![183, 73]);
     }
 }

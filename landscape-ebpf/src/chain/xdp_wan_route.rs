@@ -92,6 +92,13 @@ pub fn init_xdp_wan_route(
         "tc_wan_egress_route pin flow_match_map"
     )?;
     crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_route_open_skel.maps.rt_flow_mode_map,
+            &paths.rt_flow_mode_map
+        ),
+        "tc_wan_egress_route pin rt_flow_mode_map"
+    )?;
+    crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt4_lan_map, &paths.rt4_lan_map),
         "tc_wan_egress_route pin rt4_lan_map"
     )?;
@@ -106,6 +113,20 @@ pub fn init_xdp_wan_route(
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt6_slot_map, &paths.rt6_slot_map,),
         "tc_wan_egress_route pin rt6_slot_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_route_open_skel.maps.rt4_flow_targets,
+            &paths.rt4_flow_targets
+        ),
+        "tc_wan_egress_route pin rt4_flow_targets"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_route_open_skel.maps.rt6_flow_targets,
+            &paths.rt6_flow_targets
+        ),
+        "tc_wan_egress_route pin rt6_flow_targets"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.flow4_dns_map, &paths.flow4_dns_map),
@@ -124,12 +145,34 @@ pub fn init_xdp_wan_route(
         "tc_wan_egress_route pin flow6_ip_map"
     )?;
     crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_route_open_skel.maps.flow_l4_rule_map,
+            &paths.flow_l4_rule_map
+        ),
+        "tc_wan_egress_route pin flow_l4_rule_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(
+            &mut egress_route_open_skel.maps.flow_l4_meta_map,
+            &paths.flow_l4_meta_map
+        ),
+        "tc_wan_egress_route pin flow_l4_meta_map"
+    )?;
+    crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt4_cache_map, &paths.rt4_cache_map),
         "tc_wan_egress_route pin rt4_cache_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.rt6_cache_map, &paths.rt6_cache_map),
         "tc_wan_egress_route pin rt6_cache_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut egress_route_open_skel.maps.rt4_conn_map, &paths.rt4_conn_map),
+        "tc_wan_egress_route pin rt4_conn_map"
+    )?;
+    crate::bpf_ctx!(
+        pin_and_reuse_map(&mut egress_route_open_skel.maps.rt6_conn_map, &paths.rt6_conn_map),
+        "tc_wan_egress_route pin rt6_conn_map"
     )?;
     crate::bpf_ctx!(
         pin_and_reuse_map(&mut egress_route_open_skel.maps.ip_mac_v4, &paths.ip_mac_v4),

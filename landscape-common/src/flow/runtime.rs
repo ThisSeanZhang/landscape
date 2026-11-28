@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::flow::mark::FlowMark;
 use crate::net::MacAddr;
 
-use super::config::IpConfig;
+use super::config::{IpConfig, L4ProtoMatch};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ResolvedFlowEntryRule {
@@ -45,5 +45,15 @@ pub struct IpMarkInfo {
     pub mark: FlowMark,
     pub cidr: IpConfig,
     // pub override_dns: bool,
+    pub priority: u16,
+}
+
+/// L4 协议 + 目的端口范围标记最小单元
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PortMarkInfo {
+    pub mark: FlowMark,
+    pub protocol: L4ProtoMatch,
+    pub start_port: u16,
+    pub end_port: u16,
     pub priority: u16,
 }

@@ -11,16 +11,21 @@ use std::path::Path;
 use libbpf_rs::{MapHandle, MapType, libbpf_sys};
 
 use crate::bpf_error::LdEbpfResult;
-use crate::maps::{InnerMapSpec, MapCreateSpec, ensure_pinned_map};
+use crate::maps::{InnerMapSpec, MapCreateSpec, ensure_pinned_map, recreate_pinned_map};
 
-use super::types::{FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6};
+use super::types::{
+    FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, FlowL4Meta,
+    FlowL4RuleSet,
+};
 
 const FLOW_OUTER_MAX_ENTRIES: u32 = 256;
 const FLOW_IP_TRIE_MAX_ENTRIES: u32 = 65536;
 
-/// Pin 文件名 = C map 符号名（见 `flow4_maps.h` / `flow6_maps.h`）。
+/// Pin 文件名 = C map 符号名（见 `flow4_maps.h` / `flow6_maps.h` / `flow_l4_maps.h`）。
 pub(crate) const FLOW4_IP_MAP_PIN: &str = "flow4_ip_map";
 pub(crate) const FLOW6_IP_MAP_PIN: &str = "flow6_ip_map";
+pub(crate) const FLOW_L4_RULE_MAP_PIN: &str = "flow_l4_rule_map";
+pub(crate) const FLOW_L4_META_MAP_PIN: &str = "flow_l4_meta_map";
 
 /// Inner template `each_flow_ip_trie_v4`: `BPF_MAP_TYPE_LPM_TRIE`,
 /// `BPF_F_NO_PREALLOC`.
@@ -78,6 +83,34 @@ pub fn init_flow6_ip_map(path: &Path) -> LdEbpfResult<MapHandle> {
     ensure_pinned_map(&FLOW6_IP_MAP_SPEC, path)
 }
 
+pub(crate) const FLOW_L4_RULE_MAP_SPEC: MapCreateSpec = MapCreateSpec {
+    map_type: MapType::Array,
+    name: FLOW_L4_RULE_MAP_PIN,
+    key_size: 4,
+    value_size: size_of::<FlowL4RuleSet>() as u32,
+    max_entries: FLOW_OUTER_MAX_ENTRIES,
+    map_flags: 0,
+    inner: None,
+};
+
+pub(crate) const FLOW_L4_META_MAP_SPEC: MapCreateSpec = MapCreateSpec {
+    map_type: MapType::Array,
+    name: FLOW_L4_META_MAP_PIN,
+    key_size: 4,
+    value_size: size_of::<FlowL4Meta>() as u32,
+    max_entries: 1,
+    map_flags: 0,
+    inner: None,
+};
+
+pub fn init_flow_l4_rule_map(path: &Path) -> LdEbpfResult<MapHandle> {
+    recreate_pinned_map(&FLOW_L4_RULE_MAP_SPEC, path)
+}
+
+pub fn init_flow_l4_meta_map(path: &Path) -> LdEbpfResult<MapHandle> {
+    recreate_pinned_map(&FLOW_L4_META_MAP_SPEC, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +123,7 @@ mod tests {
         let open = XdpWanRouteSkelBuilder::default().open(&mut obj).expect("open anchor skel");
         crate::maps::assert_skel_map_matches(&open.maps.flow4_ip_map, &FLOW4_IP_MAP_SPEC);
         crate::maps::assert_skel_map_matches(&open.maps.flow6_ip_map, &FLOW6_IP_MAP_SPEC);
+        crate::maps::assert_skel_map_matches(&open.maps.flow_l4_rule_map, &FLOW_L4_RULE_MAP_SPEC);
+        crate::maps::assert_skel_map_matches(&open.maps.flow_l4_meta_map, &FLOW_L4_META_MAP_SPEC);
     }
 }

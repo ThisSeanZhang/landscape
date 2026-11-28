@@ -280,6 +280,7 @@ static __always_inline int route6_flow_verdict(struct __sk_buff *skb, u32 curren
     if (match_flow_id_v6(skb, current_l3_offset, &context->saddr, (u32 *)&flow_id)) {
         return TC_ACT_SHOT;
     }
+    const u32 src_flow_id = flow_id;
 
     volatile u32 flow_mark_action = *init_flow_id_;
     volatile u16 priority = 0xFFFF;
@@ -332,6 +333,32 @@ static __always_inline int route6_flow_verdict(struct __sk_buff *skb, u32 curren
         // ld_log("flow_id: %d, dns map is empty", *flow_id_ptr);
     }
 
+    if (unlikely(flow_has_l4_rules(src_flow_id))) {
+        const struct flow_l4_rule_set *l4_set =
+            bpf_map_lookup_elem(&flow_l4_rule_map, &src_flow_id);
+        u16 best_prio = priority;
+        if (l4_set != NULL && l4_set->count > 0 && best_prio >= l4_set->entries[0].priority) {
+            context->skip_2tuple_cache = 1;
+            route6_ensure_l4_ports_tc(skb, current_l3_offset, context);
+            if (context->has_ports) {
+                u16 host_dport = bpf_ntohs(context->dport);
+                u32 cnt = l4_set->count;
+                if (cnt > FLOW_L4_MAX_RULES_PER_FLOW) cnt = FLOW_L4_MAX_RULES_PER_FLOW;
+                for (u32 i = 0; i < FLOW_L4_MAX_RULES_PER_FLOW; i++) {
+                    if (i >= cnt) break;
+                    const struct flow_l4_rule_entry *e = &l4_set->entries[i];
+                    if (e->priority > best_prio) break;
+                    if ((e->l4_proto == 0 || e->l4_proto == context->l4_protocol) &&
+                        host_dport >= e->start_port && host_dport <= e->end_port) {
+                        flow_mark_action = e->mark;
+                        priority = e->priority;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // ld_log("flow_id %d, flow_mark_action: %u", flow_id, flow_mark_action);
     flow_action = get_flow_action(flow_mark_action);
     // dns_flow_id = get_flow_id(flow_mark_action);
@@ -348,6 +375,25 @@ static __always_inline int route6_flow_verdict(struct __sk_buff *skb, u32 curren
         goto keep_going;
     } else if (flow_action == FLOW_DROP) {
         // ld_log("FLOW_DROP ip: %pI4", context->daddr.in6_u.u6_addr32);
+        if (unlikely(skb->ingress_ifindex != 0 && context->skip_2tuple_cache &&
+                     context->has_ports)) {
+            u32 l4_slot = L4_VERDICT_CACHE;
+            void *conn_inner = bpf_map_lookup_elem(&rt6_conn_map, &l4_slot);
+            if (conn_inner != NULL) {
+                struct route6_conn_key conn_key = {
+                    .saddr = context->saddr,
+                    .daddr = context->daddr,
+                    .sport = context->sport,
+                    .dport = context->dport,
+                    .l4_proto = context->l4_protocol,
+                };
+                struct route_conn_value drop_conn = {
+                    .mark_value = flow_mark_action,
+                    .flags = ROUTE_CONN_FLAG_DROP,
+                };
+                bpf_map_update_elem(conn_inner, &conn_key, &drop_conn, BPF_ANY);
+            }
+        }
         return TC_ACT_SHOT;
     } else if (flow_action == FLOW_REDIRECT) {
         // ld_log("FLOW_REDIRECT ip: %pI4, flow_id: %d", context->daddr.in6_u.u6_addr32,
@@ -363,6 +409,90 @@ keep_going:
     // }
     *init_flow_id_ = flow_mark_action;
     return TC_ACT_OK;
+}
+
+static __always_inline struct route6_target_info *
+route6_pick_wan_target_tc(struct __sk_buff *skb, u32 current_l3_offset,
+                          struct route6_context *context, u32 flow_mark) {
+    const u32 resolved_flow_id = get_flow_id(flow_mark);
+
+    if (likely(!route_flow_is_five_tuple(resolved_flow_id))) {
+        struct route6_slot_key slot_key = {
+            .flow_id = resolved_flow_id,
+            .slot = route6_target_slot(&context->daddr),
+        };
+        return bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+    }
+
+    route6_ensure_l4_ports_tc(skb, current_l3_offset, context);
+    if (context->has_ports) {
+        struct route6_conn_key conn_key = {
+            .saddr = context->saddr,
+            .daddr = context->daddr,
+            .sport = context->sport,
+            .dport = context->dport,
+            .l4_proto = context->l4_protocol,
+        };
+        u32 conn_slot = CONN_PIN_CACHE;
+        void *conn_inner = bpf_map_lookup_elem(&rt6_conn_map, &conn_slot);
+        if (conn_inner != NULL) {
+            struct route_conn_value *conn_val = bpf_map_lookup_elem(conn_inner, &conn_key);
+            if (conn_val != NULL && conn_val->ifindex != 0) {
+                struct route_flow_target_key ft_key = {
+                    .flow_id = resolved_flow_id,
+                    .ifindex = conn_val->ifindex,
+                };
+                struct route6_target_info *pinned = bpf_map_lookup_elem(&rt6_flow_targets, &ft_key);
+                if (pinned != NULL && pinned->ifindex != 0) {
+                    u8 xdp_able = xdp_redirect_target_able(pinned->ifindex) ? 1 : 0;
+                    if (conn_val->mark_value != flow_mark || conn_val->has_mac != pinned->has_mac ||
+                        conn_val->is_docker != pinned->is_docker ||
+                        conn_val->xdp_redirect_able != xdp_able || conn_val->flags != 0 ||
+                        conn_val->link_chain_id != pinned->link_chain_id) {
+                        struct route_conn_value refreshed = {
+                            .mark_value = flow_mark,
+                            .has_mac = pinned->has_mac,
+                            .is_docker = pinned->is_docker,
+                            .xdp_redirect_able = xdp_able,
+                            .flags = 0,
+                            .ifindex = pinned->ifindex,
+                            .link_chain_id = pinned->link_chain_id,
+                            ._pad = 0,
+                        };
+                        bpf_map_update_elem(conn_inner, &conn_key, &refreshed, BPF_ANY);
+                    }
+                    return pinned;
+                }
+            }
+        }
+
+        struct route6_slot_key slot_key = {
+            .flow_id = resolved_flow_id,
+            .slot = route6_five_tuple_slot(&context->saddr, &context->daddr, context->sport,
+                                           context->dport, context->l4_protocol),
+        };
+        struct route6_target_info *target_info = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+        if (target_info != NULL && target_info->ifindex != 0 && conn_inner != NULL) {
+            struct route_conn_value new_conn = {
+                .mark_value = flow_mark,
+                .has_mac = target_info->has_mac,
+                .is_docker = target_info->is_docker,
+                .xdp_redirect_able = xdp_redirect_target_able(target_info->ifindex) ? 1 : 0,
+                .flags = 0,
+                .ifindex = target_info->ifindex,
+                .link_chain_id = target_info->link_chain_id,
+                ._pad = 0,
+            };
+            bpf_map_update_elem(conn_inner, &conn_key, &new_conn, BPF_ANY);
+        }
+        return target_info;
+    }
+
+    struct route6_slot_key slot_key = {
+        .flow_id = resolved_flow_id,
+        .slot = route6_target_slot(&context->daddr),
+    };
+    return bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
 }
 
 static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *skb,
@@ -396,39 +526,118 @@ static __always_inline int route6_redirect_by_cached_target(struct __sk_buff *sk
     return bpf_redirect(target->ifindex, 0);
 }
 
-static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
-                                                      const u32 current_l3_offset,
-                                                      const struct route6_context *context,
-                                                      u32 *flow_mark) {
-    u32 key = WAN_CACHE;
-    struct route6_cache_key search_key = {0};
-    struct route6_cache_value *target = NULL;
+static __always_inline int route6_redirect_by_conn_value(struct __sk_buff *skb,
+                                                         u32 current_l3_offset,
+                                                         const struct route_conn_value *target) {
+    if (target->ifindex == skb->ifindex) {
+        return TC_ACT_UNSPEC;
+    }
 
-    __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
-    __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
+    tc_cb_mark_forwarded(skb, target->link_chain_id);
 
-    // First WAN
-    void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
-    if (wan_cache) {
-        target = bpf_map_lookup_elem(wan_cache, &search_key);
-        if (target) {
-            if (target->ifindex == 0) {
-                return TC_ACT_SHOT;
-            }
-            if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
-                return TC_ACT_SHOT;
-            tc_cb_mark_forwarded(skb, target->link_chain_id);
-            return bpf_redirect(target->ifindex, 0);
+    if (current_l3_offset == 0 && target->has_mac) {
+        if (prepend_dummy_mac_v6(skb) != 0) {
+            return TC_ACT_SHOT;
         }
     }
 
-    key = LAN_CACHE;
-    void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
-    if (lan_cache) {
-        target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target && target->ifindex != 0) {
-            *flow_mark = target->mark_value;
-            return route6_redirect_by_cached_target(skb, current_l3_offset, target);
+    if (target->is_docker) {
+        int ret = bpf_skb_vlan_push(skb, ETH_P_8021Q, route_flow_mark_vlan_id(target->mark_value));
+        if (ret) {
+            return ret;
+        }
+        return bpf_redirect(target->ifindex, 0);
+    }
+
+    return bpf_redirect(target->ifindex, 0);
+}
+
+static __always_inline int route6_search_cache_in_lan(struct __sk_buff *skb,
+                                                      const u32 current_l3_offset,
+                                                      struct route6_context *context,
+                                                      u32 *flow_mark) {
+    {
+        u32 key = WAN_CACHE;
+        struct route6_cache_key search_key = {0};
+        struct route6_cache_value *target = NULL;
+
+        __builtin_memcpy(search_key.local_addr.in6_u.u6_addr8, context->saddr.in6_u.u6_addr8, 16);
+        __builtin_memcpy(search_key.remote_addr.in6_u.u6_addr8, context->daddr.in6_u.u6_addr8, 16);
+
+        // First WAN
+        void *wan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
+        if (wan_cache) {
+            target = bpf_map_lookup_elem(wan_cache, &search_key);
+            if (target) {
+                if (target->ifindex == 0) {
+                    return TC_ACT_SHOT;
+                }
+                if (current_l3_offset == 0 && target->has_mac && prepend_dummy_mac_v6(skb))
+                    return TC_ACT_SHOT;
+                tc_cb_mark_forwarded(skb, target->link_chain_id);
+                return bpf_redirect(target->ifindex, 0);
+            }
+        }
+
+        key = LAN_CACHE;
+        void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
+        if (lan_cache) {
+            target = bpf_map_lookup_elem(lan_cache, &search_key);
+            if (target && target->ifindex != 0) {
+                *flow_mark = target->mark_value;
+                return route6_redirect_by_cached_target(skb, current_l3_offset, target);
+            }
+        }
+    }
+
+    const bool check_five_tuple = route_any_flow_is_five_tuple();
+    const bool check_l4 = any_flow_has_l4_rules();
+    if (unlikely(check_five_tuple || check_l4)) {
+        route6_ensure_l4_ports_tc(skb, current_l3_offset, context);
+        if (context->has_ports) {
+            struct route6_conn_key conn_key = {
+                .saddr = context->saddr,
+                .daddr = context->daddr,
+                .sport = context->sport,
+                .dport = context->dport,
+                .l4_proto = context->l4_protocol,
+            };
+            struct route_conn_value *conn_val = NULL;
+            if (check_five_tuple) {
+                u32 conn_slot = CONN_PIN_CACHE;
+                void *conn_inner = bpf_map_lookup_elem(&rt6_conn_map, &conn_slot);
+                if (conn_inner != NULL) {
+                    conn_val = bpf_map_lookup_elem(conn_inner, &conn_key);
+                }
+            }
+            if (conn_val == NULL && check_l4) {
+                u32 l4_slot = L4_VERDICT_CACHE;
+                void *l4_inner = bpf_map_lookup_elem(&rt6_conn_map, &l4_slot);
+                if (l4_inner != NULL) {
+                    conn_val = bpf_map_lookup_elem(l4_inner, &conn_key);
+                }
+            }
+            if (conn_val != NULL) {
+                if (unlikely(conn_val->flags & ROUTE_CONN_FLAG_DROP)) {
+                    *flow_mark = conn_val->mark_value;
+                    return TC_ACT_SHOT;
+                }
+                if (conn_val->ifindex != 0) {
+                    struct route_flow_target_key ft_key = {
+                        .flow_id = get_flow_id(conn_val->mark_value),
+                        .ifindex = conn_val->ifindex,
+                    };
+                    struct route6_target_info *live =
+                        bpf_map_lookup_elem(&rt6_flow_targets, &ft_key);
+                    if (live != NULL && live->ifindex != 0 &&
+                        live->link_chain_id == conn_val->link_chain_id &&
+                        live->has_mac == conn_val->has_mac &&
+                        live->is_docker == conn_val->is_docker) {
+                        *flow_mark = conn_val->mark_value;
+                        return route6_redirect_by_conn_value(skb, current_l3_offset, conn_val);
+                    }
+                }
+            }
         }
     }
 
@@ -511,33 +720,69 @@ static __always_inline int route6_set_cache_in_lan(const struct route6_context *
         }
     }
 
-    key = LAN_CACHE;
-    void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
-    if (lan_cache) {
-        target = bpf_map_lookup_elem(lan_cache, &search_key);
-        if (target && target->ifindex != 0) {
-            target->mark_value = flow_mark;
-        } else {
-            const u32 resolved_flow_id = get_flow_id(flow_mark);
+    const u32 resolved_flow_id = get_flow_id(flow_mark);
+    if (unlikely(route_flow_is_five_tuple(resolved_flow_id))) {
+        // FiveTuple flows never populate 2-tuple LAN_CACHE or L4_VERDICT_CACHE;
+        // per-connection 16B entries are maintained in rt6_conn_map[CONN_PIN_CACHE].
+        return TC_ACT_OK;
+    }
+
+    if (unlikely(context->skip_2tuple_cache)) {
+        if (context->has_ports) {
             struct route6_slot_key slot_key = {
                 .flow_id = resolved_flow_id,
                 .slot = route6_target_slot(&context->daddr),
             };
             struct route6_target_info *slot_target = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
-
-            // The slot can disappear after pick_wan. Do not cache an unresolved target.
-            if (slot_target == NULL || slot_target->ifindex == 0) return TC_ACT_OK;
-
-            struct route6_cache_value new_target_cache = {0};
-            new_target_cache.mark_value = flow_mark;
-            new_target_cache.ifindex = slot_target->ifindex;
-            new_target_cache.has_mac = slot_target->has_mac;
-            new_target_cache.is_docker = slot_target->is_docker;
-            new_target_cache.link_chain_id = slot_target->link_chain_id;
-            new_target_cache.xdp_redirect_able =
-                xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
-            bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);
+            if (slot_target != NULL && slot_target->ifindex != 0) {
+                u32 l4_slot = L4_VERDICT_CACHE;
+                void *conn_inner = bpf_map_lookup_elem(&rt6_conn_map, &l4_slot);
+                if (conn_inner != NULL) {
+                    struct route6_conn_key conn_key = {
+                        .saddr = context->saddr,
+                        .daddr = context->daddr,
+                        .sport = context->sport,
+                        .dport = context->dport,
+                        .l4_proto = context->l4_protocol,
+                    };
+                    struct route_conn_value new_conn = {
+                        .mark_value = flow_mark,
+                        .has_mac = slot_target->has_mac,
+                        .is_docker = slot_target->is_docker,
+                        .xdp_redirect_able = xdp_redirect_target_able(slot_target->ifindex) ? 1 : 0,
+                        .flags = 0,
+                        .ifindex = slot_target->ifindex,
+                        .link_chain_id = slot_target->link_chain_id,
+                        ._pad = 0,
+                    };
+                    bpf_map_update_elem(conn_inner, &conn_key, &new_conn, BPF_ANY);
+                }
+            }
         }
+        return TC_ACT_OK;
+    }
+
+    key = LAN_CACHE;
+    void *lan_cache = bpf_map_lookup_elem(&rt6_cache_map, &key);
+    if (lan_cache) {
+        struct route6_slot_key slot_key = {
+            .flow_id = resolved_flow_id,
+            .slot = route6_target_slot(&context->daddr),
+        };
+        struct route6_target_info *slot_target = bpf_map_lookup_elem(&rt6_slot_map, &slot_key);
+
+        // The slot can disappear after pick_wan. Do not cache an unresolved target.
+        if (slot_target == NULL || slot_target->ifindex == 0) return TC_ACT_OK;
+
+        struct route6_cache_value new_target_cache = {0};
+        new_target_cache.mark_value = flow_mark;
+        new_target_cache.ifindex = slot_target->ifindex;
+        new_target_cache.has_mac = slot_target->has_mac;
+        new_target_cache.is_docker = slot_target->is_docker;
+        new_target_cache.link_chain_id = slot_target->link_chain_id;
+        new_target_cache.xdp_redirect_able =
+            xdp_redirect_target_able(new_target_cache.ifindex) ? 1 : 0;
+        bpf_map_update_elem(lan_cache, &search_key, &new_target_cache, BPF_ANY);
     }
 
     return TC_ACT_OK;

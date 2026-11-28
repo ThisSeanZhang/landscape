@@ -58,8 +58,8 @@ pub struct IpRouteService {
     // Serializes Flow 0 eBPF slot updates across concurrent route/health events
     // and deduplicates unchanged writes.
     pub(crate) default_router_sync: Arc<Mutex<wan::DefaultRouterSyncState>>,
-    // Serializes per-flow WAN slot updates across route/health observers and
-    // config-change refreshes so stale snapshots never overwrite newer state.
+    // Serializes per-flow WAN slot and balance-mode (`rt_flow_mode_map[256]`)
+    // updates across route/health observers, config refreshes, and clears.
     pub(crate) flow_target_sync_lock: Arc<Mutex<()>>,
 
     pub(crate) ipv4_lan_ifaces: ShareRwLock<Ipv4LanRoutesByOwner>,

@@ -7,7 +7,11 @@ use landscape_common::{
     database::error::DbError,
     database::store::Change,
     event::dns::DstIpEvent,
-    flow::{WanIPRuleSource, dataplane::FlowRuleDataplane, ip_mark::WanIpRuleConfig},
+    flow::{
+        WanIPRuleSource,
+        dataplane::FlowRuleDataplane,
+        ip_mark::{PortMarkInfo, WanIpRuleConfig},
+    },
     service::controller::{ConfigStoreController, ConfigStoreFlowController},
 };
 use landscape_database::{
@@ -178,8 +182,36 @@ fn rule_references_changed_geo(
         WanIPRuleSource::GeoKey(key) => {
             changed_keys.iter().any(|changed| key.matches_file_cache_key(changed))
         }
-        WanIPRuleSource::Config(_) => false,
+        WanIPRuleSource::Config(_) | WanIPRuleSource::Port(_) => false,
     })
+}
+
+fn extract_port_marks(enabled_rules: &[WanIpRuleConfig]) -> Vec<PortMarkInfo> {
+    let mut ports = Vec::new();
+    for config in enabled_rules {
+        let priority = config.index as u16;
+        let mark = config.mark;
+        for src in &config.source {
+            if let WanIPRuleSource::Port(p) = src {
+                ports.push(PortMarkInfo {
+                    mark,
+                    protocol: p.protocol,
+                    start_port: p.start_port,
+                    end_port: p.end_port,
+                    priority,
+                });
+            }
+        }
+    }
+    ports.sort_unstable_by_key(|info| {
+        (info.priority, info.start_port, info.end_port, info.protocol.to_ipproto())
+    });
+    ports.dedup_by(|left, right| {
+        left.protocol == right.protocol
+            && left.start_port == right.start_port
+            && left.end_port == right.end_port
+    });
+    ports
 }
 
 async fn update_flow_dst_ip_map(
@@ -191,8 +223,10 @@ async fn update_flow_dst_ip_map(
     let mut rules: Vec<WanIpRuleConfig> = rules.into_iter().filter(|r| r.enable).collect();
     rules.sort_by_key(|a| a.index);
     tracing::info!("[flow_id: {flow_id}] update dst ip rules: {rules:?}");
+    let port_marks = extract_port_marks(&rules);
     let result = geo_ip_service.convert_config_to_runtime_rule(rules).await;
     dataplane.set_dst_ip_marks(flow_id, result);
+    dataplane.set_dst_port_marks(flow_id, port_marks);
 }
 
 #[cfg(test)]
@@ -201,11 +235,14 @@ mod tests {
 
     use landscape_common::{
         config_service::geo::{GeoConfigKey, GeoFileCacheKey},
-        flow::{IpConfig, WanIPRuleSource, mark::FlowMark},
+        flow::{
+            IpConfig, L4ProtoMatch, PortRuleConfig, WanIPRuleSource,
+            mark::{FlowMark, FlowMarkAction},
+        },
     };
     use uuid::Uuid;
 
-    use super::{WanIpRuleConfig, affected_flow_ids};
+    use super::{WanIpRuleConfig, affected_flow_ids, extract_port_marks};
 
     fn geo_key(key: &str) -> GeoConfigKey {
         GeoConfigKey {
@@ -250,5 +287,58 @@ mod tests {
             HashSet::from([GeoFileCacheKey { name: "geoip".to_string(), key: "cn".to_string() }]);
 
         assert_eq!(affected_flow_ids(&configs, &changed), HashSet::from([1]));
+    }
+
+    #[test]
+    fn port_rules_are_ignored_for_geo_refresh_and_sorted_by_priority_and_port() {
+        let mut r_low_prio = rule(
+            0,
+            true,
+            vec![WanIPRuleSource::Port(PortRuleConfig {
+                protocol: L4ProtoMatch::Udp,
+                start_port: 3478,
+                end_port: 3480,
+            })],
+        );
+        r_low_prio.index = 200;
+        r_low_prio.mark = FlowMark::new(FlowMarkAction::KeepGoing, 0, true);
+
+        let mut r_high_prio = rule(
+            0,
+            true,
+            vec![
+                WanIPRuleSource::Port(PortRuleConfig {
+                    protocol: L4ProtoMatch::Tcp,
+                    start_port: 65499,
+                    end_port: 65499,
+                }),
+                WanIPRuleSource::Port(PortRuleConfig {
+                    protocol: L4ProtoMatch::Tcp,
+                    start_port: 8080,
+                    end_port: 8080,
+                }),
+            ],
+        );
+        r_high_prio.index = 10;
+        r_high_prio.mark = FlowMark::new(FlowMarkAction::Redirect, 5, false);
+
+        let changed =
+            HashSet::from([GeoFileCacheKey { name: "geoip".to_string(), key: "cn".to_string() }]);
+        assert!(affected_flow_ids(&[r_low_prio.clone(), r_high_prio.clone()], &changed).is_empty());
+
+        let marks = extract_port_marks(&[r_low_prio, r_high_prio]);
+        assert_eq!(marks.len(), 3);
+        assert_eq!(
+            (marks[0].priority, marks[0].start_port, marks[0].protocol),
+            (10, 8080, L4ProtoMatch::Tcp)
+        );
+        assert_eq!(
+            (marks[1].priority, marks[1].start_port, marks[1].protocol),
+            (10, 65499, L4ProtoMatch::Tcp)
+        );
+        assert_eq!(
+            (marks[2].priority, marks[2].start_port, marks[2].protocol),
+            (200, 3478, L4ProtoMatch::Udp)
+        );
     }
 }

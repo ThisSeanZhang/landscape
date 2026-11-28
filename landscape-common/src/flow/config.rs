@@ -12,6 +12,34 @@ use crate::service::ServiceConfigError;
 use crate::utils::id::gen_database_uuid;
 use crate::utils::time::get_f64_timestamp;
 
+/// Multi-target egress load-balancing mode for a flow.
+///
+/// Stored as an internally-tagged JSON object (`{"t": "dst_ip"}` /
+/// `{"t": "five_tuple"}`) so future modes or per-mode parameters can be
+/// introduced without additional database schema migrations.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum FlowBalanceMode {
+    #[default]
+    DstIp,
+    FiveTuple,
+}
+
+impl FlowBalanceMode {
+    /// Decode a persisted JSON value while tolerating extra per-variant fields
+    /// or unknown future variants when a user downgrades the binary.
+    pub fn from_db_json(value: serde_json::Value) -> Self {
+        if let Ok(mode) = serde_json::from_value::<Self>(value.clone()) {
+            return mode;
+        }
+        match value.get("t").and_then(|v| v.as_str()) {
+            Some("five_tuple") => Self::FiveTuple,
+            _ => Self::DstIp,
+        }
+    }
+}
+
 /// 流控配置结构体
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -28,6 +56,10 @@ pub struct FlowConfig {
     /// 处理流量目标网卡, 目前只取第一个
     /// 暂定, 可能会移动到具体的网卡上进行设置
     pub flow_targets: Vec<WeightedFlowTarget>,
+    /// 多目标出口负载均衡模式
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(required = false))]
+    pub balance_mode: FlowBalanceMode,
     /// 名称 (用于展示的简短标识, 为空时回退到 remark)
     #[serde(default)]
     #[cfg_attr(feature = "openapi", schema(required = false))]
@@ -261,6 +293,35 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum L4ProtoMatch {
+    #[default]
+    Any,
+    Tcp,
+    Udp,
+}
+
+impl L4ProtoMatch {
+    pub const fn to_ipproto(self) -> u8 {
+        match self {
+            Self::Any => 0,
+            Self::Tcp => 6,
+            Self::Udp => 17,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct PortRuleConfig {
+    #[serde(default)]
+    pub protocol: L4ProtoMatch,
+    pub start_port: u16,
+    pub end_port: u16,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(tag = "t")]
@@ -268,6 +329,7 @@ impl LandscapeDBStore<Uuid> for WanIpRuleConfig {
 pub enum WanIPRuleSource {
     GeoKey(GeoConfigKey),
     Config(IpConfig),
+    Port(PortRuleConfig),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
@@ -279,7 +341,23 @@ pub struct IpConfig {
     // pub reverse_match: String,
 }
 
-crate::impl_trivial_validatable!(WanIpRuleConfig);
+impl crate::database::validator::ValidatableConfig for WanIpRuleConfig {
+    fn validate(&self) -> Result<(), ServiceConfigError> {
+        for src in &self.source {
+            if let WanIPRuleSource::Port(p) = src
+                && (p.start_port == 0 || p.start_port > p.end_port)
+            {
+                return Err(ServiceConfigError::InvalidConfig {
+                    reason: format!(
+                        "port rule range {}..={} is invalid (require 1 <= start_port <= end_port)",
+                        p.start_port, p.end_port
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -316,6 +394,55 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_flow_balance_mode_defaults_to_dst_ip_and_parses_tagged_json() {
+        let legacy_json = serde_json::json!({
+            "id": Uuid::nil(),
+            "enable": true,
+            "flow_id": 2,
+            "flow_match_rules": [],
+            "flow_targets": [],
+            "remark": "legacy"
+        });
+        let legacy: FlowConfig = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.balance_mode, FlowBalanceMode::DstIp);
+        assert_eq!(
+            serde_json::to_value(legacy.balance_mode).unwrap(),
+            serde_json::json!({ "t": "dst_ip" })
+        );
+
+        let five_tuple_json = serde_json::json!({
+            "id": Uuid::nil(),
+            "enable": true,
+            "flow_id": 5,
+            "flow_match_rules": [],
+            "flow_targets": [],
+            "balance_mode": { "t": "five_tuple" },
+            "remark": "ecmp"
+        });
+        let five_tuple: FlowConfig = serde_json::from_value(five_tuple_json).unwrap();
+        assert_eq!(five_tuple.balance_mode, FlowBalanceMode::FiveTuple);
+        assert_eq!(
+            serde_json::to_value(five_tuple.balance_mode).unwrap(),
+            serde_json::json!({ "t": "five_tuple" })
+        );
+
+        // Downgrade safety: extra fields on a known variant preserve the variant,
+        // and unknown future variants fall back cleanly to DstIp.
+        assert_eq!(
+            FlowBalanceMode::from_db_json(
+                serde_json::json!({ "t": "five_tuple", "sticky_timeout_secs": 300 })
+            ),
+            FlowBalanceMode::FiveTuple
+        );
+        assert_eq!(
+            FlowBalanceMode::from_db_json(
+                serde_json::json!({ "t": "future_consistent_hash", "seed": 42 })
+            ),
+            FlowBalanceMode::DstIp
+        );
+    }
+
+    #[test]
     fn rejects_reserved_default_flow_id() {
         let config = FlowConfig {
             id: Uuid::nil(),
@@ -323,6 +450,7 @@ mod tests {
             flow_id: DEFAULT_FLOW_ID,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: FlowBalanceMode::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,
@@ -340,6 +468,7 @@ mod tests {
             flow_id,
             flow_match_rules: vec![],
             flow_targets: vec![],
+            balance_mode: FlowBalanceMode::default(),
             name: String::new(),
             remark: String::new(),
             update_at: 0.0,
@@ -403,5 +532,66 @@ mod tests {
         .validate();
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn port_rule_serde_and_validation() {
+        let src: WanIPRuleSource = serde_json::from_value(serde_json::json!({
+            "t": "port",
+            "protocol": "tcp",
+            "start_port": 65499,
+            "end_port": 65499
+        }))
+        .unwrap();
+        match &src {
+            WanIPRuleSource::Port(p) => {
+                assert_eq!(p.protocol, L4ProtoMatch::Tcp);
+                assert_eq!(p.start_port, 65499);
+                assert_eq!(p.end_port, 65499);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let default_proto: WanIPRuleSource = serde_json::from_value(serde_json::json!({
+            "t": "port",
+            "start_port": 3478,
+            "end_port": 3480
+        }))
+        .unwrap();
+        match &default_proto {
+            WanIPRuleSource::Port(p) => assert_eq!(p.protocol, L4ProtoMatch::Any),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        let make_rule = |start_port: u16, end_port: u16| WanIpRuleConfig {
+            id: Uuid::nil(),
+            name: None,
+            index: 10,
+            enable: true,
+            mark: FlowMark::default(),
+            source: vec![WanIPRuleSource::Port(PortRuleConfig {
+                protocol: L4ProtoMatch::Tcp,
+                start_port,
+                end_port,
+            })],
+            remark: String::new(),
+            flow_id: 0,
+            override_dns: false,
+            update_at: 0.0,
+        };
+
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(65499, 65499))
+                .is_ok()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(1, 65535)).is_ok()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(0, 443)).is_err()
+        );
+        assert!(
+            crate::database::validator::ValidatableConfig::validate(&make_rule(500, 400)).is_err()
+        );
     }
 }

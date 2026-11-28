@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "base/landscape.h"
+#include "route/route_mode.h"
 
 struct route6_slot_key {
     __u32 flow_id;
@@ -23,16 +24,40 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct route6_slot_key);
     __type(value, struct route6_target_info);
-    __uint(max_entries, 4096);
+    __uint(max_entries, 65536);
     __uint(map_flags, BPF_F_NO_PREALLOC);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } rt6_slot_map SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct route_flow_target_key);
+    __type(value, struct route6_target_info);
+    __uint(max_entries, 4096);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} rt6_flow_targets SEC(".maps");
+
 static __always_inline u32 route6_target_slot(const struct in6_addr *daddr) {
-    u32 hash = (u32)daddr->in6_u.u6_addr32[0] ^ (u32)daddr->in6_u.u6_addr32[1];
-    hash ^= hash >> 16;
-    hash ^= hash >> 8;
-    return hash & 0xF;
+    u32 h = (u32)daddr->in6_u.u6_addr32[0] * 0x9e3779b9U;
+    h ^= (u32)daddr->in6_u.u6_addr32[1] * 0x85ebca6bU;
+    h ^= (u32)daddr->in6_u.u6_addr32[2] * 0xc2b2ae35U;
+    h ^= (u32)daddr->in6_u.u6_addr32[3];
+    return route_avalanche32(h) & 0xFF;
+}
+
+static __always_inline u32 route6_five_tuple_slot(const struct in6_addr *saddr,
+                                                  const struct in6_addr *daddr, __be16 sport,
+                                                  __be16 dport, u8 proto) {
+    u32 s = (u32)saddr->in6_u.u6_addr32[0] ^ ((u32)saddr->in6_u.u6_addr32[1] * 0x9e3779b9U) ^
+            ((u32)saddr->in6_u.u6_addr32[2] * 0x85ebca6bU) ^
+            ((u32)saddr->in6_u.u6_addr32[3] * 0xc2b2ae35U);
+    u32 d = (u32)daddr->in6_u.u6_addr32[0] ^ ((u32)daddr->in6_u.u6_addr32[1] * 0x85ebca6bU) ^
+            ((u32)daddr->in6_u.u6_addr32[2] * 0xc2b2ae35U) ^
+            ((u32)daddr->in6_u.u6_addr32[3] * 0x9e3779b9U);
+    u32 ports = ((u32)(u16)sport << 16) | (u32)(u16)dport;
+    u32 h = (s * 0xcc9e2d51U) ^ d ^ (ports * 0x1b873593U) ^ ((u32)proto * 0x9e3779b9U);
+    return route_avalanche32(h) & 0xFF;
 }
 
 #endif /* __LD_ROUTE6_SLOT_H__ */

@@ -27,5 +27,6 @@ impl DnsResultSink for EbpfDnsResultSink {
 
     fn rebuild_route_cache(&self) {
         route::cache::recreate_route_lan_cache_inner_map(&self.paths);
+        route::cache::recreate_route_conn_inner_map(&self.paths);
     }
 }

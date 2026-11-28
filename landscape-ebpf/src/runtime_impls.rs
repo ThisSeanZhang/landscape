@@ -269,6 +269,10 @@ impl RouteTableDataplane for EbpfRouteTableDataplane {
         maps::route::del_wan_route_slots_v6(&self.rt.paths, flow_id);
     }
 
+    fn set_flow_balance_mode(&self, flow_id: u32, mode: landscape_common::flow::FlowBalanceMode) {
+        maps::route::set_flow_balance_mode(&self.rt.paths, flow_id, mode);
+    }
+
     async fn sync_kernel_default_ipv4(
         &self,
         nexthops: &[landscape_common::sys_service::route_service::RouteTargetInfo],
@@ -396,8 +400,17 @@ impl FlowRuleDataplane for EbpfFlowRuleDataplane {
         maps::flow_wanip::add_wan_ip_mark(&self.rt.paths, flow_id, ips);
     }
 
+    fn set_dst_port_marks(
+        &self,
+        flow_id: u32,
+        ports: Vec<landscape_common::flow::ip_mark::PortMarkInfo>,
+    ) {
+        maps::flow_wanip::set_dst_port_marks(&self.rt.paths, flow_id, ports);
+    }
+
     fn invalidate_lan_cache(&self) {
         maps::route::cache::recreate_route_lan_cache_inner_map(&self.rt.paths);
+        maps::route::cache::recreate_route_conn_inner_map(&self.rt.paths);
     }
 }
 

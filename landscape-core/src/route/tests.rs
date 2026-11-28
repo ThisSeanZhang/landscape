@@ -611,6 +611,7 @@ fn flow_config(flow_id: u32, enable: bool, targets: Vec<WeightedFlowTarget>) -> 
         flow_id,
         flow_match_rules: vec![],
         flow_targets: targets,
+        balance_mode: Default::default(),
         name: String::new(),
         remark: String::new(),
         update_at: 0.0,
@@ -921,6 +922,7 @@ struct RecordingRouteDataplane {
     calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
     v6_calls: std::sync::Mutex<Vec<Vec<RouteTargetInfo>>>,
     lan_ops: std::sync::Mutex<Vec<LanRouteOp>>,
+    flow_modes: std::sync::Mutex<Vec<(FlowId, landscape_common::flow::FlowBalanceMode)>>,
     fail_next: std::sync::atomic::AtomicBool,
     fail_next_v6: std::sync::atomic::AtomicBool,
     policy_calls: std::sync::Mutex<Vec<Vec<WanRouteTarget>>>,
@@ -941,6 +943,10 @@ impl RecordingRouteDataplane {
 
     fn take_lan_ops(&self) -> Vec<LanRouteOp> {
         std::mem::take(&mut *self.lan_ops.lock().unwrap())
+    }
+
+    fn flow_modes(&self) -> Vec<(FlowId, landscape_common::flow::FlowBalanceMode)> {
+        self.flow_modes.lock().unwrap().clone()
     }
 
     fn set_fail_next(&self) {
@@ -998,6 +1004,14 @@ impl landscape_common::sys_service::route_service::dataplane::RouteTableDataplan
 
     fn del_wan_slots_v6(&self, flow_id: FlowId) {
         self.wan_slots_v6.lock().unwrap().remove(&flow_id);
+    }
+
+    fn set_flow_balance_mode(
+        &self,
+        flow_id: FlowId,
+        mode: landscape_common::flow::FlowBalanceMode,
+    ) {
+        self.flow_modes.lock().unwrap().push((flow_id, mode));
     }
 
     async fn sync_kernel_default_ipv4(&self, nexthops: &[RouteTargetInfo]) -> bool {
@@ -2198,5 +2212,36 @@ fn reconcile_kernel_wan_policy_caches_retries_and_cleans_up_empty() {
         service.reconcile_kernel_wan_policy_ipv4().await;
         assert_eq!(dataplane.policy_calls().len(), 5);
         assert!(dataplane.policy_calls()[4].is_empty());
+    });
+}
+
+#[test]
+fn sync_and_clear_flow_wan_targets_propagate_balance_mode() {
+    run_async_test(async {
+        use landscape_common::flow::FlowBalanceMode;
+
+        let dataplane = std::sync::Arc::new(RecordingRouteDataplane::default());
+        let service = IpRouteService::new(dataplane.clone());
+        service
+            .insert_ipv4_wan_route(
+                &link_owner("wan0"),
+                ipv4_wan_route("wan0", Ipv4Addr::new(198, 51, 100, 1)),
+            )
+            .await;
+
+        let mut enabled_five_tuple = flow_config(5, true, vec![iface_target("wan0", 1)]);
+        enabled_five_tuple.balance_mode = FlowBalanceMode::FiveTuple;
+
+        let mut disabled_five_tuple = flow_config(6, false, vec![iface_target("wan0", 1)]);
+        disabled_five_tuple.balance_mode = FlowBalanceMode::FiveTuple;
+
+        service.sync_flow_wan_targets(&[enabled_five_tuple, disabled_five_tuple]).await;
+
+        let modes = dataplane.flow_modes();
+        assert_eq!(modes, vec![(5, FlowBalanceMode::FiveTuple), (6, FlowBalanceMode::DstIp)]);
+
+        service.clear_flow_wan_targets(5).await;
+        let modes = dataplane.flow_modes();
+        assert_eq!(modes.last(), Some(&(5, FlowBalanceMode::DstIp)));
     });
 }

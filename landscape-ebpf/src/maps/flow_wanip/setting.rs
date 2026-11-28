@@ -1,17 +1,22 @@
 use std::os::fd::{AsFd, AsRawFd};
 
-use landscape_common::flow::ip_mark::IpMarkInfo;
+use landscape_common::flow::ip_mark::{IpMarkInfo, PortMarkInfo};
 use libbpf_rs::{MapCore, MapFlags, MapHandle, MapType, libbpf_sys};
-use zerocopy::IntoBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
     bpf_error::LdEbpfResult,
     maps::{
         FlowIpTrieKeyV4, FlowIpTrieKeyV6, FlowIpTrieValueV4, FlowIpTrieValueV6, LandscapeMapPath,
+        flow_wanip::types::{
+            FLOW_L4_MAX_RULES_PER_FLOW, FlowL4Meta, FlowL4RuleEntry, FlowL4RuleSet,
+        },
     },
 };
 
 const IP_MATCH_MAX_ENTRIES: u32 = 20840;
+
+static FLOW_L4_META_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn create_inner_flow_match_map_v4<T>(
     outer_map: &T,
@@ -186,4 +191,79 @@ fn add_wan_ip_mark_inner(
     let flow_ip_match_map = libbpf_rs::MapHandle::from_pinned_path(&paths.flow6_ip_map)?;
     create_inner_flow_match_map_v6(&flow_ip_match_map, flow_id, &ips)?;
     Ok(())
+}
+
+pub(crate) fn set_flow_l4_rules_with_maps<R, M>(
+    rule_map: &R,
+    meta_map: &M,
+    flow_id: u32,
+    ports: &[PortMarkInfo],
+) -> LdEbpfResult<()>
+where
+    R: MapCore,
+    M: MapCore,
+{
+    if flow_id >= 256 {
+        return Ok(());
+    }
+
+    let mut sorted = ports.to_vec();
+    sorted
+        .sort_unstable_by_key(|p| (p.priority, p.start_port, p.end_port, p.protocol.to_ipproto()));
+
+    if sorted.len() > FLOW_L4_MAX_RULES_PER_FLOW {
+        tracing::warn!(
+            "flow {flow_id} has {} L4 port rules; truncating to {FLOW_L4_MAX_RULES_PER_FLOW}",
+            sorted.len()
+        );
+    }
+
+    let count = sorted.len().min(FLOW_L4_MAX_RULES_PER_FLOW);
+    let mut rule_set = FlowL4RuleSet { count: count as u32, ..Default::default() };
+    for (dst, src) in rule_set.entries.iter_mut().zip(sorted.iter().take(count)) {
+        *dst = FlowL4RuleEntry {
+            mark: u32::from(src.mark),
+            start_port: src.start_port,
+            end_port: src.end_port,
+            priority: src.priority,
+            l4_proto: src.protocol.to_ipproto(),
+            ..Default::default()
+        };
+    }
+
+    let _guard = FLOW_L4_META_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    rule_map.update(flow_id.as_bytes(), rule_set.as_bytes(), MapFlags::ANY)?;
+
+    let zero = 0u32;
+    let mut meta = match meta_map.lookup(zero.as_bytes(), MapFlags::ANY)? {
+        Some(raw) => FlowL4Meta::read_from_bytes(&raw).unwrap_or_default(),
+        None => FlowL4Meta::default(),
+    };
+    let word_idx = ((flow_id >> 5) & 7) as usize;
+    let bit = 1u32 << (flow_id & 31);
+    if count > 0 {
+        meta.active_mask_words[word_idx] |= bit;
+    } else {
+        meta.active_mask_words[word_idx] &= !bit;
+    }
+    meta_map.update(zero.as_bytes(), meta.as_bytes(), MapFlags::ANY)?;
+
+    Ok(())
+}
+
+pub fn set_dst_port_marks(paths: &LandscapeMapPath, flow_id: u32, ports: Vec<PortMarkInfo>) {
+    if let Err(e) = set_dst_port_marks_inner(paths, flow_id, &ports) {
+        tracing::error!("set_dst_port_marks(flow_id={flow_id}) error: {e:?}");
+    }
+}
+
+fn set_dst_port_marks_inner(
+    paths: &LandscapeMapPath,
+    flow_id: u32,
+    ports: &[PortMarkInfo],
+) -> LdEbpfResult<()> {
+    let rule_map = MapHandle::from_pinned_path(&paths.flow_l4_rule_map)?;
+    let meta_map = MapHandle::from_pinned_path(&paths.flow_l4_meta_map)?;
+    set_flow_l4_rules_with_maps(&rule_map, &meta_map, flow_id, ports)
 }

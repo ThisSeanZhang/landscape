@@ -33,6 +33,32 @@ pub(crate) struct FlowIpTrieValueV6 {
     pub _pad: [u8; 2],
 }
 
+pub(crate) const FLOW_L4_MAX_RULES_PER_FLOW: usize = 32;
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct FlowL4RuleEntry {
+    pub mark: u32,
+    pub start_port: u16,
+    pub end_port: u16,
+    pub priority: u16,
+    pub l4_proto: u8,
+    pub _pad: [u8; 5],
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct FlowL4RuleSet {
+    pub count: u32,
+    pub entries: [FlowL4RuleEntry; FLOW_L4_MAX_RULES_PER_FLOW],
+}
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, FromBytes, IntoBytes, Immutable, PartialEq, Eq)]
+pub(crate) struct FlowL4Meta {
+    pub active_mask_words: [u32; 8],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +81,20 @@ mod tests {
         assert_size!(FlowIpTrieValueV6, share::flow_ip_trie_value_v6);
         assert_field!(FlowIpTrieValueV6, share::flow_ip_trie_value_v6, mark);
         assert_field!(FlowIpTrieValueV6, share::flow_ip_trie_value_v6, priority);
+
+        assert_size!(FlowL4RuleEntry, share::flow_l4_rule_entry);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, mark);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, start_port);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, end_port);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, priority);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, l4_proto);
+        assert_field!(FlowL4RuleEntry, share::flow_l4_rule_entry, _pad);
+
+        assert_size!(FlowL4RuleSet, share::flow_l4_rule_set);
+        assert_field!(FlowL4RuleSet, share::flow_l4_rule_set, count);
+        assert_field!(FlowL4RuleSet, share::flow_l4_rule_set, entries);
+
+        assert_size!(FlowL4Meta, share::flow_l4_meta);
+        assert_field!(FlowL4Meta, share::flow_l4_meta, active_mask_words);
     }
 }
